@@ -141,6 +141,13 @@ end
     @test aliases[Lj] == 1000.0e-12
 end
 
+@testset "a Num value defined under any of its names" begin
+    for key in (Lj, :Lj, "Lj", JosephsonCircuits.CircuitValues.Parameter(:Lj))
+        @test JosephsonCircuits.valuetonumber(2*Lj,
+            Dict{Any,Any}(key => 1000.0e-12)) ≈ 2000.0e-12
+    end
+end
+
 @testset "the value handling methods" begin
     defs = Dict{Any,Any}(Lj => 1000.0e-12, Cc => 100.0e-15)
     @test JosephsonCircuits.valuetonumber(2*Lj, defs) ≈ 2000.0e-12

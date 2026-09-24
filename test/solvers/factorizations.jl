@@ -62,6 +62,39 @@ using Test
         @test cache.factorization !== nothing
     end
 
+    @testset "a refactorization whose pivots have grown is repivoted" begin
+        # Node 4 couples to two nodes of a capacitive mesh and is
+        # eliminated first, on its own diagonal, which vanishes at its
+        # resonance f0 while the matrix stays well conditioned. A sweep
+        # factorizes at 4 GHz and refactorizes at f0 with that pivot; its
+        # scattering matrix at f0 must be the one a solve at f0 alone,
+        # which pivots afresh, gives.
+        w0 = 2pi*5.0e9
+        L4, Ca, Cb = 1.0e-9, 30.0e-15, 50.0e-15
+        C4 = (1 - 1e-13)/(L4*w0^2) - Ca - Cb
+        c = Any[("P1", "3", "0", Port(1; Z0 = 50.0)),
+            ("P2", "5", "0", Port(2; Z0 = 50.0))]
+        nodes = ["1", "2", "3", "5"]
+        k = 0
+        for i in 1:4, j in i+1:4
+            k += 1
+            push!(c, ("Cx$(k)", nodes[i], nodes[j], Capacitor(40.0e-15*(1 + 0.3k))))
+        end
+        for (i, nd) in enumerate(nodes)
+            push!(c, ("Lg$(i)", nd, "0", Inductor(2.0e-9*(1 + 0.2i))))
+            push!(c, ("Cg$(i)", nd, "0", Capacitor(100.0e-15*(1 + 0.1i))))
+        end
+        append!(c, [("Ca", "4", "1", Capacitor(Ca)), ("Cb", "4", "2", Capacitor(Cb)),
+            ("L4", "4", "0", Inductor(L4)), ("C4", "4", "0", Capacitor(C4))])
+        circuit = Circuit(c)
+        kw = (keyedarrays = false, returnQE = false, returnCM = false)
+        atw0(S) = selectdim(S, ndims(S), size(S, ndims(S)))
+        sweep = hblinsolve([2pi*4.0e9, w0], circuit, Dict{Symbol,Any}(); kw...)
+        alone = hblinsolve([w0], circuit, Dict{Symbol,Any}(); kw...)
+        @test isapprox(atw0(sweep.S), atw0(alone.S); atol = 1e-12)
+        @test_throws ArgumentError JosephsonCircuits.KLUfactorization(pivottol = -1)
+    end
+
     @testset "trysolvetranspose!" begin
         A = sparse([1,2,3,1,2,3], [1,1,2,3,3,3],
             Complex{Float64}[2.0, 1.0, 3.0, im, 4.0, 1.0], 3, 3)
@@ -110,7 +143,7 @@ end
         @test norm(A*(F\b) - b) <= 1e-10*norm(b)
         # the refactorization from new values reuses the ordering
         A2 = A + sparse(1.0I, n, n)
-        JC.klunzval!(F, A2)
+        JC.klurefactor!(F, A2, 1e-6)
         @test norm(A2*(F\b) - b) <= 1e-10*norm(b)
         # the chosen permutation is a permutation and its predicted flops
         # are at most AMD's
@@ -146,5 +179,36 @@ end
         @test norm(G*(Fg\bg) - bg) <= 1e-10*norm(bg)
         # the factorization the package hands out is this one
         @test JC.factorize(JC.KLUfactorization(), G) isa typeof(Fg)
+    end
+
+    @testset "a cache keeps the ordering of its pattern, and takes a seeded one" begin
+        n = 300
+        A = sprand(rng, n, n, 0.02) + 5I
+        b = randn(rng, n)
+        f = JC.KLUfactorization()
+        cache = JC.FactorizationCache()
+        JC.tryfactorize!(cache, f, A)
+        ordering = cache.ordering
+        @test isperm(ordering)
+        # a fresh factorization of the same pattern, with new values, takes
+        # the ordering the cache holds and solves as a fresh choice does
+        A2 = copy(A)
+        nonzeros(A2) .*= 1 .+ rand(rng, nnz(A2))
+        cache.factorization = nothing
+        JC.tryfactorize!(cache, f, A2)
+        @test cache.ordering === ordering
+        @test cache.factorization\b ≈ JC.kluordered(A2)\b
+        # a cache seeded with it factorizes as the one which chose it
+        seeded = JC.seedordering!(JC.FactorizationCache(), A2, ordering)
+        JC.tryfactorize!(seeded, f, A2)
+        @test seeded.ordering === ordering
+        @test seeded.factorization.q == cache.factorization.q
+        @test_throws ArgumentError JC.seedordering!(JC.FactorizationCache(), A, 1:n-1)
+        # another pattern gets an ordering of its own
+        B = A + sparse(1:n-1, 2:n, 1.0, n, n)
+        cache.factorization = nothing
+        JC.tryfactorize!(cache, f, B)
+        @test cache.ordering == JC.fillordering(f, B)
+        @test cache.factorization\b ≈ Matrix(B)\b
     end
 end

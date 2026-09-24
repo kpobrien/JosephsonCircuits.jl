@@ -250,6 +250,32 @@ using Test
         fdt = vec((Array(Sp) .- Array(Sm))./(2h))
         @test norm(vec(Array(r.dSdp(parameter = :theta))) .- fdt)/norm(fdt) < 1e-4
 
+        # three instances of one definition along a line share the
+        # parameter, whose pairs make one stamp
+        function makeline(theta)
+            seriesS(w) = (z = 1/(im*w*theta*Z0);
+                [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
+            dS(w) = (z = 1/(im*w*theta*Z0); d = -2*z/(theta*(z+2)^2);
+                [d -d; -d d])
+            blk = ScatteringParameters(seriesS; nports = 2,
+                derivatives = (theta = dS,))
+            comps = Any[(:p1, 1, 0, Port(1; Z0 = Z0))]
+            for k in 1:3
+                push!(comps, (Symbol(:b, k), k, k + 1, blk))
+                push!(comps, (Symbol(:c, k), k + 1, 0, Capacitor(10e-15)))
+            end
+            push!(comps, (:cc, 4, 5, Capacitor(100e-15)),
+                (:jj, 5, 0, JosephsonJunction(:Lj)),
+                (:cj, 5, 0, Capacitor(1000e-15)))
+            return Circuit(comps)
+        end
+        rl = designsensitivities(makeline(theta), defs, ws, wp, src, (2,),
+            (8,); parameters = (:theta,))
+        Sp = hbsolve(ws, wp, src, (2,), (8,), makeline(theta + h), defs).linearized.S
+        Sm = hbsolve(ws, wp, src, (2,), (8,), makeline(theta - h), defs).linearized.S
+        fdl = vec((Array(Sp) .- Array(Sm))./(2h))
+        @test norm(vec(Array(rl.dSdp(parameter = :theta))) .- fdl)/norm(fdl) < 1e-4
+
         # a block which states no derivative depends on no parameter and
         # costs nothing
         plain = makeblk(theta; analytic = false)
@@ -261,5 +287,61 @@ using Test
         # the reverse contraction rejects block parameters
         @test_throws ArgumentError designsensitivities(circuit, defs, ws, wp,
             src, (2,), (8,); sensitivitymode = :reverse)
+    end
+
+    @testset "a pumped block among the components" begin
+        # a short written as a block of the linearized kind which does not
+        # convert and as an ordinary block, behind a coupling capacitor
+        # which is the design parameter: the block states no derivative in
+        # either form, and the two give one sensitivity
+        wpb = (2*pi*4.75e9,)
+        wsb = 2*pi*[4.4e9, 4.6e9]
+        withblock(b) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cc, 1, 2, Capacitor(:Cc)), (:b, 2, b), (:c2, 2, 0, Capacitor(500e-15))])
+        pumped = LinearizedScattering([fill(-1.0 + 0im, 1, 1)], wpb[1];
+            harmonics = [0], nports = 1)
+        ordinary = ScatteringParameters(fill(-1.0 + 0im, 1, 1); zref = 50.0,
+            noise = Lossless())
+        defs = Dict(:Cc => 100e-15)
+        dS(b) = Array(designsensitivities(withblock(b), defs, wsb, wpb, [],
+            (2,), (4,); parameters = (:Cc,)).dSdp)
+        @test isapprox(dS(pumped), dS(ordinary); rtol = 1e-10)
+        # a block pair's derivative is of its block's kind
+        @test_throws ArgumentError hbsolve(wsb, wpb, [], (2,), (4,),
+            withblock(pumped), defs; sensitivityblockpairs = [("b", 1, ordinary)],
+            nsensitivityparameters = 1)
+    end
+
+    @testset "a block design parameter with direct current" begin
+        # a series resistance block in the path of a direct current, which
+        # it reads from its own zero frequency data: its parameter moves the
+        # direct current rows of the pump solve as well as the harmonic ones
+        Z0 = 50.0
+        function makeres(R)
+            seriesS(w) = (z = R/Z0; [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
+            dS(w) = (z = R/Z0; d = 2/(Z0*(z+2)^2); [d -d; -d d])
+            blk = ScatteringParameters(seriesS; nports = 2, grounded = false,
+                derivatives = (R = dS,))
+            return Circuit(
+                [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+                 :cc => blk, :jj => JosephsonJunction(:Lj),
+                 :c2 => Capacitor(1000.0e-15)],
+                [((:p1, 1), (:r1, 1), (:cc, 1, 1)),
+                 ((:cc, 2, 1), (:jj, 1), (:c2, 1)),
+                 ((:cc, 1, 2), (:cc, 2, 2), (:jj, 2), (:c2, 2), (:r1, 2),
+                  (:p1, 2), Ground)])
+        end
+        R = 5.0
+        srcdc = [(mode = (1,), port = 1, current = 0.00565e-6),
+            (mode = (0,), port = 1, current = 1e-8)]
+        opts = (; dc = true, threewavemixing = true, fourwavemixing = true)
+        defs = Dict(:Lj => 1000.0e-12)
+        r = designsensitivities(makeres(R), defs, ws, wp, srcdc, (2,), (8,);
+            parameters = (:R,), opts...)
+        h = 1e-6*R
+        Sp = hbsolve(ws, wp, srcdc, (2,), (8,), makeres(R + h), defs; opts...).linearized.S
+        Sm = hbsolve(ws, wp, srcdc, (2,), (8,), makeres(R - h), defs; opts...).linearized.S
+        fd = vec((Array(Sp) .- Array(Sm))./(2h))
+        @test norm(vec(Array(r.dSdp(parameter = :R))) .- fd)/norm(fd) < 1e-4
     end
 end

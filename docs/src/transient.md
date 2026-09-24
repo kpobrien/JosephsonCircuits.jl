@@ -75,9 +75,7 @@ amplifier's bifurcation magnify that: the pumped amplifier of the noise
 example has its pump response 123% off harmonic balance at 5 ps and
 needs 0.3 ps for half a percent. The Gauss-Legendre rule warps by
 `(2 pi f dt)^4/720`: the same amplifier is 5e-4 off at 5 ps and 3e-5 at
-2.5 ps, converging as the fourth power, at six microseconds a step on
-the CPU where the trapezoidal rule at 5 ps refactorizes every step and
-takes twenty five. Neither rule is L-stable: an unresolved fast mode is
+2.5 ps, converging as the fourth power. Neither rule is L-stable: an unresolved fast mode is
 not damped, and a sharp edge in a drive is resolved by the grid, not
 smoothed by the rule.
 
@@ -134,8 +132,9 @@ Volts in the compiled order; the auxiliary currents follow from the
 constitutive equations and the gauge is normalized as harmonic balance
 normalizes an initial guess. The default is the zero state, and
 `transientstate(solution)` is the state at the end of a solve, to
-continue from: with transmission lines it carries the recorded waves
-over the delay window before the end, so the continuation is the
+continue from, whatever the solve recorded: with transmission lines it
+carries the waves over the delay window before the end, so the
+continuation is the
 uninterrupted solve at the same step, and reads that history through
 the lines' own interpolation at another. The state holds the solver's scaled quantities, which is
 why `initialstate` takes only a `TransientState` and not a pair of
@@ -163,7 +162,8 @@ with the same circuit.
 ```julia
 using JosephsonCircuits
 
-# a cable of 60 ohms and 90 ps in front of a two port whose measured
+# a cable of 60 ohms and 300 ps (9 cm at the speed of light) in front of
+# a two port whose measured
 # scattering parameters were fitted at four poles, at 0.3 kelvin
 data = ScatteringParameters((2pi .* frequencies, S); nports = 2, zref = 50.0,
     noise = ThermalEquilibrium(0.3))
@@ -205,12 +205,13 @@ completed to the commutation relations; a long device is fitted with
 its `delays` taken out and a line put back. The
 modulation changes the stage operator within a step, and by as much as
 the operator itself for an amplifier, so the step's frozen operator
-carries the block at the mean of its two stages' weights and the
-difference, of the rank of the block's port rows, is solved exactly
-on it, in the step, its tangent and its adjoint. A
-[`transientstate`](@ref) of a circuit with lines takes their direct
-currents as `linecurrents`, and holds the waves on the lines and the
-states of the blocks as its third and fourth members.
+carries the block's unconverted response and the modulation, of the
+rank of the block's port rows, is solved exactly on it, in the step,
+its tangent and its adjoint, so the operator is refactorized only when
+the junctions ask. A [`transientstate`](@ref) of a circuit with lines
+takes their direct currents as `linecurrents`, and holds the waves on
+the lines as its `waves` and the states of the blocks as its
+`blockstates`.
 
 ## Many drive conditions as one solve
 
@@ -281,7 +282,8 @@ adjoint = transientadjoint(solution, weights; quantity = :outgoing)
 The tangent is linearized about the full recorded trajectory, pump and
 signals together, so the loaded junction phases enter every response. The
 adjoint is the exact transpose of the steps taken, on the factorization
-of the step itself since the step matrix is symmetric, including both
+of the step itself, transposed where a scattering block makes the step
+matrix unsymmetric, including both
 source endpoints of the trapezoidal rule and the direct feedthrough of a
 port current into the measured wave; `adjoint.initialflux` and
 `adjoint.initialrate` are the sensitivities to what the circuit stored at
@@ -343,10 +345,11 @@ balance solvers, so another device needs a factorization for it. On a
 device the state, the products, the junction term, the Jacobian assembly,
 the factorization and the solves all run there, through the package's
 device sparse matrices and its assembly kernels; the compiled circuit, the
-sample times and the source callables stay on the host, and one vector of
-instantaneous drive currents is transferred each step. The Newton control
-needs scalar norms, so the loop synchronizes between kernels, and a small
-circuit is not expected to run faster on a GPU.
+sample times and the source callables stay on the host, and each step
+transfers the drive values and the Newton engine's few numbers per
+condition, its norms, floors and masks. The Newton control needs them,
+so the loop synchronizes between kernels, and a small circuit is not
+expected to run faster on a GPU.
 
 `solution.voltage`, `incident`, `outgoing`, `finalflux`, `finalrate` and
 the optional `flux` and `rate` stay on the backend.

@@ -38,6 +38,11 @@ end
 designderivative(v, ::Symbol, definitions) =
     throw(ArgumentError(lazy"the value $(v) cannot be differentiated with respect to a design parameter; write component values as numbers, parameters or expressions in parameters (frequency dependent values are not supported)."))
 
+# the analytic derivatives of a block's scattering matrix, by parameter:
+# only a `ScatteringParameters` block states any
+blockderivatives(d::ScatteringParameters) = d.derivatives
+blockderivatives(d) = NamedTuple()
+
 # the names of the design parameters: the ones given, as names or as
 # definition keys, or by default every defined parameter and every
 # parameter a scattering block states a derivative for, in sorted order
@@ -49,7 +54,7 @@ function designparameters(parameters, definitions, psc::CompiledCircuit)
             isnothing(n) || push!(names, n)
         end
         for b in psc.scatteringblocks
-            append!(names, keys(b.definition.derivatives))
+            append!(names, keys(blockderivatives(b.definition)))
         end
         return sort!(unique!(names))
     end
@@ -122,7 +127,7 @@ function designblockjacobian(circuit::CompilableCircuit, parameters)
     psc = compile(circuit)
     out = Tuple{String,Int,Any}[]
     for b in psc.scatteringblocks, (j, name) in enumerate(parameters)
-        d = b.definition.derivatives
+        d = blockderivatives(b.definition)
         haskey(d, name) || continue
         # a derivative is not a passive scattering matrix and is not
         # checked as one: the positional constructor

@@ -475,19 +475,14 @@ node 1; see [`extractbranches`](@ref) for which components make a branch.
 
 The branches are the edges of the undirected graph of those endpoints, in
 ascending order of their endpoints, oriented from the lower to the higher
-node index, which is the order and the orientation
-[`calcgraphs`](@ref) gives them. A circuit with a component whose two
-terminals are the same node has a branch of no incidence, which only the
-diagnostic construction places, so that case is built through it.
+node index. A component whose two terminals are the same node is a branch
+with no incidence entries: it carries its value and couples no node.
 """
 circuittopology(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     Nnodes::Int) = circuittopology(
         extractbranches(componenttypes, nodeindices), Nnodes)
 
 function circuittopology(branchvector::Vector{Tuple{Int,Int}}, Nnodes::Int)
-    if any(e -> first(e) == last(e), branchvector)
-        return calcgraphs(branchvector, Nnodes).topology
-    end
     gl = Graphs.SimpleGraphFromIterator(tuple2edge(branchvector))
     edge2indexdict = Dict{Tuple{Int,Int},Int}()
     I = Int[]; J = Int[]; V = Int[]
@@ -498,6 +493,7 @@ function circuittopology(branchvector::Vector{Tuple{Int,Int}}, Nnodes::Int)
         a, b = Graphs.src(edge), Graphs.dst(edge)
         edge2indexdict[(a,b)] = i
         edge2indexdict[(b,a)] = i
+        a == b && continue
         if a > 1
             push!(I, i); push!(J, a-1); push!(V, -1)
         end
@@ -531,7 +527,7 @@ The flat table, in elaboration order:
 - `junctioncprs`: the [`PolynomialCPR`](@ref) of each `:Lj` entry whose
     current-phase relation is not the sinusoidal Josephson one. Empty for
     every circuit which does not ask for another, and the solvers then
-    evaluate `sin` and `cos` as they always did.
+    evaluate `sin` and `cos`.
 - `componenttemperatures`: the temperature of each entry which states one,
     keyed by flat index.
 - `couplings`: resolved `(coupling, inductor1, inductor2)` flat indices,
@@ -604,14 +600,6 @@ ncomponents(c::CompiledCircuit) = length(c.componenttypes)
 # chain alone; a second table for them would be a second place to get one
 # wrong.
 
-# A nonlinear inductor is a junction whatever its relation: the branch it
-# makes, the matrices it enters and the small signal inductance `L0` are
-# the same, and only the pointwise relation the solvers evaluate differs.
-# `junctioncpr` decides whether that relation is one they can evaluate.
-function lowercomponent(def::NonlinearInductor, path)
-    junctioncpr(def, path)
-    return :Lj, def.L0
-end
 function lowercomponent(def::VoltageSource, path)
     throw(ComponentNotSupportedError(lazy"the VoltageSource at $(path) is not supported by the solvers."))
 end
@@ -728,7 +716,7 @@ function calcnodesorting(uniquenodevector::Vector{String};
             if !isnothing(parsednode)
                 uniquenodevectorints[i] = parsednode
             else
-                throw(ArgumentError(lazy"Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."))
+                throw(ArgumentError(lazy"The node $(repr(uniquenodevector[i])) is not an integer. Name the nodes with integers, or set the keyword argument `sorting=:name` or `sorting=:none`."))
             end
         end
         sortperm!(uniquenodevectorsortindices, uniquenodevectorints, initialized=true)
@@ -736,7 +724,7 @@ function calcnodesorting(uniquenodevector::Vector{String};
     elseif sorting == :none
         nothing
     else
-        throw(ArgumentError(lazy"Unknown sorting type."))
+        throw(ArgumentError(lazy"Unknown sorting $(repr(sorting)); use :number, :name or :none."))
     end
 
     groundnodeindex = findgroundnodeindex(uniquenodevector)
@@ -812,10 +800,9 @@ are numbered by [`calcnodesorting`](@ref) with ground first; the default
 names are not integers, and `:number` sorts integer node names by value.
 
 Only components the solvers support can be lowered: a
-[`GaussianChannel`](@ref), a [`VoltageSource`](@ref), a non-sinusoidal
-[`NonlinearInductor`](@ref), or any component with other than two
-terminals throws a [`ComponentNotSupportedError`](@ref) naming the
-instance. A circuit with no connection to [`Ground`](@ref) throws an
+[`GaussianChannel`](@ref), a [`VoltageSource`](@ref), or a component with
+other than two terminals which is not a scattering block throws a
+[`ComponentNotSupportedError`](@ref) naming the instance. A circuit with no connection to [`Ground`](@ref) throws an
 `ArgumentError`.
 """
 function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
@@ -879,6 +866,10 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         typesymbol, value = if def isa Capacitor
             (:C, def.C)
         elseif def isa NonlinearInductor
+            # a junction whatever its relation: the branch it makes, the
+            # matrices it enters and the small signal inductance `L0` are
+            # the same, and only the pointwise relation differs, which is
+            # recorded below
             (:Lj, def.L0)
         elseif def isa Inductor
             (:L, def.L)
@@ -1057,7 +1048,7 @@ function warnduplicatematchedload(ports, componentnames, componenttypes,
             # value cannot be made about values which are not yet numbers,
             # and a circuit carrying one is compiled rather than refused
             ((v isa Number && z isa Number) && (v == z) === true) || continue
-            @warn "This port owns a matched environment of its own and a device resistor of the same value sits across the same terminals, so the port is loaded twice. If the resistor was written as the port's termination, which is how a port was terminated before a port could own one, either delete it or write the port as `termination = nothing` to keep it as the only load. If two loads are intended, this is correct and the warning can be ignored." port=p.number resistor=componentnames[i] value=z
+            @warn "This port owns a matched environment of its own and a device resistor of the same value sits across the same terminals, so the port is loaded twice. If the resistor was written as the port's termination, either delete it or write the port as `termination = nothing` to keep it as the only load. If two loads are intended, this is correct and the warning can be ignored." port=p.number resistor=componentnames[i] value=z
         end
     end
     return nothing
@@ -1122,7 +1113,7 @@ it. This is the one place a name becomes an index, so every entry point
 refuses an unknown one the same way.
 """
 function componentindex(c::CompiledCircuit, name)
-    idx = get(c.componentnamedict, String(name), 0)
+    idx = get(c.componentnamedict, string(name), 0)
     iszero(idx) && throw(ArgumentError(
         lazy"The component $(name) is not in this circuit."))
     return idx
@@ -1132,23 +1123,27 @@ end
     orderedports(c::CompiledCircuit)
 
 The ports of a compiled circuit ordered by port number. Throws an
-`ArgumentError` for duplicate port numbers or two ports on the same
-branch. Every port list the assembly reads is built from this one, so the
-indices, the numbers, the environments and the reference impedances are
-in one order.
+`ArgumentError` for duplicate port numbers, a port with both terminals on
+one node, or two ports on the same branch. Every port list the assembly
+reads is built from this one, so the indices, the numbers, the
+environments and the reference impedances are in one order.
 """
 function orderedports(c::CompiledCircuit)
+    name(p) = c.componentnames[p.component]
     numbers = [p.number for p in c.ports]
     if !allunique(numbers)
-        throw(ArgumentError(lazy"Duplicate ports are not allowed."))
+        n = first(k for k in numbers if count(==(k), numbers) > 1)
+        names = join([name(p) for p in c.ports if p.number == n], ", ")
+        throw(ArgumentError(lazy"The port number $(n) is given to more than one port: $(names)."))
     end
-    branches = Tuple{Int,Int}[]
-    for p in c.ports
-        push!(branches, (p.positivenode, p.negativenode))
-        push!(branches, (p.negativenode, p.positivenode))
-    end
-    if !allunique(branches)
-        throw(ArgumentError(lazy"Only one port allowed per branch."))
+    pairs = Dict{Tuple{Int,Int},Int}()
+    for (k, p) in enumerate(c.ports)
+        p.positivenode == p.negativenode && throw(ArgumentError(
+            lazy"The port $(name(p)) has both terminals on one node."))
+        pair = minmax(p.positivenode, p.negativenode)
+        other = get(pairs, pair, 0)
+        iszero(other) || throw(ArgumentError(lazy"The ports $(name(c.ports[other])) and $(name(p)) are across the same pair of nodes; only one port is allowed between two nodes."))
+        pairs[pair] = k
     end
     sp = sortperm(numbers)
     return c.ports[sp]
@@ -1189,7 +1184,8 @@ function portreferenceimpedances(ports::Vector{CompiledPort}, values)
 end
 
 """
-    noiseindices(c::CompiledCircuit, values)
+    noiseindices(c::CompiledCircuit, values,
+        candidates = noisecandidates(c))
 
 The flat table indices of the internal dissipative components, which are
 the noise channels of the linearized analysis: every resistor which is not
@@ -1198,7 +1194,9 @@ value in `values` has a nonzero imaginary part.
 
 A port termination is an external bath rather than an internal channel and
 is excluded by its role; any other resistor across a port's nodes is an
-ordinary device resistor and is included.
+ordinary device resistor and is included. `candidates` are the components
+examined, those which can be noise channels whatever their values, which a
+plan computes once and passes in.
 """
 function noiseindices(c::CompiledCircuit, values, candidates = noisecandidates(c))
     return [i for i in candidates if c.componenttypes[i] === :R ||
@@ -1208,9 +1206,11 @@ end
 # the components which can be noise channels whatever their values: the
 # resistors which are not a port's own environment, and the capacitors
 # and inductors, which are when their value has an imaginary part; a plan
-# holds them so that an assembly reads the values of these alone
+# holds them so that an assembly reads the values of these alone. A
+# component whose terminals are one node carries no current and is none.
 function noisecandidates(c::CompiledCircuit)
     owned = Set(p.environment for p in c.ports if !iszero(p.environment))
     return [i for (i, t) in enumerate(c.componenttypes)
-        if (t === :R && !(i in owned)) || t === :C || t === :L]
+        if ((t === :R && !(i in owned)) || t === :C || t === :L) &&
+            c.nodeindices[1, i] != c.nodeindices[2, i]]
 end

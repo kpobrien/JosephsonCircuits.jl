@@ -344,8 +344,6 @@ function fillandfactorize!(F::SparseBlockFactorization{T},
 end
 refactorize!(::BlockFactorization, F::SparseBlockFactorization, A::SparseMatrixCSC) =
     fillandfactorize!(F, A)
-refactorize!(::BlockFactorization, F::SparseBlockFactorization, vals::AbstractMatrix) =
-    fillandfactorize!(F, vals)
 
 # the work arrays for a right-hand side of `W` columns
 function blockwork(F::SparseBlockFactorization{T}, W::Integer) where {T}
@@ -385,7 +383,6 @@ function blocksolve!(X::AbstractArray{<:Any,3}, F::SparseBlockFactorization{T},
     Z, Y = w.Z, w.Y
     gather = blockgatherrowskernel!(backend, 256)
     scatter = blockscatterrowskernel!(backend, 256)
-    scattersub = blockscattersubrowskernel!(backend, 256)
     if isnothing(F.scale)
         gather(Z, B, F.lu.perm; ndrange = F.lu.n*W*nb)
     else
@@ -457,9 +454,8 @@ function refinedsolve!(X::AbstractArray{<:Any,3}, F::SparseBlockFactorization,
     blockresidual!(R, F, X, B; transposed)
     # each system of the batch is judged on its own residual: one which
     # stagnates stops its own corrections and keeps its best iterate, and
-    # the others go on. A batch-wide norm let one difficult system end the
-    # refinement of the rest, or one large residual keep converged systems
-    # iterating.
+    # the others go on, so one difficult system neither ends the refinement
+    # of the rest nor keeps converged systems iterating.
     nb = size(X, 3)
     rnorm = [norm(view(R, :, :, k)) for k in 1:nb]
     floor = 4*eps(real(eltype(B)))*norm(B)
@@ -518,13 +514,10 @@ number of tones and the memory, the rule [`Automatic`](@ref) applies to
 the nonlinear solve. One tone keeps the backend's sparse factorization
 (KLU on the host, cuDSS on a device): its node blocks are small and the
 sparse factorizations are as fast as or faster than the block one on
-them (measured on the README's JTWPA examples: equal on the host, cuDSS
-3.5x faster on a device). Two or more tones take
-[`BlockFactorization`](@ref) in double when the factors of one system
-([`blocksystembytes`](@ref)), times the host batches, fit in `budget`:
-2 to 3.5x faster than KLU on the host and at parity with cuDSS on an
-RTX 4090, where the double rate bounds both; otherwise the sparse
-factorization.
+them. Two or more tones take [`BlockFactorization`](@ref) in double when
+the factors of one system ([`blocksystembytes`](@ref)), times the host
+batches, fit in `budget`, where it is faster than KLU on the host and
+keeps pace with cuDSS on a device; otherwise the sparse factorization.
 """
 function linearizedfactorization(A::SparseMatrixCSC, Nmodes::Integer,
     ntones::Integer, backend; nbatches::Integer = 1,

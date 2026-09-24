@@ -1,12 +1,13 @@
-# Building the real sparsity structure on a backend.
+# The sparsity structures of the Jacobians on a backend: the real pattern
+# expanded from the complex one, the complex pattern of the Josephson
+# couplings, their transposes, the stored contributions grouped by the entry
+# they land in, and the sparse matrix whose values live on the device, with
+# its products.
 #
-# `expandrealpattern` turns the complex pattern into the real one by walking
-# it and emitting each complex entry's block of real entries. On a multi
-# tone line that is tens of millions of row indices, written by a host loop
-# inside the rebuild at escalation while the device sits idle. It is also
-# embarrassingly parallel: the number of real entries each complex index
-# contributes is fixed by the layouts, so a prefix sum over those counts
-# gives every output column a known place to write.
+# `deviceexpandrealpattern` expands the complex pattern into the real one in
+# parallel: the number of real entries each complex index contributes is
+# fixed by the layouts, so a prefix sum over those counts gives every output
+# column a known place to write.
 
 """
     DeviceSparsePattern{Ti,V}
@@ -49,7 +50,7 @@ SparseArrays.nnz(p::DeviceSparsePattern) = length(p.rowval)
 end
 
 # one work item per real column, writing that column's run of row indices in
-# the order the host loop emits them
+# ascending order
 @kernel function expandpatternkernel!(rowval, @Const(colptr), @Const(outerinv),
         @Const(outerptr), @Const(outerrowval), @Const(innerptr))
     c = @index(Global)
@@ -119,10 +120,8 @@ end
 # the complex pattern, on the backend
 # ---------------------------------------------------------------------------
 #
-# The host `complexjacobianpattern` collects each column's candidate rows,
-# deduplicates them through a workspace the size of the matrix, sorts, and
-# appends; the shared workspace is what makes it serial. On a device no
-# workspace is needed: the candidates arrive already sorted, in four
+# No workspace is needed to deduplicate a column's candidate rows: they
+# arrive already sorted, in four
 # sequences (the Josephson product `adjacency[n2] x activem1[m2]`, whose
 # entries `(n1-1)*Nmodes + m1` ascend with `n1` and then `m1` when both
 # factors do, and the row lists of the three linear term matrices in that
@@ -286,11 +285,12 @@ end
 """
     realjacobianstructure(Amatrixindices::Matrix, Amatrixconjindices::Matrix,
         Ljb::SparseVector, Rbnm::SparseMatrixCSC, Nmodes::Integer,
-        Nbranches::Integer, invLnm, Gnm, Cnm, rl::ModeLayout, cl::ModeLayout,
+        Nbranches::Integer, invLnm, Gnm, Cnm, layout::ModeLayout,
         ::Type{T} = Float64; transposed = false, backend = CPU())
 
 The sparsity structure of the real Jacobian, and the branch incidence the
-assembly needs with it: `(P, nodesandsigns)`.
+assembly needs with it: `(P, nodesandsigns)`. The Jacobian is square, its
+rows and columns both in the real representation `layout`.
 
 `P` is a `SparseMatrixCSC` with zero values on a host and a
 [`DeviceSparsePattern`](@ref) on a backend, which is what a device
@@ -304,8 +304,8 @@ inputs are the node adjacency and the active mode rows.
 """
 function realjacobianstructure(Amatrixindices::Matrix,
     Amatrixconjindices::Matrix, Ljb::SparseVector, Rbnm::SparseMatrixCSC,
-    Nmodes::Integer, Nbranches::Integer, invLnm, Gnm, Cnm, rl::ModeLayout,
-    cl::ModeLayout, ::Type{T} = Float64; transposed::Bool = false,
+    Nmodes::Integer, Nbranches::Integer, invLnm, Gnm, Cnm, layout::ModeLayout,
+    ::Type{T} = Float64; transposed::Bool = false,
     backend = CPU()) where {T<:Real}
 
     nodesandsigns = branchnodesandsigns(Rbnm, Nmodes, Nbranches)
@@ -315,7 +315,8 @@ function realjacobianstructure(Amatrixindices::Matrix,
         activemoderows(Nmodes, Amatrixindices, Amatrixconjindices),
         (invLnm, Gnm, Cnm), backend)
     Cx = transposed ? transposepattern(C, backend) : C
-    Pd = deviceexpandrealpattern(Cx.colptr, Cx.rowval, rl, cl, n, backend)
+    Pd = deviceexpandrealpattern(Cx.colptr, Cx.rowval, layout, layout, n,
+        backend)
     P = backend isa CPU ?
         SparseMatrixCSC(Pd.m, Pd.n, Array(Pd.colptr), Array(Pd.rowval),
             zeros(T, nnz(Pd))) : Pd
@@ -332,13 +333,11 @@ The result is a permutation rather than a copy: the caller gathers whatever
 payload it has through `perm`, which keeps this independent of how many arrays
 travel with the destinations.
 
-The grouping must be stable, because it fixes the order in which the
-contributions to one entry are added and floating point addition is not
-associative. A histogram with an atomic cursor is not stable, so the order the
-positions were emitted in is restored afterwards by sorting each segment. That
-is cheap because the segments are tiny -- 28.8 million contributions over 21.7
-million entries is an average of 1.33 -- and it is why this is not done with a
-general sort, which measured 0.315 s on 28.8 million keys.
+The grouping is stable, which is what leaves the column indices of a
+transposed structure ascending within each row ([`transposepattern`](@ref)).
+A histogram with an atomic cursor is not stable, so the order the positions
+were emitted in is restored afterwards by sorting each segment, which is cheap
+because the segments are short.
 """
 function segmentbydest!(seg::AbstractVector, perm::AbstractVector,
     dest::AbstractVector, backend)

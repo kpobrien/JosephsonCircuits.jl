@@ -51,9 +51,10 @@ end
 
 # `factorize` of the host sparse factorizations; the types are defined in
 # solvers/options.jl. KLU's fill reducing ordering is chosen by measurement
-# (`kluordered`) and its refactorization reuses the symbolic analysis.
+# (`kluordered`), and its refactorization reuses the symbolic analysis and
+# checks the pivots it reuses (`klurefactor!`).
 factorize(f::KLUfactorization, A) = kluordered(A; f.kwargs...)
-refactorize!(f::KLUfactorization, F, A) = klunzval!(F, A; f.kwargs...)
+refactorize!(f::KLUfactorization, F, A) = klurefactor!(F, A, f.pivottol; f.kwargs...)
 factorize(f::LUfactorization, A) = lu(A; f.kwargs...)
 refactorize!(f::LUfactorization, F, A) = lu!(F, A; f.kwargs...)
 factorize(f::QRfactorization, A) = qr(A; f.kwargs...)
@@ -212,15 +213,16 @@ are run, and the better accepted point is taken. `F` and `xcandidate` should
 hold the candidate's residual and trial point (the curved path's α = 1),
 `ϕcand` the merit, and `Fbest` the residual at `x`.
 
-The motivation is an iteration costs a Jacobian evaluation, factorization, and
-a linear solve which for a typical device like a TWPA take an order of
-magnitude more time than a residual evaluation, so extra residual evaluations
-are worth it if it results in a better path (which they appear to).
+An iteration costs a Jacobian evaluation, a factorization and a linear
+solve, which for a device such as a TWPA take an order of magnitude longer
+than a residual evaluation, so the extra residual evaluations of a second
+search are worth spending on a better step.
 
 If both searches fail, the better best-effort point is returned and
 `accepted` is false. `Fatx` preserves the residual at `x` across the
-searches (which clobber `Fbest` with best-trial copies), keeping every
-restore contract valid.
+searches (which clobber `Fbest` with best-trial copies), so that the
+plain search starts, as [`backtracking_linesearch!`](@ref) requires, with
+the residual at `x` in `F`.
 
 Returns `(α, ϕα, accepted, backtracks, usedcorrection)`, where
 `usedcorrection` reports whether the returned point lies on the curved
@@ -253,9 +255,9 @@ function dualsearch!(f!, F::AbstractVector,
     if accc && (isone(αc) || curvedpriority)
         return αc, ϕc, true, btc, true
     end
-    # store the result and run the plain search
+    # store the result and run the plain search from the residual at x
     copyto!(Fspare, F)
-    copyto!(Fbest, Fatx)
+    copyto!(F, Fatx)
     αp, ϕp, accp, btp = backtracking_linesearch!(
         f!, F, xcandidate, x, deltax, ϕ0, dϕ0dα; ls = ls, Fbest = Fbest)
     backtracks = btc + 1 + btp
@@ -309,7 +311,7 @@ end
 
 """
     nlsolve!(fj!, F, J, x; iterations = 1000, atol = 1e-8, rtol = 0.0,
-        factorization = KLUfactorization(), label = "",
+        factorization = KLUfactorization(),
         linesearch = Backtracking(), andersondepth = 5, andersonbeta = 1.0,
         andersonacceptfactor = 0.9)
 
@@ -340,13 +342,18 @@ when the curved one produces non-finite values. See [`dualsearch!`](@ref).
 3. Without a usable correction (an empty history, or a failed coefficient
 solve) only the linear line search runs.
 
+A stall of an iteration which took accelerated steps is retried once
+from the initial point with the curved path given priority, within the
+same budget of `iterations` steps; the record keeps both attempts, the
+second's residual norms following the first's.
+
 # Keywords
-- `iterations = 1000`: the maximum number of Newton iterations.
+- `iterations = 1000`: the maximum number of Newton iterations, over both
+  attempts.
 - `atol = 1e-8`: converged when `norm(F) <= atol`.
 - `rtol = 0.0`: a relative tolerance; the effective tolerance is
     `max(atol, rtol*norm(F0))` with `F0` the initial residual.
 - `factorization = KLUfactorization()`: the sparse factorization of `J`.
-- `label = ""`: label for the returned `IterationInfo`.
 - `linesearch = Backtracking()`: the [`Backtracking`](@ref) of every
   search of the iteration, the curvilinear one included: the Armijo
   constant, the safeguards, the trial budget, whether a backtrack is
@@ -364,12 +371,15 @@ evaluations after each iteration's first), `andersonaccepted` (true when
 the taken step lies on the curved path), and `reason`, why the iteration
 ended: `:converged`, `:iterations`, `:linesearch` (no decrease at all, or
 two consecutive steps short of the Armijo condition), or `:progress` (the
-residual stopped coming down and its rate is not improving,
-[`residualstalled`](@ref)); see [`stallmessage`](@ref).
+residual stopped coming down, or comes down too slowly to reach the
+tolerance within the steps left, and its rate is not improving,
+[`residualstalled`](@ref); a first such judgement is given a fresh
+history, and the attempt ends if the stall persists over it); see
+[`stallmessage`](@ref).
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::AbstractVector{T}; iterations = 1000, atol = 1e-8, rtol = 0.0,
-    factorization = KLUfactorization(), label = "",
+    factorization = KLUfactorization(),
     linesearch::Backtracking = Backtracking(), andersondepth::Integer = 5,
     andersonbeta = 1.0, andersonacceptfactor = 0.9) where T
 
@@ -429,16 +439,17 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
 
     # run the fast comparison first. on a stall (the failure-counter or
     # no-decrease exit) restart once from the initial point with curved
-    # priority on a fresh trajectory.
+    # priority on a fresh trajectory, within the same budget of steps and
+    # with the first attempt's record kept.
     curvedpriority = false
     stalled = false
+    steps = 0
 
     for attempt in 1:2
         if attempt == 2
             # retry by resetting to initial values and setting curved priority
             # the motivation for this is some problems may require the
             # corrections from Anderson acceleration to converge.
-            # @warn string(lazy"Second attempt: restarting with curved priority.")
             copyto!(x, xinitial)
             if !isnothing(anderson)
                 andersonrestart!(anderson)
@@ -457,16 +468,25 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         # when either holds; at `rtol = 0` the tolerance is exactly `atol`
         # and nothing already measured moves. See `nlsolvekrylov!`.
         residual!(F, x)
-        if !tracestart!(tr, F, atol, rtol)
-            # only a point from which a step will be taken needs a Jacobian.
+        converged = attempt == 1 ? tracestart!(tr, F, atol, rtol) :
+            tracerestart!(tr, F)
+        # only a point from which a step will be taken needs a Jacobian
+        if !converged && steps < iterations
             fj!(nothing, J, x)
             tryfactorize!(cache, factorization, J)
         end
+        # the stall rule judges this attempt's history from here, against
+        # the steps left; a first stall is given a fresh history, over
+        # which a residual still coming down may show it is only crossing
+        # a plateau, and a stall which persists over it ends the attempt
+        progressstart = length(normF)
+        judged = false
 
         # perform Newton's method with linesearch based on Nocedal and Wright
         # chapter 3 section 5.
-        for n in 1:iterations
+        while steps < iterations
             tr.converged && break
+            steps += 1
 
             # F and x are consistent here, and cache.factorization matches
             # the J from which deltax will be computed
@@ -502,7 +522,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             # a non-finite merit, or a search direction which is not a descent
             # direction, is a numerical outcome of this solve rather than a
             # caller error: `deltax` comes from a factorization of `J`, and for
-            # `method = :quasinewton` that `J` is only an approximation, so it
+            # `QuasiNewton()` that `J` is only an approximation, so it
             # can propose a direction the true merit does not decrease along.
             # treat it as a stall, which stops this attempt and lets the robust
             # retry below run on a fresh trajectory, instead of throwing out of
@@ -590,27 +610,32 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                 break
             end
 
-            if tracestalled(tr, 1)
-                stalled = true
-                tr.reason = :progress
-                break
+            if tracestalled(tr, progressstart; remaining = iterations - steps)
+                if judged
+                    stalled = true
+                    tr.reason = :progress
+                    break
+                end
+                judged = true
+                progressstart = length(normF)
             end
 
-            # refresh and refactor the Jacobian at the new x; convergence was
-            # already decided above, so no Jacobian is evaluated at the final
-            # point
+            # refresh and refactor the Jacobian at the new x for the next
+            # step, when the budget leaves one; convergence was already
+            # decided above, so no Jacobian is evaluated at the final point
+            steps < iterations || break
             fj!(nothing, J, x)
             tryfactorize!(cache, factorization, J)
         end
 
-        # retry only on a stall (not on budget exhaustion), only once, and
-        # only if the fast attempt actually used the acceleration (otherwise
-        # the robust policy could not differ)
+        # retry only on a stall (not on budget exhaustion), only once, only
+        # if the fast attempt actually used the acceleration (otherwise the
+        # robust policy could not differ), and only with steps left
         if tr.converged || !stalled || isnothing(anderson) ||
-                !any(tr.andersonaccepted)
+                !any(tr.andersonaccepted) || steps >= iterations
             break
         end
     end
 
-    return IterationInfo(tr, label)
+    return IterationInfo(tr, "")
 end

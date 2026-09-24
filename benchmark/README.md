@@ -15,6 +15,9 @@ julia --startup-file=no --project=. benchmark/circuit-preparation.jl main
 - `circuit-preparation.jl`: compiling a long ladder, planning its matrices,
   assembling and refilling them, and evaluating a rational scattering
   block.
+- `sensitivities.jl`: the residual derivatives of a pumped junction chain
+  and the sensitivity sweeps from its operating point, for two components,
+  where the setup of each call is most of the cost, and for every one.
 
 `--smoke` runs every case at a small size with few samples. Nothing it
 prints is a measurement; it is what `benchmark/smoke.jl` and the continuous

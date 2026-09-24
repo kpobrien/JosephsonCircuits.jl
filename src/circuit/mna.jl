@@ -84,34 +84,6 @@ function mnapad(A::SparseMatrixCSC, Naux::Int)
 end
 
 """
-    nzpositions(A::SparseMatrixCSC, U::SparseMatrixCSC)
-
-For a matrix `A` whose stored entries are a subset of those of `U`, the
-position in `nonzeros(U)` of each stored entry of `A`, in the order of
-`nonzeros(A)`. Throws if an entry of `A` has no home in `U`.
-"""
-function nzpositions(A::SparseMatrixCSC, U::SparseMatrixCSC)
-    size(A) == size(U) || throw(DimensionMismatch(
-        lazy"the matrices are $(size(A)) and $(size(U))."))
-    pos = Vector{Int}(undef, nnz(A))
-    Arows = rowvals(A); Urows = rowvals(U)
-    @inbounds for j in 1:size(A, 2)
-        k = SparseArrays.getcolptr(U)[j]
-        kmax = SparseArrays.getcolptr(U)[j+1] - 1
-        for ptr in nzrange(A, j)
-            r = Arows[ptr]
-            while k <= kmax && Urows[k] < r
-                k += 1
-            end
-            (k <= kmax && Urows[k] == r) || throw(ArgumentError(
-                lazy"entry ($(r), $(j)) has no position in the union structure."))
-            pos[ptr] = k
-        end
-    end
-    return pos
-end
-
-"""
     PaddedLinearTerm
 
 The frequency dependent linear term of the augmented system, padded to the
@@ -125,9 +97,15 @@ change (see [`hbcache`](@ref)).
 # Fields
 - `Rbnm`: the incidence matrix with its empty auxiliary columns.
 - `invLnm`, `Gnm`, `Cnm`: the padded matrices, `invLnm` with `Amna` added.
-- `Amna`: the augmentation, whose only value dependent entries are the
-    coupled inductor rows of [`calcAmnaind`](@ref).
-- `pind`: the positions of those rows' entries in `nonzeros(Amna)`.
+- `Amna`: the augmentation, whose value dependent entries are the coupled
+    inductor rows of [`calcAmnaind`](@ref) and the scattering block term
+    of [`scatteringlinearterm`](@ref), whose node flux columns carry the
+    solver scale.
+- `pind`: the positions of the coupled inductor rows' entries in
+    `nonzeros(Amna)`.
+- `pblock`: the positions of the scattering block term's entries in
+    `nonzeros(Amna)`.
+- `scale`: the solver scale the block term is stamped at.
 - `pinv`, `pamna`: the positions of the unpadded inverse inductance
     entries and of `Amna`'s entries in `nonzeros(invLnm)`.
 - `bnm`: the drive in the padded node basis.
@@ -143,6 +121,8 @@ struct PaddedLinearTerm{TR,TM,TA,TD,TS}
     Cnm::TM
     Amna::TA
     pind::Vector{Int}
+    pblock::Vector{Int}
+    scale::Base.RefValue{Float64}
     pinv::Vector{Int}
     pamna::Vector{Int}
     bnm::Vector{Complex{Float64}}
@@ -152,28 +132,36 @@ struct PaddedLinearTerm{TR,TM,TA,TD,TS}
 end
 
 """
-    PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, AmnaL, invLnm0, bnm,
-        wmodesm, wmodes2m, stampedblocks)
+    PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, AmnaL, blockterm, scale,
+        invLnm0, bnm, wmodesm, wmodes2m, stampedblocks)
 
 Record a padded linear term as [`hbnlsolve`](@ref) assembled it, with the
-unpadded inverse inductance `invLnm0` and the coupled inductor rows `AmnaL`
-it was assembled from, so that [`refill!`](@ref) can reproduce the assembly
-at new values. Returns `nothing` when the coupled inductor rows share an
-entry with the rest of the augmentation, which a refill by overwrite could
-not reproduce exactly.
+unpadded inverse inductance `invLnm0`, the coupled inductor rows `AmnaL`
+and the scattering block term `blockterm` (or `nothing` when the circuit
+has no blocks) at the solver scale `scale` it was assembled from, so that
+[`refill!`](@ref) can reproduce the assembly at new values. Returns
+`nothing` when the coupled inductor rows or the block term share an entry
+with the rest of the augmentation, which a refill by overwrite could not
+reproduce exactly.
 """
-function PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, AmnaL, invLnm0,
-        bnm, wmodesm, wmodes2m, stampedblocks)
-    pind = nzpositions(AmnaL, Amna)
-    # the coupled inductor rows are overwritten, not added, on refill, which
-    # is exact only where nothing else is stored under them
+function PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, AmnaL, blockterm,
+        scale, invLnm0, bnm, wmodesm, wmodes2m, stampedblocks)
+    pind = sparseaddmap(Amna, AmnaL)
+    pblock = isnothing(blockterm) ? Int[] : sparseaddmap(Amna, blockterm)
+    # the coupled inductor rows and the block term are overwritten, not
+    # added, on refill, which is exact only where nothing else is stored
+    # under them
     all(k -> nonzeros(Amna)[pind[k]] == nonzeros(AmnaL)[k], eachindex(pind)) ||
         return nothing
-    pinv = nzpositions(mnapad(invLnm0, size(invLnm, 1) - size(invLnm0, 1)),
-        invLnm)
-    pamna = nzpositions(Amna, invLnm)
-    return PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, pind, pinv, pamna,
-        bnm, wmodesm, wmodes2m, stampedblocks)
+    isnothing(blockterm) || (isdisjoint(pind, pblock) &&
+        all(k -> nonzeros(Amna)[pblock[k]] == nonzeros(blockterm)[k],
+            eachindex(pblock))) || return nothing
+    pinv = sparseaddmap(invLnm,
+        mnapad(invLnm0, size(invLnm, 1) - size(invLnm0, 1)))
+    pamna = sparseaddmap(invLnm, Amna)
+    return PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, pind, pblock,
+        Ref(Float64(scale)), pinv, pamna, bnm, wmodesm, wmodes2m,
+        stampedblocks)
 end
 
 # the unpadded matrix has the padded one's structure in its leading block,
@@ -186,15 +174,20 @@ function paddedstructure(A::SparseMatrixCSC, P::SparseMatrixCSC)
 end
 
 """
-    refill!(lin::PaddedLinearTerm, invLnm, Gnm, Cnm, AmnaL, bbm, Rbnm0)
+    refill!(lin::PaddedLinearTerm, invLnm, Gnm, Cnm, AmnaL, bbm, Rbnm0;
+        blockterm = nothing, scale = lin.scale[])
 
 Move the values of a new assembly of the unpadded matrices, of the coupled
 inductor rows `AmnaL` (or `nothing` when there are none) and of the branch
-drive `bbm` into the padded linear term, in place. The result is entry for
-entry what [`hbnlsolve`](@ref) assembles from the same inputs.
+drive `bbm` into the padded linear term, in place, and with them the
+scattering block term `blockterm` stamped at the solver scale `scale`,
+which is needed only when the scale moved. The result is entry for entry
+what [`hbnlsolve`](@ref) assembles from the same inputs.
 """
 function refill!(lin::PaddedLinearTerm, invLnm::SparseMatrixCSC,
-        Gnm::SparseMatrixCSC, Cnm::SparseMatrixCSC, AmnaL, bbm, Rbnm0)
+        Gnm::SparseMatrixCSC, Cnm::SparseMatrixCSC, AmnaL, bbm, Rbnm0;
+        blockterm::Union{Nothing,SparseMatrixCSC} = nothing,
+        scale::Real = lin.scale[])
     for (A, P, what) in ((Gnm, lin.Gnm, "conductance"),
             (Cnm, lin.Cnm, "capacitance"), (invLnm, lin.invLnm, "inverse inductance"))
         (what == "inverse inductance" ? length(lin.pinv) == nnz(A) :
@@ -210,6 +203,15 @@ function refill!(lin::PaddedLinearTerm, invLnm::SparseMatrixCSC,
         @inbounds for k in eachindex(lin.pind)
             va[lin.pind[k]] = vl[k]
         end
+    end
+    if !isnothing(blockterm)
+        nnz(blockterm) == length(lin.pblock) || throw(ArgumentError(
+            "the scattering block term changed its structure between points; build a new linear term."))
+        va = nonzeros(lin.Amna); vb = nonzeros(blockterm)
+        @inbounds for k in eachindex(lin.pblock)
+            va[lin.pblock[k]] = vb[k]
+        end
+        lin.scale[] = scale
     end
     v = nonzeros(lin.invLnm)
     fill!(v, 0)
@@ -301,10 +303,7 @@ so both sides have the same per-row interpretation and the accepted error
 in any one equation does not grow with the number of driven rows. The
 tolerance is deliberately independent of the achieved augmented residual
 (which would be circular) and of the auxiliary current entries of the
-state, which are not Kirchhoff current law quantities. (With the solver
-inductance scale of [`calcsolverscale`](@ref) the auxiliary entries are of
-order one; under the earlier mean-inductance scale they reached ~1e9 in
-inductor free circuits, which motivated this exclusion.) A non-finite reconstructed norm, or a non-finite source scale
+state, which are not Kirchhoff current law quantities. A non-finite reconstructed norm, or a non-finite source scale
 (which would make the tolerance infinite and accept anything), fails the
 validation. Returns `(ok, normkcl, kcltol)` so a diagnostic can report
 the achieved residual against the applied tolerance.
@@ -360,10 +359,9 @@ absolute values of the nonzero drive frequencies. With this choice the
 natural current unit is `phi0*w0/Z0`, the entries of the scaled system are
 dimensionless and of order one for circuits driven near their characteristic
 impedance and frequency, the auxiliary branch currents have magnitudes
-comparable to the node fluxes (in particular in circuits without inductors,
-where the previous mean-inductance scale degenerated to one henry and
-produced auxiliary values of order 1e9), and the residual tolerance `atol`
-becomes independent of the unit system of the problem. Because the scale
+comparable to the node fluxes, in circuits without inductors too, and the
+residual tolerance `atol` becomes independent of the unit system of the
+problem. Because the scale
 multiplies rows only, and the auxiliary variables are internal, the returned
 node fluxes and all physical quantities are unchanged in exact arithmetic.
 
@@ -553,37 +551,39 @@ function mnainitialauxind!(x::AbstractVector, coupledbranches::Vector{Int},
 
     nb = length(coupledbranches)
     nb == 0 && return x
-    # the dense branch inductance matrix over the coupled branches, scaled
-    L = zeros(Complex{Float64}, nb, nb)
+    # the branch inductance matrix over the coupled branches, scaled: the
+    # diagonal and the couplings, sparse, factorized once for every mode.
+    # The coupled branches are sorted, so a branch's position is a search.
+    I = Int[]; J = Int[]; V = Complex{Float64}[]
     for (r, b) in enumerate(coupledbranches)
-        L[r, r] = Lb[b]/Lscale
+        push!(I, r); push!(J, r); push!(V, Lb[b]/Lscale)
         for ptr in nzrange(Mb, b)
             k = rowvals(Mb)[ptr]
-            if k != b
-                kr = findfirst(==(k), coupledbranches)
-                L[kr, r] = nonzeros(Mb)[ptr]/Lscale
-            end
+            k == b && continue
+            push!(I, searchsortedfirst(coupledbranches, k)); push!(J, r)
+            push!(V, nonzeros(Mb)[ptr]/Lscale)
         end
     end
-    # the branch fluxes of the coupled branches for each mode
+    # a singular matrix, a unit coupling, leaves the currents as they are
+    F = try
+        lu(sparse(I, J, V, nb, nb))
+    catch
+        return x
+    end
+    # the branch fluxes of the coupled branches, a column per mode
     Rnb = sparse(transpose(Rbn))
+    phib = zeros(Complex{Float64}, nb, Nmodes)
+    for m in 1:Nmodes, (r, b) in enumerate(coupledbranches)
+        for ptr in nzrange(Rnb, b)
+            p = rowvals(Rnb)[ptr]
+            phib[r, m] += nonzeros(Rnb)[ptr]*x[(p-1)*Nmodes + m]
+        end
+    end
+    u = F \ phib
     for m in 1:Nmodes
-        phib = zeros(Complex{Float64}, nb)
-        for (r, b) in enumerate(coupledbranches)
-            for ptr in nzrange(Rnb, b)
-                p = rowvals(Rnb)[ptr]
-                phib[r] += nonzeros(Rnb)[ptr]*x[(p-1)*Nmodes + m]
-            end
-        end
-        u = try
-            L \ phib
-        catch
-            nothing
-        end
-        if !isnothing(u) && all(isfinite, u)
-            for r in 1:nb
-                x[auxoffset + (r-1)*Nmodes + m] = u[r]
-            end
+        all(isfinite, view(u, :, m)) || continue
+        for r in 1:nb
+            x[auxoffset + (r-1)*Nmodes + m] = u[r, m]
         end
     end
     return x

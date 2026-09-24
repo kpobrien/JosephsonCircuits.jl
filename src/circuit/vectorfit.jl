@@ -11,6 +11,7 @@
 # realization must all classify a pole the same way, or a conjugate
 # pair splits across representations.
 const realpoletolerance = 1e-6
+isrealpole(a) = abs(imag(a)) <= realpoletolerance*abs(a)
 
 # A singular value of the residue basis below this fraction of the
 # largest is a direction the samples do not determine, which the residue
@@ -22,7 +23,8 @@ const fitranktolerance = 1e-12
 """
     RationalScattering(block::ScatteringParameters, npoles;
         frequencies = nothing, iterations = 30, passivity = true, atol = 1e-8,
-        margin = 1e-6, rounds = 20, pruneslack = 0.05, delays = nothing)
+        margin = 1e-6, rounds = 20, scalelimit = 1e-2, pruneslack = 0.05,
+        delays = nothing)
 
 A [`RationalScattering`](@ref) block fitted to the scattering data of
 `block` at `npoles` common poles by vector fitting: starting poles
@@ -59,10 +61,15 @@ holding its singular values, and leave the zero frequency statement of
 a `dcmodel` alone.
 
 With `passivity = true` the fit is perturbed wherever its largest
-singular value crosses one, by the smallest change of its residues and
+singular value crosses one, found on a grid over the band and at each
+resonance of the fit, by the smallest change of its residues and
 constant that brings each crossing to `1 - margin`, over at most
 `rounds` rounds, and the result is validated by the same test as any
-rational block, to `atol`. `passivity = false` returns the raw fit,
+rational block, to `atol`. A fit the rounds leave within `scalelimit`
+of one, or whose constant term stands within it above one, is
+contracted the rest of the way, which moves its response by about that
+much; one further above is refused, since a contraction that large
+describes a block which is mostly loss rather than the data. `passivity = false` returns the raw fit,
 without the enforcement or its repair of an active constant term, but
 still rejects a fit that fails validation. The test decides on a lower
 bound of the largest singular value, so a returned fit can have a true
@@ -106,20 +113,36 @@ fit.
 """
 function RationalScattering(block::ScatteringParameters, npoles::Integer; frequencies = nothing,
         iterations::Integer = 30, passivity::Bool = true, atol::Real = 1e-8,
-        margin::Real = 1e-6, rounds::Integer = 20, pruneslack::Real = 0.05, delays = nothing)
+        margin::Real = 1e-6, rounds::Integer = 20, scalelimit::Real = passivityscalelimit,
+        pruneslack::Real = 0.05, delays = nothing)
     npoles >= 1 || throw(ArgumentError("fit at least one pole."))
+    fs, S, options = fitsetup(block, frequencies, delays; iterations, passivity, atol,
+        margin, rounds, scalelimit, pruneslack)
+    return fitsampled(block, S, fs, Int(npoles); options...)
+end
+
+# The options both fitting methods take, checked, and the block sampled
+# for them with any delay taken out: the frequencies in Hz, the samples,
+# and the options of `fitsampled`, the noise the fitted block carries
+# among them.
+function fitsetup(block::ScatteringParameters, frequencies, delays; iterations, passivity,
+        atol, margin, rounds, scalelimit, pruneslack)
     (isfinite(margin) && 0 <= margin < 1) || throw(ArgumentError(
         "margin must be finite and in [0, 1): it is how far below one a singular value is put."))
     (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
     iterations >= 1 || throw(ArgumentError("give at least one relocation iteration."))
     rounds >= 1 || throw(ArgumentError("give at least one round of passivity enforcement."))
+    # a contraction to below `1 - 2 scalelimit` of the data is refused (see
+    # enforcepassivity), so a limit of a half or more would refuse nothing
+    (isfinite(scalelimit) && 0 <= scalelimit < 0.5) || throw(ArgumentError(
+        "scalelimit must be finite and in [0, 0.5): it is how far above one a fit may stand and still be contracted under it."))
     (isfinite(pruneslack) && pruneslack >= 0) || throw(ArgumentError("pruneslack must be finite and nonnegative."))
     taus = fitdelays(delays, block.nports)
     fs, S = samplescattering(block, frequencies; delays = taus)
-    return fitsampled(block, S, fs, Int(npoles); iterations = Int(iterations),
-        passivity = passivity, atol = atol, margin = Float64(margin),
-        rounds = Int(rounds), pruneslack = Float64(pruneslack),
+    options = (; iterations = Int(iterations), passivity, atol, margin = Float64(margin),
+        rounds = Int(rounds), scalelimit = Float64(scalelimit), pruneslack = Float64(pruneslack),
         noise = undelaynoise(block.noise, taus))
+    return fs, S, options
 end
 
 # The sample frequencies a fit accepts, checked once for both fitters: a
@@ -203,8 +226,8 @@ end
 
 # One fit of already sampled data at a fixed order.
 function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; iterations::Int,
-        passivity::Bool, atol::Real, margin::Float64, rounds::Int, pruneslack::Float64,
-        noise = block.noise)
+        passivity::Bool, atol::Real, margin::Float64, rounds::Int, scalelimit::Float64,
+        pruneslack::Float64, noise = block.noise)
     # a block which states what it does at zero frequency has the fit meet
     # it exactly; one which states nothing leaves it to the extrapolation
     dc = block.dcmodel isa ScatteringLimit ? nothing :
@@ -219,7 +242,7 @@ function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; iterations:
     A, B, C = realization(poles, residues, block.nports)
     if enforce
         A, B, C, D = enforcepassivity(A, B, C, D, 2pi .* fs; atol = atol,
-            margin = margin, rounds = rounds, dc = dc)
+            margin = margin, rounds = rounds, dc = dc, scalelimit = scalelimit)
     end
     return RationalScattering(A, B, C, D; zref = block.zref,
         grounded = block.grounded, noise = noise, atol = atol)
@@ -273,19 +296,10 @@ end
 # excellent almost everywhere and wrong at one resonance is not a model
 # of the block.
 function relativefiterror(fit, S, fs)
-    P = fit.provider
-    nz = size(P.A, 1)
-    worst, scale = 0.0, 0.0
-    # one factorization for the whole sweep, not one solve per sample
-    rf = resolventfactors(P.A, P.B)
-    work = ResolventWorkspace(rf)
-    F = similar(P.D, ComplexF64)
-    CZ = P.C*rf.Z
-    for (k, f) in enumerate(fs)
-        transferat!(F, rf, CZ, P.D, 2pi*f, nz, work)
-        worst = max(worst, opnorm(F .- view(S, :, :, k)))
-        scale = max(scale, opnorm(view(S, :, :, k)))
-    end
+    F = similar(S, ComplexF64)
+    evaluateprovider!(F, fit.provider, 2pi .* fs)
+    worst = maximum(k -> opnorm(view(F, :, :, k) .- view(S, :, :, k)), axes(S, 3))
+    scale = maximum(k -> opnorm(view(S, :, :, k)), axes(S, 3))
     return worst/max(scale, floatmin(Float64))
 end
 
@@ -293,7 +307,7 @@ end
     RationalScattering(block::ScatteringParameters; tol, minpoles = 4,
         maxpoles = nothing, noisefloor = 1e-12, frequencies = nothing,
         iterations = 30, passivity = true, atol = 1e-8, margin = 1e-6,
-        rounds = 20, pruneslack = 0.05, delays = nothing)
+        rounds = 20, scalelimit = 1e-2, pruneslack = 0.05, delays = nothing)
 
 A [`RationalScattering`](@ref) block fitted to the scattering data of
 `block` at the fewest poles that meet `tol`, the largest allowed error
@@ -344,19 +358,12 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
         minpoles::Integer = 4, maxpoles = nothing, noisefloor::Real = 1e-12,
         frequencies = nothing, iterations::Integer = 30, passivity::Bool = true,
         atol::Real = 1e-8, margin::Real = 1e-6, rounds::Integer = 20,
-        pruneslack::Real = 0.05, delays = nothing)
+        scalelimit::Real = passivityscalelimit, pruneslack::Real = 0.05, delays = nothing)
     (isfinite(tol) && tol > 0) || throw(ArgumentError("tol must be finite and positive."))
     minpoles >= 1 || throw(ArgumentError("give minpoles >= 1."))
     (isfinite(noisefloor) && noisefloor > 0) || throw(ArgumentError("noisefloor must be finite and positive."))
-    (isfinite(margin) && 0 <= margin < 1) || throw(ArgumentError(
-        "margin must be finite and in [0, 1): it is how far below one a singular value is put."))
-    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
-    iterations >= 1 || throw(ArgumentError("give at least one relocation iteration."))
-    rounds >= 1 || throw(ArgumentError("give at least one round of passivity enforcement."))
-    (isfinite(pruneslack) && pruneslack >= 0) || throw(ArgumentError("pruneslack must be finite and nonnegative."))
-    taus = fitdelays(delays, block.nports)
-    fs, S = samplescattering(block, frequencies; delays = taus)
-    noise = undelaynoise(block.noise, taus)
+    fs, S, options = fitsetup(block, frequencies, delays; iterations, passivity, atol,
+        margin, rounds, scalelimit, pruneslack)
     # fitting N poles needs N + 1 samples, so a scan from minpoles needs
     # at least that many; refusing here names the samples rather than
     # reporting a scan of no orders
@@ -376,9 +383,7 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
     failures = Dict{String,Vector{Int}}()
     attempt = np -> begin
         fit, err = try
-            candidate = fitsampled(block, S, fs, np; iterations = Int(iterations),
-                passivity = passivity, atol = atol, margin = Float64(margin),
-                rounds = Int(rounds), pruneslack = Float64(pruneslack), noise = noise)
+            candidate = fitsampled(block, S, fs, np; options...)
             (candidate, relativefiterror(candidate, S, fs))
         catch e
             e isa ArgumentError || rethrow()
@@ -518,8 +523,9 @@ end
 # relocation would be arbitrary
 # the scale an error is measured against, in the norm it is measured in
 roundoff(S; scale::Real = 1e-12) = scale*maximum(k -> opnorm(view(S, :, :, k)), axes(S, 3))
-# how far above one a fit may be and still be scaled under it rather than
-# refused: a block scaled from further away than this is mostly loss
+# the default `scalelimit`, how far above one a fit may be and still be
+# scaled under it rather than refused: a block scaled from further away
+# than this is mostly loss
 const passivityscalelimit = 1e-2
 function converge(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vector{ComplexF64}, iterations::Int;
         stallpatience::Int = 5, settletol::Real = 1e-9,
@@ -634,11 +640,11 @@ function dropneedless(S, ws, poles, before, acceptable; dc = nothing, lastpole::
             trial = poles[keep]
             err = fiterror(S, ws, trial; dc = dc)
             if acceptable(err, before)
-                # the last pole is needless only if a constant reproduces
-                # the data, which is then no rational block: refused,
-                # returned as the constant, or kept as the caller asked
+                # the last pole is needless where a constant fits the data
+                # as closely as the poles do: refused, returned as the
+                # constant, or kept as the caller asked
                 if isempty(trial)
-                    lastpole == :refuse && throw(ArgumentError("no pole is needed: a constant reproduces the data, so give it as a ScatteringParameters matrix."))
+                    lastpole == :refuse && throw(ArgumentError(nopolereason(S, err)))
                     lastpole == :keep && continue
                 end
                 poles, before, dropped = trial, err, true
@@ -648,6 +654,16 @@ function dropneedless(S, ws, poles, before, acceptable; dc = nothing, lastpole::
         dropped || return poles, before
     end
 end
+# Why a fit which keeps no pole is refused: a constant which reproduces
+# the data is no rational block, and poles which fit the data no closer
+# than a constant does are too few for how fast it turns over the band,
+# as a delay of many turns does; `err` is the constant's error.
+function nopolereason(S, err)
+    err <= roundoff(S) && return "no pole is needed: a constant reproduces the data, so give it as a ScatteringParameters matrix."
+    scale = maximum(k -> opnorm(view(S, :, :, k)), axes(S, 3))
+    return "the poles fit the data no closer than a constant, which misses it by $(err/scale) of its largest response: the data turns over the band faster than the poles can follow, as a delay of many turns does. Fit with more poles, over a narrower band, or take a delay out of the data with delays."
+end
+
 function mergeclusters(S, ws, poles, iterations, before, acceptable; dc = nothing)
     # the resolution of the data at a pole: the spacing of the samples
     # around its frequency, the first spacing below the band
@@ -695,7 +711,7 @@ function realbasis(ws::AbstractVector, poles::Vector{ComplexF64})
     p = 1
     while p <= N
         a = poles[p]
-        if imag(a) == 0 || abs(imag(a)) <= realpoletolerance*abs(a)
+        if isrealpole(a)
             Phi[:, p] .= 1 ./ (im .* ws .- real(a))
             p += 1
         else
@@ -712,7 +728,7 @@ function complexresidues(c::AbstractVector, poles::Vector{ComplexF64})
     p = 1
     while p <= N
         a = poles[p]
-        if imag(a) == 0 || abs(imag(a)) <= realpoletolerance*abs(a)
+        if isrealpole(a)
             r[p] = c[p]
             p += 1
         else
@@ -794,8 +810,7 @@ function relocate(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vect
     # the zeros of the weight: the eigenvalues of A - b r'/d in the real
     # form of the pole set
     Ar, br = realpolematrix(poles)
-    cr = realresiduerow(csigma, poles)
-    zeros_ = eigvals(Ar .- br*transpose(cr) ./ dsigma)
+    zeros_ = eigvals(Ar .- br*transpose(csigma) ./ dsigma)
     newpoles = ComplexF64[]
     for z in zeros_
         real(z) > 0 && (z = complex(-real(z), imag(z)))
@@ -807,7 +822,7 @@ function relocate(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vect
     used = falses(length(newpoles))
     for (k, z) in enumerate(newpoles)
         used[k] && continue
-        if abs(imag(z)) <= realpoletolerance*abs(z)
+        if isrealpole(z)
             push!(out, complex(real(z), 0.0))
             used[k] = true
         else
@@ -826,9 +841,10 @@ function relocate(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vect
     return out
 end
 
-# the real block diagonal matrix of a pole set, its input column of ones
-# in the real form, and the coefficient row of the weight's residues in
-# the same form, so that `A - b c'` has the weight's zeros as eigenvalues
+# the real block diagonal matrix of a pole set and its input column of
+# ones in the real form, so that `A - b c'/d` has the weight's zeros as
+# eigenvalues, with `c` the weight's coefficients in the real basis,
+# which are its residues in that form
 function realpolematrix(poles::Vector{ComplexF64})
     N = length(poles)
     A = zeros(N, N)
@@ -836,7 +852,7 @@ function realpolematrix(poles::Vector{ComplexF64})
     p = 1
     while p <= N
         a = poles[p]
-        if imag(a) == 0 || abs(imag(a)) <= realpoletolerance*abs(a)
+        if isrealpole(a)
             A[p, p] = real(a)
             b[p] = 1.0
             p += 1
@@ -848,22 +864,6 @@ function realpolematrix(poles::Vector{ComplexF64})
         end
     end
     return A, b
-end
-function realresiduerow(c::AbstractVector, poles::Vector{ComplexF64})
-    N = length(poles)
-    row = zeros(N)
-    p = 1
-    while p <= N
-        a = poles[p]
-        if imag(a) == 0 || abs(imag(a)) <= realpoletolerance*abs(a)
-            row[p] = c[p]
-            p += 1
-        else
-            row[p] = c[p]; row[p + 1] = c[p + 1]
-            p += 2
-        end
-    end
-    return row
 end
 
 # The least squares of the residue solve, factored once and applied to
@@ -997,7 +997,7 @@ function realization(poles::Vector{ComplexF64}, residues::AbstractArray{<:Comple
         r = count(s -> s > ranktol*max(F.S[1], floatmin(Float64)), F.S)
         Bc = Diagonal(sqrt.(F.S[1:r]))*F.Vt[1:r, :]
         Cc = F.U[:, 1:r]*Diagonal(sqrt.(F.S[1:r]))
-        if imag(a) == 0 || abs(imag(a)) <= realpoletolerance*abs(a)
+        if isrealpole(a)
             r > 0 && push!(blocks, (real(a) .* Matrix(1.0I, r, r), real.(Bc), real.(Cc)))
             p += 1
         else
@@ -1034,8 +1034,8 @@ end
 #
 # The resolvent through a Schur form: `A` and `B` are fixed while the
 # enforcement perturbs `C` and `D`, so the factorization is taken once
-# and every later evaluation is a triangular solve, `O(nz^2 n)` rather
-# than the `O(nz^3)` of a fresh dense solve at each frequency. The
+# and every later evaluation is a quasi-triangular solve, `O(nz^2 n)`
+# rather than the `O(nz^3)` of a fresh dense solve at each frequency. The
 # violation sweep evaluates the fit over a grid in every band and
 # dominates the enforcement, so this is where its time goes.
 # the fit at one frequency, `D + C (i w I - A)^-1 B`, through the held
@@ -1298,10 +1298,13 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
     work = ResolventWorkspace(rf)
     response = similar(D, ComplexF64)
     resolvent = similar(B, ComplexF64)
+    # how many corrections the rounds made and why they stopped, for a
+    # refusal to say
+    corrections, stopped = 0, :rounds
     for roundindex in 1:rounds
         bands = sampledviolations(rf, C, D, ws; atol = atol, work = work)
         # the rounds refine; the guarantee below is what every path ends at
-        isempty(bands) && break
+        isempty(bands) && (stopped = :clean; break)
         # the worst point of each band; constraining every grid point
         # above the level instead over-constrains the perturbation and
         # keeps the rounds from converging
@@ -1384,7 +1387,7 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
                 push!(rhs, 1 - margin - F.S[j])
             end
         end
-        isempty(rows) && break
+        isempty(rows) && (stopped = :clean; break)
         Ceq = reduce(vcat, transpose.(rows))
         ceq = rhs
         # The constraints are inequalities, not equalities: forcing
@@ -1428,11 +1431,12 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
         isnothing(dcbasis) || (maximum(abs, reshape(δ[1:n*nz], n, nz)*X0 .+
             transpose(reshape(δ[n*nz + 1:end], n, n)); init = 0.0) <= dcchecktol*(1 + maximum(abs, δ))) ||
             throw(ArgumentError("the passivity correction moved the stated value at zero frequency; report this."))
-        (solved && slack <= slacktol) || break
+        (solved && slack <= slacktol) || (stopped = :infeasible; break)
         # the unknowns were laid out as delta C[i, k] at (k - 1) n + i and
         # delta D[i, j] at (i - 1) n + j
         C = C .+ reshape(δ[1:n*nz], n, nz)
         D = D .+ transpose(reshape(δ[n*nz + 1:end], n, n))
+        corrections += 1
         # a singular KKT system leaves a correction which is not finite,
         # and the failure would otherwise surface as an error from the
         # next factorization built from `C` and `D`
@@ -1456,9 +1460,9 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
     # together into a nearly double eigenvalue that leaves the axis, so
     # the level cannot be brought to one and tightening the tolerance
     # stops working before it gets there.
-    worst, _, ceiling = hinfnorm(A, B, C, D)
+    worst, peak, ceiling = hinfnorm(A, B, C, D)
     isfinite(ceiling) || throw(ArgumentError(
-        lazy"the fit's largest singular value could not be bounded after $(rounds) rounds: the level set search did not converge, and the largest value it saw was $(worst). Fit with fewer poles, or over a narrower band."))
+        lazy"the fit's largest singular value could not be bounded: the level set search did not converge, and the largest value it saw was $(worst), at $(peak) rad/s. Fit with fewer poles, or over a narrower band."))
     # a statement of unit norm at zero frequency -- a through, an
     # open, a short -- pins the norm of any fit meeting it at one, so
     # nothing can be contracted away and such a fit is accepted at one
@@ -1468,7 +1472,7 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
     # it
     worst <= 1 && return A, B, C, D
     worst <= 1 + scalelimit || throw(ArgumentError(
-        lazy"the fit could not be made passive in $(rounds) rounds: its largest singular value is still $(worst), too far above one to scale under it without describing a block which is mostly loss. Fit with fewer poles, or over a narrower band."))
+        lazy"the fit could not be made passive: $(enforcementrecord(stopped, corrections)), and its largest singular value is $(worst), at $(peak) rad/s, more than scalelimit = $(scalelimit) above one, too far to scale under it without describing a block which is mostly loss. Fit with fewer poles, or over a narrower band."))
     # The worst point moves as the block is scaled and the norm is
     # found by a search, so a single step to a margin guessed in
     # advance can leave the next measurement a shade above one: the
@@ -1538,17 +1542,28 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
     return A, B, C, D
 end
 
+# what the rounds of the enforcement did, for a refusal to say
+function enforcementrecord(stopped::Symbol, corrections::Int)
+    rounds = corrections == 1 ? "one round of correction" : "$(corrections) rounds of correction"
+    stopped === :clean && corrections == 0 && return "its sampled search found no violation to correct"
+    stopped === :clean && return "$(rounds) left no violation its sampled search could find"
+    stopped === :infeasible && return "after $(rounds) the next correction could not meet its own constraints"
+    return "$(rounds) did not remove every violation"
+end
+
 # The bands of angular frequency where the largest singular value
-# stands above one, found by sweeping the fit on a logarithmic grid.
+# stands above one, found by sweeping the fit on a logarithmic grid and
+# by looking at each complex pole where its resonance peaks.
 # The exact pencil of the passivity test is what the guarantee at the
 # end of the enforcement rests on, but it is a generalized eigenproblem
 # of twice the state dimension and costs far more than the sweep, which
-# is one triangular solve per point once the resolvent is factored; the
-# sweep's risk is a violation narrower than the grid spacing, which the
-# exact norm at the end still catches (Gustavsen, IEEE Transactions on
-# Electromagnetic Compatibility 67(3), 2025, section X-B).
+# is one quasi-triangular solve per point once the resolvent is
+# factored; the sweep's risk is a violation narrower than the grid
+# spacing, which the exact norm at the end still catches (Gustavsen,
+# IEEE Transactions on Electromagnetic Compatibility 67(3), 2025,
+# section X-B).
 function sampledviolations(rf::ResolventFactors, C, D, ws; atol = 1e-8, density::Int = 12,
-        pad::Real = 10.0, work::ResolventWorkspace = ResolventWorkspace(rf))
+        pad::Real = 10.0, span::Real = 8.0, work::ResolventWorkspace = ResolventWorkspace(rf))
     level = 1 + atol/2
     n, nz = size(D, 1), size(rf.T, 1)
     # the logarithmic grid starts from the lowest positive sample, a band
@@ -1578,6 +1593,19 @@ function sampledviolations(rf::ResolventFactors, C, D, ws; atol = 1e-8, density:
         else
             k += 1
         end
+    end
+    # A resonance narrower than the grid's spacing peaks between its
+    # points, where the sweep cannot see it and a band from the points
+    # around it would be too wide to resolve it. Each complex pole is
+    # looked at where it peaks, at its frequency and a half width either
+    # side, and one which stands above the level there has its bracket,
+    # the span the norm search refines it over, as a band of its own.
+    for l in schureigenvalues(rf.T)
+        imag(l) > 0 || continue
+        w0, half = imag(l), max(abs(real(l)), eps())
+        any(t -> opnorm(transferat!(response, rf, CZ, D, w0 + t*half, nz, work)) > level,
+            (-1.0, -0.5, 0.0, 0.5, 1.0)) || continue
+        push!(bands, polebracket(l, span))
     end
     return bands
 end
@@ -1659,9 +1687,7 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
     (isfinite(tol) && tol >= 0) || throw(ArgumentError("tol must be finite and nonnegative."))
     (isfinite(noisetol) && noisetol >= 0) || throw(ArgumentError("noisetol must be finite and nonnegative."))
     isnothing(band) || (length(band) == 2 && 0 <= band[1] < band[2]) || throw(ArgumentError("band is (flo, fhi) in Hz with 0 <= flo < fhi."))
-    taus = isnothing(delays) ? zeros(block.nports) : Float64.(collect(delays))
-    length(taus) == block.nports && all(t -> isfinite(t) && t >= 0, taus) || throw(ArgumentError(
-        lazy"give one finite nonnegative delay per port ($(block.nports))."))
+    taus = something(fitdelays(delays, block.nports), zeros(block.nports))
     iterations >= 1 || throw(ArgumentError("give at least one relocation iteration."))
     (isfinite(pruneslack) && pruneslack >= 0) || throw(ArgumentError("pruneslack must be finite and nonnegative."))
     n = block.nports
@@ -1688,12 +1714,11 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
     end
     for (j, k) in enumerate(block.harmonics)
         p = block.providers[j]
+        knots = tableknots(p)
         fs = if !isnothing(frequencies)
             Float64.(collect(frequencies))
-        elseif p isa TabulatedMatrixProvider
-            sort!(unique!(filter(>(0), abs.(p.frequencies ./ (2pi)))))
-        elseif p isa PiecewiseTabulatedProvider
-            sort!(unique!(filter(>(0), abs.(piecewisefrequencies(p) ./ (2pi)))))
+        elseif !isempty(knots)
+            sort!(unique!(filter(>(0), abs.(knots ./ (2pi)))))
         else
             throw(ArgumentError(lazy"give the frequencies in Hz to sample the harmonic $(k) at; only a tabulated harmonic has its own."))
         end
@@ -1784,11 +1809,7 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
     # stated
     fitted = LinearizedScattering(block.harmonics, providers, block.wp, 0.0, n, block.zref,
         block.grounded, noise, block.dcmodel, block.envelope, block.atol)
-    nus = Float64[]
-    for p in block.providers
-        p isa TabulatedMatrixProvider && append!(nus, p.frequencies)
-        p isa PiecewiseTabulatedProvider && append!(nus, piecewisefrequencies(p))
-    end
+    nus = reduce(vcat, (tableknots(p) for p in block.providers); init = Float64[])
     isempty(nus) && !isnothing(frequencies) && (nus = 2pi .* Float64.(collect(frequencies)))
     nus = sort!(unique!(abs.(nus)))
     filter!(>(0), nus)

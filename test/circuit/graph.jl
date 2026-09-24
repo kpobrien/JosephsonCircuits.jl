@@ -22,13 +22,6 @@ import SparseArrays
             )
     end
 
-    @testset "edge2index" begin
-        @test isequal(
-            JosephsonCircuits.edge2index(JosephsonCircuits.Graphs.path_digraph(4)),
-            Dict((1, 2) => 1, (2, 1) => 1, (3, 2) => 2, (3, 4) => 3, (2, 3) => 2, (4, 3) => 3),
-            )
-    end
-
     # the branches the incidence matrix is built from
     @testset "extractbranches" begin
         @test_throws(
@@ -44,17 +37,6 @@ import SparseArrays
             JosephsonCircuits.extractbranches(
                 [:P,:I,:R,:C,:Lj,:C],
                 [2 2 2 2 3 3; 1 1 1 3 1 1; 0 0 0 0 0 0],
-            )
-        )
-    end
-
-    @testset "extractbranches!" begin
-        @test_throws(
-            DimensionMismatch("branchvector should be length zero"),
-            JosephsonCircuits.extractbranches!(
-                [1],
-                [:P,:I,:R,:C,:Lj,:C],
-                [2 2 2 2 3 3; 1 1 1 3 1 1],
             )
         )
     end
@@ -120,4 +102,22 @@ end
     psc = compile(c)
     @test JosephsonCircuits.comparestruct(psc.topology,
         JC.calccircuitgraph(psc).topology)
+end
+
+@testset "components with both terminals on one node" begin
+    # such a component carries no current: the response of the circuit, its
+    # noise included, is the one without it, and a port so placed is refused
+    ws = 2pi*(4.5:0.5:5.5)*1e9
+    sol(c) = hblinsolve(ws, Circuit(c); keyedarrays = false, returnSnoise = true)
+    # node 2 has no inductive branch, so a self loop there is its only one
+    base = [(:p1, 1, 0, Port(1)), (:c1, 1, 2, Capacitor(100e-15)),
+        (:c2, 2, 0, Capacitor(1e-12)), (:r2, 2, 0, Resistor(1e4))]
+    ref = sol(base)
+    for extra in ((:cx, 0, 0, Capacitor(1e-12)), (:rx, 0, 0, Resistor(50.0)),
+            (:rx, 2, 2, Resistor(50.0)), (:lx, 0, 0, Inductor(1e-9)),
+            (:lx, 2, 2, Inductor(1e-9)), (:jx, 2, 2, JosephsonJunction(1e-9)))
+        s = sol(vcat(base, [extra]))
+        @test s.S ≈ ref.S && s.QE ≈ ref.QE && size(s.Snoise) == size(ref.Snoise)
+    end
+    @test_throws ArgumentError sol([(:p1, 1, 1, Port(1)), (:c1, 1, 0, Capacitor(1e-12))])
 end

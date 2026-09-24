@@ -303,7 +303,7 @@ using Test
             NLj = 2
             fd = zeros(Complex{Float64}, Nw..., NLj)
             td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(fd)
-            fftplan = JosephsonCircuits.plan_applyffttranspose(fd, td)
+            fftplan = JosephsonCircuits.plan_applyffttranspose(td)
             padded = zeros(Complex{Float64}, size(td))
             alpha = zeros(Complex{Float64}, size(td))
             for trial in 1:3

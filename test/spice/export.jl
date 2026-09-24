@@ -27,110 +27,89 @@ using Test
         )
     end
 
-    @testset "componentdictionaries errors" begin
-        begin
-            componenttypes = [:P, :I, :R, :L, :K, :K, :L, :C]
-            nodeindices = [2 2 2 2 0 0 3 3 3; 1 1 1 1 0 0 1 1 1]
-            couplings = [(5, 4, 7), (6, 4, 7)]
-            @test_throws(
-                DimensionMismatch("Input arrays must have the same length"),
-                JosephsonCircuits.componentdictionaries(componenttypes,
-                    nodeindices,couplings)
-            )
-        end
-
-        begin
-            componenttypes = [:P, :I, :R, :L, :K, :K, :L, :C, :C]
-            nodeindices = [2 2 2 2 0 0 3 3 3; 1 1 1 1 0 0 1 1 1; 1 1 1 1 0 0 1 1 1]
-            couplings = [(5, 4, 7), (6, 4, 7)]
-            @test_throws(
-                DimensionMismatch("The length of the first axis must be 2"),
-                JosephsonCircuits.componentdictionaries(componenttypes,
-                    nodeindices,couplings)
-            )
-        end
-
+    @testset "a junction's shunt capacitance wherever it is listed" begin
+        # the capacitors on a junction's branch are one branch of the
+        # export's table whatever their order, so the capacitor listed
+        # before the junction, after it, or split on both sides of it, gives
+        # the same netlist
+        before = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 0, Capacitor(1e-12)), (:Lj1, 1, 0, JosephsonJunction(1e-9))])
+        after = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:Lj1, 1, 0, JosephsonJunction(1e-9)), (:C1, 1, 0, Capacitor(1e-12))])
+        split = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 0, Capacitor(0.5e-12)), (:Lj1, 1, 0, JosephsonJunction(1e-9)),
+            (:C2, 1, 0, Capacitor(0.5e-12))])
+        reference = JosephsonCircuits.exportnetlist(after).netlist
+        @test JosephsonCircuits.exportnetlist(before).netlist == reference
+        @test JosephsonCircuits.exportnetlist(split).netlist == reference
+        @test JosephsonCircuits.exportnetlist(before; jj = false).netlist ==
+            JosephsonCircuits.exportnetlist(split; jj = false).netlist
     end
 
-    @testset "componentdictionaries" begin
-        begin
-            JosephsonCircuits.@params Ipump Rleft L1 K1 L2 C2 C3
-            circuit = Any[]
-            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
-            push!(circuit,("I1", "1", "0", CurrentSource(Ipump)))
-            push!(circuit,("L1", "1", "0", Inductor(L1)))
-            push!(circuit,("K1", "L1", "L2", MutualInductor(K1)))
-            push!(circuit,("L2", "2", "0", Inductor(L2)))
-            push!(circuit,("C2", "2", "0", Capacitor(C2)))
-            push!(circuit,("C3", "2", "0", Capacitor(C3)))
-            circuit = Circuit(circuit)
-            psc = compile(circuit)
-            countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.couplings)
-
-            @test isequal(countdict,Dict((:L, 1, 3) => 1, (:K, 4, 6) => 1, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1))
-            @test isequal(indexdict,Dict((:C, 1, 3, 1) => 7, (:I, 1, 2, 1) => 3, (:R, 1, 2, 1) => 2, (:L, 1, 3, 1) => 6, (:C, 1, 3, 2) => 8, (:L, 1, 2, 1) => 4, (:P, 1, 2, 1) => 1, (:K, 4, 6, 1) => 5))
-        end
-
-        begin
-            JosephsonCircuits.@params Ipump Rleft L1 K1 K2 L2 C2 C3
-            circuit = Any[]
-            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
-            push!(circuit,("I1", "1", "0", CurrentSource(Ipump)))
-            push!(circuit,("L1", "1", "0", Inductor(L1)))
-            push!(circuit,("K1", "L1", "L2", MutualInductor(K1)))
-            push!(circuit,("K2", "L1", "L2", MutualInductor(K2)))
-            push!(circuit,("L2", "2", "0", Inductor(L2)))
-            push!(circuit,("C2", "2", "0", Capacitor(C2)))
-            push!(circuit,("C3", "2", "0", Capacitor(C3)))
-            circuit = Circuit(circuit)
-            psc = compile(circuit)
-            countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.couplings)
-
-            @test isequal(countdict,Dict((:L, 1, 3) => 1, (:K, 4, 7) => 2, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1))
-            @test isequal(indexdict,Dict((:C, 1, 3, 1) => 8, (:I, 1, 2, 1) => 3, (:R, 1, 2, 1) => 2, (:K, 4, 7, 1) => 5, (:K, 4, 7, 2) => 6, (:L, 1, 2, 1) => 4, (:L, 1, 3, 1) => 7, (:P, 1, 2, 1) => 1, (:C, 1, 3, 2) => 9))
-        end
-
-    end
-
-    @testset "calcCjIcmean errors" begin
+    @testset "the jj model's conditions" begin
         # two junctions whose critical currents differ by a factor of a
-        # hundred either way: WRSPICE's junction model cannot span them
-        function tables(Lj1, Lj2)
-            circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)),
-                ("Lj1", "2", "0", JosephsonJunction(Lj1)), ("Cj1", "2", "0", Capacitor(1e-12)), ("C2", "2", "3", Capacitor(100e-15)),
-                ("Lj2", "3", "0", JosephsonJunction(Lj2)), ("Cj2", "3", "0", Capacitor(1e-12))])
-            psc = compile(circuit)
-            vvn = JosephsonCircuits.componentvaluestonumber(psc.componentvalues, Dict{Any,Any}())
-            countdict, indexdict = JosephsonCircuits.componentdictionaries(
-                psc.componenttypes, psc.nodeindices, psc.couplings)
-            return (psc.componenttypes, psc.nodeindices, vvn, psc.couplings,
-                countdict, indexdict)
-        end
-        @test_throws ErrorException JosephsonCircuits.calcCjIcmean(tables(1.0e-9, 100*1.1e-9)...)
-        @test_throws ErrorException JosephsonCircuits.calcCjIcmean(tables(100*1.1e-9, 1.0e-9)...)
+        # hundred and ten either way: WRSPICE's junction model cannot span
+        # them
+        pair(Lj1, Lj2) = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)),
+            ("Lj1", "2", "0", JosephsonJunction(Lj1)), ("Cj1", "2", "0", Capacitor(1e-12)), ("C2", "2", "3", Capacitor(100e-15)),
+            ("Lj2", "3", "0", JosephsonJunction(Lj2)), ("Cj2", "3", "0", Capacitor(1e-12))])
+        @test_throws ErrorException JosephsonCircuits.exportnetlist(pair(1.0e-9, 100*1.1e-9))
+        @test_throws ErrorException JosephsonCircuits.exportnetlist(pair(100*1.1e-9, 1.0e-9))
+        # a junction without shunt capacitance
+        unshunted = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)),
+            ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1e-9))])
+        @test_throws(ErrorException("Cj cannot be zero in the WRSPICE JJ model."),
+            JosephsonCircuits.exportnetlist(unshunted))
+        # a relation other than the sinusoidal one, a SNAIL's
+        snail = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:cc, 1, 2, Capacitor(100e-15)),
+            (:nl, 2, 0, NonlinearInductor(1e-9, PolynomialCPR([1.0, 0.3, -1/6]))),
+            (:cj, 2, 0, Capacitor(1e-12))])
+        @test_throws JosephsonCircuits.ComponentNotSupportedError JosephsonCircuits.exportnetlist(snail)
+        # written as their linear inductances the junctions are inductors,
+        # which none of the model's conditions apply to
+        lines(c) = split(JosephsonCircuits.exportnetlist(c; jj = false).netlist, "\n")
+        @test "Lj2 3 0 109999.99999999999p" in lines(pair(1.0e-9, 100*1.1e-9))
+        @test "Lj1 2 0 1000.0000000000001p" in lines(unshunted)
+        @test "Lnl 2 0 1000.0000000000001p" in lines(snail)
+    end
 
-        begin
-            JosephsonCircuits.@params R Cc Lj Cj
-            circuit = Circuit([
-                ("P1", "1", "0", Port(1; Z0 = R)),
-                ("C1", "1", "2", Capacitor(Cc)),
-                ("Lj1", "2", "0", JosephsonJunction(Lj)),
-            #    ("C2", "2", "0", Capacitor(Cj)),
-                ])
-            circuitdefs = Dict(
-                Lj =>1000.0e-12,
-                Cc => 100.0e-15,
-                Cj => 1000.0e-15,
-                R => 50.0)
-            psc = compile(circuit)
-            vvn = JosephsonCircuits.componentvaluestonumber(psc.componentvalues,circuitdefs)
-            countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.couplings)
-            @test_throws(
-                ErrorException("Cj cannot be zero in the WRSPICE JJ model."),
-                JosephsonCircuits.calcCjIcmean(psc.componenttypes, psc.nodeindices,
-                    vvn, psc.couplings, countdict, indexdict)
-                )
-        end
+    @testset "parallel elements" begin
+        # an inductor a mutual inductor couples keeps its own line beside a
+        # parallel one, so the coupling names a line of the netlist
+        g = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:la, 1, 0, Inductor(1e-9)),
+            (:lb, 1, 0, Inductor(2e-9)), (:lc, 2, 0, Inductor(1e-9)),
+            (:k1, :lb, :lc, MutualInductor(0.5)), (:c2, 2, 0, Capacitor(1e-12)),
+            (:r2, 2, 0, Resistor(50.0))])
+        glines = split(JosephsonCircuits.exportnetlist(g).netlist, "\n")
+        @test "la 1 0 1000.0000000000001p" in glines
+        @test "lb 1 0 2000.0000000000002p" in glines
+        @test "k1 lb lc 0.5" in glines
+        # the resistors of one branch combine in parallel: a port's
+        # termination and a load across it
+        loaded = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:rl, 1, 0, Resistor(150.0)),
+            (:c1, 1, 0, Capacitor(1.0e-12))])
+        @test "Rp1_termination 1 0 37.5" in
+            split(JosephsonCircuits.exportnetlist(loaded).netlist, "\n")
+    end
+
+    @testset "the phase nodes are not nets" begin
+        # a net named by an integer past the node count: the phase node of
+        # the junction is numbered past it
+        c = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:cc, 1, 3, Capacitor(100e-15)),
+            (:jj, 3, 0, JosephsonJunction(1e-9)), (:cj, 3, 0, Capacitor(1e-12))])
+        n = JosephsonCircuits.exportnetlist(c)
+        @test !(n.junctions[1].phasenode in compile(c).nodenames)
+        @test occursin("Bjj 3 0 $(n.junctions[1].phasenode) jjk ", n.netlist)
+    end
+
+    @testset "values SPICE cannot express" begin
+        # a lossy capacitor has a complex value, which no SPICE element
+        # takes; a value of complex type without an imaginary part is real
+        jpa(Cj) = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:cc, 1, 2, Capacitor(100e-15)),
+            (:jj, 2, 0, JosephsonJunction(1e-9)), (:cj, 2, 0, Capacitor(Cj))])
+        @test_throws ArgumentError JosephsonCircuits.exportnetlist(jpa(1e-12*(1 - 1e-2im)))
+        @test JosephsonCircuits.exportnetlist(jpa(1e-12 + 0im)).netlist ==
+            JosephsonCircuits.exportnetlist(jpa(1e-12)).netlist
     end
 
     @testset "SPICE element names" begin

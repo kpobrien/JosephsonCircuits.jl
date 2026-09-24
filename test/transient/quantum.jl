@@ -18,12 +18,12 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
     plan = transientquantumplan(prob, times, c; ports = [1, 1, 2], backend)
     rng = Random.default_rng()
     @testset "Quantum temporal modes: $backend" begin
-        @test plan.rows == [2, 2, 1]
+        @test plan.rows == [1, 1, 2]
         X, P = 1.7, -0.4
         rf = sqrt(JC.planck_constant*f/period) .* (X .* cospi.(2f .* (times .- times[1])) .+
               P .* sinpi.(2f .* (times .- times[1])))
         # port 1 carries the wave and port 2 twice it, on their rows
-        traces = device(permutedims(hcat(2rf, rf)))
+        traces = device(permutedims(hcat(rf, 2rf)))
         @test Array(transientquantum(plan, traces)) ≈ [X, P, P, -X, 2X, 2P] rtol=1e-13
         @test plan.gram ≈ [1 im 0; -im 1 0; 0 0 1]
         # Independent canonical Fourier quadratures reconstruct both the
@@ -91,7 +91,7 @@ function testquantumcontracts()
         @test_throws ArgumentError transientquantumplan(two, ts, zeros(31, 1))
         # a mode names a port by its number, which must exist
         @test_throws ArgumentError transientquantumplan(two, ts, [1/(64e-11)]; ports = [3])
-        @test transientquantumplan(two, ts, [1/(64e-11)]; ports = [2]).rows == [1]
+        @test transientquantumplan(two, ts, [1/(64e-11)]; ports = [2]).rows == [2]
         circuit = Circuit(
             [:p => Port(1), :Rloss => Resistor(100.0; temperature = 0.1),
                 :Ropen => Resistor(Inf), :c => Capacitor(1e-12)],

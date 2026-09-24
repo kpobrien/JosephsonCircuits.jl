@@ -1,13 +1,17 @@
-# The full family of real representation conversions as the package once
-# carried it: dense and sparse, by mask or by layout, with the optional
-# conjugation and real mode scaling. The package keeps only the forms its
-# solvers use (the vector conversions and the sparse layout conversion,
-# without the scalings); this module is the reference those are tested
-# against, and the oracle of the properties the tests below check.
+# The full family of real representation conversions: dense and sparse, by
+# mask or by layout, with the optional conjugation and real mode scaling.
+# The package has only the forms its solvers use (the vector conversions and
+# the sparse layout conversion, without the scalings); this module is the
+# reference those are tested against, and the oracle of the properties the
+# tests below check.
 module LayoutReference
 
 using SparseArrays, LinearAlgebra
-using JosephsonCircuits: ModeLayout, realdim, complexdim, _next, _rowwidth
+using JosephsonCircuits: ModeLayout, realdim, complexdim, _next
+
+# the number of real slots of complex index i, from the bit per index of a
+# real mode
+_rowwidth(w::BitVector, i::Integer) = 2 - w[i]
 
 @inline _colfac(cs::T, wc) where {T} = wc == 1 ? cs : one(T)
 @inline _rowfac(rs::T, wr) where {T} = ifelse(wr == 1, rs, one(T))
@@ -387,7 +391,9 @@ function real_to_complex(Ar::SparseMatrixCSC{T,Ti}, rl::ModeLayout, cl::ModeLayo
                     ::Type{Tj} = Ti; conj_input::Bool = false) where {T<:Real,Ti,Tj<:Integer}
     _checkdest(Ar, rl, cl)
     Rp, Ri, Rv = SparseArrays.getcolptr(Ar), rowvals(Ar), nonzeros(Ar)
-    cptr, rinv, isfirst = cl.ptr, rl.inv, rl.isfirst
+    cptr, rinv = cl.ptr, rl.inv
+    # whether a real slot is the first of its complex index
+    isfirst = [k == rl.ptr[rl.inv[k]] for k in 1:rl.rdim]
     qs = conj_input ? one(T) : -one(T)
 
     # Scan every slot and count the ones that start a mode

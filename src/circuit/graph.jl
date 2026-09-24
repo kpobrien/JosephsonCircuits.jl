@@ -41,7 +41,7 @@ the closure branches, and (when `loops = true`) the loop each closure
 branch closes, beside the topology.
 
 The graph is built from the branches of the inductive components, the
-Josephson junctions, the current and voltage sources and the ports; see
+Josephson junctions, the current sources and the ports; see
 [`extractbranches`](@ref) for the list. Nothing in the solvers reads any
 of it: they read `compiledcircuit.topology`, which [`compile`](@ref)
 built. Enumerating the loops costs a tree walk per closure branch, so they
@@ -115,8 +115,13 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
         # numbers back to the circuit's node indices
         gli, vmap = Graphs.induced_subgraph(gl,v)
 
-        # a minimum spanning tree of the component
-        si = Graphs.SimpleGraph(Graphs.kruskal_mst(gli))
+        # a minimum spanning tree of the component, over all of its
+        # vertices: a component of one node has a tree of no edges, and its
+        # self loop, if it has one, is a closure branch like any other
+        si = Graphs.SimpleGraph(Graphs.nv(gli))
+        for e in Graphs.kruskal_mst(gli)
+            Graphs.add_edge!(si, e)
+        end
 
         # the closure branches: every edge not in the tree
         ci = collect(Graphs.edges(Graphs.difference(gli,si)))
@@ -141,51 +146,18 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
             push!(lvarray, length(cyc) > 2 ? vmap[cyc] : Int[])
         end
 
-        # orient the tree edges away from local vertex 1 by a breadth first
-        # search, so that every branch has a definite direction
-        if Graphs.ne(si) == 0
-            sid = si
-        else
-            sid = Graphs.SimpleGraph(Graphs.bfs_tree(si,1))
-        end
-
-        # add the closure branches back to get the directed graph of every
-        # branch in this component
-        glid = copy(sid)
-        for cj in ci
-            Graphs.add_edge!(glid, Graphs.dst(cj), Graphs.src(cj))
-        end
-
-        # record the edges in the circuit's node numbering
-        for e in Graphs.edges(sid)
+        # record the edges in the circuit's node numbering: those of the
+        # tree, and every branch of the component, the tree's and the
+        # closure branches, each from its lower node to its higher
+        for e in Graphs.edges(si)
             push!(searray,(vmap[Graphs.src(e)],vmap[Graphs.dst(e)]))
-
         end
-        for e in Graphs.edges(glid)
+        for e in Graphs.edges(gli)
             push!(glearray,(vmap[Graphs.src(e)],vmap[Graphs.dst(e)]))
-
         end
     end
 
-    gl2 = Graphs.SimpleDiGraphFromIterator(tuple2edge(glearray))
-    # A graph built from an edge list has as many vertices as the largest
-    # node index in it. Nodes above that, which can happen when only
-    # capacitors or resistors touch the highest numbered nodes, are added so
-    # that the incidence matrix has a column for every node. (`gl` and `gl2`
-    # have the same vertex count, both being built from the same branches.)
-    if Graphs.nv(gl2) < Nnodes
-        Graphs.add_vertices!(gl2,Nnodes-Graphs.nv(gl))
-    end
-
-    edge2indexdict = edge2index(gl2)
-
-    # the oriented incidence matrix, transposed to branches by nodes, with
-    # the ground node column (node 1) dropped
-    Rbn=sparse(transpose(Graphs.incidence_matrix(gl2,oriented=true)))[:,2:end]
-
-    Nbranches = Graphs.ne(gl2)
-
-    return CircuitGraph(CircuitTopology(edge2indexdict, Rbn, Nbranches),
+    return CircuitGraph(circuittopology(Ledgearray, Nnodes),
         searray, cearray, glearray, lvarray, isolatednodes, gl)
 end
 
@@ -300,22 +272,6 @@ function treepath(parent::Vector{Int}, depth::Vector{Int}, u::Integer,
 end
 
 """
-    edge2index(graph::Graphs.SimpleDiGraph{Int})
-
-A dictionary from the `(src, dst)` tuple of each edge of `graph`, in both
-orientations, to the position of that edge in `Graphs.edges(graph)`. The
-positions are the branch indices of the incidence matrix.
-"""
-function edge2index(graph::Graphs.SimpleDiGraph{Int})
-    edge2indexdict = Dict{Tuple{Int, Int},Int}()
-    for (i,e) in enumerate(Graphs.edges(graph))
-        edge2indexdict[(Graphs.src(e),Graphs.dst(e))] = i
-        edge2indexdict[(Graphs.dst(e),Graphs.src(e))] = i
-    end
-    return edge2indexdict
-end
-
-"""
     tuple2edge(tuplevector::Vector{Tuple{Int, Int}})
 
 Convert a vector of `(src, dst)` tuples to a vector of `Graphs` edges.
@@ -342,7 +298,8 @@ end
 
 The `(node1, node2)` branches of the components which define the circuit
 graph: inductors (`:L`), Josephson junctions (`:Lj`), current sources
-(`:I`), ports (`:P`) and voltage sources (`:V`). Capacitors, resistors and mutual inductors do not create branches.
+(`:I`) and ports (`:P`). Capacitors, resistors and mutual inductors do
+not create branches.
 
 Components sharing a branch produce duplicate tuples; the graph
 construction in [`calcgraphs`](@ref) merges them.
@@ -358,21 +315,6 @@ julia> JosephsonCircuits.extractbranches([:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3 3; 1 1 
 """
 function extractbranches(componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
 
-    branchvector = Array{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},1}(undef,0)
-    extractbranches!(branchvector,componenttypes,nodeindexarray)
-
-    return branchvector
-end
-
-"""
-    extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},
-        nodeindexarray::Matrix{Int})
-
-Push the branches described in [`extractbranches`](@ref) onto the empty
-vector `branchvector`.
-"""
-function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
-
     if  length(componenttypes) != size(nodeindexarray,2)
         throw(DimensionMismatch(lazy"componenttypes must have the same length as the number of node indices"))
     end
@@ -381,17 +323,12 @@ function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},no
         throw(DimensionMismatch(lazy"the length of the first axis must be 2"))
     end
 
-    if length(branchvector) != 0
-        throw(DimensionMismatch(lazy"branchvector should be length zero"))
-    end
-
-    allowedcomponenttypes = [:Lj,:L,:I,:P,:V]
+    branchvector = Tuple{Int,Int}[]
     for i in eachindex(componenttypes)
-        type = componenttypes[i]
-        if type in allowedcomponenttypes
+        if componenttypes[i] in (:Lj, :L, :I, :P)
             push!(branchvector,(nodeindexarray[1,i],nodeindexarray[2,i]))
         end
     end
 
-    return nothing
+    return branchvector
 end

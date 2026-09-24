@@ -34,7 +34,13 @@ Everything a solver asks for is a method on `prob`:
 The state is the **equivalent real representation**. The harmonic balance
 residual is not complex differentiable, so the implicit function theorem
 does not hold with the holomorphic Jacobian; anything relying on a Jacobian
-needs the real form. `tocomplex` and `toreal` convert.
+needs the real form. It holds the real and imaginary parts of each complex
+mode amplitude side by side, and only the real part of a self conjugate
+mode; `JosephsonCircuits.real_to_complex(u, prob.modelayout.isreal)` and
+`JosephsonCircuits.complex_to_real(x, prob.modelayout.isreal)` convert.
+When the circuit injects direct current the unknowns are the canonical
+state instead, which carries the average node voltages as well, and
+`JosephsonCircuits.isaugmented(prob)` says so.
 
 ## A linear solver
 
@@ -90,19 +96,25 @@ of your own, which receives the problem and the initial value and returns
 mysolver = ExternalSolver() do prob, u0
     u = copy(u0); F = similar(u)
     hbresidual!(F, prob, u)
+    # built once, and refactorized at each new point on its structure
+    P = preconditioner(prob, u)
     for k in 1:40
+        norm(F) <= prob.atol && return (u, true)
         J = JacobianOperator(prob, u)
-        P = preconditioner(prob, u)
         d, st = Krylov.gmres(J, -F; N = P, rtol = 1e-10, atol = 0.0)
         st.solved || return (u, false)
         u .+= d
         hbresidual!(F, prob, u)
+        JosephsonCircuits.updatepreconditioner!(P, u)
     end
-    return (u, norm(F) < tol)
+    return (u, norm(F) <= prob.atol)
 end
 
 hbnlsolve(wp, Nharmonics, sources, circuit, circuitdefs; method = mysolver)
 ```
+
+`prob.atol` is the tolerance of the solve, which the root is held to
+whatever the solver reports.
 
 With NonlinearSolve.jl, `SciMLBase.NonlinearProblem(prob)` builds a
 `NonlinearFunction` carrying the matrix-free product as `jvp` and the
@@ -160,20 +172,24 @@ bp = BifurcationProblem(F, zeros(length(prob)), (s = 0.0,), (@optic _.s);
 
 ## Sensitivities
 
-`sensitivityparameters` names physical parameters rather than components.
-Every component whose value depends on a parameter contributes to that
-parameter's derivative, and the result has one slot per parameter.
+[`designsensitivities`](@ref) differentiates the scattering parameters
+with respect to the design parameters a circuit's values are written in
+terms of, rather than with respect to its components. Every component
+whose value depends on a parameter contributes to that parameter's
+derivative, with the exact derivative of its value, and the result has
+one slot per parameter.
 
 ```julia
-sol = hblinsolve(ws, circuit, circuitdefs;
-    sensitivityparameters = [Ic, Cg], returnSsensitivity = true)
-sol.Ssensitivity     # (out, in, parameter, frequency)
+out, dSdp = designsensitivities(circuit, circuitdefs, ws, wp, sources,
+    Nmodulationharmonics, Npumpharmonics; parameters = [:Ic, :Cg])
+dSdp    # (outputmode, outputport, inputmode, inputport, parameter, freqindex)
 ```
 
-A scattering block has no component value to differentiate, so its
-contribution arrives as an explicit `dS/dθ` keyed by `(component, parameter)`
-in `blockjacobians`, and lands in the same slot as the lumped components of
-that parameter.
+A scattering block has no component value to differentiate, so it states
+its derivative with respect to a parameter itself, through the
+`derivatives` keyword of [`ScatteringParameters`](@ref), and its
+contribution lands in the same slot as the lumped components of that
+parameter.
 
 ## Testing
 

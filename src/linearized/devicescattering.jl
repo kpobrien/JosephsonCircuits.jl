@@ -211,18 +211,25 @@ end
 # knot second derivatives, with the chord as the case of zero curvature. A
 # block whose data is a single matrix is a one point table, so it needs no
 # separate path. Beyond the band the stored edge slopes continue the
-# interpolant, and a block whose data must not leave the band was checked on
-# the host, because a kernel cannot raise.
+# interpolant, and are zero where the block holds its end values; a block
+# which is zero beyond its band (`zeroout`) is zero there, and a block whose
+# data must not leave the band was checked on the host, because a kernel
+# cannot raise. A frequency within roundoff of an end knot is on it, as on
+# the host (see `evaluateprovider!`).
 @inline function tableentry(freqs, vals, curv, eslopes, foff, nf, voff, soff,
-        n, p, q, w)
+        n, p, q, w, zeroout::Bool)
     @inbounds begin
         s = n*n
         e = (q-1)*n + p
+        f1 = freqs[foff+1]
+        fn = freqs[foff+nf]
+        if zeroout
+            tol = 8*eps(Float64)*max(abs(f1), abs(fn))
+            (w < f1 - tol || w > fn + tol) && return zero(eltype(vals))
+        end
         if nf == 1
             return vals[voff + e]
         end
-        f1 = freqs[foff+1]
-        fn = freqs[foff+nf]
         if w <= f1
             return vals[voff + e] + eslopes[soff + e]*(w - f1)
         elseif w >= fn
@@ -282,7 +289,8 @@ end
         @Const(sgn), @Const(nports), @Const(zrefoff), @Const(zref),
         @Const(freqoff), @Const(nfreq), @Const(freqs), @Const(valoff),
         @Const(vals), @Const(curv), @Const(slopeoff), @Const(eslopes),
-        @Const(conjsym), @Const(wpump), @Const(ws), scale, iscale, ncontrib)
+        @Const(conjsym), @Const(zeroout), @Const(wpump), @Const(ws), scale,
+        iscale, ncontrib)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
@@ -299,7 +307,7 @@ end
             wq = isconj ? abs(wm) : wm
             S = tableentry(freqs, vals, curv, eslopes, Int(freqoff[bi]),
                 Int(nfreq[bi]), Int(valoff[bi]), Int(slopeoff[bi]), n, p, q,
-                wq)
+                wq, zeroout[bi] != 0)
             if isconj && wm < 0
                 S = conj(S)
             end
@@ -376,6 +384,8 @@ struct DeviceProviders{VI,VZ,VR,VC,VF,B}
     # tabulated; exactly one of `vals` and `funcs` is used
     funcs::VF
     conjsym::VZ
+    # 1 where a block is zero beyond its band
+    zeroout::VZ
     modeindex::VI
     blockindex::VI
     pindex::VI
@@ -385,6 +395,7 @@ struct DeviceProviders{VI,VZ,VR,VC,VF,B}
     wpump::VR
     ws::VR
     wshost::Vector{Float64}
+    wpumphost::Vector{Float64}
     scale::Float64
     iscale::Float64
     ncontrib::Int
@@ -531,6 +542,7 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     slopeoff = Vector{Int32}(undef, nb)
     eslopes = zeros(Complex{Float64}, stot)
     conjsym = Vector{Int8}(undef, nb)
+    zeroout = zeros(Int8, nb)
     ranges = Vector{Tuple{Float64,Float64}}(undef, nb)
     strict = Vector{Bool}(undef, nb)
     conjhost = Vector{Bool}(undef, nb)
@@ -574,17 +586,20 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
                 copytable!(curv, vi, prov.curvatures, n, nf)
             end
             # beyond the band the kernel continues the interpolant with the
-            # stored edge slopes: zero holds the end values, and a strict
-            # block never reaches them, since its range is checked on the
-            # host before each batch
-            if prov.extrapolation != :constant && nf > 1
+            # stored edge slopes of a block which extrapolates linearly; the
+            # zero slopes of the others hold the end values, which is where
+            # a frequency within roundoff of the band is evaluated. A block
+            # zero beyond its band is zeroed by the kernel, and a strict
+            # block's range is checked on the host before each batch
+            if prov.extrapolation == :linear && nf > 1
                 copyedgeslopes!(eslopes, si, prov, n, nf)
             end
+            zeroout[bi] = prov.extrapolation == :zero
             vi += n*n*nf
             si += 2*n*n
             ranges[bi] = (Float64(prov.frequencies[1]),
                 Float64(prov.frequencies[nf]))
-            strict[bi] = prov.extrapolation == :error && nf > 1
+            strict[bi] = prov.extrapolation == :error
         end
         conjhost[bi] = !(blk.negative_frequency isa Native)
         conjsym[bi] = conjhost[bi] ? Int8(1) : Int8(0)
@@ -595,11 +610,12 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     ncontrib = length(ssys.Aindex)
     return DeviceProviders(d(nports), d(zrefoff), d(zref), d(freqoff),
         d(nfreq), d(freqs), d(valoff), d(vals), d(curv), d(slopeoff),
-        d(eslopes), funcs, d(conjsym),
+        d(eslopes), funcs, d(conjsym), d(zeroout),
         d(Int32.(ssys.modeindex)), d(Int32.(ssys.blockindex)),
         d(Int32.(ssys.pindex)), d(Int32.(ssys.qindex)), d(Int8.(ssys.coeff)),
         d(Int8.(ssys.sign)), d(collect(Float64, wpumpmodes)),
-        d(zeros(Float64, nbatch)), zeros(Float64, nbatch), Float64(scale),
+        d(zeros(Float64, nbatch)), zeros(Float64, nbatch),
+        collect(Float64, wpumpmodes), Float64(scale),
         Float64(ssys.iscale),
         ncontrib, ranges, strict, conjhost, names, ssys, backend)
 end
@@ -609,8 +625,8 @@ end
 function checkdeviceranges(dp::DeviceProviders, k::Integer)
     any(dp.strict) || return nothing
     lonat = Inf; hinat = -Inf; loabs = Inf; hiabs = -Inf
-    nm = length(dp.wpump)
-    wp = Array(dp.wpump)
+    nm = length(dp.wpumphost)
+    wp = dp.wpumphost
     @inbounds for j in 1:k
         for m in 1:nm
             w = dp.wshost[j] + wp[m]
@@ -624,7 +640,9 @@ function checkdeviceranges(dp::DeviceProviders, k::Integer)
         dp.strict[bi] || continue
         lo, hi = dp.ranges[bi]
         l, h = dp.conjhost[bi] ? (loabs, hiabs) : (lonat, hinat)
-        if l < lo || h > hi
+        # a frequency within roundoff of an end knot is on it, as on the host
+        tol = 8eps(Float64)*max(abs(lo), abs(hi))
+        if l < lo - tol || h > hi + tol
             throw(ArgumentError(lazy"The scattering block at $(dp.names[bi]) is evaluated over [$(l), $(h)] rad/s but its tabulated range is [$(lo), $(hi)] rad/s. Extrapolation of tabulated data is opt-in: pass extrapolation = :constant or :linear if extrapolation is intended."))
         end
     end
@@ -654,8 +672,9 @@ function stagedeviceproviders!(values::AbstractMatrix, dp::DeviceProviders,
         deviceproviderkernel!(dp.backend, 64)(values, dp.modeindex,
             dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn, dp.nports,
             dp.zrefoff, dp.zref, dp.freqoff, dp.nfreq, dp.freqs, dp.valoff,
-            dp.vals, dp.curv, dp.slopeoff, dp.eslopes, dp.conjsym, dp.wpump,
-            dp.ws, dp.scale, dp.iscale, dp.ncontrib; ndrange = length(values))
+            dp.vals, dp.curv, dp.slopeoff, dp.eslopes, dp.conjsym, dp.zeroout,
+            dp.wpump, dp.ws, dp.scale, dp.iscale, dp.ncontrib;
+            ndrange = length(values))
     else
         deviceentrykernel!(dp.backend, 64)(values, dp.modeindex,
             dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn,

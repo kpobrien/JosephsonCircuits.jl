@@ -79,16 +79,16 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 ## JPA with a frequency dependent environmental impedance
 Any component value can be a function of frequency: `FrequencyDependent`
-wraps an arbitrary Julia closure of the signed mode frequency in radians per
+wraps an arbitrary Julia closure of a positive frequency in radians per
 second, and both the nonlinear pump solve and the linearized sweep evaluate
-it at their own mode frequencies. Here the JPA of the first example sees its
+it at the magnitude of their own mode frequencies, taking the complex
+conjugate at a negative one, since a physical impedance obeys
+`Z(-w) = conj(Z(w))`. Here the JPA of the first example sees its
 environment through five centimeters of slightly mismatched cable -- a 50 ohm
 line terminated by a 40 ohm source -- so the port resistor becomes the
 complex input impedance of that line. The transformed environment reshapes
 the gain and moves the peak, and because the pump harmonics feel it too, the
-operating point itself shifts, not just the readout. A physical impedance
-obeys `Z(-w) = conj(Z(w))`, which this law satisfies automatically because
-`tan` is odd and the constants are real.
+operating point itself shifts, not just the readout.
 
 ```julia
 using JosephsonCircuits
@@ -216,7 +216,7 @@ Cr = 0.4e-12
 Lr = 0.4264e-9
 Ll = 34e-12
 Ldc = 0.74e-12
-K = 0.999 # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
+K = 0.999 # the coupling of the bias inductor ldc to the loop inductor ll
 
 circuit = Circuit(
     [(:p1, 1, 0, Port(1; Z0 = R)),
@@ -343,7 +343,7 @@ Cr = 0.4e-12*1.25
 Lr = 0.4264e-9*1.25
 Ll = 34e-12
 Ldc = 0.74e-12
-K = 0.999 # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
+K = 0.999 # the coupling of the bias inductor ldc to the loop inductor ll
 
 alpha = 0.29
 Z0 = 50

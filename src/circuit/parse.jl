@@ -347,11 +347,16 @@ function netlistcircuit(netlist::AbstractVector; pins = nothing,
     return Circuit(components, connections; pins = pins, ports = ports)
 end
 
+# The components whose terminals come in ports, a pair per port, or one
+# per port when the component is grounded: the scattering blocks and the
+# Gaussian channels.
+const MultiportComponent = Union{ScatteringParameters,LinearizedScattering,GaussianChannel}
+
 # The endpoints of a netlist entry go straight into their node groups,
 # one dispatch per component, without a vector of endpoints or a slice of
 # the entry in between.
 netlistterminalcount(def, name) = nterminals(def)
-function netlistterminalcount(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, name)
+function netlistterminalcount(def::MultiportComponent, name)
     return isgrounded(def) ? componentnports(def) : 2*componentnports(def)
 end
 function netlistterminalcount(def::Circuit, name)
@@ -378,7 +383,7 @@ function appendnetlistnodes!(groups, nodeorder, entry, def, name)
     return nothing
 end
 function appendnetlistnodes!(groups, nodeorder, entry,
-        def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, name)
+        def::MultiportComponent, name)
     if isgrounded(def)
         for p in 1:componentnports(def)
             appendnetlistnode!(groups, nodeorder, entry[p+1], (name, p), name)
@@ -433,9 +438,7 @@ nterminals(::VoltageSource) = 2
 nterminals(::Port) = 2
 nterminals(::NonlinearInductor) = 2
 nterminals(::MutualInductor) = 0
-nterminals(c::ScatteringParameters) = 2*c.nports
-nterminals(c::LinearizedScattering) = 2*c.nports
-nterminals(c::GaussianChannel) = 2*c.nmodes
+nterminals(c::MultiportComponent) = 2*componentnports(c)
 function nterminals(c::Circuit)
     if isnothing(c.interface)
         throw(ArgumentError("A Circuit used as a component must have an Interface."))
@@ -450,9 +453,7 @@ nterminals(c) = throw(ArgumentError(lazy"$(typeof(c)) is not a known component m
 Whether the component exposes bundled two terminal port views addressable
 in pair connections.
 """
-hasports(c::ScatteringParameters) = true
-hasports(c::LinearizedScattering) = true
-hasports(c::GaussianChannel) = true
+hasports(c::MultiportComponent) = true
 hasports(c::Circuit) = !isnothing(c.interface) && !isnothing(c.interface.ports)
 hasports(c) = false
 
@@ -475,9 +476,7 @@ Whether a multiport component's second terminals are all tied to ground,
 so that only its first terminals connect (`grounded = true` at
 construction).
 """
-isgrounded(c::ScatteringParameters) = c.grounded
-isgrounded(c::LinearizedScattering) = c.grounded
-isgrounded(c::GaussianChannel) = c.grounded
+isgrounded(c::MultiportComponent) = c.grounded
 
 # === interface key lookup ===
 
@@ -618,7 +617,7 @@ end
 function instanceindex(table::ComponentTable, id, context::AbstractString)
     i = get(table.index, id, 0)
     if i == 0
-        throw(ArgumentError(lazy"The endpoint $(context) references the instance $(id), which does not exist in this circuit."))
+        throw(ArgumentError(lazy"The endpoint $(context) references the instance $(repr(id)), which does not exist in this circuit."))
     end
     return i
 end
@@ -641,7 +640,7 @@ function scalarterminal(def::MutualInductor, id, k)
     throw(ArgumentError(lazy"The mutual inductor $(id) couples two inductor branches and has no terminals; it must not appear in connections."))
 end
 
-function scalarterminal(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, id, k)
+function scalarterminal(def::MultiportComponent, id, k)
     if isgrounded(def)
         if !(k isa Integer) || !(1 <= k <= componentnports(def))
             throw(ArgumentError(lazy"The grounded multiport $(id) has ports 1:$(componentnports(def)); got $(k)."))
@@ -665,7 +664,11 @@ function portterminal(def, id, p, t)
     throw(ArgumentError(lazy"The instance $(id) has no ports; address its terminals as ($(repr(id)), terminal)."))
 end
 
-function portterminal(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, id, p, t)
+function portterminal(def::Circuit, id, p, t)
+    throw(ArgumentError(lazy"The instance $(id) is a subcircuit, whose terminals are its pins: address one as ($(repr(id)), pin), and a port of its interface with PortRef."))
+end
+
+function portterminal(def::MultiportComponent, id, p, t)
     np = componentnports(def)
     if !(p isa Integer) || !(1 <= p <= np)
         throw(ArgumentError(lazy"The multiport $(id) has ports 1:$(np); got port $(p)."))
@@ -687,7 +690,7 @@ function portview(def, id, p)
     throw(ArgumentError(lazy"The instance $(id) exposes no ports, so $(p) cannot be used as a port in a pair connection."))
 end
 
-function portview(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, id, p)
+function portview(def::MultiportComponent, id, p)
     np = componentnports(def)
     if !(p isa Integer) || !(1 <= p <= np)
         throw(ArgumentError(lazy"The multiport $(id) has ports 1:$(np); got port $(p)."))
@@ -742,7 +745,7 @@ end
 # Resolve one scalar endpoint written in group context. Returns
 # (instanceindex, terminal) or Ground.
 function resolvescalar(table::ComponentTable, ep, context::AbstractString)
-    if ep === Ground || ep isa GroundType
+    if ep isa GroundType
         return Ground
     elseif ep isa PinRef
         i = instanceindex(table, ep.instance, context)
@@ -924,8 +927,7 @@ end
 function parsegroundties(table::ComponentTable)
     ties = Tuple{Int,Int}[]
     for (i, def) in enumerate(table.defs)
-        if (def isa ScatteringParameters || def isa LinearizedScattering ||
-                def isa GaussianChannel) && isgrounded(def)
+        if def isa MultiportComponent && isgrounded(def)
             for p in 1:componentnports(def)
                 push!(ties, (i, 2*(p-1) + 2))
             end
@@ -938,13 +940,16 @@ end
 
 """
     parsecircuitlevel(components, connections, interface)
-    parsecircuitlevel(c::Circuit)
+    parsecircuitlevel(c::Circuit, interfacecache = IdDict{Any,InterfaceIndex}())
 
 Parse and validate one level of a circuit description into a
 [`ParsedLevel`](@ref): the component table, the connection groups, the
 interface pins, the ground ties and the mutual inductors. The
 [`Circuit`](@ref) constructor runs it to validate its arguments, and the
-elaboration runs it on every level it flattens.
+elaboration runs it on every level it flattens. `interfacecache` holds the
+key lookup of each subcircuit's interface found so far, so that an
+elaboration builds each one once however many instances the subcircuit
+has.
 """
 function parsecircuitlevel(c::Circuit,
         interfacecache = IdDict{Any,InterfaceIndex}())

@@ -65,6 +65,57 @@ scaledentries(netlist, name, r) =
         ts = transientsolve(transientproblem(typed; sources = [TransientSource(1, 1e-6)]),
             (0.0, 200e-12); dt = 5e-12)
         @test ts.voltage ≈ coarse.voltage
+        # the port axis is in the order of the port numbers, harmonic
+        # balance's, whatever order the ports are declared in: a two port
+        # declared port 2 first, driven at port 1, reflects and transmits
+        # what the linearized solver says S11 and S21 are
+        swapped = Circuit([("p2", "2", "0", Port(2; Z0 = 50.0)), ("p1", "1", "0", Port(1; Z0 = 50.0)),
+            ("c12", "1", "2", Capacitor(1e-12)), ("c2", "2", "0", Capacitor(2e-12)), ("r1", "1", "0", Resistor(100.0))])
+        S = hblinsolve([2pi*1e9], swapped; keyedarrays = false).S
+        drive = transientsolve(transientproblem(swapped; sources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t))]),
+            (0.0, 40e-9); dt = 1e-12)
+        @test maximum(abs, drive.incident[2, :]) <= 1e-12*maximum(abs, drive.incident[1, :])
+        window = t -> t < 20e-9 ? 0.0 : sinpi((t - 20e-9)/20e-9)^2
+        wave = (q, k) -> transientdemodulate(drive, q, 1e9; quantity = k, window)
+        @test wave(1, :outgoing)/wave(1, :incident) ≈ S[1, 1, 1] rtol=1e-6
+        @test wave(2, :outgoing)/wave(1, :incident) ≈ S[2, 1, 1] rtol=1e-6
+    end
+
+    @testset "a weak drive is converged relative to itself" begin
+        # a linear circuit's response scales with its drive, so with the
+        # absolute tolerance below the drive a picoampere is solved to
+        # `rtol` of itself as a microampere is, under every rule
+        lc = Circuit([(:p, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(50e-15)),
+            (:l, 2, 0, Inductor(1e-9)), (:c, 2, 0, Capacitor(1e-12))])
+        tone(a) = t -> a*sinpi(2e9*t)*(t <= 0 ? 0.0 : t >= 1e-9 ? 1.0 : sinpi(t/2e-9)^2)
+        strong = transientproblem(lc; sources = [TransientSource(1, tone(1e-6))])
+        weak = transientproblem(strong; sources = [TransientSource(1, tone(1e-12))])
+        for method in (GaussLegendre(), Trapezoidal(), BackwardEuler())
+            s = transientsolve(strong, (0.0, 2e-9); dt = 2e-12, method, atol = 1e-20)
+            w = transientsolve(weak, (0.0, 2e-9); dt = 2e-12, method, atol = 1e-20)
+            @test maximum(abs, 1e6 .* w.outgoing .- s.outgoing) < 1e-8*maximum(abs, s.outgoing)
+        end
+        # and the start is checked against the same tolerances: a resistor
+        # driven from the first sample by a current far below the scaled
+        # unit is refused from rest
+        faint = transientproblem(Circuit(rc[1:1]); sources = [TransientSource(1, 1e-18)])
+        @test_throws ArgumentError transientsolve(faint, (0.0, 1e-11); dt = 1e-12, atol = 1e-20)
+    end
+
+    @testset "a running junction's phase does not loosen its step" begin
+        # a junction biased past its critical current winds its phase
+        # without bound, and nothing in the circuit sees a whole turn of
+        # it: started a thousand turns up it is the same circuit, whose
+        # steps converge as closely as from zero under every rule
+        running = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)),
+            ("Lj1", "1", "0", JosephsonJunction(1e-9)), ("C1", "1", "0", Capacitor(0.2e-12))]);
+            sources = [TransientSource(1, t -> 0.6e-6*(t <= 0 ? 0.0 : t >= 0.5e-9 ? 1.0 : (1 - cospi(t/0.5e-9))/2))])
+        turned = transientstate(running; flux = [2000pi*JC.phi0])
+        for method in (Trapezoidal(), BackwardEuler(), GaussLegendre())
+            s0 = transientsolve(running, (0.0, 2e-9); dt = 1e-12, method)
+            s1 = transientsolve(running, (0.0, 2e-9); dt = 1e-12, method, initialstate = turned)
+            @test maximum(abs, s1.voltage .- s0.voltage) < 1e-9*maximum(abs, s0.voltage)
+        end
     end
 
     @testset "a lossless LC keeps its energy, and coupled inductors their modes" begin
@@ -127,8 +178,8 @@ scaledentries(netlist, name, r) =
             long = transientsolve(p2, (0.0, 16period); dt = period/800, initialstate = state,
                 record = :states, method)
             sysm = JC.transientsystem(p2, period/800, method, JC.CPU(), KLUfactorization())
-            @test JC.transientconsistency(sysm, long.finalflux, long.finalrate, 16period)[1] < 1e-12
-            @test JC.transientconsistency(sysm, long.flux[:, end], long.rate[:, end], 16period)[1] < 1e-12
+            @test JC.transientconsistency(sysm, long.finalflux, long.finalrate, 16period).violation < 1e-12
+            @test JC.transientconsistency(sysm, long.flux[:, end], long.rate[:, end], 16period).violation < 1e-12
             @test transientsolve(p2, (16period, 17period); dt = period/800, method,
                 initialstate = transientstate(long)).stats.steps == 800
         end
@@ -206,6 +257,24 @@ scaledentries(netlist, name, r) =
         transientstate(brief), transientstate(uninterrupted)
         @test size(uninterrupted.linewaves, 2) > 5*size(brief.linewaves, 2)
         @test (@allocated transientstate(uninterrupted)) < 2*(@allocated transientstate(brief))
+        # the end of a solve continues whatever it recorded: a rational
+        # block's states under a record of the ports or of checkpoints,
+        # and the waves of a line short enough that checkpoints keep its
+        # history at each of them rather than the record of its waves
+        a = 2*50.0/2e-9
+        u = [1.0, -1.0]
+        ind = RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2), reshape(-a .* u, 2, 1), Matrix(1.0I, 2, 2); zref = 50.0)
+        blocked = transientproblem(Circuit([(:p1, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(0.3e-12)), (:b, 1, 2, ind),
+            (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2))]); sources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t))])
+        shortline = transientproblem(Circuit([(:p1, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(10e-12)),
+            (:line, 1, 2, TransmissionLine(60.0, 0.009)), (:c2, 2, 0, Capacitor(20e-12)), (:p2, 2, 0, Port(2))]);
+            sources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t))])
+        for (prob, record) in ((blocked, :ports), (blocked, :checkpoints), (shortline, :checkpoints))
+            onego = transientsolve(prob, (0.0, 1e-9); dt = 2e-12, gl...)
+            part = transientsolve(prob, (0.0, 0.5e-9); dt = 2e-12, record, checkpointevery = 50, gl...)
+            restof = transientsolve(prob, (0.5e-9, 1e-9); dt = 2e-12, initialstate = transientstate(part), gl...)
+            @test restof.voltage ≈ onego.voltage[:, length(part.times):end] rtol=1e-8
+        end
         @test coarse.finalflux ≈ whole.finalflux rtol=1e-3
     end
 
@@ -281,6 +350,12 @@ scaledentries(netlist, name, r) =
         @test_throws ArgumentError transientproblem(Circuit([("C1", "1", "0", Capacitor(1e-12 + 1e-15im))]))
         @test_throws ArgumentError transientproblem(Circuit([("R1", "1", "0", Resistor(FrequencyDependent(w -> 50.0)))]))
         @test_throws ArgumentError transientproblem(Circuit([("L1", "1", "0", Inductor(0.0))]))
+        # a negative capacitance between two nodes whose totals are
+        # positive makes the capacitance matrix indefinite, and is refused;
+        # a capacitor of no capacitance is none
+        @test_throws ArgumentError transientproblem(Circuit([("P1", "1", "0", Port(1)), ("C1", "1", "0", Capacitor(1e-12)),
+            ("C2", "2", "0", Capacitor(1e-12)), ("C12", "1", "2", Capacitor(-0.8e-12)), ("L2", "2", "0", Inductor(1e-9))]))
+        @test transientproblem(Circuit(vcat(rc, [("C0", "1", "0", Capacitor(0.0))]))) isa JC.TransientProblem
         @test_throws ArgumentError transientproblem(Circuit(rc); sources = [TransientSource(9, 0.0)])
         @test_throws ArgumentError transientproblem(Circuit(rc); sources = [TransientSource("P1/termination", 0.0)])
         @test_throws ArgumentError transientsolve(transientproblem(Circuit(rc)), (0.0, 1e-9); dt = 0.0)
@@ -297,14 +372,14 @@ scaledentries(netlist, name, r) =
         jac = Ref(1.0)
         base = Ref(0.0)
         res(norms, r, y) = (r[1] = y[1] + 10sin(y[1]) - 1; norms[1] = abs(r[1]); nothing)
-        refresh = () -> (jac[] = 1 + 10cos(base[]); nothing)
+        refresh = mask -> (jac[] = 1 + 10cos(base[]); nothing)
         x = [0.0]
         baseres = (norms, r, y) -> (base[] = y[1]; res(norms, r, y))
         solve = (c, r) -> (c[1] = r[1]/jac[]; (false, 0))
-        out = JC.newtonsolve!(x, [0.0], [0.0], [0.0], [0.0], baseres, res, refresh, solve,
-            [1e-12], 15, false, true, false, JC.NewtonWork(JC.CPU(), 1))
-        converged, fresh, corrections, factorizations, retries = out
-        @test converged && fresh && retries == 1 && factorizations == 1
+        work = JC.NewtonWork(JC.CPU(), 1)
+        converged, corrections = JC.newtonsolve!(x, [0.0], [0.0], [0.0], [0.0], baseres, res, refresh, solve,
+            [1e-12], 15, [false], true, false, work)
+        @test converged && work.fresh[1] && work.retries[1] == 1 && work.factorizations[1] == 1
         @test x[1] + 10sin(x[1]) ≈ 1 atol=1e-12
         @test corrections <= 6
         # the stepping rule reaches the same discrete solution whatever
@@ -333,7 +408,7 @@ scaledentries(netlist, name, r) =
         JC.junctionphases!(phi, sys, x)
         JC.stepjacobian!(sys, phi, nothing)
         J = copy(sys.jacobian)
-        r = (y -> (res = zeros(n); JC.stepresidual!(res, sys, y, phi, zeros(n), jwork, zeros(n), zeros(n)); res))
+        r = (y -> (res = zeros(n); JC.stepresidual!(res, sys, zeros(n), y, zeros(n), phi, zeros(n), jwork, zeros(n)); res))
         h = 1e-6
         @test J*d ≈ (r(x + h*d) - r(x - h*d))/(2h) rtol=1e-7
         @test J ≈ transpose(J)
@@ -442,15 +517,15 @@ scaledentries(netlist, name, r) =
         end
         # two ports declared out of numerical order with different
         # impedances, each with its own branch and drive: the environments
-        # are listed by port number and the traces by compiled port, and
-        # each termination's derivative lands on its own port's row
+        # and the traces are listed by port number, and each termination's
+        # derivative lands on its own port's row
         twoport(z1, z2) = transientproblem(Circuit([(:p2, 1, 0, Port(2; Z0 = z2)), (:c2, 1, 0, Capacitor(1e-12)),
             (:p1, 2, 0, Port(1; Z0 = z1)), (:c1, 2, 0, Capacitor(2e-12))]);
             sources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t)), TransientSource(2, t -> 0.5e-6*cospi(3e9*t))])
         tp = twoport(50.0, 75.0)
-        @test tp.portimpedances == [75.0, 50.0]
+        @test tp.portimpedances == [50.0, 75.0]
         tnames = ["p2/termination", "p1/termination"]
-        @test JC.componentperturbation(tp, tnames, JC.CPU(); forcing = true).ports == [1, 2]
+        @test JC.componentperturbation(tp, tnames, JC.CPU(); forcing = true).ports == [2, 1]
         tsol = transientsolve(tp, (0.0, 1e-9); dt = 2e-12, method = GaussLegendre(), record = :states, tol...)
         ts = transientsensitivity(tsol, tnames)
         eps = 1e-5
@@ -881,6 +956,73 @@ scaledentries(netlist, name, r) =
             # a device keeps the one chunk its uniform batch already is
             @test JosephsonCircuits.batchchunks(NotTheHost(), 8) == [1:8]
         end
+        # A condition refreshes its own factorization: a junction biased
+        # hard enough that its frozen operator drifts beside one that
+        # never does, stepped as one chunk, as two and each alone, has the
+        # same bits every way, forward, in the tangent and in the adjoint,
+        # and the weak one factorizes once.
+        let circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("Lj1", "1", "0", JosephsonJunction(1e-9)),
+                ("C1", "1", "0", Capacitor(0.2e-12))]),
+            ramp = t -> t <= 0 ? 0.0 : t >= 0.5e-9 ? 1.0 : (1 - cospi(t/0.5e-9))/2,
+            base = transientproblem(circuit; sources = [TransientSource(1, t -> 0.0)]),
+            pair = [transientproblem(base; sources = [TransientSource(1, t -> ib*ramp(t) + 1e-9*sinpi(2*3e9*t))])
+                for ib in (0.2e-6, 0.6e-6)],
+            sys = JC.transientsystem(base, 15e-12, GaussLegendre(), JC.CPU(), JC.transientfactorization(JC.CPU())),
+            run = (js, chunks) -> JC.gaussbatchintegrate(sys, pair[js], 0.0, 333*15e-12, 333,
+                [transientstate(q) for q in pair[js]], 1, :states, 0, 1e-9, 1e-10, 15, nothing; chunks)
+            whole, split = run(1:2, [1:2]), run(1:2, [1:1, 2:2])
+            alone = [run(j:j, [1:1]) for j in 1:2]
+            @test alone[1].stats.factorizations == 1 && alone[2].stats.factorizations > 10
+            @test whole.stats.factorizations == split.stats.factorizations == alone[2].stats.factorizations
+            member = (a, j) -> selectdim(a, ndims(a), j)
+            for j in 1:2, f in (:voltage, :flux, :phases)
+                @test member(getfield(whole, f), j) == member(getfield(split, f), j) == member(getfield(alone[j], f), 1)
+            end
+            nt = length(whole.times)
+            (injh, tp) = JC.targetinjection(base, JC.porttargets(base))
+            tc = JC.tangentcurrents([1e-9*sinpi(2*2.9e9*t) for _ in 1:1, t in whole.times], 1, nt, 1)
+            init = JC.tangentinitial(nothing, length(base), 1, 2, 0, 1, 0)
+            wh = JC.adjointweights([cospi(2*3.1e9*t) for _ in 1:1, t in whole.times], 1, nt)
+            tangent = chunks -> JC.gaussbatchtangent(whole, tc, injh, tp, init, sys, nothing, nothing, nothing; chunks)
+            adjoint = chunks -> JC.gaussbatchadjoint(whole, wh, true, :outgoing, injh, tp, sys, nothing, nothing, nothing,
+                nothing; chunks)
+            @test tangent([1:2]).outgoing == tangent([1:1, 2:2]).outgoing
+            @test adjoint([1:2]).currents == adjoint([1:1, 2:2]).currents
+        end
+        # so does the projection of its endpoint: two unequal junctions in
+        # series around a node without capacitance, one pair driven into
+        # the voltage state beside one which is not
+        let Ic = JC.phi0/1e-9,
+            ramp = t -> t <= 0 ? 0.0 : t >= 0.2e-9 ? 1.0 : (1 - cospi(t/0.2e-9))/2,
+            base = transientproblem(Circuit([("p1", "1", "0", Port(1)), ("c1", "1", "0", Capacitor(1e-12)),
+                ("J1", "1", "2", JosephsonJunction(1e-9)), ("J2", "2", "0", JosephsonJunction(1.3e-9))]);
+                sources = [TransientSource(1, t -> 0.0)]),
+            pair = [transientproblem(base; sources = [TransientSource(1, t -> a*Ic*ramp(t) + 0.05Ic*sinpi(2*7e9*t))])
+                for a in (0.3, 1.2)],
+            sys = JC.transientsystem(base, 1e-12, GaussLegendre(), JC.CPU(), JC.transientfactorization(JC.CPU())),
+            run = (js, chunks) -> JC.gaussbatchintegrate(sys, pair[js], 0.0, 1e-9, 1000,
+                [transientstate(q) for q in pair[js]], 1, :states, 0, 1e-9, 1e-10, 15, nothing; chunks)
+            whole = run(1:2, [1:2])
+            @test !isempty(sys.projection.directions)
+            @test all(j -> whole.flux[:, :, j] == run(j:j, [1:1]).flux[:, :, 1], 1:2)
+        end
+        # a step which fails throws the typed error naming the conditions
+        # which failed it, the others having converged there: a pump the
+        # step cannot follow beside a weak drive, which converges alone
+        let base = transientproblem(JC.warmupcircuit(50.0, 100.0e-15, 1000.0e-12, 1000.0e-15);
+                sources = [TransientSource(1, t -> 0.0)]),
+            h = 1/(2*4.75e9),
+            weak = transientproblem(base; sources = [TransientSource(1, t -> 1e-9*cospi(2*4.75e9*t))]),
+            strong = transientproblem(base; sources = [TransientSource(1, t -> 1e-6*cospi(2*4.75e9*t))])
+            err = try
+                transientsolve([weak, strong], (0.0, 40h); dt = h)
+            catch e
+                e
+            end
+            @test err isa TransientStepError && err.conditions == [2] && err.cause == :newton
+            @test err.step == 2 && err.time ≈ 2h
+            @test transientsolve(weak, (0.0, 40h); dt = h).stats.steps == 40
+        end
         # the responses of the whole batch on one pass equal the members'
         currents = [1e-8*sinpi(2*4.7e9*t) for p in 1:1, t in batch.times]
         tb = transienttangent(batch, currents)
@@ -897,8 +1039,8 @@ scaledentries(netlist, name, r) =
         ts = transienttangent(batch, currents; outputsink = sink)
         @test isnothing(ts.outgoing) && isnothing(ts.voltage)
         # the stored tangent runs in chunks across the threads of the
-        # session and the one with a sink on one task, whose stage
-        # operators are refreshed on the worst column of their own chunk
+        # session and the one with a sink on one task, each condition
+        # refreshing its own stage operator
         @test measured ≈ sum(tb.outgoing; dims = 2)[:, 1, :] rtol=1e-10
         # a reuse keeps the workspaces of the tangent and the adjoint for a
         # response of the same shape, which gives the same results on them;
@@ -940,9 +1082,8 @@ scaledentries(netlist, name, r) =
         # On the host a batch's stored responses are split into chunks of
         # conditions across the threads of the session, each chunk on its
         # own workspace, and joined; the conditions are independent, so
-        # any split gives the same responses to the roundoff of the stage
-        # solves, which stop when every column of a chunk has converged.
-        # A reuse keeps one workspace per chunk.
+        # any split gives the same responses. A reuse keeps one workspace
+        # per chunk.
         let sys = reuse.system, p = first(batch.problems), nt = length(batch.times),
             (injh, tp) = JC.targetinjection(p, JC.porttargets(p)),
             tc = JC.tangentcurrents(currents, 1, nt, 1), init = JC.tangentinitial(nothing, length(p), 1, 3, 0, 1, 0),
@@ -1204,7 +1345,7 @@ scaledentries(netlist, name, r) =
             # which reads the drive's rate; so a restart from the end is
             # accepted
             bsys = JC.transientsystem(bsol.problem, bdt, method, JC.CPU(), KLUfactorization())
-            @test maximum(JC.transientconsistency(bsys, bsol.flux[:, k], bsol.rate[:, k], bsol.times[k])[1]
+            @test maximum(JC.transientconsistency(bsys, bsol.flux[:, k], bsol.rate[:, k], bsol.times[k]).violation
                 for k in eachindex(bsol.times)) < 1e-10
             @test transientsolve(bsol.problem, (bspan[2], bspan[2] + 8bdt); dt = bdt, method,
                 initialstate = transientstate(bsol)).stats.steps == 8
@@ -1219,8 +1360,31 @@ scaledentries(netlist, name, r) =
         for method in (GaussLegendre(), Trapezoidal())
             ssol = transientsolve(sprob, (0.0, 0.1e-9); dt = 2e-12, method, record = :states)
             ssys = JC.transientsystem(sprob, 2e-12, method, JC.CPU(), KLUfactorization())
-            @test maximum(JC.transientconsistency(ssys, ssol.flux[:, k], ssol.rate[:, k], ssol.times[k])[1]
+            @test maximum(JC.transientconsistency(ssys, ssol.flux[:, k], ssol.rate[:, k], ssol.times[k]).violation
                 for k in eachindex(ssol.times)) < 1e-10
+        end
+        # a junction's phase is a difference of node fluxes which may be
+        # far larger than it, whose rounding the floor allows for: a
+        # series array of identical junctions without capacitance on its
+        # inner nodes, which divide the flux evenly, and a pair of unequal
+        # junctions driven into the voltage state, whose node fluxes wind
+        # up while their currents stay balanced at the node between them
+        M = 24
+        array = transientproblem(Circuit(vcat([("p1", "1", "0", Port(1)), ("c1", "1", "0", Capacitor(1e-12))],
+                [("J$j", string(j), j == M ? "0" : string(j + 1), JosephsonJunction(1e-9/M)) for j in 1:M]));
+            sources = [TransientSource(1, t -> 0.3e-6*sinpi(2*3e9*t))])
+        order = [findfirst(==(string(j)), array.circuit.nodenames) - 1 for j in 1:M]
+        Ic = JC.phi0/1e-9
+        pair = transientproblem(Circuit([("p1", "1", "0", Port(1)), ("c1", "1", "0", Capacitor(1e-12)),
+                ("J1", "1", "2", JosephsonJunction(1e-9)), ("J2", "2", "0", JosephsonJunction(1.3e-9))]);
+            sources = [TransientSource(1, t -> 2.5Ic*(t <= 0 ? 0.0 : t >= 0.2e-9 ? 1.0 : (1 - cospi(t/0.2e-9))/2))])
+        for method in (GaussLegendre(), Trapezoidal())
+            asol = transientsolve(array, (0.0, 0.2e-9); dt = 1e-12, method)
+            @test asol.finalflux[order] ≈ asol.finalflux[order[1]] .* (M:-1:1) ./ M rtol=1e-10
+            psol = transientsolve(pair, (0.0, 0.5e-9); dt = 1e-12, method)
+            x1, x2 = psol.finalflux[1], psol.finalflux[2]
+            @test x2 > 10
+            @test sin(x1 - x2) ≈ sin(x2)/1.3 rtol=1e-10
         end
         # a tangent current on a record of two or three samples: its rate
         # at each time from the line or the quadratic through them, under
@@ -1274,7 +1438,7 @@ scaledentries(netlist, name, r) =
                 dt = 50e-12, method, rtol = 1e-12)
             @test with.voltage ≈ without.voltage rtol=1e-8
             msys = JC.transientsystem(hprob, 50e-12, method, JC.CPU(), KLUfactorization())
-            @test maximum(JC.transientconsistency(msys, with.flux[:, k], with.rate[:, k], with.times[k])[1]
+            @test maximum(JC.transientconsistency(msys, with.flux[:, k], with.rate[:, k], with.times[k]).violation
                 for k in eachindex(with.times)) < 1e-10
         end
         hmats = (JC.hostsparse(hsys.L), JC.hostsparse(hsys.RJ), JC.hostsparse(hsys.injection),
@@ -1322,7 +1486,8 @@ scaledentries(netlist, name, r) =
         f, ip = 3e9, 0.12e-6
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> ip*cospi(2f*t))])
         sol = transientsolve(prob, (0.0, 12e-9); dt = 0.5e-12, method = Trapezoidal())
-        # a factorization is kept while Newton converges in one correction
+        # a factorization is kept while its corrections contract the
+        # residual
         @test sol.stats.factorizations < 10
         # the iterative step, on the package's GMRES with the factorization
         # as its preconditioner, gives the same trajectory from one

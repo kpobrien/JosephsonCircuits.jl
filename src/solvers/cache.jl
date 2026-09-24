@@ -20,15 +20,16 @@
     HBCache
 
 A reusable harmonic balance solver over a typed circuit with parameters:
-the compiled circuit and its definitions, the mode grid and its Fourier
-index maps, the solver options, and the last converged operating point,
-which [`hbsolve!`](@ref) uses to warm start the next solve.
+the compiled circuit and a copy of its definitions, the mode grid and its
+Fourier index maps, the solver options, and the last converged operating
+point, which [`hbsolve!`](@ref) uses to warm start the next solve.
 
 Built by [`hbcache`](@ref). `converged` reports whether the last solve
 succeeded, and a solve which does not converge also warns with the reason
-it stopped. Check it: a solve which does not converge returns a state that
-looks like a solution and is not one, and comparing timings or gradients
-against it is meaningless.
+it stopped and leaves the stored operating point as it was. Check it: a
+solve which does not converge returns a state that looks like a solution
+and is not one, and comparing timings or gradients against it is
+meaningless.
 """
 mutable struct HBCache{N,K,P}
     compiled::CompiledCircuit
@@ -37,13 +38,14 @@ mutable struct HBCache{N,K,P}
     definitions::Dict{Any,Any}
     definitionkeys::Dict{Symbol,Vector{Any}}
     plan::P
-    structure::Any
     frequencies::Frequencies{N}
     indices::FourierIndices{N}
     Nmodes::Int
     w::NTuple{N,Float64}
     sources::Vector{SourceTuple{N}}
     kwargs::K
+    # the node fluxes of the last converged point, the warm start, and
+    # whether the last solve converged
     x::Union{Nothing,Vector{Complex{Float64}}}
     converged::Bool
     nsolves::Int
@@ -64,11 +66,13 @@ end
 A reusable nonlinear solver over a typed [`Circuit`](@ref), or the
 [`CompiledCircuit`](@ref) of one, whose values are written in terms of
 parameters (symbols, or the parameters of [`@params`](@ref)), with
-`circuitdefs` giving every parameter a number. [`hbsolve!`](@ref) takes
-the parameters to move as a named tuple keyed by their names, reads the
-rest from `circuitdefs`, and evaluates the values at the point; a value
-which is not a number at the definitions (a frequency dependent one) is
-refused.
+`circuitdefs` giving every parameter a number. The cache keeps a copy of
+`circuitdefs`, so editing the dictionary afterwards does not move it.
+[`hbsolve!`](@ref) takes the parameters to move as a named tuple keyed by
+their names, reads the rest from the definitions, and evaluates the values
+at the point; a name the definitions do not hold is refused, and so is a
+value which is not a number at the definitions (a frequency dependent
+one).
 
 The harmonic selection keywords match [`hbnlsolve`](@ref); the remaining
 keywords are stored and forwarded to every solve as keywords of
@@ -79,9 +83,10 @@ here: a keyword the compiled circuit solve does not accept is an
 as are `x0` and `reuse`, which the cache manages itself (the warm start
 through `warmstart`, the reuse object internally), `keyedarrays = true`,
 since the state is kept as plain vectors (`false` is accepted as what the
-cache does anyway), and `method = Staged()`, which the cache does not
-support since the continuation builds its own systems at its own
-truncations.
+cache does anyway), `returnsystem = true` and `debugJacobian = true`,
+which return the system rather than solve it, and `method = Staged()`,
+which the cache does not support since the continuation builds its own
+systems at its own truncations.
 
 # Examples
 ```julia
@@ -102,25 +107,21 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
         maxintermodorder = Inf, frequencywindow = (0, Inf),
         dc::Bool = false, odd::Bool = true, even::Bool = false, kwargs...) where {N}
-    all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
-        lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
     checkcachekwargs(kwargs)
     compiled = compile(circuit)
-    definitions = definitiontable(circuitdefs)
-    bound = bindvalues(compiled, cachevalues(compiled, definitions))
+    # a copy, so that the caller's dictionary does not move the cache
+    definitions = Dict{Any,Any}(circuitdefs)
+    # every value a number at the definitions, or refused naming it
+    cachevalues(compiled, definitions)
     # the inputs in their canonical forms, once, for every solve
     w = tonefrequencies(w)
     sources = sourcetable(sources, w)
-    frequencies = removeconjfreqs(
-        truncfreqs(calcfreqsrdft(Nevaluationharmonics); dc = dc, odd = odd,
-            even = even, maxintermodorder = maxintermodorder,
-            maxharmonics = Nharmonics, w = w,
-            frequencywindow = frequencywindow))
-    indices = fourierindices(frequencies)
+    frequencies, indices = pumpmodeset(w, Nharmonics, Nevaluationharmonics;
+        dc = dc, odd = odd, even = even, maxintermodorder = maxintermodorder,
+        frequencywindow = frequencywindow)
     Nmodes = length(frequencies.modes)
     plan = circuitmatrixplan(compiled; Nmodes = Nmodes)
     return HBCache(compiled, definitions, definitionkeys(definitions), plan,
-        structuralkey(bound),
         # as a named tuple: a keyword splat of mixed value types is a
         # `Pairs{Symbol,Any}`, and splatting that into every solve hands the
         # solver keywords of unknown type
@@ -150,23 +151,26 @@ function definitionkeys(definitions::AbstractDict)
 end
 
 # the definitions with the parameters of the point `p` moved, under every
-# key of each name (see `definitionkeys`); a parameter the definitions do
-# not hold is added under its symbol
+# key of each name (see `definitionkeys`); a name the definitions do not
+# hold is refused, since nothing in the circuit could read it
 function definitionsat(definitions::AbstractDict, index::AbstractDict,
         p::NamedTuple)
     d = copy(definitions)
     for (name, value) in zip(keys(p), values(p))
         moved = get(index, name, nothing)
-        if isnothing(moved)
-            d[name] = value
-        else
-            for key in moved
-                d[key] = value
-            end
+        isnothing(moved) && throwunknownparameter(name, keys(index))
+        for key in moved
+            d[key] = value
         end
     end
     return d
 end
+
+function throwunknownparameter(name, known)
+    names = join(sort!(collect(known)), ", ")
+    throw(ArgumentError(lazy"the point moves `$(name)`, which the definitions do not hold; the parameters are $(names)."))
+end
+
 # the keywords the compiled circuit solve accepts, read off its method so
 # the check cannot drift from the signature
 function compiledsolvekwargs()
@@ -182,9 +186,11 @@ end
 Validate the solver keywords an [`hbcache`](@ref) stores for every solve.
 `x0` and `reuse` are the cache's own to manage and are refused, as is
 `keyedarrays = true`, since the state is kept as plain vectors (`false` is
-accepted); so is `method = Staged()`, which the compiled circuit solve does
-not take; and so is any keyword that solve does not accept, which would
-otherwise fail at the first [`hbsolve!`](@ref) with a method error.
+accepted); so are `returnsystem = true` and `debugJacobian = true`, whose
+solves return the system rather than a solution; so is `method =
+Staged()`, which the compiled circuit solve does not take; and so is any
+keyword that solve does not accept, which would otherwise fail at the
+first [`hbsolve!`](@ref) with a method error.
 """
 function checkcachekwargs(kwargs)
     for k in (:x0, :reuse)
@@ -194,6 +200,10 @@ function checkcachekwargs(kwargs)
     if haskey(kwargs, :keyedarrays) && kwargs[:keyedarrays]
         throw(ArgumentError(
             "`keyedarrays = true` cannot be stored in the cache, whose state is kept as plain vectors for the warm start; index the returned arrays by position, or convert them."))
+    end
+    for k in (:returnsystem, :debugJacobian)
+        haskey(kwargs, k) && kwargs[k] == true && throw(ArgumentError(
+            lazy"`$(k) = true` returns the system rather than solving it, which a cache is for; build it with `hbnlsolve` or `hbnonlinearproblem`."))
     end
     if haskey(kwargs, :method) && kwargs[:method] isa Staged
         throw(ArgumentError(
@@ -217,17 +227,33 @@ componentvalues(cache::HBCache, p::NamedTuple) =
     cachevalues(cache.compiled,
         definitionsat(cache.definitions, cache.definitionkeys, p))
 
+# whether the matrices `nm` hold the element types the values of `b`
+# assemble to, so that they can be refilled in place
+function refillable(nm::CircuitMatrices, b::BoundCircuit)
+    return eltype(nm.Cnm) === eltype(b.capacitors) &&
+        eltype(nm.Gnm) === eltype(b.resistors) &&
+        eltype(nm.Lb) === eltype(b.inductors) &&
+        eltype(nm.Ljb) === eltype(b.junctions) &&
+        eltype(nm.Mb) === promote_type(eltype(b.inductors),
+            eltype(b.mutualinductors))
+end
+
 """
     reset!(cache::HBCache)
 
 Discard the stored operating point, so the next [`hbsolve!`](@ref) starts
-cold. Use this when the parameters move far enough that the previous
-solution is a worse starting point than zero, or when crossing to a
-different solution branch.
+cold, and with it what the previous solves taught the preconditioner: a
+coupling set grown by escalation or by measurement, and the deflation
+candidates of a [`Floquet`](@ref) preconditioner, so the next solve builds
+the preconditioner its method asks for. Use this when the parameters move
+far enough that the previous solution is a worse starting point than zero,
+or when crossing to a different solution branch.
 """
 function reset!(cache::HBCache)
     cache.x = nothing
     cache.converged = false
+    cache.reuse.preconditioner = nothing
+    cache.reuse.recycling = nothing
     return cache
 end
 
@@ -235,55 +261,47 @@ end
     hbsolve!(cache::HBCache, p::NamedTuple; warmstart = true)
 
 Solve the nonlinear harmonic balance problem of `cache` at the design
-parameters `p`, warm starting from the previously converged operating
-point. Returns the [`NonlinearHB`](@ref) solution; `cache.converged`
-reports whether it converged.
+parameters `p`, warm starting from the last converged operating point.
+Returns the [`NonlinearHB`](@ref) solution; `cache.converged` reports
+whether it converged. A name of `p` which the definitions of the
+cache do not hold is an `ArgumentError`.
 
 The compiled circuit and the mode grid are reused, and so are the system,
 the preconditioner and the Krylov vectors of the previous solve, rebound to
 the new component values (see [`HBReuse`](@ref)); only the numeric matrices
-and the solve itself are recomputed. If the previous solve did not converge
-its state is not used, because starting from a non-solution is usually
-worse than starting cold; `warmstart = false` starts cold without
-discarding the stored point, unlike [`reset!`](@ref). A component value
-which crosses a structural boundary (an inductance open or shorted, a value
-turned complex, a mutual coupling reaching one) invalidates the cached
-sparsity patterns and is an `ArgumentError`; build a new cache for those
-parameters.
+and the solve itself are recomputed. The matrices are refilled on the
+patterns of the compiled circuit, which do not depend on the values, and
+assembled anew when a value changes the element type of its group (a
+resistance or a capacitance turned complex). A solve which does not
+converge leaves the stored point as it was, so the next one starts from
+the last solution rather than from a non-solution or from nothing;
+`warmstart = false` starts cold without discarding the stored point,
+unlike [`reset!`](@ref).
 """
 function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     vvn = componentvalues(cache, p)
     # only the numbers moved, so the topology, the groups and the sparsity
-    # patterns are reused and the matrices are refilled rather than rebuilt.
-    # A value which crosses a structural boundary -- an inductance going
-    # open or shorted, a capacitance going complex -- would change the
-    # patterns, so it is refused rather than silently assembled against a
-    # stale plan.
+    # patterns are reused, and the matrices are refilled in the storage of
+    # the previous point's when they hold the element types the values
+    # assemble to, and assembled anew otherwise
     bound = bindvalues(cache.compiled, vvn)
-    if structuralkey(bound) != cache.structure
-        throw(ArgumentError("a component value crossed a structural boundary (an inductance became open or shorted, a value became complex, or a mutual coupling reached one), so the cached sparsity patterns no longer apply. Build a new cache for these parameters."))
-    end
-    # into the storage of the previous point's matrices, once there are any
-    nm = if isnothing(cache.nm)
+    nm = if isnothing(cache.nm) || !refillable(cache.nm, bound)
         matrices = assemblematrices(cache.plan, bound)
         cache.matrixworkspace = CircuitMatrixWorkspace(cache.plan, matrices)
         matrices
     else
-        matrices = assemblematrices!(cache.nm, cache.plan, bound, cache.matrixworkspace)
-        if eltype(matrices.Mb) !== eltype(cache.nm.Mb)
-            cache.matrixworkspace = CircuitMatrixWorkspace(cache.plan, matrices)
-        end
-        matrices
+        assemblematrices!(cache.nm, cache.plan, bound, cache.matrixworkspace)
     end
     cache.nm = nm
-    x0 = (warmstart && cache.converged) ? initialguess(cache.x) : ComplexF64[]
+    x0 = (warmstart && !isnothing(cache.x)) ? initialguess(cache.x) :
+        ComplexF64[]
     # keyed arrays are a presentation convenience and pure overhead in a
     # loop; the stored state has to be a plain vector for the warm start
     nl = hbnlsolve(cache.w, cache.sources, cache.frequencies,
         cache.indices, cache.compiled, nm;
         x0 = x0, keyedarrays = false, reuse = cache.reuse, cache.kwargs...)
-    cache.x = vec(collect(nl.nodeflux))
     cache.converged = nl.solverinfo.converged
+    cache.converged && (cache.x = vec(collect(nl.nodeflux)))
     cache.nsolves += 1
     return nl
 end

@@ -1,13 +1,14 @@
 
 """
     Frequencies(Nharmonics::NTuple{N, Int}, Nw::NTuple{N,Int}, Nt::NTuple{N,Int},
-        coords::Vector{CartesianIndex{N}}, modes::Vector{NTuple{N,Int})
+        coords::Vector{CartesianIndex{N}}, modes::Vector{NTuple{N,Int}})
 
 A simple structure to hold time and frequency domain information for the
 signals. See also [`calcfreqsrdft`](@ref) and [`calcfreqsdft`](@ref).
 
 # Fields
-- `Nharmonics::NTuple{N, Int}`: The number of harmonics for each frequency.
+- `Nharmonics::NTuple{N, Int}`: The number of harmonics of each frequency
+    the grid samples, which sets `Nw` and `Nt`; the modes kept may be fewer.
 - `Nw::NTuple{N,Int}`: The dimensions of the frequency domain signal for a
     single node.
 - `Nt::NTuple{N,Int}`: The dimensions of the time domain signal for a single
@@ -25,8 +26,7 @@ struct Frequencies{N}
 end
 
 """
-    FourierIndices(conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}},
-        vectomatmap::Vector{Int}, conjsourceindices::Vector{Int},
+    FourierIndices(vectomatmap::Vector{Int}, conjsourceindices::Vector{Int},
         conjtargetindices::Vector{Int}, hbmatmodes::Matrix{NTuple{N, Int}},
         hbmatindices::Matrix{Int}, hbconjmatindices::Matrix{Int})
 
@@ -38,13 +38,11 @@ derivative of the residual with respect to the node fluxes), while the
 `hbconjmatindices` matrix is built from the sums of the modes, aliased back
 onto the sampled grid, and describes the coupling between the modes and the
 complex conjugates of the modes (the derivative of the residual with respect
-to the complex conjugates of the node fluxes). The mode sums themselves are
-not kept: nothing reads them, and at thousands of modes a matrix of mode
-tuples over every pair is the largest thing in the setup. See also
+to the complex conjugates of the node fluxes). The mode sums are not kept. See
+also
 [`fourierindices`](@ref).
 """
 struct FourierIndices{N}
-    conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}
     vectomatmap::Vector{Int}
     conjsourceindices::Vector{Int}
     conjtargetindices::Vector{Int}
@@ -64,13 +62,12 @@ the Fourier analysis. See also [`FourierIndices`](@ref), [`Frequencies`](@ref),
 """
 function fourierindices(freq::Frequencies)
 
-    conjsymdict = conjsym(freq)
-    freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(freq,conjsymdict)
+    freqindexmap, conjsourceindices, conjtargetindices =
+        calcphiindices(freq, conjsym(freq))
     Amatrixmodes, Amatrixindices = hbmatind(freq)
-    _, Amatrixconjindices = hbconjmatind(freq)
+    Amatrixconjindices = hbconjmatind(freq)
 
     return FourierIndices(
-        conjsymdict,
         freqindexmap,
         conjsourceindices,
         conjtargetindices,
@@ -182,165 +179,27 @@ function removeconjfreqs(frequencies::Frequencies)
 end
 
 """
-    keepfreqs(frequencies::Frequencies{N},
-        keepmodes::AbstractVector{NTuple{N,Int}})
-
-Return a new Frequencies struct with all coordinates and modes except the ones
-in keepmodes removed.
-"""
-function keepfreqs(frequencies::Frequencies{N},
-    keepmodes::AbstractVector{NTuple{N,Int}}) where N
-    Nt = frequencies.Nt
-    Nw = frequencies.Nw
-    coords = frequencies.coords
-    modes = frequencies.modes
-
-    keepmodesdict = Dict{eltype(keepmodes),Int}()
-    sizehint!(keepmodesdict,length(keepmodes))
-
-    keepmodessorted = Vector{eltype(modes)}(undef,0)
-    sizehint!(keepmodessorted,length(keepmodes))
-
-    keepcoords = Vector{eltype(coords)}(undef,0)
-    sizehint!(keepcoords,length(keepmodes))
-
-    for (i,mode) in enumerate(keepmodes)
-        keepmodesdict[mode] = i
-    end
-
-    for i in eachindex(modes)
-        if haskey(keepmodesdict,modes[i])
-            push!(keepmodessorted,modes[i])
-            push!(keepcoords,coords[i])
-        end
-    end
-
-    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodessorted)
-end
-
-"""
-    keepfreqs(frequencies::Frequencies{N},
-        keepcoords::AbstractVector{CartesianIndex{N}})
-
-Return a new Frequencies struct with all coordinates and modes except the ones
-in keepmodes removed.
-"""
-function keepfreqs(frequencies::Frequencies{N},
-    keepcoords::AbstractVector{CartesianIndex{N}}) where N
-    Nt = frequencies.Nt
-    Nw = frequencies.Nw
-    coords = frequencies.coords
-    modes = frequencies.modes
-
-    keepcoordsdict = Dict{eltype(keepcoords),Int}()
-    sizehint!(keepcoordsdict,length(keepcoords))
-
-    keepmodes = Vector{eltype(modes)}(undef,0)
-    sizehint!(keepmodes,length(keepcoords))
-
-    keepcoordssorted = Vector{eltype(coords)}(undef,0)
-    sizehint!(keepcoordssorted,length(keepcoords))
-
-    for (i,coord) in enumerate(keepcoords)
-        keepcoordsdict[coord] = i
-    end
-
-    for i in eachindex(coords)
-        if haskey(keepcoordsdict,coords[i])
-            push!(keepmodes,modes[i])
-            push!(keepcoordssorted,coords[i])
-        end
-    end
-
-    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoordssorted,keepmodes)
-end
-
-"""
     removefreqs(frequencies::Frequencies{N},
         removemodes::AbstractVector{NTuple{N,Int}})
-
-Return a new Frequency struct with the coordinates and modes for the modes in
-removemodes removed.
-"""
-function removefreqs(frequencies::Frequencies{N},
-    removemodes::AbstractVector{NTuple{N,Int}}) where N
-    Nt = frequencies.Nt
-    Nw = frequencies.Nw
-    coords = frequencies.coords
-    modes = frequencies.modes
-
-    # estimate the size of the output
-    if length(removemodes) >= length(modes)
-        sizeestimate = 0
-    else
-        sizeestimate = length(modes) - length(removemodes)
-    end
-
-    removemodesdict = Dict{eltype(removemodes),Int}()
-    sizehint!(removemodesdict,length(removemodes))
-
-    keepmodessorted = Vector{eltype(modes)}(undef,0)
-    sizehint!(keepmodessorted,sizeestimate)
-
-    keepcoords = Vector{eltype(coords)}(undef,0)
-    sizehint!(keepcoords,sizeestimate)
-
-    for (i,mode) in enumerate(removemodes)
-        removemodesdict[mode] = i
-    end
-
-    for i in eachindex(modes)
-        if !haskey(removemodesdict,modes[i])
-            push!(keepmodessorted,modes[i])
-            push!(keepcoords,coords[i])
-        end
-    end
-
-    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodessorted)
-end
-
-"""
     removefreqs(frequencies::Frequencies{N},
         removecoords::AbstractVector{CartesianIndex{N}})
 
-Return a new Frequency struct with the coordinates and modes for the modes in
-removemodes removed.
+Return a new [`Frequencies`](@ref) without the modes `removemodes`, or
+without the modes at the coordinates `removecoords`, keeping the others in
+their order.
 """
-function removefreqs(frequencies::Frequencies{N},
-    removecoords::AbstractVector{CartesianIndex{N}}) where N
-    Nt = frequencies.Nt
-    Nw = frequencies.Nw
-    coords = frequencies.coords
-    modes = frequencies.modes
+removefreqs(frequencies::Frequencies{N},
+    removemodes::AbstractVector{NTuple{N,Int}}) where N =
+    keepunlisted(frequencies, frequencies.modes, Set(removemodes))
+removefreqs(frequencies::Frequencies{N},
+    removecoords::AbstractVector{CartesianIndex{N}}) where N =
+    keepunlisted(frequencies, frequencies.coords, Set(removecoords))
 
-    # estimate the size of the output
-    if length(removecoords) >= length(modes)
-        sizeestimate = 0
-    else
-        sizeestimate = length(modes) - length(removecoords)
-    end
-
-    removecoordsdict = Dict{eltype(removecoords),Int}()
-    sizehint!(removecoordsdict,length(removecoords))
-
-    keepmodes = Vector{eltype(modes)}(undef,0)
-    sizehint!(keepmodes,sizeestimate)
-
-    keepcoords = Vector{eltype(coords)}(undef,0)
-    sizehint!(keepcoords,sizeestimate)
-
-    for (i,coord) in enumerate(removecoords)
-        removecoordsdict[coord] = i
-    end
-
-    for i in eachindex(coords)
-        if !haskey(removecoordsdict,coords[i])
-            push!(keepmodes,modes[i])
-            push!(keepcoords,coords[i])
-        end
-    end
-
-    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodes)
+# the frequencies whose key, the mode or the coordinate, is not in `removed`
+function keepunlisted(frequencies::Frequencies, keys, removed)
+    keep = [!(k in removed) for k in keys]
+    return Frequencies(frequencies.Nharmonics, frequencies.Nw, frequencies.Nt,
+        frequencies.coords[keep], frequencies.modes[keep])
 end
 
 """
@@ -357,22 +216,17 @@ index in each tone is at most `maxharmonics` for that tone.
 
 With the tone frequencies `w` given and a window other than the default
 `(0, Inf)`, a mode is also required to lie in the `frequencywindow`:
-`wmin <= abs(dot(w, mode)) <= wmax`, in the units of `w`. The zero frequency mode is governed by `dc` alone. This is a
-truncation by frequency rather than by order: incommensurate tones scatter
-combination frequencies of high order arbitrarily close to zero, where a
-floating circuit's linear response is enormous although nothing excites
-those modes, and near the junction plasma frequency at the other end.
-Such modes carry no flux at the operating point (measured at 1e-5 of the
-strongest tone and 1e-9 of the flux energy on a three-tone line) and their
-nearly singular blocks are what a block diagonal preconditioner, and every
-preconditioner built from it, inverts badly. The ceiling is the one that
-changes a solve: on a 64-junction RPM line with three tones on a (6,4,4)
-grid, the 138 modes above 40 GHz, near the junction plasma frequency and
-at the edge of the sampled grid where their products alias, hold at most
-5e-4 of the strongest tone's flux, and without them the block diagonal
-preconditioner converges the solve in 32 Arnoldi steps where with them it
-fails after 9900; the retained modes change by 3e-4 and the tones by
-4e-5.
+`wmin <= abs(dot(w, mode)) <= wmax`, in the units of `w`. The zero
+frequency mode is governed by `dc` alone. This is a truncation by frequency
+rather than by order: incommensurate tones scatter combination frequencies
+of high order arbitrarily close to zero, where a floating circuit's linear
+response is enormous although nothing excites those modes, and near the
+junction plasma frequency at the other end, at the edge of the sampled grid
+where their products alias. Such modes carry almost no flux at the
+operating point, and their nearly singular blocks are what a block diagonal
+preconditioner, and every preconditioner built from it, inverts badly: the
+ceiling can decide whether such a preconditioner converges a solve, while
+the retained modes barely change.
 
 # Examples
 ```jldoctest
@@ -654,31 +508,6 @@ function printsymmetries(freq::Frequencies)
 end
 
 """
-    calcindexdict(N::Tuple)
-
-Return a dictionary of Cartesian indices where the Cartesian index is the key
-and the index giving the order is the value.
-"""
-function calcindexdict(N::Tuple)
-    d = Dict{CartesianIndex{length(N)},Int}()
-
-    for (i,index) in enumerate(CartesianIndices(N))
-        d[index] = i
-    end
-    return d
-end
-
-"""
-    calcindexdict(N::Int)
-
-Return a dictionary of Cartesian indices where the Cartesian index is the key
-and the index giving the order is the value.
-"""
-function calcindexdict(N)
-    return calcindexdict(Tuple(N))
-end
-
-"""
     calcphiindices(frequencies::Frequencies{N},
         conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}})
 
@@ -688,9 +517,11 @@ return the indices `conjsourceindices` whose data should be copied from the
 vector to `conjtargetindices` in the array then complex conjugated.
 
 # Arguments
-- `Nt`: tuple with dimensions of signal in time domain 
-- `dropdict`: dictionary of elements of frequency domain signal to drop where
-    the key is the Cartesian index and the value is the value. 
+- `frequencies`: the retained frequencies, whose coordinates are the
+    positions of the vector's elements in the frequency domain array.
+- `conjsymdict`: the conjugate symmetric pairs of coordinates of the array
+    (see [`conjsym`](@ref)); a retained coordinate with a pair has its
+    conjugate written at the paired coordinate.
 
 # Returns
 - `indexmap`: the indices which map the elements of the frequency domain
@@ -721,16 +552,8 @@ JosephsonCircuits.calcphiindices(noconjtruncfreq,conjsymdict)
 function calcphiindices(frequencies::Frequencies{N},
     conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}) where N
 
-    modes = frequencies.modes
     coords = frequencies.coords
     Nw = frequencies.Nw
-    Nt = frequencies.Nt
-
-    coordsdict = Dict{CartesianIndex{N},Int}()
-    sizehint!(coordsdict,length(coords))
-    for (i,coord) in enumerate(coords)
-        coordsdict[coord] = i
-    end
 
     # the position in the frequency domain array of each mode of the vector
     indexmap = Vector{Int}(undef,length(coords))
@@ -742,9 +565,8 @@ function calcphiindices(frequencies::Frequencies{N},
     # the positions which receive the conjugates
     conjtargetindices = Vector{Int}(undef,0)
 
-    # create a dictionary that maps between the CartesianIndex coordinates
-    # and the index in the array at which they occur. 
-    carttoint = calcindexdict(Nw)
+    # the position of each coordinate in the frequency domain array
+    carttoint = LinearIndices(Nw)
 
     # the vector to matrix map, in the order of `coords`
     for (i,coord) in enumerate(coords)
@@ -834,77 +656,6 @@ function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
 end
 
 """
-    phimatrixtovector!(phivector::Vector, phimatrix::Array,
-        indexmap::Vector{Int}, conjsourceindices::Vector{Int},
-        conjtargetindices::Vector{Int}, Nbranches::Int)
-
-The harmonic balance method requires a vector with all of the conjugate symmetric
-terms removed and potentially other terms dropped if specified by the user (
-for example, intermodulation products which are not of interest) whereas the
-Fourier transform operates on multidimensional arrays with the proper
-conjugate symmetries and with dropped terms set to zero. This function converts
-an array to a vector with the above properties.
-
-# Examples
-```jldoctest
-freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-conjsourceindices = [16, 6]
-conjtargetindices = [21, 31]
-Nbranches = 1
-
-phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap))
-phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
-
-JosephsonCircuits.phimatrixtovector!(phivector,
-    phimatrix,
-    freqindexmap,
-    conjsourceindices,
-    conjtargetindices,
-    Nbranches,
-)
-phivector
-
-# output
-8-element Vector{ComplexF64}:
- 0.0 + 1.0im
- 0.0 + 2.0im
- 0.0 + 3.0im
- 0.0 + 4.0im
- 0.0 + 5.0im
- 0.0 + 6.0im
- 0.0 + 7.0im
- 0.0 + 8.0im
-```
-"""
-function phimatrixtovector!(phivector::AbstractVector, phimatrix::AbstractArray,
-    indexmap::Vector{Int}, conjsourceindices::Vector{Int},
-    conjtargetindices::Vector{Int}, Nbranches::Int)
-
-
-    if length(phivector) == 0
-        Nvector = 0
-    else
-        Nvector = length(phivector)÷ Nbranches
-    end
-
-    Nmatrix = prod(size(phimatrix)[1:end-1])
-
-    # fill the vector with zeros
-    fill!(phivector,0)
-
-    if length(indexmap)*Nbranches != length(phivector)
-        throw(DimensionMismatch(lazy"Unexpected length for phivector"))
-    end
-
-    for i in 1:Nbranches
-        for j in 1:length(indexmap)
-            phivector[j+(i-1)*Nvector] = phimatrix[indexmap[j]+(i-1)*Nmatrix]
-        end
-    end
-    return nothing
-end
-
-"""
     applynl(fd::Array{Complex{Float64}}, f::Function)
 
 Perform the inverse discrete Fourier transform on an array `fd` of complex
@@ -977,7 +728,10 @@ end
 Create the inverse real transform plan from the frequency domain array `fd`
 to the time domain array `td`, and the forward plan back, on the given
 KernelAbstractions backend. The transform runs over all but the last
-dimension, the last being the Josephson junction index.
+dimension, the last being the Josephson junction index. The inverse plan is
+the unnormalized backward transform, which gives the time domain samples
+in the convention of [`applyifft!`](@ref) with no scaling pass; the
+forward plan is unnormalized too, and [`applyfft!`](@ref) scales it.
 
 The `CPU()` method uses FFTW. A device backend supplies its own method, which
 is the only thing the residual and the matrix-free products need that the
@@ -989,7 +743,7 @@ CUDA, `using CUDA`) to get its method.
 function fftplans(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
     stepsperperiod::Int, backend::CPU) where T
     dims = 1:length(size(fd))-1
-    irfftplan = FFTW.plan_irfft(fd, stepsperperiod, dims;
+    irfftplan = FFTW.plan_brfft(fd, stepsperperiod, dims;
         flags = FFTW.ESTIMATE, timelimit = Inf)
     rfftplan = FFTW.plan_rfft(td, dims; flags = FFTW.ESTIMATE, timelimit = Inf)
     return irfftplan, rfftplan
@@ -1027,22 +781,10 @@ fd
 function applynl!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T}, f, irfftplan,
     rfftplan) where T
 
-    #transform to the time domain
-    mul!(td, irfftplan, fd)
-
-    # normalize the fft
-    normalization = prod(size(td)[1:end-1])
-    invnormalization = 1/normalization
-
-    # apply the nonlinear function. broadcasting keeps this device generic
-    td .= f.(td .* normalization)
-
-    # transform to the frequency domain
-    mul!(fd, rfftplan, td)
-
-    # normalize
-    fd .*= invnormalization
-
+    applyifft!(td, fd, irfftplan)
+    # broadcasting keeps this device generic
+    td .= f.(td)
+    applyfft!(fd, td, rfftplan)
     return nothing
 end
 
@@ -1064,13 +806,10 @@ marks sinusoidal take instead. `work` is a time domain array the size of
 function applyrelationnl!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
         work::AbstractArray{T}, relations, coefficients, trig, irfftplan,
         rfftplan) where T
-    mul!(td, irfftplan, fd)
-    normalization = prod(size(td)[1:end-1])
-    work .= td .* normalization
+    applyifft!(work, fd, irfftplan)
     applyrelationlast!(td, work, coefficients, relations.sinusoidal,
         relations.anysinusoidal, trig)
-    mul!(fd, rfftplan, td)
-    fd .*= 1/normalization
+    applyfft!(fd, td, rfftplan)
     return nothing
 end
 
@@ -1085,8 +824,9 @@ With `alias = true` a difference mode which falls outside the sampled grid
 is aliased back onto it by the periodicity of the discrete transform
 ([`aliasmode`](@ref)) rather than dropped; the linearized solver uses
 `alias = false`, which makes the assembled matrix an explicit truncation.
-Returns a matrix describing which indices of the frequency domain matrix
-(from the RFFT) to pull out and use in the harmonic balance matrix. A negative
+Returns the modes of the harmonic balance matrix and a matrix describing
+which indices of the frequency domain matrix (from the RFFT) to pull out and
+use in it. A negative
 index means we take the complex conjugate of that element. A zero index means
 that term is not present, so skip it. The harmonic balance matrix describes
 the coupling between different frequency modes.
@@ -1137,9 +877,9 @@ end
     hbmatind(frequencies::Frequencies{N},
         truncfrequencies::Frequencies{N}; alias::Bool = false)
 
-Returns a matrix describing which indices of the frequency domain matrix
-(from the RFFT or FFT) to pull out and use in the harmonic balance matrix.
-A negative index means we take the complex conjugate of that element. A zero
+Returns the modes of the harmonic balance matrix and a matrix describing
+which indices of the frequency domain matrix (from the RFFT or FFT) to pull
+out and use in it. A negative index means we take the complex conjugate of that element. A zero
 index means that term is not present, so skip it. The harmonic balance matrix
 describes the coupling between different frequency modes.
 
@@ -1180,49 +920,58 @@ JosephsonCircuits.hbmatind(pumpfreq, signalfreq;alias = true)[2]
 function hbmatind(frequencies::Frequencies{N},
     truncfrequencies::Frequencies{N}; alias::Bool = false) where N
 
-    modes = frequencies.modes
     truncmodes = truncfrequencies.modes
-    Nt = frequencies.Nt
 
     # the mode difference of each pair of modes, which is the mode the
     # Fourier coefficient coupling them is read from
-    Amatrixmodes = Matrix{NTuple{N,Int}}(undef,length(truncmodes),length(truncmodes))
-    for i in 1:length(truncmodes)
-        for j in 1:length(truncmodes)
-            mode = NTuple{N,Int}(truncmodes[i][k]-truncmodes[j][k] for k in 1:length(truncmodes[i]))
-            Amatrixmodes[i,j] = mode
-        end
-    end
+    Amatrixmodes = [truncmodes[i] .- truncmodes[j]
+        for i in eachindex(truncmodes), j in eachindex(truncmodes)]
 
-    # the position of each mode in the frequency domain array
-    modesdict = Dict{eltype(modes),Int}()
-    for (i,mode) in enumerate(modes)
+    return Amatrixmodes, hbmatindices(frequencies, Amatrixmodes;
+        alias = alias)
+end
+
+"""
+    hbmatindices(frequencies::Frequencies{N},
+        Amatrixmodes::AbstractMatrix{NTuple{N,Int}}; alias::Bool = false)
+
+The index matrix of [`hbmatind`](@ref) for the mode differences
+`Amatrixmodes` it returns, read from the untruncated grid `frequencies`,
+so that a solve which needs the indices both with and without aliasing
+forms the differences once.
+"""
+function hbmatindices(frequencies::Frequencies{N},
+    Amatrixmodes::AbstractMatrix{NTuple{N,Int}}; alias::Bool = false) where N
+    modesdict = modeindexdict(frequencies)
+    Nt = frequencies.Nt
+    return [storedmodeindex(modesdict, mode, Nt, alias) for mode in Amatrixmodes]
+end
+
+# the position of each mode of the untruncated grid in the frequency domain
+# array
+function modeindexdict(frequencies::Frequencies)
+    modesdict = Dict{eltype(frequencies.modes),Int}()
+    for (i, mode) in enumerate(frequencies.modes)
         modesdict[mode] = i
     end
+    return modesdict
+end
 
-    # where in the frequency domain array each difference mode is, using the
-    # untruncated frequencies
-    Amatrixindices = zeros(Int,length(truncmodes),length(truncmodes))
-    for (i,mode) in enumerate(Amatrixmodes)
-        # if the alias flag is true, then for modes that fall outside the grid
-        # we take the corresponding mode from inside the grid due to the
-        # periodicity of the rdft.
-        if alias
-            aliasedmode, conjflag = aliasmode(mode, Nt)
-            if haskey(modesdict, aliasedmode)
-                Amatrixindices[i] = conjflag ? -modesdict[aliasedmode] : modesdict[aliasedmode]
-            end
-        else
-            conjmode = NTuple{N}(-m for m in mode)
-            if haskey(modesdict,mode)
-                Amatrixindices[i] = modesdict[mode]
-            elseif haskey(modesdict,conjmode)
-                Amatrixindices[i] = -modesdict[conjmode]
-            end
-        end
+# The signed position of `mode` in the frequency domain array whose modes
+# `modesdict` indexes: negative for the complex conjugate of a stored mode
+# and zero for a mode which is not stored. With `alias`, a mode which falls
+# outside the grid is first taken back onto it by the periodicity of the
+# transform.
+function storedmodeindex(modesdict, mode::NTuple{N,Int}, Nt::NTuple{N,Int},
+    alias::Bool) where N
+    if alias
+        aliasedmode, conjflag = aliasmode(mode, Nt)
+        k = get(modesdict, aliasedmode, 0)
+        return conjflag ? -k : k
     end
-
-    return Amatrixmodes, Amatrixindices
+    k = get(modesdict, mode, 0)
+    iszero(k) || return k
+    return -get(modesdict, map(-, mode), 0)
 end
 
 
@@ -1315,7 +1064,7 @@ that term is not present, so skip it. See also [`hbmatind`](@ref).
 
 # Examples
 ```jldoctest
-julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbconjmatind(JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[2]
+julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbconjmatind(JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
 4×4 Matrix{Int64}:
  1   2   3   4
  2   3   4  -4
@@ -1344,38 +1093,12 @@ term is not present, so skip it. See also [`hbmatind`](@ref).
 function hbconjmatind(frequencies::Frequencies{N},
     truncfrequencies::Frequencies{N}) where N
 
-    modes = frequencies.modes
     truncmodes = truncfrequencies.modes
+    modesdict = modeindexdict(frequencies)
     Nt = frequencies.Nt
-
     # the coupling between the modes and the complex conjugates of the
     # modes involves the sums of the modes, aliased back onto the sampled
-    # grid.
-    Amatrixconjmodes = Matrix{NTuple{N,Int}}(undef, length(truncmodes),
-        length(truncmodes))
-    for i in 1:length(truncmodes)
-        for j in 1:length(truncmodes)
-            mode = NTuple{N,Int}(truncmodes[i][k]+truncmodes[j][k] for k in 1:length(truncmodes[i]))
-            Amatrixconjmodes[i,j] = mode
-        end
-    end
-
-    # find the keys that are in the rfft matrix and their locations
-    modesdict = Dict{eltype(modes),Int}()
-    for (i,mode) in enumerate(modes)
-        modesdict[mode] = i
-    end
-
-    # find where in the dft matrix we should pull these modes from, after
-    # aliasing them back onto the sampled grid. to do this, we use the
-    # un-truncated frequencies struct.
-    Amatrixconjindices = zeros(Int,length(truncmodes),length(truncmodes))
-    for (i,mode) in enumerate(Amatrixconjmodes)
-        aliasedmode, conjflag = aliasmode(mode, Nt)
-        if haskey(modesdict, aliasedmode)
-            Amatrixconjindices[i] = conjflag ? -modesdict[aliasedmode] : modesdict[aliasedmode]
-        end
-    end
-
-    return Amatrixconjmodes, Amatrixconjindices
+    # grid of the untruncated frequencies; the sums are read and not kept
+    return [storedmodeindex(modesdict, truncmodes[i] .+ truncmodes[j], Nt, true)
+        for i in eachindex(truncmodes), j in eachindex(truncmodes)]
 end

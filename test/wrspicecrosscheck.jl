@@ -65,8 +65,30 @@ using XicTools_jll
             sd = transientsolve(p, ts; dt = 1e-12, saveevery = 5,
                 method = WRspice())
             @test sd.times == spice.times[1:5:end]
+            # and counts the steps of its grid, as the package's rules do
+            @test sd.stats.steps == spice.stats.steps == native.stats.steps
             @test maximum(abs, sd.voltage .- spice.voltage[:, 1:5:end]) <
                 1e-4*maximum(abs, spice.voltage)
+        end
+
+        @testset "a shunt capacitor listed first and a net past the node count" begin
+            # the same JPA with the junction's capacitor listed before it and
+            # its node named 3 of three nets: the netlist takes the
+            # capacitance wherever it is listed, and numbers the phase node
+            # past the nets rather than onto one
+            circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+                (:cc, 1, 3, Capacitor(100e-15)),
+                (:cj, 3, 0, Capacitor(1000e-15)),
+                (:jj, 3, 0, JosephsonJunction(1000e-12))])
+            p = transientproblem(circuit; sources = [TransientSource(1, drive)])
+            native = transientsolve(p, ts; dt = 1e-12, record = :phases,
+                method = Trapezoidal())
+            spice = transientsolve(p, ts; dt = 1e-12, record = :phases,
+                method = WRspice())
+            @test maximum(abs, native.voltage .- spice.voltage) <
+                0.02*maximum(abs, native.voltage)
+            @test maximum(abs, native.phases .- spice.phases) <
+                0.05*maximum(abs, native.phases)
         end
 
         @testset "a mismatched transmission line in front of a junction" begin

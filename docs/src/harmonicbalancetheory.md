@@ -273,9 +273,9 @@ residual in the real representation, `dx/dr = -J^{-1} dF/dr` with the
 exact real Jacobian assembled and factorized once at the converged
 point; its effect on the scattering parameters is contracted either
 forward, one product per component, or in reverse, the output
-functionals pushed through the transposed pump Jacobian once per output
-port and mode, which is chosen when the components outnumber the
-outputs. A design parameter of a circuit builder carries the exact
+functionals pushed through the transposed pump Jacobian once per pair
+of output port modes, which is chosen when the components outnumber those
+pairs eight times over. A design parameter of a circuit builder carries the exact
 direction of every component value it touches, merged into one
 contraction, which is exact for a parameter that rotates a complex value.
 

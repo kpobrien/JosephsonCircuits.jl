@@ -1,155 +1,168 @@
 
 """
-    calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
-        outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, componenttypes, wmodes)
+    portsourcecurrents(bnm, portindices, nodeindices, Nmodes)
 
-Return the input and output waves for the system linearized around the strong
-pump.
+The source current of each port mode in its own column of the source terms
+`bnm` of a sweep, whose column `(i-1)*Nmodes+j` is a unit current source at
+the port `i` and the mode `j` and at no other port, even one which shares a
+node with it: `±1`, the sign by which the orientation of the port branch in
+the incidence matrix differs from the node order of the port component (see
+[`calcsourcecurrent`](@ref)). These are all the source currents the waves of
+a sweep need, and they do not depend on the frequency.
 
 # Examples
 ```jldoctest
-inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
-outputwave = ComplexF64[0;;]
-bnm = ComplexF64[1; 0;;]
-portimpedanceindices = [3]
-portimpedances = ComplexF64[50]
-nodeindices = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
-componenttypes = [:P, :I, :R, :L, :K, :L, :C]
-wmodes = [1]
-phin = ComplexF64[0;0;;]
-JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
-    wmodes)
-println(outputwave)
+julia> bnm = ComplexF64[1 0; 0 1];  # port 1 from node 2 to ground, port 2 from ground to node 3
 
-# output
-ComplexF64[-3.5355339059327378 + 0.0im;;]
-```
-```jldoctest
-inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
-outputwave = ComplexF64[0;;]
-bnm = ComplexF64[1; 0;;]
-portimpedanceindices = [3]
-portimpedances = ComplexF64[50]
-nodeindices = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
-componenttypes = [:P, :I, :R, :L, :K, :L, :C]
-wmodes = [1]
-phin = ComplexF64[50/(im*wmodes[1]);0;;]
-JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
-    wmodes)
-println(outputwave)
-
-# output
-ComplexF64[3.5355339059327378 + 0.0im;;]
-```
-```jldoctest
-inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
-outputwave = ComplexF64[0;;]
-bnm = ComplexF64[1; 0;;]
-portimpedanceindices = [3]
-portimpedances = ComplexF64[50]
-nodeindices = [1 1 1 1 0 1 1; 2 2 2 2 0 3 3;]
-componenttypes = [:P, :I, :R, :L, :K, :L, :C]
-wmodes = [1]
-phin = ComplexF64[50/(im*wmodes[1]);0;;]
-JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
-    wmodes)
-println(outputwave)
-
-# output
-ComplexF64[-3.5355339059327378 + 0.0im;;]
-```
-```jldoctest
-inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
-outputwave = ComplexF64[0;;]
-bnm = ComplexF64[-1; 1;;]
-portimpedanceindices = [2]
-portimpedances = ComplexF64[50.0 + 0.0im]
-nodeindices = [2 2 2 2 3; 3 3 1 1 1]
-componenttypes = [:P, :R, :L, :C, :C]
-wmodes = [1]
-phin = ComplexF64[0;0;;]
-JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
-    wmodes)
-println(outputwave)
-
-# output
-ComplexF64[3.5355339059327378 + 0.0im;;]
-```
-```jldoctest
-inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
-outputwave = ComplexF64[0;;]
-bnm = ComplexF64[-1; 1;;]
-portimpedanceindices = [2]
-portimpedances = ComplexF64[50.0 + 0.0im]
-nodeindices = [2 2 2 2 3; 3 3 1 1 1]
-componenttypes = [:P, :R, :L, :C, :C]
-wmodes = [1]
-phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
-JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
-    wmodes)
-println(outputwave)
-
-# output
-ComplexF64[-10.606601717798213 + 0.0im;;]
+julia> JosephsonCircuits.portsourcecurrents(bnm, [1, 2], [2 1; 1 3], 1)
+2-element Vector{ComplexF64}:
+  1.0 + 0.0im
+ -1.0 - 0.0im
 ```
 """
-function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
-    outputportindices, inputportimpedances, outputportimpedances,
-    nodeindices, componenttypes, wmodes)
-    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm,
-        inputportindices, outputportindices, inputportimpedances,
-        outputportimpedances, nodeindices, componenttypes, wmodes,
-        false)
+function portsourcecurrents(bnm, portindices, nodeindices, Nmodes)
+    s = zeros(Complex{Float64}, length(portindices)*Nmodes)
+    for i in eachindex(portindices), j in 1:Nmodes
+        k = (i-1)*Nmodes + j
+        s[k] = calcsourcecurrent(nodeindices[1,portindices[i]],
+            nodeindices[2,portindices[i]], bnm, Nmodes, j, k)
+    end
+    return s
 end
 
 """
-    calcinputoutputnoise!(inputwave, outputwave, phin, bnm,
-        inputportindices, outputportindices, inputportimpedances,
-        outputportimpedances, nodeindices, componenttypes, wmodes)
+    calcinputwaves!(inputwave, sourcecurrents, portindices, portimpedances,
+        componenttypes, wmodes)
 
-The input and output waves at the ports when the linearized system is
-driven at the noise channels rather than at the ports:
-[`calcinputoutput!`](@ref) with `nosource = true`, so that no source
-current is attributed to a port when forming its output wave. (With the
-source included, a port sharing a branch with a lossy capacitor would be
-credited with that channel's source current.)
+The incident power wave of each port mode `(i-1)*Nmodes+j`, driven by the
+source current `sourcecurrents[(i-1)*Nmodes+j]`, as defined in (except in
+units of sqrt(photons/second) instead of sqrt(power))
+K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
+Micr. Theory and Tech. 13, 194–202 (1965)
+doi: 10.1109/TMTT.1965.1125964
+
+A port is a source current `s` in parallel with its impedance `Z`, so the
+current it drives into the circuit is `I = s - V/Z` and the incident wave
+`kval*(V + Z*I)/2` is `kval*Z*s/2`, whatever the solution; `kval` is
+[`portwavescale`](@ref).
 
 # Examples
 ```jldoctest
-inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
-noiseoutputwave = ComplexF64[0;;]
-phin = ComplexF64[-2.5000000000007394e-10 - 0.000795774715459398im; 1.983790476804266e-20 + 3.141592641138603e-16im;;]
-bnm = ComplexF64[1.0 + 0.0im; 0.0 + 0.0im;;]
-portimpedanceindices = [2]
-noiseportimpedanceindices = [6]
-portimpedances = [50]
-noiseportimpedances = [1]
-nodeindices = [2 2 2 3 3 3; 1 1 3 1 1 1]
-componenttypes = [:P, :R, :C, :Lj, :C, :R]
-wmodes = [2*pi*5e9]
-JosephsonCircuits.calcinputoutputnoise!(inputwave,noiseoutputwave,
-    phin,bnm,portimpedanceindices,noiseportimpedanceindices,
-    portimpedances,noiseportimpedances,nodeindices,
-    componenttypes,wmodes)
-println(noiseoutputwave)
-
-# output
-ComplexF64[-5.568327974762547e-11 + 3.516177070001411e-15im;;]
+julia> JosephsonCircuits.calcinputwaves!(zeros(ComplexF64, 1), ComplexF64[1],
+           [1], [50.0], [:P], [1.0])
+1-element Vector{ComplexF64}:
+ 3.5355339059327378 + 0.0im
 ```
 """
-function calcinputoutputnoise!(inputwave, outputwave, phin, bnm,
-    inputportindices, outputportindices, inputportimpedances,
-    outputportimpedances, nodeindices, componenttypes, wmodes)
-    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm,
-        inputportindices, outputportindices, inputportimpedances,
-        outputportimpedances, nodeindices, componenttypes, wmodes,
-        true)
+function calcinputwaves!(inputwave, sourcecurrents, portindices,
+    portimpedances, componenttypes, wmodes)
+    Nmodes = length(wmodes)
+    for i in eachindex(portindices), j in 1:Nmodes
+        r = (i-1)*Nmodes + j
+        portimpedance = calcimpedance(portimpedances[i],
+            componenttypes[portindices[i]], wmodes[j])
+        kval = portwavescale(portimpedance, wmodes[j])
+        inputwave[r] = 1/2*kval*portimpedance*sourcecurrents[r]
+    end
+    return inputwave
+end
+
+"""
+    calcoutputwaves!(outputwave, phin, sourcecurrents, portindices,
+        portimpedances, nodeindices, componenttypes, wmodes)
+
+The outgoing power wave of each port mode (the rows) in each solution
+column of the node fluxes `phin`, `kval*(V - conj(Z)*I)/2` in the units of
+[`calcinputwaves!`](@ref), with the port voltage `V` of
+[`calcportvoltage`](@ref) and the port current `I = s - V/Z`.
+
+`sourcecurrents[r,k]` is the source current `s` of the port mode `r` in the
+solution column `k`. A sweep drives one port mode per column, so its source
+currents are the `Diagonal` of [`portsourcecurrents`](@ref): a port which
+shares a node with the driven one carries no source current of its own.
+`nothing` means that no port carries a source, which is how the noise ports
+are read from the adjoint solutions.
+
+# Examples
+A port of 50 ohms from node 2 to ground at the mode frequency 1, driven by a
+unit source current. Across a short the wave is reflected with the opposite
+sign; into an open circuit, `V = Z*s`, it is reflected whole; and the same
+voltage with no source is the wave the port carries away.
+```jldoctest
+julia> phishort = ComplexF64[0;;]; phiopen = ComplexF64[50/im;;];
+
+julia> args = ([1], [50.0], [2; 1;;], [:P], [1.0]);
+
+julia> JosephsonCircuits.calcoutputwaves!(zeros(ComplexF64, 1, 1), phishort,
+           ComplexF64[1;;], args...)
+1×1 Matrix{ComplexF64}:
+ -3.5355339059327378 + 0.0im
+
+julia> JosephsonCircuits.calcoutputwaves!(zeros(ComplexF64, 1, 1), phiopen,
+           ComplexF64[1;;], args...)
+1×1 Matrix{ComplexF64}:
+ 3.5355339059327378 + 0.0im
+
+julia> JosephsonCircuits.calcoutputwaves!(zeros(ComplexF64, 1, 1), phiopen,
+           nothing, args...)
+1×1 Matrix{ComplexF64}:
+ 7.0710678118654755 + 0.0im
+```
+"""
+function calcoutputwaves!(outputwave, phin, sourcecurrents, portindices,
+    portimpedances, nodeindices, componenttypes, wmodes)
+    Nmodes = length(wmodes)
+    for i in eachindex(portindices), j in 1:Nmodes
+        r = (i-1)*Nmodes + j
+        key1 = nodeindices[1,portindices[i]]
+        key2 = nodeindices[2,portindices[i]]
+        # the port impedance and the wave scale depend on the port and the
+        # mode, not on the solution column
+        portimpedance = calcimpedance(portimpedances[i],
+            componenttypes[portindices[i]], wmodes[j])
+        if isnothing(sourcecurrents)
+            scale = noisewavescale(portimpedance, wmodes[j])
+            for k in axes(phin, 2)
+                outputwave[r,k] = scale*calcportvoltage(key1, key2, phin,
+                    wmodes, Nmodes, j, k)
+            end
+        else
+            kval = portwavescale(portimpedance, wmodes[j])
+            for k in axes(phin, 2)
+                portvoltage = calcportvoltage(key1, key2, phin, wmodes,
+                    Nmodes, j, k)
+                portcurrent = sourcecurrents[r,k] - portvoltage/portimpedance
+                outputwave[r,k] = 1/2*kval*(portvoltage -
+                    conj(portimpedance)*portcurrent)
+            end
+        end
+    end
+    return outputwave
+end
+
+"""
+    pumpsourcecurrents(sources, modes, portindices, portnumbers, nodeindices)
+
+The source current of each port mode `(i-1)*Nmodes+j` of a pump solve, in
+units of the flux quantum: the sum of the currents the `sources` give at the
+port `i` and the mode `j`, with the sign by which the orientation of the
+port branch differs from the node order of the port, as
+[`portsourcecurrents`](@ref) reads it for a sweep. A port no source drives
+has none, even one which shares a node with a driven port.
+"""
+function pumpsourcecurrents(sources, modes, portindices, portnumbers,
+        nodeindices)
+    Nmodes = length(modes)
+    s = zeros(Complex{Float64}, length(portindices)*Nmodes)
+    for source in sources
+        i = findfirst(==(source[:port]), portnumbers)
+        j = findfirst(==(source[:mode]), modes)
+        # the solve has refused a source at a port or a mode it does not have
+        p = portindices[i]
+        sign = nodeindices[1,p] > nodeindices[2,p] ? 1 : -1
+        s[(i-1)*Nmodes+j] += sign*source[:current]/phi0
+    end
+    return s
 end
 
 """
@@ -302,9 +315,9 @@ The scale factor of the Kurokawa power waves at a port with impedance
 sqrt(photons/second) rather than sqrt(power):
 `1/sqrt(real(Z))/sqrt(abs(w))`, and zero at zero frequency, where the wave
 normalization is singular. This is the single definition used by the
-scattering parameter calculation ([`calcinputoutput_inner!`](@ref)) and by
-the sensitivity scaling ([`calcsensitivityscaling!`](@ref)), so the two
-cannot drift apart.
+waves ([`calcinputwaves!`](@ref), [`calcoutputwaves!`](@ref)) and by the
+sensitivity scaling ([`calcsensitivityscaling!`](@ref)), so the two cannot
+drift apart.
 
 The zero is a convention and not an approximation, and it is what keeps the
 direct current out of the waves. The voltage those functions reconstruct is
@@ -324,151 +337,51 @@ is reported as a voltage instead.
 end
 
 """
-    calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
-        outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, componenttypes, wmodes, nosource)
+    noisewavescale(portimpedance, w)
 
-Calculate the input and output power waves as defined in (except in
-units of sqrt(photons/second) instead of sqrt(power)
-K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
-Micr. Theory and Tech. 13, 194–202 (1965) 
-doi: 10.1109/TMTT.1965.1125964
-inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
-we can simplify the above to:
-inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
-outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
-.
-
+The outgoing wave per unit voltage of a port which carries no source, a
+noise channel, whose current is the one the voltage drives through its own
+impedance: `kval*(V + conj(Z)*V/Z)/2 = kval*real(Z)/Z*V` with `kval` the
+[`portwavescale`](@ref), written as `sqrt(real(Z))/(Z*sqrt(abs(w)))` so
+that an element with no loss at `w`, whose channel carries nothing there,
+gives zero rather than an infinite scale times a zero voltage term.
 """
-function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputportindices,
-    outputportindices, inputportimpedances, outputportimpedances,
-    nodeindices, componenttypes, wmodes, nosource)
-
-    # check the size of inputwave
-
-    # check the size of outputwave
-
-    # check the sizes of all of the inputs
-
-    # loop over input branches and modes to define inputwaves
-    Ninputports = length(inputportindices)
-    Noutputports = length(outputportindices)
-    Nsolutions = size(nodeflux,2)
-    Nmodes = length(wmodes)
-
-    for i in 1:Ninputports
-        for j in 1:Nmodes
-            # the port impedance and the wave scale depend on the port and
-            # the mode, not on the drive column, so they are computed once
-            # per (port, mode) rather than once per solution.
-            portimpedance = calcimpedance(
-                inputportimpedances[i],
-                componenttypes[inputportindices[i]],
-                wmodes[j])
-            kval = portwavescale(portimpedance, wmodes[j])
-            for k in 1:Nsolutions
-
-                sourcecurrent = calcsourcecurrent(
-                    nodeindices[1,inputportindices[i]],
-                    nodeindices[2,inputportindices[i]],
-                    bnm,Nmodes,j,k)
-
-                # calculate the input and output power waves as defined in (except in
-                # units of sqrt(photons/second) instead of sqrt(power)
-                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
-                # Micr. Theory and Tech. 13, 194–202 (1965) 
-                # doi: 10.1109/TMTT.1965.1125964
-                inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
-            end
-        end
+@inline function noisewavescale(portimpedance, w)
+    s = sqrt(Complex(real(portimpedance)))
+    if w == 0
+        return zero(s)
     end
-
-    # loop over output branches and modes to define outputwaves
-    for i in 1:Noutputports
-        for j in 1:Nmodes
-            # the port impedance and the wave scale depend on the port and
-            # the mode, not on the drive column, so they are computed once
-            # per (port, mode) rather than once per solution.
-            portimpedance = calcimpedance(
-                outputportimpedances[i],
-                componenttypes[outputportindices[i]],
-                wmodes[j])
-            kval = portwavescale(portimpedance, wmodes[j])
-            for k in 1:Nsolutions
-
-                sourcecurrent = calcsourcecurrent(
-                    nodeindices[1,outputportindices[i]],
-                    nodeindices[2,outputportindices[i]],
-                    bnm,Nmodes,j,k)
-
-                portvoltage = calcportvoltage(
-                    nodeindices[1,outputportindices[i]],
-                    nodeindices[2,outputportindices[i]],
-                    nodeflux,
-                    wmodes,
-                    Nmodes,j,k)
-
-                # calculate the current flowing through the port
-                if nosource
-                    portcurrent = - portvoltage / portimpedance
-                else
-                    portcurrent = sourcecurrent - portvoltage / portimpedance
-                end
-
-                # calculate the input and output power waves as defined in
-                # (except in units of sqrt(photons/second) instead of
-                # sqrt(power)
-                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE
-                # Trans. Micr. Theory and Tech. 13, 194–202 (1965) 
-                # doi: 10.1109/TMTT.1965.1125964
-                outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
-            end
-        end
-    end
- 
-    return nothing
+    return s/(portimpedance*sqrt(abs(w)))
 end
 
 """
-    calcscatteringmatrix!(S, inputwave::Diagonal, outputwave)
+    calcscatteringmatrix!(S, inputwave::AbstractVector, outputwave::AbstractMatrix)
 
-The scattering matrix is defined as `outputwave = S * inputwave`.
+The scattering matrix of a sweep, whose solution column `k` is driven at the
+port mode `k` alone, so that `outputwave = S * Diagonal(inputwave)`: each
+column of `outputwave` divided by its input wave.
 
 # Examples
 ```jldoctest
-julia> inputwave=JosephsonCircuits.LinearAlgebra.Diagonal([1.0,1.0]);outputwave=[im/sqrt(2) 1/sqrt(2);1/sqrt(2) im/sqrt(2)];S = zeros(Complex{Float64},2,2);JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave);S
+julia> inputwave = [1.0, 2.0]; outputwave = [im/sqrt(2) sqrt(2); 1/sqrt(2) im*sqrt(2)];
+
+julia> S = zeros(ComplexF64, 2, 2); JosephsonCircuits.calcscatteringmatrix!(S, inputwave, outputwave); S
 2×2 Matrix{ComplexF64}:
       0.0+0.707107im  0.707107+0.0im
  0.707107+0.0im            0.0+0.707107im
 ```
 """
-function calcscatteringmatrix!(S, inputwave::Diagonal, outputwave)
-    # copy!(S,outputwave)
-    # rdiv!(S,inputwave)
-    rdiv!(outputwave,inputwave)
-    copy!(S,outputwave)
-    
-    return nothing
-end
-
-"""
-    calcscatteringmatrix!(S, inputwave, outputwave)
-
-The scattering matrix is defined as `outputwave = S * inputwave`.
-
-# Examples
-```jldoctest
-julia> inputwave=[1.0 0.0;0.0 1.0];outputwave=[im/sqrt(2) 1/sqrt(2);1/sqrt(2) im/sqrt(2)];S = zeros(Complex{Float64},2,2);JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave);S
-2×2 Matrix{ComplexF64}:
-      0.0+0.707107im  0.707107+0.0im
- 0.707107+0.0im            0.0+0.707107im
-
-julia> inputwave = rand(Complex{Float64},2,2);outputwave = rand(Complex{Float64},2,2);S=zeros(Complex{Float64},2,2);JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave);isapprox(S*inputwave,outputwave)
-true
-```
-"""
-function calcscatteringmatrix!(S, inputwave, outputwave)
-    S .= outputwave / inputwave
+function calcscatteringmatrix!(S, inputwave::AbstractVector,
+    outputwave::AbstractMatrix)
+    if size(S) != size(outputwave) || size(outputwave, 2) != length(inputwave)
+        throw(DimensionMismatch(lazy"The scattering matrix of size $(size(S)) does not match the output waves of size $(size(outputwave)) and the $(length(inputwave)) input waves."))
+    end
+    @inbounds for k in axes(outputwave, 2)
+        scale = inv(inputwave[k])
+        for r in axes(outputwave, 1)
+            S[r, k] = outputwave[r, k]*scale
+        end
+    end
     return nothing
 end
 
@@ -526,7 +439,6 @@ function calcportvoltage(key1, key2, phin, wmodes, Nmodes, j, k)
     end
 
     # scale the branch flux by frequency to get voltage
-    # portvoltage *= im*abs(wmodes[j])
     portvoltage *= im*wmodes[j]
 
     return portvoltage
@@ -614,8 +526,13 @@ directly from the kernels which compute power waves on a backend.
 end
 
 """
-    calcimpedance(c::Union{Integer,T,Complex{T}}, type, w
-        ) where {T<:AbstractFloat}
+    calcimpedance(c, type, w)
+
+The impedance at the mode frequency `w` of a component of value `c` and
+type `type`: `:R`, `:C`, `:L`, or `:P` for a port, whose impedance is its
+reference impedance. The value is resolved at `w` by
+[`substitutefreq`](@ref) and [`impedance`](@ref) conjugates it at a
+negative frequency.
 
 # Examples
 ```jldoctest
@@ -637,67 +554,17 @@ julia> JosephsonCircuits.calcimpedance(30.0,:L,-1.0)
 julia> JosephsonCircuits.calcimpedance(30.0,:R,-1.0)
 30.0 + 0.0im
 
-```
-"""
-function calcimpedance(c::Union{T,Complex{T}}, type, w
-    ) where {T<:Union{AbstractFloat,Integer}}
-    return impedance(c, impedancecode(type), w)
-end
-
-
-"""
-    calcimpedance(c, type, w)
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->30*w),:R,2.0)
-60.0 + 0.0im
-
-julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->30*w),:C,2.0)
-0.0 - 0.008333333333333333im
-
 julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->30*w),:L,2.0)
 0.0 + 120.0im
 
-julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->30*w),:R,-2.0)
--60.0 + 0.0im
-
-julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->30*w),:C,-2.0)
-0.0 - 0.008333333333333333im
-
 julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->30*w),:L,-2.0)
-0.0 + 120.0im
+-0.0 - 120.0im
+
+julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->30*w),:R,-2.0)
+60.0 + 0.0im
 ```
 """
-function calcimpedance(c, type, w)
-    # substitutefreq evaluates a frequency dependent value at the signed
-    # mode frequency; on a plain number it is the identity
-    v = substitutefreq(c, w)
-    # `:P` is a port, whose impedance is the reference impedance it was given
-    # rather than a component value, and is constant in frequency like a
-    # resistance
-    if type == :R || type == :P
-        if w >= 0
-            return v+0.0im
-        else
-            return conj(v)+0.0im
-        end
-    elseif type == :C
-        if w >= 0
-            return 1/(im*w*v)
-        else
-            return 1/(im*w*conj(v))
-        end
-    elseif type == :L
-        if w >= 0
-            return (im*w*v)
-        else
-            return (im*w*conj(v))
-        end
-    else
-        error(lazy"Unknown component type")
-    end
-end
+calcimpedance(c, type, w) = impedance(substitutefreq(c, w), impedancecode(type), w)
 
 """
     NoiseReduction
@@ -1079,7 +946,6 @@ function calcCnoise!(Cnoise::AbstractMatrix, S)
                 # use abs2 as a cludge to make sure QE is identical for
                 # symbolic math with real variables.
                 Cnoise[i,j] -= ifelse(i==j,abs2(S[i,k]),S[i,k]*conj(S[j,k]))
-                # Cnoise[i,j] -= S[i,k]*conj(S[j,k])
             end
         end
     end
@@ -1095,7 +961,9 @@ end
     calcCnoise(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}
 
 Calculate the noise wave covariance matrix for a scattering matrix in the
-field ladder operator basis.
+field ladder operator basis. `Snoise` is ports by noise channels:
+`Snoise[i, k]` scatters channel `k` to port `i`, the transpose of the
+`Snoise` of a [`LinearizedHB`](@ref) at one frequency.
 
 # Examples
 ```jldoctest
@@ -1148,8 +1016,6 @@ function calcCnoise!(Cnoise, S, Snoise)
                 # use abs2 as a cludge to make sure QE is identical for
                 # symbolic math with real variables.
                 Cnoise[i,j] += ifelse(i==j,abs2(Snoise[i,k]),Snoise[i,k]*conj(Snoise[j,k]))
-                # Cnoise[i,j] -= Snoise[i,k]*conj(Snoise[j,k])
-
             end
         end
     end
@@ -1160,9 +1026,9 @@ end
 """
     calcqe_S_Cnoise(S::AbstractArray, Cnoise::AbstractArray)
 
-Calculate the noise wave covariance matrix from the scattering parameter
-matrix and the noise covariance matrix, both in the field ladder operator
-(sqrt photon number) basis.
+Calculate the quantum efficiency of each output from the scattering
+parameter matrix and the noise wave covariance matrix, both in the field
+ladder operator (sqrt photon number) basis.
 
 # Examples
 ```jldoctest

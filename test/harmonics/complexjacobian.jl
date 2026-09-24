@@ -3,6 +3,18 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+# Test-local oracle: `A += c*As*Ad` with the diagonal `Ad` given explicitly,
+# every entry of `As` resolved at the mode frequency of its column and
+# conjugated in the columns `conjflag` marks, the route the mode indexed
+# assembly of the linearized system is checked against.
+function refconjsubst!(A, c, As, Ad, indexmap, conjflag, wmodesm)
+    for i in axes(As, 2), j in nzrange(As, i)
+        v = JosephsonCircuits.substitutefreq(nonzeros(As)[j], wmodesm[i,i])
+        nonzeros(A)[indexmap[j]] += c*Ad[i,i]*(conjflag[i,i] ? conj(v) : v)
+    end
+    return A
+end
+
 # Test-local oracle: independent construction of the Josephson branch matrix
 # from the mode coupling index matrix and the Fourier coefficients of
 # cos(phi(t)). Entries follow Amatrixindices (negative entries denote complex
@@ -233,13 +245,13 @@ end
                 AoLjnmuse = conjugatepump ? conj.(AoLjnm) : AoLjnm
                 JosephsonCircuits.sparseadd!(Aref, 1, AoLjnmuse,
                     JosephsonCircuits.sparseaddmap(Aref, AoLjnmuse))
-                JosephsonCircuits.sparseaddconjsubst!(Aref, -1, Cnmp,
+                refconjsubst!(Aref, -1, Cnmp,
                     wmodes2m, JosephsonCircuits.sparseaddmap(Aref, Cnmp),
                     real.(wmodesm) .< 0, wmodesm)
-                JosephsonCircuits.sparseaddconjsubst!(Aref, im, Gnmsub,
+                refconjsubst!(Aref, im, Gnmsub,
                     wmodesm, JosephsonCircuits.sparseaddmap(Aref, Gnmsub),
                     real.(wmodesm) .< 0, wmodesm)
-                JosephsonCircuits.sparseaddconjsubst!(Aref, 1, invLnmp,
+                refconjsubst!(Aref, 1, invLnmp,
                     JosephsonCircuits.LinearAlgebra.Diagonal(
                         ones(size(invLnmp, 1))),
                     JosephsonCircuits.sparseaddmap(Aref, invLnmp),
@@ -248,9 +260,8 @@ end
                     JosephsonCircuits.sparseaddmap(Aref, Amna0))
 
                 # the shared assembly, both entry points. the reference
-                # above uses the Diagonal based sparseaddconjsubst! method,
-                # so this also checks the mode indexed method the assembly
-                # uses against it.
+                # above assembles with explicit diagonals, so this also
+                # checks the mode indexed assembly against it.
                 A2 = copy(Asparse)
                 JosephsonCircuits.assemblesystemmatrix!(A2, lsys, wmodes;
                     conjugatepump = conjugatepump)

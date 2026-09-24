@@ -35,7 +35,8 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         symbolic = hbcache(wp, (8,), src, compile(circuit), Dict(:Lj => 1000e-12, :Cc => 100e-15); atol = 1e-12)
         @test isapprox(vec(collect(hbsolve!(symbolic, (Lj = 1000e-12,)).nodeflux)), vec(collect(ref.nodeflux)); rtol = 1e-8)
         # a parameter the definitions lack is refused when the cache is
-        # built, a value crossing a structural boundary when it is solved
+        # built, and a value the solve refuses, an infinite junction
+        # inductance, when it is solved
         @test_throws ArgumentError hbcache(wp, (8,), src, circuit, Dict(Lj => 1000e-12); atol = 1e-12)
         @test_throws ArgumentError hbsolve!(cache, (Lj = Inf,))
         # the cache evaluates the values at each point, so a frequency
@@ -102,18 +103,39 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
             vec(collect(ref3.nodeflux)); rtol = 1e-8)
         @test isapprox(Array(n3.S), Array(ref3.S); rtol = 1e-8)
 
+        # a coupling which is zero at the first point keeps its place in the
+        # rebound system, so the next point solves the circuit with it
+        zc = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12)
+        hbsolve!(zc, (Lj = 1000.0e-12, Cc = 0.0); warmstart = false)
+        nz = hbsolve!(zc, p)
+        @test zc.converged
+        @test isapprox(vec(collect(nz.nodeflux)), vec(collect(nl.nodeflux));
+            rtol = 1e-8)
+
         # the assembled Jacobian of a rebound system is that of the new
         # values, not of the first point: the operating point of a cached
         # solve matches a cold one, and a direct Newton cache converges
         # like a cold solve
         opc = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12,
             returnoperatingpoint = true)
-        hbsolve!(opc, p; warmstart = false)
+        o1 = hbsolve!(opc, p; warmstart = false).operatingpoint
         o2 = hbsolve!(opc, p2).operatingpoint
         r2 = hbnlsolve(wp, (8,), src, circuit, at(; p2...); atol = 1e-12,
             keyedarrays = false, returnoperatingpoint = true).operatingpoint
         @test isapprox(o2.jacobian, r2.jacobian; rtol = 1e-8)
         @test norm(o2.jacobian - r2.jacobian) < 1e-8*norm(r2.jacobian)
+        # and it owns its system, which the next solve does not rebind: the
+        # first point's operating point is still a cold solve's there, down
+        # to the residual derivative the sensitivities read from it
+        r1 = hbnlsolve(wp, (8,), src, circuit, at(; p...); atol = 1e-12,
+            keyedarrays = false, returnoperatingpoint = true).operatingpoint
+        @test isapprox(o1.jacobian, r1.jacobian; rtol = 1e-8)
+        nm1 = numericmatrices(opc.compiled, at(; p...); Nmodes = opc.Nmodes)
+        idx = [JosephsonCircuits.componentindex(opc.compiled, n) for n in ("Lj1", "C2")]
+        @test isapprox(
+            Matrix(JosephsonCircuits.calcresidualsensitivity(o1, opc.compiled, nm1, idx)),
+            Matrix(JosephsonCircuits.calcresidualsensitivity(r1, opc.compiled, nm1, idx));
+            rtol = 1e-8)
         nc = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12, method = Newton())
         hbsolve!(nc, p; warmstart = false)
         nn = hbsolve!(nc, p2; warmstart = false)
@@ -134,7 +156,8 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         # construction, and a solver keyword still reaches the solve
         for bad in ((x0 = zeros(2),), (keyedarrays = true,),
                 (reuse = nothing,), (method = Staged(),), (nosuchkeyword = 1,),
-                (maxharmonics = (8,),))
+                (maxharmonics = (8,),), (returnsystem = true,),
+                (debugJacobian = true,))
             @test_throws ArgumentError hbcache(wp, (8,), src, circuit, defs; bad...)
         end
         # what the cache does anyway is accepted
@@ -152,7 +175,10 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         cache = hbcache(wp, (4,), src, circuit, defs;
             method = controlled.method, warnnotconverged = false)
         first = hbsolve!(cache, (;))
-        saved = (copy(first.nodeflux), copy(first.S))
+        # the junction vectors too: the cache refills its matrices at every
+        # point, failed or refused, and the result keeps its own
+        kept(s) = (copy(s.nodeflux), copy(s.S), copy(s.Ljb), copy(s.Ljbm))
+        saved = kept(first)
         matrixwork, capacitance = cache.matrixworkspace, cache.nm.Cnm
         @test cache.converged
         failed = hbsolve!(cache, (Lj = 1.02e-9,))
@@ -164,24 +190,120 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
             method = freshsolver.method)
         fresh = hbsolve!(freshcache, (Lj = 0.98e-9,))
         @test cache.converged && cache.nsolves == 3
-        @test controlled.starts[3] == freshsolver.starts[1]
+        # the point after a failure starts from the last converged point,
+        # not from the failed state nor cold
+        @test controlled.starts[3] ≈ controlled.solutions[1]
+        @test controlled.starts[3] != freshsolver.starts[1]
         @test recovered.nodeflux ≈ fresh.nodeflux rtol = 1e-10
         @test cache.matrixworkspace === matrixwork &&
             cache.nm.Cnm === capacitance
-        @test first.nodeflux == saved[1] && first.S == saved[2]
-        # a point refused before the assembly leaves the cache as it was,
-        # so the next point still solves
+        @test kept(first) == saved
+        # a point the solve refuses leaves the cache as it was, so the next
+        # point still solves
         retained = copy(cache.x)
         @test_throws ArgumentError hbsolve!(cache, (Lj = Inf,))
-        @test_throws ArgumentError hbsolve!(cache,
-            (Cc = 100e-15*(1 - im/100),))
         @test cache.x == retained && cache.nsolves == 3
         @test hbsolve!(cache, (Lj = 0.98e-9,)).nodeflux ≈ fresh.nodeflux
         JosephsonCircuits.reset!(cache)
         @test isnothing(cache.x) && !cache.converged
         hbsolve!(cache, (Lj = 0.98e-9,))
         @test controlled.starts[end] == freshsolver.starts[1]
-        @test first.nodeflux == saved[1] && first.S == saved[2]
+        @test kept(first) == saved
+    end
+
+    @testset "values which change a group's element type or behavior" begin
+        # a capacitance turned lossy, a resistance at infinity and a mutual
+        # coupling at one are points like any other, which the direct solve
+        # takes: the matrices are assembled anew where a group's element
+        # type changes, and refilled otherwise
+        lossy = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(:Cc)),
+            (:Lj1, 2, 0, JosephsonJunction(:Lj)), (:C2, 2, 0, Capacitor(1000e-15)),
+            (:R1, 2, 0, Resistor(:R))])
+        defs = Dict(:Lj => 1e-9, :Cc => 100e-15, :R => 1e4)
+        cache = hbcache(wp, (8,), src, lossy, defs; atol = 1e-12)
+        for p in ((Cc = 100e-15,), (Cc = 100e-15*(1 - im/100),), (R = Inf,),
+                (Cc = 110e-15,))
+            sol = hbsolve!(cache, p)
+            fresh = hbnlsolve(wp, (8,), src, lossy, merge(defs, Dict(pairs(p)));
+                atol = 1e-12, keyedarrays = false)
+            @test cache.converged
+            @test isapprox(vec(collect(sol.nodeflux)),
+                vec(collect(fresh.nodeflux)); rtol = 1e-8)
+        end
+        transformer = Circuit([:p1 => Port(1), :c1 => Capacitor(1e-13),
+            :l1 => Inductor(1e-9), :l2 => Inductor(1e-9),
+            :jj => JosephsonJunction(1e-9), :cj => Capacitor(1e-12),
+            :k => MutualInductor(:K, :l1, :l2)],
+            [[(:p1, 1), (:c1, 1)], [(:c1, 2), (:l1, 1)], [(:l2, 1), (:jj, 1), (:cj, 1)],
+             [(:p1, 2), (:l1, 2), (:l2, 2), (:jj, 2), (:cj, 2), Ground]])
+        tsrc = [(mode = (1,), port = 1, current = 1e-8)]
+        cache = hbcache((2*pi*5e9,), (4,), tsrc, transformer, Dict(:K => 0.9);
+            atol = 1e-12)
+        for K in (0.9, 1.0)
+            sol = hbsolve!(cache, (K = K,))
+            fresh = hbnlsolve((2*pi*5e9,), (4,), tsrc, transformer, Dict(:K => K);
+                atol = 1e-12, keyedarrays = false)
+            @test cache.converged
+            @test isapprox(vec(collect(sol.nodeflux)),
+                vec(collect(fresh.nodeflux)); rtol = 1e-8)
+        end
+    end
+
+    @testset "a scattering block under a swept port impedance" begin
+        # the port impedance moves the solver scale, which the block's rows
+        # of the reused linear term carry: every point of a cached sweep is
+        # the fresh solve's, and a reuse is refused at another pump, whose
+        # mode frequencies it holds
+        capS(C, Z0) = w -> fill((1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
+        shunt = ScatteringParameters(capS(1000e-15, 50.0); nports = 1,
+            grounded = true)
+        jpa = Circuit([:p1 => Port(1; Z0 = :Rp), :cc => Capacitor(100e-15),
+            :jj => JosephsonJunction(:Lj), :c2 => shunt],
+            [((:p1, 1), (:cc, 1)), ((:cc, 2), (:jj, 1), (:c2, 1)),
+             ((:jj, 2), (:p1, 2), Ground)])
+        defs = Dict(:Rp => 50.0, :Lj => 1000e-12)
+        cache = hbcache(wp, (8,), src, jpa, defs; atol = 1e-12)
+        for p in ((Rp = 50.0,), (Rp = 49.0,), (Rp = 48.0, Lj = 1010e-12),
+                (Rp = 50.0,))
+            sol = hbsolve!(cache, p)
+            fresh = hbnlsolve(wp, (8,), src, jpa, merge(defs, Dict(pairs(p)));
+                atol = 1e-12, keyedarrays = false)
+            @test cache.converged
+            @test isapprox(vec(collect(sol.nodeflux)),
+                vec(collect(fresh.nodeflux)); rtol = 1e-8)
+        end
+        @test_throws ArgumentError hbnlsolve((2*pi*4.6e9,), cache.sources,
+            cache.frequencies, cache.indices, cache.compiled, cache.nm;
+            reuse = cache.reuse, keyedarrays = false)
+        # a start from node fluxes sets the block's port currents from
+        # them, as the cache's warm starts do: a restart from a converged
+        # point is converged, rather than starting at the block's response
+        cold = hbnlsolve(wp, (8,), src, jpa, defs; atol = 1e-12,
+            keyedarrays = false)
+        restart = hbnlsolve(wp, (8,), src, jpa, defs; atol = 1e-12,
+            keyedarrays = false, x0 = cold.nodeflux)
+        @test restart.solverinfo.initialresidual < 1e-12
+        @test restart.solverinfo.stages[end].iterations == 0
+    end
+
+    @testset "a reset drops what the preconditioner grew" begin
+        # a preconditioner escalated at one point stays escalated for the
+        # next, which is the point of keeping it; a reset starts the next
+        # solve from the preconditioner its method asks for, so it solves
+        # step for step as a new cache does
+        defs = Dict(:Lj => 1000e-12, :Cc => 100e-15)
+        method = NewtonKrylov(preconditioner = BlockDiagonal())
+        cache = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12, method)
+        hbsolve!(cache, (Lj = 1000e-12,))
+        # as a hard point would have
+        @test JosephsonCircuits.escalatepreconditioner!(cache.reuse.preconditioner)
+        JosephsonCircuits.reset!(cache)
+        a = hbsolve!(cache, (Lj = 1000e-12,))
+        b = hbsolve!(hbcache(wp, (8,), src, circuit, defs; atol = 1e-12, method),
+            (Lj = 1000e-12,))
+        steps(s) = [k.iterations for k in s.solverinfo.stages[end].krylov]
+        @test steps(a) == steps(b)
+        @test a.nodeflux == b.nodeflux
     end
 
     @testset "Newton-Krylov workspace survives an exhausted solve" begin
@@ -196,7 +318,13 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
             opts..., kw...)
         first = attempt(defs)
         @test first.solverinfo.converged
-        saved = (copy(first.nodeflux), copy(first.S))
+        # a system handed back would be rebound under its holder
+        @test_throws ArgumentError attempt(defs; returnsystem = true)
+        @test_throws ArgumentError attempt(defs; debugJacobian = true)
+        # the reused system is rebound to each new point's junctions, and
+        # the first result keeps its own
+        saved = (copy(first.nodeflux), copy(first.S), copy(first.Ljb),
+            copy(first.Ljbm))
         workspace = (reuse.sys.phimatrix, reuse.preconditioner, reuse.krylov[])
         moved = Dict(:Lj => 1.02e-9, :Cc => 110e-15)
         # a solve given no Newton iterations at a nonzero drive cannot
@@ -212,20 +340,56 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test reuse.sys.phimatrix === workspace[1]
         @test reuse.preconditioner === workspace[2]
         @test reuse.krylov[] === workspace[3]
-        @test first.nodeflux == saved[1] && first.S == saved[2]
+        @test (first.nodeflux, first.S, first.Ljb, first.Ljbm) == saved
+    end
+
+    @testset "a solution owns its values under either method" begin
+        # a cached solve refills the matrices and, under Newton-Krylov,
+        # rebinds the system, so a solution sharing either would move with
+        # the next point: its branch vectors, and the junction vectors and
+        # the Jacobian of its operating point, are its own
+        shunted = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 2, Capacitor(100e-15)),
+            (:Lj1, 2, 0, JosephsonJunction(:Lj)),
+            (:C2, 2, 0, Capacitor(1000e-15)), (:L1, 1, 0, Inductor(:L))])
+        owned(s) = map(copy, (s.Ljb, s.Lb, s.Ljbm, s.operatingpoint.sys.Ljb,
+            s.operatingpoint.sys.Ljbm, s.operatingpoint.jacobian))
+        for method in (NewtonKrylov(), Newton())
+            c = hbcache(wp, (4,), src, shunted, Dict(:Lj => 1e-9, :L => 10e-9);
+                method = method, atol = 1e-12, returnoperatingpoint = true)
+            first = hbsolve!(c, (;); warmstart = false)
+            saved = owned(first)
+            second = hbsolve!(c, (Lj = 1.2e-9, L = 12e-9))
+            @test c.converged
+            @test second.Ljb != first.Ljb && second.Lb != first.Lb
+            @test owned(first) == saved
+        end
     end
 
     @testset "the definitions at a point" begin
         # a parameter defined under its parameter object, its symbol and its
-        # string moves under every one of them, a parameter the definitions
-        # lack is added under its symbol, and the base definitions stay
+        # string moves under every one of them, a name the definitions lack
+        # is refused, and the base definitions stay
         JosephsonCircuits.@params La
         d = Dict{Any,Any}(La => 1.0, :La => 1.0, "La" => 1.0, :Cb => 2.0)
-        at = JosephsonCircuits.definitionsat(d, JosephsonCircuits.definitionkeys(d),
-            (La = 3.0, Cb = 4.0, Ln = 5.0))
+        index = JosephsonCircuits.definitionkeys(d)
+        at = JosephsonCircuits.definitionsat(d, index, (La = 3.0, Cb = 4.0))
         @test at[La] == at[:La] == at["La"] == 3.0
-        @test at[:Cb] == 4.0 && at[:Ln] == 5.0
+        @test at[:Cb] == 4.0
         @test d[La] == 1.0 && d[:Cb] == 2.0
+        @test_throws ArgumentError JosephsonCircuits.definitionsat(d, index,
+            (La = 3.0, Ln = 5.0))
+        # the cache refuses a misspelt parameter, and holds its own copy of
+        # the definitions, which the caller's dictionary does not move
+        defs = Dict{Any,Any}(:Lj => 1000e-12, :Cc => 100e-15)
+        cache = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12)
+        a = hbsolve!(cache, (Lj = 1000e-12,))
+        @test_throws ArgumentError hbsolve!(cache, (Ljj = 900e-12,))
+        @test cache.nsolves == 1
+        defs[:Cc] = 150e-15
+        b = hbsolve!(cache, (Lj = 1000e-12,); warmstart = false)
+        @test isapprox(vec(collect(b.nodeflux)), vec(collect(a.nodeflux));
+            rtol = 1e-10)
         # a point moving every parameter of a large set
         n = 4096
         names = ntuple(i -> Symbol(:p, i), n)
@@ -301,5 +465,14 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
              (mode=(0,), port=1, current=2e-8)],
             Dict(:L1 => 1e-9, :k => 0.5), (L1 = 1.5e-9, k = 0.7);
             dc = true, odd = true, even = true)
+        # a scattering block restamped at the scale of a new port impedance
+        blocked = Circuit([:p1 => Port(1; Z0 = :Rp), :cc => Capacitor(100e-15),
+            :jj => JosephsonJunction(1e-9),
+            :c2 => ScatteringParameters(w -> fill((1 - im*w*5e-11)/(1 + im*w*5e-11), 1, 1);
+                nports = 1, grounded = true)],
+            [((:p1, 1), (:cc, 1)), ((:cc, 2), (:jj, 1), (:c2, 1)),
+             ((:jj, 2), (:p1, 2), Ground)])
+        @test refilled(blocked, (2*pi*4.75e9,), (6,),
+            [(mode=(1,), port=1, current=1e-8)], Dict(:Rp => 50.0), (Rp = 30.0,))
     end
 end

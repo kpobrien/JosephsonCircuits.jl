@@ -450,10 +450,15 @@ using Test
         Cval = 1000.0e-15
         ftab = 2*pi*collect(range(0.5e9, 30e9, length = 200))
         capval(w) = (1 - im*w*Cval*50.0)/(1 + im*w*Cval*50.0)
-        for (lbl, scale) in (("lossless", 1.0), ("lossy", 0.85))
-            tab = reshape([scale*capval(w) for w in ftab], 1, 1, :)
-            blk = ScatteringParameters((ftab, tab); nports = 1, grounded = true,
-                extrapolation = :constant)
+        # the last is zero beyond a band which the sidebands two and four
+        # pump harmonics up leave
+        fband = 2*pi*collect(range(3e9, 12e9, length = 60))
+        for (lbl, scale, f, extrapolation) in (("lossless", 1.0, ftab, :constant),
+                ("lossy", 0.85, ftab, :constant),
+                ("zero beyond the band", 1.0, fband, :zero))
+            tab = reshape([scale*capval(w) for w in f], 1, 1, :)
+            blk = ScatteringParameters((f, tab); nports = 1, grounded = true,
+                extrapolation = extrapolation)
             circuit = Circuit(
                 Any[:p1 => Port(1; Z0 = 50.0),
                     :cc => Capacitor(100.0e-15),
@@ -1230,7 +1235,7 @@ using Test
                     bp.factors, bp.blockindex, bp.factoroff, dp.nports,
                     dp.freqoff, dp.nfreq, dp.freqs, dp.valoff, dp.vals,
                     dp.curv, dp.slopeoff, dp.eslopes,
-                    dp.conjsym, wmodes, Nmodes, bp.nentries;
+                    dp.conjsym, dp.zeroout, wmodes, Nmodes, bp.nentries;
                     ndrange = bp.nentries*Nmodes)
             else
                 JosephsonCircuits.blocknoiseentryfactorkernel!(backend, 64)(
@@ -1397,7 +1402,7 @@ using Test
                 bp.factors, bp.blockindex, bp.factoroff, dp.nports,
                 dp.freqoff, dp.nfreq, dp.freqs, dp.valoff, dp.vals,
                 dp.curv, dp.slopeoff, dp.eslopes,
-                dp.conjsym, wmodes, Nmodes, bp.nentries;
+                dp.conjsym, dp.zeroout, wmodes, Nmodes, bp.nentries;
                 ndrange = bp.nentries*Nmodes)
             JosephsonCircuits.blocknoisecontractkernel!(backend, 64)(got,
                 phiadj, bp.factors, bp.blockindex, bp.factoroff, bp.auxbase,
@@ -2005,6 +2010,17 @@ end
         alone = hbsolve(ws, (2pi*fp,), [], (8,), (16,), Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, blk)]))
         @test maximum(abs, S(alone) .- S(sol)) < 1e-9
         @test all(x -> isapprox(abs(x), 1.0; atol = 1e-12), alone.linearized.CM)
+        # a solve at one frequency holds one sample of each sideband, and
+        # the block states nothing between them: alone it is the junctions
+        # at that frequency, and halfway to the next sideband its harmonic
+        # transfer functions are zero, not a spline through the sidebands
+        onef = hbsolve(ws[3:3], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; atol = 1e-14)
+        single = LinearizedScattering(onef.linearized, 2pi*fp)
+        alonef = hbsolve(ws[3:3], (2pi*fp,), [], (8,), (16,), Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, single)]))
+        @test maximum(abs, S(alonef) .- S(onef)) < 1e-9
+        between = JC.evaluateharmonics!(zeros(ComplexF64, 1, 1, length(single.harmonics), 2), single,
+            [ws[3] + pi*fp, ws[3] - 3pi*fp])
+        @test maximum(abs, between) == 0
         # behind a matched pad and a line: the pump reaches the junction
         # attenuated by the pad and delayed by the line, so the source is
         # raised by the pad and the block's pump phase is the line's delay
@@ -2212,6 +2228,29 @@ end
         @test_throws ArgumentError RationalScattering(blk3, 8; delays = [0.0])
         @test_throws ArgumentError RationalScattering(blk3, 8; band = (6e9, 5e9))
     end
+
+    @testset "the noise of a pumped block converted by the circuit" begin
+        # a matched 3 dB pad in front of a pumped JPA, written as a pumped
+        # block which does not convert and states the vacuum noise of its
+        # loss, and as a T of resistors: the noise of the pad reaches the
+        # output through the conversion of the junction, so the cross terms
+        # of the added noise between the signal and the idler follow the
+        # sign convention of the channels
+        g = 10^(-3/20); Sp = ComplexF64[0 g; g 0]
+        R1 = Z0*(1 - g)/(1 + g); R2 = 2*Z0*g/(1 - g^2)
+        fp, ip = 4.75e9, 0.00565e-6
+        ws = 2pi*[4.6e9, 4.9e9]
+        jpa = [(:cc, 2, 3, Capacitor(100.0e-15)), (:jj, 3, 0, JosephsonJunction(1000.0e-12)),
+            (:cj, 3, 0, Capacitor(1000.0e-15))]
+        pad = LinearizedScattering([Sp], 2pi*fp; harmonics = [0], nports = 2, zref = Z0,
+            noise = NoiseCovariance([Matrix{ComplexF64}((1 - g^2)*I, 2, 2)]))
+        solve(c) = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,),
+            Circuit(vcat([(:p1, 1, 0, Port(1; Z0 = Z0))], c, jpa)); returnCnoise = true, keyedarrays = false)
+        block = solve([(:pad, 1, 2, pad)])
+        lumped = solve([(:r1a, 1, 4, Resistor(R1)), (:r2, 4, 0, Resistor(R2)), (:r1b, 4, 2, Resistor(R1))])
+        @test isapprox(block.linearized.S, lumped.linearized.S; atol = 1e-9)
+        @test isapprox(block.linearized.Cnoise, lumped.linearized.Cnoise; atol = 1e-8)
+    end
 end
 
 # The zero frequency pencil, which is what makes a block visible at direct
@@ -2271,6 +2310,20 @@ end
         # and one which is genuinely complex there
         @test_throws ArgumentError descr("reactive",
             mk(w -> Complex{Float64}[0 im; im 0]))
+    end
+
+    @testset "a table zero beyond a band above zero has no limit there" begin
+        # zero beyond the band is a statement about the band and not about
+        # direct current: the block is refused when a direct current is
+        # asked of it and left open otherwise, as a table which refuses
+        # extrapolation is
+        f = 2*pi*collect(range(4e9, 6e9; length = 5))
+        tab = cat([Complex{Float64}[0 1; 1 0] for _ in f]...; dims = 3)
+        zeroed = ScatteringParameters((f, tab); nports = 2, grounded = true,
+            extrapolation = :zero)
+        @test_throws ArgumentError descr("zero", zeroed)
+        @test isnothing(JC.dcblockdescriptor(JC.StampedScatteringBlock(
+            zeroed, [1, 2], [0, 0], 0, "zero"); required = false))
     end
 end
 

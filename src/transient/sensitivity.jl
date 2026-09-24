@@ -1,9 +1,13 @@
 # The tangent and the exact discrete adjoint of the steps taken: the
 # derivative of a recorded trajectory on its own grid, linearized about the
 # full loaded state, with respect to currents injected at the ports and to
-# the initial state. The step matrix is symmetric, since the circuit
-# matrices, the augmentation and the junction term are, so the adjoint
-# solves use the factorization of the step itself.
+# the initial state; here the entries of the responses and the steps of
+# the trapezoidal and backward Euler rules, and the perturbation of the
+# component values, which the Gauss-Legendre responses of batch.jl read as
+# well. Under those two rules, which step no scattering block, the step
+# matrix is symmetric, since the circuit matrices, the augmentation and
+# the junction term are, so the adjoint solves use the factorization of
+# the step itself.
 
 # the outputs of a state as linear maps: the port voltage is `phi0*P*v`,
 # a wave is `(V + s*Z*(I - G*V))/(2 sqrt(Z))` with `s = +1` incident and
@@ -57,15 +61,14 @@ injects the component's own current, out of its first terminal and into
 its second, as a named source does, whatever the component is, which is
 how a bath of a resistor is placed. The default targets of
 [`transienttangent`](@ref) and [`transientadjoint`](@ref) are the ports
-in compiled order.
+in the order of their numbers.
 """
 function transientinjection(p::TransientProblem, targets)
     psc = p.circuit
     rows, cols, vals = Int[], Int[], Float64[]
     for (k, target) in enumerate(targets)
         if target isa Integer
-            q = findfirst(port -> port.number == target, psc.ports)
-            isnothing(q) && throw(ArgumentError(lazy"there is no port $(target)."))
+            q = portindex(p, target)
             n1, n2 = p.portpositive[q], p.portnegative[q]
         elseif target isa Union{AbstractString,Symbol}
             c = get(psc.componentnamedict, String(target), 0)
@@ -80,27 +83,23 @@ function transientinjection(p::TransientProblem, targets)
     return sparse(rows, cols, vals, length(p), length(targets))
 end
 
-# the ports in compiled order, as targets
-porttargets(p::TransientProblem) = [port.number for port in p.circuit.ports]
+# the ports in the order of their numbers, as targets
+porttargets(p::TransientProblem) = [port.number for port in p.ports]
 
 # the problem a plan or a bath is built against, from whatever names it
 transientproblemof(p::TransientProblem) = p
 transientproblemof(s::TransientSolution) = s.problem
 transientproblemof(b::TransientBatchSolution) = first(b.problems)
 
-# the compiled index of a port from its number, which is what the user
-# facing functions take; the traces of a solution are in compiled order
-function portindex(p::TransientProblem, number)
-    number isa Integer || throw(ArgumentError(lazy"a port is named by its number, not $(number)."))
-    q = findfirst(port -> port.number == number, p.circuit.ports)
-    isnothing(q) && throw(ArgumentError(lazy"there is no port $(number)."))
-    return q
-end
+# the row of a port's trace from its number, which is what the user
+# facing functions take; the traces of a solution are in the order of
+# the ports' numbers
+portindex(p::TransientProblem, number) = portindex(p.ports, number)
 portrows(p::TransientProblem, ports) = Int[portindex(p, number) for number in ports]
 
 # which ports the targets are, zero for a component, for the direct
 # feedthrough of a target's current into a port wave
-targetports(p::TransientProblem, targets) = [t isa Integer ? findfirst(port -> port.number == t, p.circuit.ports) : 0 for t in targets]
+targetports(p::TransientProblem, targets) = [t isa Integer ? portindex(p, t) : 0 for t in targets]
 
 """
     ComponentPerturbation
@@ -136,7 +135,7 @@ it, as the linearized solve has it, which enters the port waves directly
     adjoint, which never forms them.
 - `states`: whether any component reads the state; the junctions alone
     read only the phases the record always holds.
-- `ports`: the compiled port whose termination each component is, the
+- `ports`: the row of the port whose termination each component is, the
     row of its trace, or zero.
 """
 struct ComponentPerturbation{E, H, F}
@@ -200,16 +199,6 @@ end
 # entries, for the forcing of a tangent
 stackedderivative(t::PerturbationTriplets, n::Int, nc::Int) = sparse((t.c .- 1) .* n .+ t.i, t.j, t.v, nc*n, t.k)
 
-# the junction incidence of a problem and the junction coefficients
-# `Lscale/Lj`, on the host, as the system builds them
-function junctionincidence(p::TransientProblem)
-    nm = p.matrices
-    Ljb = nm.Ljb
-    Rbnm = hcat(nm.Rbnm, spzeros(eltype(nm.Rbnm), size(nm.Rbnm, 1), p.Naux))
-    RJ = SparseMatrixCSC{Float64,Int}(Rbnm[Ljb.nzind, :])
-    return RJ, Float64[p.Lscale/Ljb.nzval[j] for j in eachindex(Ljb.nzval)]
-end
-
 # The perturbation of the named components of a problem, on the backend:
 # the stored entries of every component's derivative, and, with
 # `forcing`, the stacked derivatives a tangent's forcing is one product
@@ -221,7 +210,7 @@ function componentperturbation(p::TransientProblem, names, backend; forcing::Boo
     n, Nnodal, Lscale = length(p), p.Nnodal, p.Lscale
     Ljb = nm.Ljb
     nj = length(Ljb.nzval)
-    RJ, lmolj = junctionincidence(p)
+    RJ, lmolj = p.RJ, p.lmolj
     RJt = sparse(transpose(RJ))
     lookups = componentlookups(p.coupledbranches, Ljb)
     isempty(names) && throw(ArgumentError("name at least one component."))
@@ -244,7 +233,7 @@ function componentperturbation(p::TransientProblem, names, backend; forcing::Boo
             push!(tJ, sparse(findnz(RJt[:, info])[1], fill(info, nnz(RJt[:, info])), -lmolj[info] .* findnz(RJt[:, info])[2], n, nj), c)
         end
         # a port's own termination: the environments are listed by port
-        # number, the traces by compiled port
+        # number, as the traces are
         pos = findfirst(==(idx), nm.portenvironmentindices)
         isnothing(pos) || (ports[c] = portindex(p, nm.portnumbers[pos]))
     end
@@ -524,6 +513,33 @@ end
 matrixsolve!(X, factor::KLU.KLUFactorization, B) = myldiv!(X, factor, B)
 matrixsolve!(X, factor::Transpose{<:Any,<:KLU.KLUFactorization}, B) = myldiv!(X, factor, B)
 
+# The readings of a trapezoidal or backward Euler record the tangent
+# and the adjoint share: the window of its states, which the
+# perturbation's endpoint reads, and `readingat!(o, k)`, the projected
+# junctions' phases and read rates at time `k` from the record into the
+# reading work `o`, and with `withstates` the state where the
+# perturbation reads it, into `xk`, its rate read.
+function recordreadings(sol::TransientSolution, sys::TransientSystem, withstates::Bool, xk, delta)
+    n = length(sys.problem)
+    problems = [sol.problem]
+    statewindow = ResponseWindow(1:length(sol.times), nothing, nothing, nothing, nothing,
+        (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing), nothing)
+    readingat! = (o, k) -> begin
+        prj = sys.projection
+        if !isnothing(prj) && !isempty(prj.pj)
+            copyto!(o.hphi, Array(view(sol.phases, prj.pj, k)))
+            copyto!(o.er, Array(view(sol.endrates, :, k)))
+        end
+        if withstates
+            copyto!(xk, view(sol.flux, :, k))
+            isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[k], delta, o.rn.hv1, o.rn.hv2)
+            readrate!(o.wk, reshape(view(sol.rate, :, k), n, 1), xk, sys, o.rn)
+        end
+        nothing
+    end
+    return statewindow, readingat!
+end
+
 """
     transienttangent(solution, currents; targets = the ports,
         initialstate = nothing, factorization = nothing, reuse = nothing,
@@ -532,8 +548,13 @@ matrixsolve!(X, factor::Transpose{<:Any,<:KLU.KLUFactorization}, B) = myldiv!(X,
 The tangent of a recorded transient along a perturbation: `currents[q, k]`
 is an additional Norton current in Amperes at target `q` (a port number,
 or a component name, see [`transientinjection`](@ref)) at recorded time
-`k`, and `initialstate` an optional pair of perturbations of the scaled
-flux and rate at the start. A third dimension of `currents` is a set of
+`k`, and `initialstate` an optional tuple of perturbations at the start:
+of the scaled flux and rate, `(flux, rate)`, each `(state, direction)`,
+and under [`GaussLegendre`](@ref) optionally of the waves the lines
+carried before it, `(line port, prehistory column, direction)`, and of
+the rational blocks' states, `(state, direction)`, as its third and
+fourth members, each with a trailing dimension of the conditions of a
+batch when it differs between them. A third dimension of `currents` is a set of
 directions propagated together, each step's factorization serving them
 all. Under [`GaussLegendre`](@ref) a current on the grid is read at the
 stage times through a cubic Lagrange stencil, through the line between
@@ -624,7 +645,6 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
     withstates = !isnothing(perturbation) && perturbation.states
     dIh = currents.grid
     delta = ratedelta(sys)
-    problems = [p]
     xk = allocate(n, 1)
     # the projection of the endpoint linearized at the recorded endpoint,
     # with the constraints perturbed there by the components and by the
@@ -634,23 +654,7 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
     cw = projecting ? projectionwork(pr, backend, n, 1, ndir) : nothing
     pend = (projecting && !isnothing(perturbation)) ? endpointwork(perturbation, sys, p, 1, ndir; forcing = true) : nothing
     fdev, fh = projecting ? (allocate(n, ndir), allocate(n, ndir)) : (nothing, nothing)
-    statewindow = ResponseWindow(1:nt, nothing, nothing, nothing, nothing,
-        (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing), nothing)
-    # the projected junctions' phases and read rates at time `k` from the
-    # record, and the state where the perturbation reads it, its rate read
-    function readingat!(o, k)
-        prj = sys.projection
-        if !isnothing(prj) && !isempty(prj.pj)
-            copyto!(o.hphi, Array(view(sol.phases, prj.pj, k)))
-            copyto!(o.er, Array(view(sol.endrates, :, k)))
-        end
-        if withstates
-            copyto!(xk, view(sol.flux, :, k))
-            isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[k], delta, o.rn.hv1, o.rn.hv2)
-            readrate!(o.wk, reshape(view(sol.rate, :, k), n, 1), xk, sys, o.rn)
-        end
-        nothing
-    end
+    statewindow, readingat! = recordreadings(sol, sys, withstates, xk, delta)
     function outputs!(k)
         if !isnothing(reading)
             readingat!(reading, k)
@@ -690,9 +694,12 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
             perturbationforcing!(pwork.F, perturbation, pwork, pwork.work)
             rhs .+= reshape(pwork.F, n, ndir)
         end
-        # the step matrix at the recorded phases, and the solves
-        copyto!(phi, view(sol.phases, :, k))
-        factor = stepjacobian!(sys, phi, factor)
+        # the step matrix at the recorded phases, and the solves; without
+        # a junction it does not change, and is factorized once
+        if nj > 0 || isnothing(factor)
+            copyto!(phi, view(sol.phases, :, k))
+            factor = stepjacobian!(sys, phi, factor)
+        end
         matrixsolve!(dxnew, factor, rhs)
         if projecting
             if !isnothing(pend)
@@ -716,9 +723,8 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
     end
     KernelAbstractions.synchronize(backend)
     isnothing(reuse) || (reuse.factor = factor)
-    # the tangent's rate along the algebraic directions read as the
-    # solve's is, the constraints' rows perturbed as its directions
-    # perturb them
+    # the tangent's rate along the algebraic directions, as the
+    # Gauss-Legendre tangent reads it
     finalrate = copy(dv)
     (isnothing(sys.invariant) && isnothing(sys.projection)) ||
         readtangentrate!(finalrate, dv, dx, sys, sol, 1, ndir, perturbation, dIh, injh, backend)
@@ -781,19 +787,27 @@ end
 
 """
     transientadjoint(solution, weights; quantity = :outgoing, targets = the ports,
-        factorization = nothing, reuse = nothing, sink = nothing, stagesink = nothing)
+        factorization = nothing, reuse = nothing, sink = nothing, stagesink = nothing,
+        components = String[])
 
 The exact discrete adjoint of `sum(weights .* getproperty(solution,
 quantity))` on the recorded grid, `weights` having one row per port and
 one column per recorded time and `quantity` being `:voltage`, `:incident`
 or `:outgoing`; a third dimension of `weights` is a set of objectives
 propagated together on each step's factorization. Returns `(currents,
-initialflux, initialrate)`: the derivatives with respect to a Norton
-current at every target (a port number or a component name, see
-[`transientinjection`](@ref)) and recorded time, in Amperes, including
-the direct feedthrough of a port's current into its wave, and with
-respect to the scaled initial flux and rate, with the objectives as the
-trailing dimension. For a consistent perturbation the contraction equals
+initialflux, initialrate, initialwaves, initialstates, sensitivity)`:
+the derivatives with respect to a Norton current at every target (a
+port number or a component name, see [`transientinjection`](@ref)) and
+recorded time, in Amperes, including the direct feedthrough of a port's
+current into its wave; with respect to the scaled initial flux and
+rate; under [`GaussLegendre`](@ref) with respect to the lines'
+prehistory and the rational blocks' initial states, the cotangents of
+the third and fourth members of the tangent's `initialstate`, or
+`nothing` without them; and with respect to the relative values of the
+named `components`, `(component, objective)`, as
+[`transientsensitivity`](@ref) perturbs them, or `nothing` without any;
+all with the objectives as the trailing dimension. For a consistent
+perturbation the contraction equals
 the weighted output of [`transienttangent`](@ref); a complex demodulation
 is two real objectives, and a time integral carries its quadrature
 weights in `weights`. With a `sink`, a function `sink(k, values)`, the
@@ -803,7 +817,8 @@ final, in decreasing recorded time, and `currents` is `nothing`; a
 contraction over a long record then needs no memory per time. With a
 `stagesink` as well, a function `stagesink(k, i, values)`, the
 multipliers of the two stages of each Gauss-Legendre step from `k` to
-`k + 1` go to it as they are, at their stage times, and the grid columns
+`k + 1` go to it as they are, at their stage times, in a buffer which,
+like the sink's columns, is valid until the next call, and the grid columns
 hold only what the grid reads; that pair is the transpose of the staged
 form of the tangent's currents, and it is what the noise contracts.
 """
@@ -854,17 +869,11 @@ function stepadjoint(sol::TransientSolution, wh::Array{Float64, 3}, single::Bool
     phi, jwork = allocate(nj), allocate(nj, nobj)
     portwork = allocate(np, nobj)
     targetwork = allocate(nq, nobj)
-    # The adjoint of an output at time `k`: the rate receives
-    # `phi0 P' (cv .* w)`. Where a port reads a rate along an algebraic
-    # direction, through the transpose of the reading: the rate before
-    # the reading, the flux through the curvature of the projected
-    # junctions' stiffness, the currents whose rate the reading read, at
-    # the points of the stencil, and the components whose perturbation of
-    # the constraints it read, on the read rate at the time.
+    # the adjoint of an output at time `k`, as the Gauss-Legendre
+    # adjoint's (see `adjointoutput!`)
     transposing = sys.portsread ? outputtranspose(sys, backend, n, 1, nobj) : nothing
     withstates = !isnothing(perturbation) && perturbation.states
     delta = ratedelta(sys)
-    problems = [p]
     xk = allocate(n, 1)
     # the projection of the endpoint transposed (see `constrainttranspose!`):
     # the cotangent of the flux before it, and through the cotangent of
@@ -876,21 +885,7 @@ function stepadjoint(sol::TransientSolution, wh::Array{Float64, 3}, single::Bool
     fbar = projecting ? allocate(n, nobj) : nothing
     pend = (projecting && !isnothing(perturbation)) ? endpointwork(perturbation, sys, p, 1, nobj; forcing = false) : nothing
     sensh = isnothing(pend) ? nothing : zeros(length(perturbation.names), nobj, 1)
-    statewindow = ResponseWindow(1:nt, nothing, nothing, nothing, nothing,
-        (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing), nothing)
-    function readingat!(o, k)
-        prj = sys.projection
-        if !isnothing(prj) && !isempty(prj.pj)
-            copyto!(o.hphi, Array(view(sol.phases, prj.pj, k)))
-            copyto!(o.er, Array(view(sol.endrates, :, k)))
-        end
-        if withstates
-            copyto!(xk, view(sol.flux, :, k))
-            isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[k], delta, o.rn.hv1, o.rn.hv2)
-            readrate!(o.wk, reshape(view(sol.rate, :, k), n, 1), xk, sys, o.rn)
-        end
-        nothing
-    end
+    statewindow, readingat! = recordreadings(sol, sys, withstates, xk, delta)
     function output!(k)
         portwork .= cv .* view(w, :, k, :)
         stepmul!(work, sys.portst, portwork)
@@ -921,8 +916,10 @@ function stepadjoint(sol::TransientSolution, wh::Array{Float64, 3}, single::Bool
                 endpointcontract!(sensh, pend, perturbation, Array(fbar), -1.0)
             end
         end
-        copyto!(phi, view(sol.phases, :, k))
-        factor = stepjacobian!(sys, phi, factor)
+        if nj > 0 || isnothing(factor)
+            copyto!(phi, view(sol.phases, :, k))
+            factor = stepjacobian!(sys, phi, factor)
+        end
         matrixsolve!(lambda, factor, xbar)
         # the components' forcing of the step against its multipliers
         if !isnothing(perturbation)

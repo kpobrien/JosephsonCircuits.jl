@@ -12,8 +12,8 @@
 The output power waves at the noise ports, from the adjoint solution, one work
 item per (noise port, mode, right hand side).
 
-This is [`calcinputoutputnoise!`](@ref) restricted to its output waves, which
-is all of it that reads a solution: the input waves come from the source terms
+This is [`calcoutputwaves!`](@ref) with no source current, as the host reads
+the noise ports; the input waves it is divided by come from the source terms
 alone and are computed on the host.
 """
 @kernel function noiseoutputwavekernel!(out, @Const(phin), @Const(node1),
@@ -27,7 +27,6 @@ alone and are computed on the host.
         k = q ÷ (Nmodes*Nnoise) + 1
         w = wmodes[j]
         z = impedance(values[i], codes[i], w)
-        kval = portwavescale(z, w)
         k1 = Int(node1[i]); k2 = Int(node2[i])
         v = if k1 == 1
             -phin[(k2-2)*Nmodes+j, k]
@@ -39,8 +38,7 @@ alone and are computed on the host.
         v *= im*w
         # no source current at a noise port, so the whole port current is the
         # one the port voltage drives through the port impedance
-        current = -v/z
-        out[(i-1)*Nmodes+j, k] = (kval*(v - conj(z)*current))/2
+        out[(i-1)*Nmodes+j, k] = noisewavescale(z, w)*v
     end
 end
 
@@ -91,7 +89,7 @@ end
 
 """
     devicenoise(plan::DeviceNoisePlan, blockplan, providers,
-        adjointsolution, nrhs, wpumpmodes, w, keepmatrix)
+        adjointsolution, nrhs, wpumpmodes, w, keepmatrix, temperatures = nothing)
 
 A callback which computes the noise scattering parameters of a signal
 frequency from the adjoint solutions on the backend.
@@ -116,9 +114,10 @@ scattering matrix unless `keepmatrix`: on a line with loss spread along it
 that matrix has a row per noise port mode and is the largest thing in the
 sweep, while what is read of it is one number per port mode.
 
-`Snoise = noiseoutputwave/inputwave` is formed as a product with the inverse
-of the input waves, which is a dense matrix the size of the scattering matrix
-and so is inverted on the host.
+`Snoise` is each column of the noise output waves divided by the input wave
+of its port mode, with the sign the adjoint route owes it (see
+[`adjointnoisesigns!`](@ref)); the scale of each column is formed on the
+host, where the input waves are.
 """
 function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
     adjointsolution, nrhs::Integer, wpumpmodes, w, keepmatrix::Bool,
@@ -131,15 +130,15 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
         (isnothing(blockplan) ? 0 : blockplan.nchannels*plan.nmodes)
     out = KernelAbstractions.allocate(backend, T, nrows, nrhs)
     Snoise = KernelAbstractions.allocate(backend, T, nrows, nrhs)
-    invinput = KernelAbstractions.allocate(backend, T, nrhs, nrhs)
+    # the reciprocal of the input wave of each port column, times the sign
+    # of its mode frequency
+    colscale = KernelAbstractions.allocate(backend, T, 1, nrhs)
+    colscalehost = zeros(T, 1, nrhs)
     # the two reductions go through the backend's own `sum!`, a tree over
     # the noise index; summing each column in one work item would be a
     # dozen threads each walking every noise port in turn
     absq = KernelAbstractions.allocate(backend, Float64, nrows, nrhs)
     signs = KernelAbstractions.allocate(backend, Float64, nrows, 1)
-    # the sign of the mode frequency of each port column, for the sign the
-    # adjoint route owes the matrix (see `adjointnoisesigns!`)
-    colsigns = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     denomd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     signedd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     wmodesd = KernelAbstractions.allocate(backend, Float64, plan.nmodes)
@@ -162,6 +161,9 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
     Cwork = KernelAbstractions.allocate(backend, T, nrows, nrhs)
     Cdev = KernelAbstractions.allocate(backend, T, nrhs, nrhs)
     Chost = Matrix{T}(undef, nrhs, nrhs)
+    # the host copy of the noise scattering matrix, when it is kept
+    Snoisehost = keepmatrix ? Matrix{T}(undef, nrows, nrhs) :
+        Matrix{T}(undef, 0, 0)
 
     return function(i, inputwave, Snoiseview, Cnoiseview = nothing)
         @inbounds for m in eachindex(wmodes)
@@ -183,7 +185,7 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
                     providers.nports, providers.freqoff, providers.nfreq,
                     providers.freqs, providers.valoff, providers.vals,
                     providers.curv, providers.slopeoff, providers.eslopes,
-                    providers.conjsym, wmodesd,
+                    providers.conjsym, providers.zeroout, wmodesd,
                     plan.nmodes, blockplan.nentries;
                     ndrange = blockplan.nentries*plan.nmodes)
             else
@@ -201,15 +203,15 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
                 blockplan.nchannels, lumpedrows, nrhs;
                 ndrange = blockplan.nchannels*plan.nmodes*nrhs)
         end
-        KernelAbstractions.synchronize(backend)
-        copyto!(invinput, inv(Matrix{T}(inputwave)))
-        mul!(Snoise, out, invinput)
+        @inbounds for k in 1:nrhs
+            colscalehost[k] = sign(wmodes[(k - 1) % plan.nmodes + 1])/
+                inputwave[k]
+        end
+        copyto!(colscale, colscalehost)
         modesignkernel!(backend, 64)(signs, wmodesd, plan.nmodes;
             ndrange = nrows)
-        modesignkernel!(backend, 64)(colsigns, wmodesd, plan.nmodes;
-            ndrange = nrhs)
         KernelAbstractions.synchronize(backend)
-        Snoise .*= signs .* colsigns
+        Snoise .= out .* signs .* colscale
         # the same two passes and two reductions as at zero temperature, with
         # the occupation folded into the one the quantum efficiency reads
         if warm
@@ -224,10 +226,12 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
         absq .= abs2.(Snoise) .* signs
         sum!(signedd, absq)
         KernelAbstractions.synchronize(backend)
-        copyto!(denom, vec(Array(denomd)))
-        copyto!(signed, vec(Array(signedd)))
-        keepmatrix && isempty(Snoiseview) == false && copyto!(Snoiseview,
-            Array(Snoise))
+        copyto!(denom, denomd)
+        copyto!(signed, signedd)
+        if keepmatrix && !isempty(Snoiseview)
+            copyto!(Snoisehost, Snoise)
+            copyto!(Snoiseview, Snoisehost)
+        end
         if !isnothing(Cnoiseview)
             # Cnoise[i,j] = sum_c occupation[c] Snoise[c,i] conj(Snoise[c,j])
             if warm
@@ -260,8 +264,8 @@ and a block has few ports.
 @kernel function blocknoisefactorkernel!(L, @Const(blockindex),
         @Const(factoroff), @Const(nports), @Const(freqoff), @Const(nfreq),
         @Const(freqs), @Const(valoff), @Const(vals), @Const(curv),
-        @Const(slopeoff), @Const(eslopes), @Const(conjsym), @Const(wmodes),
-        Nmodes, nentries)
+        @Const(slopeoff), @Const(eslopes), @Const(conjsym), @Const(zeroout),
+        @Const(wmodes), Nmodes, nentries)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
@@ -269,39 +273,13 @@ and a block has few ports.
         e = g ÷ Nmodes + 1
         bi = Int(blockindex[e])
         n = Int(nports[bi])
-        off = Int(factoroff[e]) + (m-1)*n*n
-        T = eltype(L)
-        wm = wmodes[m]
-        if iszero(wm)
-            # the wave normalization is singular at zero frequency, where the
-            # lumped noise ports are zero too
-            for j in 1:n*n
-                L[off + j] = zero(T)
-            end
-        else
-            isconj = conjsym[bi] != 0
-            wq = isconj ? abs(wm) : wm
-            neg = isconj && wm < 0
-            fo = Int(freqoff[bi]); nf = Int(nfreq[bi]); vo = Int(valoff[bi])
-            so = Int(slopeoff[bi])
-            for c in 1:n
-                for p in c:n
-                    acc = p == c ? one(T) : zero(T)
-                    for l in 1:n
-                        spl = tableentry(freqs, vals, curv, eslopes, fo, nf,
-                            vo, so, n, p, l, wq)
-                        scl = tableentry(freqs, vals, curv, eslopes, fo, nf,
-                            vo, so, n, c, l, wq)
-                        if neg
-                            spl = conj(spl); scl = conj(scl)
-                        end
-                        acc -= spl*conj(scl)
-                    end
-                    L[off + (c-1)*n + p] = acc
-                end
-            end
-            psdcholesky!(L, off, n)
-        end
+        zo = zeroout[bi] != 0
+        fo = Int(freqoff[bi]); nf = Int(nfreq[bi]); vo = Int(valoff[bi])
+        so = Int(slopeoff[bi])
+        entry = (p, l, w) -> tableentry(freqs, vals, curv, eslopes, fo, nf,
+            vo, so, n, p, l, w, zo)
+        blocknoisefactor!(L, Int(factoroff[e]) + (m-1)*n*n, n, wmodes[m],
+            conjsym[bi] != 0, entry)
     end
 end
 
@@ -317,35 +295,46 @@ end
         e = g ÷ Nmodes + 1
         bi = Int(blockindex[e])
         n = Int(nports[bi])
-        off = Int(factoroff[e]) + (m-1)*n*n
-        T = eltype(L)
-        wm = wmodes[m]
-        if iszero(wm)
-            for j in 1:n*n
-                L[off + j] = zero(T)
-            end
-        else
-            isconj = conjsym[bi] != 0
-            wq = isconj ? abs(wm) : wm
-            neg = isconj && wm < 0
-            f = funcs[bi]
-            for c in 1:n
-                for p in c:n
-                    acc = p == c ? one(T) : zero(T)
-                    for l in 1:n
-                        spl = T(f(p, l, wq))
-                        scl = T(f(c, l, wq))
-                        if neg
-                            spl = conj(spl); scl = conj(scl)
-                        end
-                        acc -= spl*conj(scl)
-                    end
-                    L[off + (c-1)*n + p] = acc
+        f = funcs[bi]
+        entry = (p, l, w) -> eltype(L)(f(p, l, w))
+        blocknoisefactor!(L, Int(factoroff[e]) + (m-1)*n*n, n, wmodes[m],
+            conjsym[bi] != 0, entry)
+    end
+end
+
+# The factor, at `off` in `L`, of the vacuum noise covariance `I - S S'` of
+# an `n` port block at the mode frequency `wm`, from its scattering
+# entries `entry(p, q, w)`, which the two kernels above read from a table
+# or a callable. A block which states its data at positive frequencies
+# only (`isconj`) is read at `abs(wm)` and conjugated at a negative one.
+@inline function blocknoisefactor!(L, off, n, wm, isconj::Bool, entry::F) where {F}
+    T = eltype(L)
+    if iszero(wm)
+        # the wave normalization is singular at zero frequency, where the
+        # lumped noise ports are zero too
+        for j in 1:n*n
+            @inbounds L[off + j] = zero(T)
+        end
+        return nothing
+    end
+    wq = isconj ? abs(wm) : wm
+    neg = isconj && wm < 0
+    @inbounds for c in 1:n
+        for p in c:n
+            acc = p == c ? one(T) : zero(T)
+            for l in 1:n
+                spl = entry(p, l, wq)
+                scl = entry(c, l, wq)
+                if neg
+                    spl = conj(spl); scl = conj(scl)
                 end
+                acc -= spl*conj(scl)
             end
-            psdcholesky!(L, off, n)
+            L[off + (c-1)*n + p] = acc
         end
     end
+    psdcholesky!(L, off, n)
+    return nothing
 end
 
 """

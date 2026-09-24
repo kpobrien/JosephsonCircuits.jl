@@ -259,10 +259,10 @@ using Test
         Nharmonics = (2*Npumpmodes,)
         sources = ((mode=(1,),port=1,current=Ip),)
 
-        @test_warn(
-            "Solver did not converge",
-            hbnlsolve(w,Nharmonics,sources,circuit,circuitdefs,iterations=1)
-        )
+        r = @test_logs (:warn,) match_mode=:any hbnlsolve(w, Nharmonics,
+            sources, circuit, circuitdefs, iterations = 1)
+        @test !r.solverinfo.converged
+        @test r.solverinfo.stages[end].reason == :iterations
     end
 
     @testset "hbnlsolve simple testcase" begin
@@ -594,9 +594,9 @@ using Test
             mk(L, R) = Circuit([(:p, 1, 0, Port(1)), (:l, 1, 0, Inductor(L)),
                 (:r, 1, 0, Resistor(R)), (:c, 1, 0, Capacitor(1e-12))])
             wsi = [2pi*5e9]
-            si = hblinsolve(wsi, mk(2, 50); keyedarrays = false,
+            si = hblinsolve(wsi, mk(2, 75); keyedarrays = false,
                 sensitivitynames = ["l", "r"], returnSsensitivity = true)
-            sf = hblinsolve(wsi, mk(2.0, 50.0); keyedarrays = false,
+            sf = hblinsolve(wsi, mk(2.0, 75.0); keyedarrays = false,
                 sensitivitynames = ["l", "r"], returnSsensitivity = true)
             @test si.S == sf.S
             @test si.Ssensitivity == sf.Ssensitivity
@@ -1109,6 +1109,24 @@ using Test
                 @test isapprox(a, b; rtol = tol)
             end
         end
+        # batches of a block factorization run with one BLAS thread, which
+        # is a setting of the whole process: two sweeps at once leave it
+        # as they found it
+        let threads = BLAS.get_num_threads()
+            jpa, jpadefs = testjpacircuit()
+            BLAS.set_num_threads(2)
+            try
+                both = [Threads.@spawn hbsolve(2*pi*[4.5e9, 4.7e9, 4.9e9],
+                    (2*pi*4.75001e9,), [(mode = (1,), port = 1,
+                    current = 0.00565e-6)], (2,), (8,), jpa, jpadefs;
+                    factorization = BlockFactorization(), nbatches = 3,
+                    keyedarrays = false) for _ in 1:2]
+                foreach(fetch, both)
+                @test BLAS.get_num_threads() == 2
+            finally
+                BLAS.set_num_threads(threads)
+            end
+        end
         # a promoted port resistor and a mutual inductor: the modified nodal
         # analysis rows join the node blocks, and the sensitivity path takes
         # its own factorization of the pump Jacobian
@@ -1236,6 +1254,37 @@ using Test
         @test sensnoS.Ssensitivity == sensS.Ssensitivity
     end
 
+end
+
+@testset "inputs refused by name" begin
+    circuit, circuitdefs = testjpacircuit()
+    ws = 2*pi*[4.5e9, 5.0e9]
+    wp = (2*pi*4.75001e9,)
+    sources = [(mode = (1,), port = 1, current = 0.00565e-6)]
+    # a modulation harmonic count per pump tone, checked before the pump
+    # is solved
+    @test_throws ArgumentError hbsolve(ws, wp, sources, (2, 2), (4,), circuit,
+        circuitdefs)
+    # a temperature below zero
+    @test_throws ArgumentError hblinsolve(ws, circuit, circuitdefs;
+        temperature = -0.05)
+    # an operating point of another circuit, with fewer junctions
+    nl = hbnlsolve(wp, (4,), sources, circuit, circuitdefs)
+    other = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(100e-15)),
+        (:Lj1, 2, 0, JosephsonJunction(1000e-12)), (:Lj2, 2, 3, JosephsonJunction(1000e-12)),
+        (:C2, 3, 0, Capacitor(1000e-15))])
+    @test_throws ArgumentError hblinsolve(ws, other; nonlinear = nl,
+        Nmodulationharmonics = (2,))
+    # a modulation harmonic count per pump tone, against an operating point
+    @test_throws ArgumentError hblinsolve(ws, circuit, circuitdefs;
+        nonlinear = nl, Nmodulationharmonics = (2, 2))
+    # a complex junction inductance, under every method
+    lossyjunction = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(100e-15)),
+        (:Lj1, 2, 0, JosephsonJunction(1000e-12 + 1e-12im)), (:C2, 2, 0, Capacitor(1000e-15))])
+    for method in (NewtonKrylov(), Newton(), QuasiNewton())
+        @test_throws ArgumentError hbnlsolve(wp, (4,), sources, lossyjunction;
+            method = method)
+    end
 end
 
 @testset "the frequency window of the pump modes" begin

@@ -295,8 +295,9 @@ using Test
             verdict, _, _, _ = JC.passivityassessment(Ah, Bh, Ch, Dh; atol = 1e-8)
             @test verdict === :active
             @test_throws ArgumentError RationalScattering(Ah, Bh, Ch, Dh; zref = 50.0, atol = 1e-8)
-            # and the enforcement brings it under
-            Ae, Be, Ce, De = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+            # and the enforcement brings it under, correcting it where
+            # its pole peaks rather than contracting the whole block
+            Ae, Be, Ce, De = @test_logs JC.enforcepassivity(
                 Ah, Bh, Ch, Dh, 2pi .* collect(range(0.01, 1.0; length = 200)))
             @test abs(only(De + Ce*((im*wpk*I - Ae) \ Be))) <= 1 + 1e-8
             # The level is a bound only where the pencil
@@ -635,7 +636,7 @@ end
     @test_throws ArgumentError RationalScattering(blk, 0)
     # the fit against the tables it came from, at their knots
     for (j, k) in enumerate(blk.harmonics)
-        nus = JC.piecewisefrequencies(blk.providers[j])
+        nus = JC.tableknots(blk.providers[j])
         Ht = zeros(ComplexF64, 1, 1, length(blk.harmonics), length(nus))
         Hf = similar(Ht)
         JC.evaluateharmonics!(Ht, blk, nus)
@@ -815,19 +816,32 @@ end
         blk = LinearizedScattering([q0, JC.ModulatedRationalProvider(qc, qz)], wp; harmonics = [0, 1],
             nports = 2, zref = Z0, phase = 0.73, noise)
         for reference in (0.0, 1.7e-9)
-            got = JC.pumpedpairterms(blk, pfreqs, JC.CPU(), reference)
+            # the ladders, each over its own frequencies, placed on the
+            # quadratures of all of them, against the pairs read from the
+            # one family, placed the same way, `(frequency, port,
+            # quadrature)`
+            got = JC.pumpedladders(blk, pfreqs, JC.CPU(), reference)
             want = densepairs(blk, pfreqs, reference)
-            @test [(t.a, t.b) for t in got] == [(w[1], w[2]) for w in want]
-            @test all(zip(got, want)) do (t, w)
-                all(isapprox.(t.E, w[3]; rtol = 1e-10, atol = 1e-10)) && all(isapprox.(t.C, w[4]; rtol = 1e-10, atol = 1e-10))
+            np, nf = 2, length(pfreqs)
+            Ew, Cw, Eg, Cg = [zeros(2np*nf, 2np*nf) for _ in 1:4]
+            for (a, b, E, C) in want, (i, (qa, qb)) in enumerate(((1, 1), (1, 2), (2, 1), (2, 2))), p in 1:np, q in 1:np
+                Ew[2np*(a - 1) + 2(p - 1) + qa, 2np*(b - 1) + 2(q - 1) + qb] += E[i][p, q]
+                Cw[2np*(a - 1) + 2(p - 1) + qa, 2np*(b - 1) + 2(q - 1) + qb] += C[i][p, q]
             end
+            for L in got
+                rows = reduce(vcat, [2np*(f - 1) + 1:2np*f for f in L.frequencies])
+                Eg[rows, rows] .+= L.E
+                Cg[rows, rows] .+= L.C
+            end
+            @test Eg ≈ Ew rtol=1e-10 atol=1e-10
+            @test Cg ≈ Cw rtol=1e-10 atol=1e-10
             # the pair at half the pump is one term and not two, and it
             # carries both correlations: the covariance a harmonic apart
             # is its anomalous one, which is why its two quadratures
             # differ where the block states it
-            degenerate = only(filter(t -> t.a == 3 && t.b == 3, got))
             if stated
-                @test !isapprox(degenerate.E[1], degenerate.E[4]; rtol = 1e-3)
+                x3, p3 = 2np*2 .+ (1:2:2np), 2np*2 .+ (2:2:2np)
+                @test !isapprox(Eg[x3, x3], Eg[p3, p3]; rtol = 1e-3)
             end
         end
     end
@@ -881,19 +895,13 @@ end
     end
     @test isapprox(var[1], var[2]; rtol = 1e-10)
     @test var[1] > 10
-    # the stage values of a pumped block belong to the factor of the
-    # batch which steps it, so batches on one system do not share them
-    p = transientproblem(one(model()))
-    sys = JC.transientsystem(p, dt, GaussLegendre(), JC.CPU(), JC.KLUfactorization())
-    bf1, bf2 = JC.gaussbatchfactor(sys, 1), JC.gaussbatchfactor(sys, 1)
-    r1, r2 = JC.rationalwork(p, JC.CPU(), length(p), 1), JC.rationalwork(p, JC.CPU(), length(p), 1)
-    JC.stageweights!(r1, sys, dt, 2dt)
-    JC.refreshstageoperator!(r1, sys, bf1)
-    v1 = copy(bf1.rationalvals)
-    JC.stageweights!(r2, sys, 20dt, 21dt)
-    JC.refreshstageoperator!(r2, sys, bf2)
-    @test bf1.rationalvals == v1 && bf1.rationalvals != bf2.rationalvals
-    @test !(bf1.rationalvals === sys.gauss.rationalvals) && !(bf1.hostvals === sys.gauss.hostvals)
+    # the frozen stage operator carries the block's unconverted response
+    # and the stage correction its modulation, exactly: a linear circuit
+    # with a strongly converting block steps on one factorization, one
+    # correction a step
+    p = transientproblem(one(model(amp = 0.5)); sources = [TransientSource(1, t -> 1e-9*sinpi(2*0.4e9*t))])
+    lin = transientsolve(p, (0.0, 4e-9); dt, method = GaussLegendre())
+    @test lin.stats.factorizations == 1 && lin.stats.newtoncorrections == lin.stats.steps
     # the stage correction is rebuilt with the factorization when the
     # junctions of the circuit ask for a fresh one
     cj = one(model(amp = 0.5, noise = NoiseCovariance([fill(10.0, 1, 1), zero1])), (:jj, 1, 0, JosephsonJunction(1e-9)), (:cap, 1, 0, Capacitor(1e-12)))
@@ -903,16 +911,15 @@ end
     st = JC.gaussstepper(sysj, [pj], 1e-12, 1e-13, 100, bfj)
     JC.setstate!(st, zeros(length(pj), 1), zeros(length(pj), 1), nothing)
     JC.stageweights!(st.rw, sysj, 0.18e-9, 0.22e-9)
-    JC.refreshstageoperator!(st.rw, sysj, st.bf)
-    st.refresh!()
+    st.refresh!(nothing)
     Kold = copy(st.rw.correction.K)
     fill!(st.phi, 1.2)
-    st.refresh!()
+    st.refresh!(nothing)
     @test norm(st.rw.correction.K .- Kold) > 0
     r = randn(size(st.delta))
     a, b = zero(r), zero(r)
     st.solve!(a, r)
-    JC.stagecorrection!(st.rw, sysj, st.bf, sysj.gauss.coefficients, st.rc, st.zc, false)
+    JC.stagefactors!(st.rw, sysj, st.bf, sysj.gauss.coefficients, st.rc, st.zc, false)
     st.solve!(b, r)
     @test a == b
     # and that circuit in time, a weak signal through the block beside

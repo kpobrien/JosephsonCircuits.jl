@@ -8,6 +8,12 @@ using JosephsonCircuits
         theta=0:0.01:6*pi
         @test isapprox(theta,JosephsonCircuits.unwrap(angle.(exp.(im*theta))))
 
+        # complex values are not phases
+        @test_throws(
+            MethodError,
+            JosephsonCircuits.unwrap(exp.(im*theta)),
+        )
+
         @test isapprox(
             JosephsonCircuits.unwrap!(zeros(10,10);dims=1),
             zeros(10,10),

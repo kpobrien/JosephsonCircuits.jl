@@ -136,10 +136,6 @@ import StaticArrays
                 JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
             )
 
-    # if size(Cout) != size(Sout)
-    #     throw(DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."))
-    # end
-
         end
 
         begin
@@ -481,6 +477,11 @@ import StaticArrays
             @test isapprox(Sout2,Sout3)
             @test isapprox(Sout3,Sout4)
             @test isapprox(Cout3,Cout4)
+
+            # the in place connections with noise return both outputs
+            Sout5, Cout5 = similar(Sout4), similar(Cout4)
+            @test JosephsonCircuits.interconnectS!(Sout5,Cout5,Sa,Sb,Ca,Cb,1,2) == (Sout5,Cout5)
+            @test isapprox(Cout5,Cout4)
         end
 
         begin
@@ -899,15 +900,6 @@ import StaticArrays
             )
         end
 
-        # begin
-        #     networks = [JosephsonCircuits.PassiveNetwork(:S1,[0 1;1 0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
-        #     connections = [[(:S1,1),(:S2,2)]];
-        #     @test_throws(
-        #         ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
-        #         JosephsonCircuits.add_splitters(networks,connections)
-        #     )
-        # end
-
     end
 
     @testset "connectS solveS comparison" begin
@@ -917,6 +909,19 @@ import StaticArrays
         out1 = JosephsonCircuits.connectS(networks,connections)
         out2 = JosephsonCircuits.solveS(networks,connections)
         @test isapprox(out1[1][1],out2[1])
+
+        # integer network names give the splitters of junctions integer
+        # names; the result is that of the same networks named by strings
+        S = [rand(Complex{Float64},2,2,3), rand(Complex{Float64},2,2,3),
+            rand(Complex{Float64},1,1,3)]
+        out3 = JosephsonCircuits.connectS([(i,S[i]) for i in 1:3],
+            [[(1,2),(2,1),(3,1)]])
+        out4 = JosephsonCircuits.solveS([(i,S[i]) for i in 1:3],
+            [[(1,2),(2,1),(3,1)]])
+        out5 = JosephsonCircuits.connectS([("$i",S[i]) for i in 1:3],
+            [[("1",2),("2",1),("3",1)]])
+        @test isapprox(out3.S[1],out5.S[1])
+        @test isapprox(out4.S,out5.S[1])
     end
 
     @testset "connectS! solveS! in-place updates" begin
@@ -939,6 +944,81 @@ import StaticArrays
         @test isapprox(S1b,S2b)
         @test !isapprox(S1a,S1b)
         @test !isapprox(S2a,S2b)
+
+        # with noise, the passive covariances I - S*S' of networks given
+        # without covariances follow the update: the result is the passive
+        # covariance of the connected network
+        passive(n) = stack([0.8 .* (X ./ opnorm(X)) for X in
+            [randn(Complex{Float64}, n, n) for f in 1:10]])
+        networks = [("A", passive(4)), ("B", passive(3))]
+        connections = [[("A", 4), ("B", 2)]]
+        init1 = JosephsonCircuits.connectS_initialize(networks, connections)
+        init2 = JosephsonCircuits.solveS_initialize(networks, connections;
+            noise = true)
+        JosephsonCircuits.connectS!(init1...; noise = true)
+        JosephsonCircuits.solveS!(init2...)
+        networks[1][2] .= passive(4)
+        c = JosephsonCircuits.connectS!(init1...; noise = true)
+        s = JosephsonCircuits.solveS!(init2...)
+        for f in 1:10
+            Sc, Cc = c.S[1][:, :, f], c.C[1][:, :, f]
+            @test isapprox(Cc, I - Sc*Sc'; atol = 1e-14)
+            Ss, Cs = s.S[:, :, f], s.C[:, :, f]
+            @test isapprox(Cs, I - Ss*Ss'; atol = 1e-14)
+        end
+    end
+
+    @testset "noise and internal waves against a dense solve of every wave" begin
+        # the waves b leaving the ports of the networks obey b = S*a + c with
+        # a = P*b + E*ae, where P joins the connected ports and E feeds the
+        # external ones, so one dense solve gives b at every port: its
+        # external rows are the S and C of the connected network, and its
+        # internal rows Sinternal and Cinternal. The networks have noise
+        # other than the passive one.
+        nf = 2
+        sizes = [3, 3, 2]
+        names = ["A", "B", "C"]
+        S = [stack([0.8 .* (X ./ opnorm(X)) for X in
+            [randn(Complex{Float64}, n, n) for f in 1:nf]]) for n in sizes]
+        C = [stack([X*X' for X in [randn(Complex{Float64}, n, n)
+            for f in 1:nf]]) for n in sizes]
+        networks = [(names[k], S[k], C[k]) for k in eachindex(names)]
+        connections = [[("A", 2), ("B", 1)], [("B", 2), ("C", 1)],
+            [("C", 2), ("A", 3)]]
+        s = JosephsonCircuits.solveS(networks, connections; noise = true,
+            internal_ports = true)
+        c = JosephsonCircuits.connectS(networks, connections; noise = true)
+
+        ports = [(names[k], p) for k in eachindex(names) for p in 1:sizes[k]]
+        index = Dict(p => i for (i, p) in enumerate(ports))
+        P = zeros(length(ports), length(ports))
+        for (p, q) in connections
+            P[index[p], index[q]] = P[index[q], index[p]] = 1
+        end
+        e = [index[p] for p in s.ports]
+        i = [index[p] for p in s.portsinternal]
+        ec = [findfirst(==(p), c.ports[1]) for p in s.ports]
+        @test size(s.Cinternal) == (length(i), length(i), nf)
+        for f in 1:nf
+            Sd = cat([Sk[:, :, f] for Sk in S]...; dims = (1, 2))
+            Cd = cat([Ck[:, :, f] for Ck in C]...; dims = (1, 2))
+            K = inv(I - Sd*P)
+            B = K*Sd
+            N = K*Cd*K'
+            @test isapprox(s.S[:, :, f], B[e, e])
+            @test isapprox(s.C[:, :, f], N[e, e])
+            @test isapprox(s.Sinternal[:, :, f], B[i, e])
+            @test isapprox(s.Cinternal[:, :, f], N[i, i])
+            @test isapprox(c.S[1][ec, ec, f], B[e, e])
+            @test isapprox(c.C[1][ec, ec, f], N[e, e])
+        end
+
+        # a covariance must be the size of its scattering parameters
+        networks[1] = ("A", S[1], rand(Complex{Float64}, 4, 4, nf))
+        @test_throws(DimensionMismatch,
+            JosephsonCircuits.solveS(networks, connections; noise = true))
+        @test_throws(DimensionMismatch,
+            JosephsonCircuits.connectS(networks, connections; noise = true))
     end
 
     @testset "connectS solveS splitters" begin
@@ -1012,6 +1092,35 @@ import StaticArrays
         @test isapprox(sol6[1][1],sol3)
     end
 
+    @testset "solveS on its own task, and on no frequencies" begin
+        # a three port junction with two of its ports joined, a loop of zero
+        # length: connectS resolves it to an open; its connection system is
+        # singular, which a single batch reports as the factorization's own
+        # exception, and QR factorization solves
+        Ssplit = JosephsonCircuits.S_splitter!(zeros(Complex{Float64}, 3, 3))
+        networks = [("J", Ssplit)]
+        connections = [[("J", 2), ("J", 3)]]
+        @test isapprox(JosephsonCircuits.connectS(networks, connections).S[1], [1.0;;])
+        @test isapprox(JosephsonCircuits.solveS(networks, connections;
+            factorization = JosephsonCircuits.QRfactorization()).S, [1.0;;])
+        @test_throws(
+            LinearAlgebra.SingularException,
+            JosephsonCircuits.solveS(networks, connections; nbatches = 1),
+        )
+
+        # no frequencies give no scattering parameters
+        networks = [("A", zeros(Complex{Float64}, 2, 2, 0)),
+            ("B", zeros(Complex{Float64}, 2, 2, 0))]
+        connections = [[("A", 2), ("B", 1)]]
+        for noise in (false, true)
+            s = JosephsonCircuits.solveS(networks, connections; noise = noise)
+            c = JosephsonCircuits.connectS(networks, connections; noise = noise)
+            @test size(s.S) == (2, 2, 0)
+            @test size(c.S[1]) == (2, 2, 0)
+            @test s.ports == c.ports[1]
+        end
+    end
+
     @testset "PassiveNetwork" begin
         network_name = "S1"
         scattering_parameters = rand(Complex{Float64},10,10)
@@ -1026,6 +1135,12 @@ import StaticArrays
         @test JosephsonCircuits.comparestruct(p1,p2)
         @test JosephsonCircuits.comparestruct(p1,p3)
         @test JosephsonCircuits.comparestruct(p1,p4)
+
+        # the constructors without covariances have the same default
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.PassiveNetwork(network_name, scattering_parameters),
+            JosephsonCircuits.PassiveNetwork(network_name, scattering_parameters,
+                port_names))
     end
 
 end

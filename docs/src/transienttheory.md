@@ -14,13 +14,18 @@ where; the [usage page](transient.md) shows the calls, and the
 
 The code lives in `src/transient/`: `system.jl` compiles a
 [`transientproblem`](@ref) from a circuit, classifying its directions;
-`solve.jl` builds the scaled matrices and the trapezoidal and backward
-Euler steps; `gauss.jl` the Gauss-Legendre rule, its projection of the
-endpoint and the stage algebra of the rational blocks; `batch.jl` the
-stepping of a batch of conditions, the rational operators, the line
-histories, the tangent and the adjoint; `sensitivity.jl` the argument
-handling of the responses; `noise.jl` the baths and the contraction;
-`quantum.jl` and `iq.jl` the temporal mode and I/Q measurements. The
+`constraints.jl` the projection of an endpoint onto the algebraic
+constraints and the reading of the rate along them; `solve.jl` builds
+the scaled system, the Newton engine and the trapezoidal and backward
+Euler steps; `gauss.jl` the Gauss-Legendre coefficients and the stage
+algebra of the rational blocks; `batch.jl` the stepping of a batch of
+conditions under Gauss-Legendre, the rational blocks' operators and
+stage correction, the line histories, its tangent and its adjoint;
+`sensitivity.jl` the entries of the responses, the tangent and the
+adjoint of the trapezoidal and backward Euler rules and the
+perturbation of the component values; `noise.jl` the baths and the
+contraction; `quantum.jl` and `iq.jl` the temporal mode and I/Q
+measurements. The
 vector fitter is `src/circuit/vectorfit.jl`, next to the components it
 produces.
 
@@ -118,19 +123,25 @@ averaging parameters, second order and free of numerical damping;
 fourth order, A-stable and symplectic; and [`BackwardEuler`](@ref),
 first order and strongly damping, a reference for checking that a
 result does not depend on the rule. A trapezoidal step is one implicit
-equation in the new flux,
+equation in the increment of the flux, `d = phi_{n+1} - phi_n`,
 
 ```math
-[\alpha C + \beta G + L^{-1}]\,\phi_{n+1} + I_c\sin\phi_{b,n+1} = r_n,
+[\alpha C + \beta G + L^{-1}]\,d + I_c\sin\phi_{b,n+1} = r_n, \qquad \phi_{n+1} = \phi_n + d,
 ```
 
-solved by Newton from the previous increment, with the Jacobian
+whose right hand side `r_n` holds the drives, the rate and the currents
+of the stiffness and the junctions at `phi_n`, and not the capacitive
+term `alpha C phi_n`, which grows with an accumulated phase no current
+sees, so the tolerance of the Newton solve, relative to those terms,
+does not grow with it either; the Gauss-Legendre rule steps its stage
+increments the same way. It is solved by Newton from the previous
+increment, with the Jacobian
 assembled by the real Jacobian plan of harmonic balance at one mode,
 whose pattern and symbolic analysis are fixed for the whole solve. A
-factorization is kept across steps while Newton converges in one
-correction with it, and refreshed at the current iterate when a second
-correction is needed, so a linear circuit factorizes once and a junction
-driven weakly nearly so.
+factorization is kept across steps while each correction with it
+contracts the residual by at least a quarter, and refreshed at the
+current iterate when one does not, so a linear circuit factorizes once
+and a junction driven moderately nearly so.
 
 A Gauss-Legendre step solves the two stage equations of the collocation
 together, on the stage increments. The stage matrix of the tableau has
@@ -271,14 +282,16 @@ matrices factorized once per step size, and in the complex stage basis
 that algebra is the block's own scattering matrix at the stage
 frequency `mu/h`, which the frozen operator carries exactly. A series
 inductor written as a one state block equals the explicit inductor to
-roundoff at every step size. The block's states are the fourth member
+roundoff at every step size. The block's states are the `blockstates`
 of a [`transientstate`](@ref), at rest under the port voltages by
-default, and `record = :states` keeps them as `blockstates`. The
-tangent and the adjoint carry the perturbation of the states and its
-cotangent through the same algebra and its transpose, a perturbation of
-the states being the fourth member of the tangent's initial state and
-the adjoint returning theirs as `initialstates`; on the inductor block
-both equal the explicit inductor's to roundoff.
+default; every solve keeps them at its end as `finalstates`, and
+`record = :states` at every saved time as `blockstates`. The tangent and
+the adjoint carry the perturbation of the states and its cotangent
+through the same algebra and its transpose, a perturbation of the
+states being the fourth member of the tangent's `initialstate`, after
+the flux, the rate and the lines' prehistory, and the adjoint returning
+theirs as `initialstates`; on the inductor block both equal the
+explicit inductor's to roundoff.
 
 
 The stage algebra of a rational block is exact. With the tableau `A`
@@ -342,8 +355,9 @@ the line carries, which [`transientstate`](@ref) takes as `linecurrents`.
 The tangent and the adjoint carry their own rings of the perturbation,
 read at the stages and the endpoints through the same stencils and
 scattered back through their transpose; a perturbation of the
-prehistory is the third member of the tangent's initial state, and the
-adjoint returns the cotangent of the prehistory as `initialwaves`.
+prehistory is the third member of the tangent's `initialstate`, after
+the flux and the rate, and the adjoint returns the cotangent of the
+prehistory as `initialwaves`.
 
 
 ## Fitting measured data
@@ -427,8 +441,12 @@ checkpoints the phases of a window of steps are replayed from the
 checkpoint's state, stage predictor, block states and line history
 before it, and the window is walked forward by the tangent or backward
 by the adjoint, so the memory of a record of any length is bounded by
-the checkpoints and one window; a replay that does not reach the next
-checkpoint is an error, not a warning.
+the checkpoints and one window. The solve begins its factorizations
+anew at the initial state and refactorizes at every checkpoint, as the
+replay does at the start of each window, so a replayed window retraces
+the solve's steps exactly, whatever window was replayed before it; one
+that does not reach the next checkpoint to roundoff is an error, not a
+warning.
 
 The histories of the lines are rings as long as the longest delay and
 the stencil's reach in the solve, the tangent and the adjoint alike: the

@@ -39,45 +39,39 @@ The coupling set of the preconditioner is honored at the level of its
 *clusters*: the retained coupling graph of the modes is split into its
 connected components, every component of two or more modes becomes one
 block factorization over the circuit graph restricted to those modes'
-slots, and the modes left single are solved by the mode block diagonal as
-before. [`FullJacobian`](@ref) is therefore one factorization of the complete
+slots, and the modes left single are solved by the mode block diagonal.
+[`FullJacobian`](@ref) is therefore one factorization of the complete
 Jacobian, an exact solve; a mask made of complete clusters (as
 [`Clusters`](@ref) produces) is one factorization per cluster;
 and a coupling set which is not a union of complete clusters, a [`HarmonicBand`](@ref)
 say, is factorized on its closure, which keeps at least every coupling the
 set asked for.
 
-Measured on a three tone line of 128 junctions with 527 modes on a GPU, the
-single precision factorization of the complete Jacobian takes 0.4 s and
-2.8 GB against 2.6 s and 10.5 GB for cuDSS on the measured band, converges
-the linear solves in three Arnoldi steps against 85, and solves the
-nonlinear problem in 3.2 s against 38.5 s; clusters halve the memory again
-at 18 steps. Factor storage grows as the square of the number of retained
-slots per node and the arithmetic as its cube, which is what bounds it.
+Factor storage grows as the square of the number of retained slots per
+node and the arithmetic as its cube, which is what bounds it.
 
 `singletons` is the sparse [`AbstractFactorization`](@ref) of the block diagonal
 of the modes left single, the backend's default (KLU on the host, cuDSS on
 a device) when `nothing`. `precision` is the floating point type of the
 blocks, that of the preconditioner when `nothing`: `Float32` is the mixed
-precision form, which halves the storage and is two to four times faster
-on a GPU at three outer steps per solve while the iteration stays in
-double precision.
+precision form, which halves the storage and runs at a device's single
+precision rate while the iteration stays in double precision.
 
 The block factorization does not pivot across its supernodes. A supernode
 whose diagonal block is singular, which happens when a node's stiffness
 at some mode frequency lives entirely in a promoted branch current and its
 own elements resonate there, stops it with a `SingularException`; the mode
 coupling preconditioner then falls back to the backend's sparse
-factorization of the same coupling set (see [`refactorize!`](@ref)).
+factorization (see [`refactorize!`](@ref)).
 
 `refine` concerns the linearized solve: single precision factors of a
 double system refine their solutions against the double residual to double
 accuracy by default; `refine = false` leaves them single precision
 solutions computed entirely in single precision, equilibrated, with no
 refinement, for the cases where single precision scattering parameters
-suffice (about 1e-2 of the largest element of S on strongly resonant
-multi-tone lines, 1e-3 on a plain chain) at four to five times double's
-speed on a device whose single precision rate far exceeds its double one.
+suffice, at the speed of a device whose single precision rate far exceeds
+its double one; the accuracy then falls with the conditioning of the
+system, furthest on strongly resonant multi-tone lines.
 The outputs are returned in double either way.
 """
 struct BlockFactorization <: AbstractFactorization
@@ -142,8 +136,8 @@ end
 The elimination order of the circuit nodes from KLU's symbolic analysis of
 the node graph: its block triangular form permutation followed by the fill
 reducing ordering within the blocks. On a chain this walks the chain; on a
-meshed circuit it halves the fill of a bandwidth reducing order and gives an
-elimination tree many times shallower.
+meshed circuit it fills less than a bandwidth reducing order and gives a
+far shallower elimination tree.
 """
 function klunodeorder(adj::AbstractVector{<:AbstractVector{<:Integer}})
     N = length(adj)
@@ -158,27 +152,32 @@ function klunodeorder(adj::AbstractVector{<:AbstractVector{<:Integer}})
     A = sparse(I_, J_, ones(length(I_)), N, N)
     K = KLU.KLUFactorization(A)
     KLU.klu_analyze!(K)
-    sym = K.symbolic
-    # the column permutation, 0-based in KLU
-    q = unsafe_wrap(Array, sym.Q, N) .+ 1
-    return copy(q)
+    # the column permutation, 0-based in KLU, read from the symbolic
+    # analysis `K` owns, which its finalizer frees
+    return GC.@preserve K unsafe_wrap(Array, K.symbolic.Q, N) .+ 1
 end
 
 """
     eliminationtree(adj, order::AbstractVector{<:Integer})
 
-The elimination tree of the node graph `adj` under `order`: `parent[a]` is
-the node eliminated first among those coupled to `a` after `a`, following the
-fill, or zero for a root. Returned with the postorder of the tree, which is
-the order the supernodes are eliminated in.
+The symbolic elimination of the node graph `adj` under `order`, returned as
+`(parent, post, later)`. `parent[a]` is the node eliminated first among
+those coupled to `a` after `a`, following the fill, or zero for a root;
+`post` is the postorder of this elimination tree, the order the supernodes
+are eliminated in; and `later[a]` lists the nodes after `a` that `a` is
+coupled to once the fill is included. Every postorder of the tree
+eliminates with the same fill, and every coupling of the filled graph joins
+a node to one of its ancestors, so `later` holds in the postorder as well.
 """
 function eliminationtree(adj, order::AbstractVector{<:Integer})
     N = length(adj)
     rank = invperm(order)
     nbr = [Set{Int}(adj[a]) for a in 1:N]
     parent = zeros(Int, N)
+    later = [Int[] for _ in 1:N]
     for a in order
         lat = [b for b in nbr[a] if rank[b] > rank[a]]
+        later[a] = lat
         isempty(lat) && continue
         parent[a] = lat[argmin(rank[lat])]
         for b in lat, c in lat
@@ -206,7 +205,7 @@ function eliminationtree(adj, order::AbstractVector{<:Integer})
             end
         end
     end
-    return parent, post
+    return parent, post, later
 end
 
 """
@@ -614,7 +613,7 @@ end
 
 """
     clustersymbolic(modes, adj, order, Nmodes::Integer, layout::ModeLayout;
-        target = BLOCKTARGETROWS)
+        target = BLOCKTARGETROWS, tree = eliminationtree(adj, order))
 
 The symbolic block structure of one cluster, on the host and without
 allocating any factor storage: the supernodes of the amalgamated
@@ -622,10 +621,13 @@ elimination tree of the circuit-node graph `adj` under the node `order`,
 restricted to the real-layout slots of `modes`, the positions of every
 supernode, its panel rows after fill, and the offsets the Schur updates
 scatter through. [`clusterblocks`](@ref) allocates from it and
-[`blockfactorbytes`](@ref) sizes it.
+[`blockfactorbytes`](@ref) sizes it. The elimination `tree`
+([`eliminationtree`](@ref)) depends on the graph and the order alone, so
+a caller structuring several clusters of one graph computes it once.
 """
 function clustersymbolic(modes, adj, order, Nmodes::Integer,
-    layout::ModeLayout; target = BLOCKTARGETROWS)
+    layout::ModeLayout; target = BLOCKTARGETROWS,
+    tree = eliminationtree(adj, order))
     nnodes = length(adj)
     # the slots of this cluster's modes at each node, in the real layout
     noderows = [Int[] for _ in 1:nnodes]
@@ -633,15 +635,15 @@ function clustersymbolic(modes, adj, order, Nmodes::Integer,
         c = (a - 1)*Nmodes + k
         append!(noderows[a], Int(layout.ptr[c]):Int(layout.ptr[c+1])-1)
     end
-    return clustersymbolic(noderows, adj, order; target)
+    return clustersymbolic(noderows, adj, order; target, tree)
 end
 
 # the core: `noderows[a]` are the slots node `a` contributes, in order
 function clustersymbolic(noderows::Vector{Vector{Int}}, adj, order;
-    target = BLOCKTARGETROWS)
+    target = BLOCKTARGETROWS, tree = eliminationtree(adj, order))
     nnodes = length(adj)
     nrows = length.(noderows)
-    parent, post = eliminationtree(adj, order)
+    parent, post, later = tree
     nodes = amalgamate(parent, post, nrows, target)
     N = length(nodes)
     snode = zeros(Int, nnodes); nodepos = zeros(Int, nnodes)
@@ -657,19 +659,12 @@ function clustersymbolic(noderows::Vector{Vector{Int}}, adj, order;
         end
         push!(range, lo:length(perm))
     end
-    # symbolic elimination on the node graph in the final order gives each
-    # supernode the later nodes it couples to, fill included
-    nbr = [Set{Int}(adj[a]) for a in 1:nnodes]
-    for P in 1:N, a in nodes[P]
-        lat = [b for b in nbr[a] if noderank[b] > noderank[a]]
-        for b in lat, c in lat
-            b != c && push!(nbr[b], c)
-        end
-    end
+    # the panel rows of a supernode: the later nodes its nodes couple to,
+    # fill included, outside the supernode
     rowsnodes = Vector{Int}[]
     for P in 1:N
         R = Set{Int}()
-        for a in nodes[P], b in nbr[a]
+        for a in nodes[P], b in later[a]
             snode[b] > P && push!(R, b)
         end
         push!(rowsnodes, sort!(collect(R); by = b -> noderank[b]))
@@ -703,8 +698,11 @@ decide whether the factors fit before building anything.
 function blockfactorbytes(::Type{T}, keep::AbstractMatrix{Bool}, adj, order,
     Nmodes::Integer, layout::ModeLayout) where {T}
     bytes = 0
-    for modes in modeclusters(keep)
-        sym = clustersymbolic(modes, adj, order, Nmodes, layout)
+    clusters = modeclusters(keep)
+    isempty(clusters) && return 0
+    tree = eliminationtree(adj, order)
+    for modes in clusters
+        sym = clustersymbolic(modes, adj, order, Nmodes, layout; tree)
         scratch = Set{Tuple{Int,Int}}()
         for P in 1:sym.N
             n = length(sym.range[P]); m = length(sym.rowidxh[P])
@@ -720,17 +718,21 @@ end
 
 """
     clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
-        layout::ModeLayout, backend; target = BLOCKTARGETROWS)
+        layout::ModeLayout, backend; target = BLOCKTARGETROWS,
+        tree = eliminationtree(adj, order))
 
 The symbolic block structure of one cluster: the supernodes of the
 amalgamated elimination tree of the circuit-node graph `adj` under the node
 `order`, restricted to the real-layout slots of `modes`; the panels from a
 symbolic elimination on the node graph; and the index maps of the Schur
-updates. Storage is allocated on `backend` in precision `T`.
+updates. Storage is allocated on `backend` in precision `T`. `tree` is the
+elimination of the graph, shared by the clusters of one graph (see
+[`clustersymbolic`](@ref)).
 """
 function clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
-    layout::ModeLayout, backend; target = BLOCKTARGETROWS) where {T}
-    sym = clustersymbolic(modes, adj, order, Nmodes, layout; target)
+    layout::ModeLayout, backend; target = BLOCKTARGETROWS,
+    tree = eliminationtree(adj, order)) where {T}
+    sym = clustersymbolic(modes, adj, order, Nmodes, layout; target, tree)
     return clusterblocks(T, modes, sym, backend)
 end
 
@@ -756,10 +758,9 @@ What a [`ModeCouplingPreconditioner`](@ref) holds in place of a sparse
 structure when its factorization is a [`BlockFactorization`](@ref): the
 block factorizations of the mode clusters, the mode block diagonal for the
 modes left single (`nothing` when there are none), the assembly ingredients
-on the backend, work vectors in the factorization's precision, and the
-backend together with the mode count, `Rbnm` and the branch count the
-junction pair table is rebuilt from when the system is rebound
-([`refreshvalues!`](@ref)).
+on the backend, refreshed when the system is rebound
+([`refreshvalues!`](@ref)), work vectors in the factorization's precision,
+and the backend.
 """
 mutable struct BlockStructure{T,VT}
     const clusters::Vector
@@ -768,9 +769,6 @@ mutable struct BlockStructure{T,VT}
     const backend
     const rT::VT
     const xT::VT
-    const Nmodes::Int
-    const Rbnm::SparseMatrixCSC
-    const Nbranches::Int
 end
 
 # the ingredient arrays of the assembly on the backend, refreshed by
@@ -817,15 +815,19 @@ function blockstructure(::Type{T}, sys, Amatrixindices::Matrix,
         sys.invLnm, sys.Gnm, sys.Cnm, Nmodes, nnodes)
     order = klunodeorder(adj)
     clusters = Any[]
-    for modes in modeclusters(keep)
-        push!(clusters, clusterblocks(T, modes, adj, order, Nmodes, layout,
-            backend))
+    mc = modeclusters(keep)
+    if !isempty(mc)
+        tree = eliminationtree(adj, order)
+        for modes in mc
+            push!(clusters, clusterblocks(T, modes, adj, order, Nmodes,
+                layout, backend; tree))
+        end
     end
     ing = blockingredients(T, sys, junctions, layout, backend)
     n = layout.rdim
     rT = KernelAbstractions.zeros(backend, T, n)
     return BlockStructure{T,typeof(rT)}(clusters, singletons, ing, backend,
-        rT, similar(rT), Int(Nmodes), Rbnm, Int(Nbranches))
+        rT, similar(rT))
 end
 
 """
@@ -946,7 +948,9 @@ struct BlockJacobian{S,P}
 end
 
 # assemble every cluster and factorize it, and refactorize the block
-# diagonal of the singleton modes; the structure is the factorization
+# diagonal of the singleton modes; the structure is the factorization.
+# Every factorization is into the structure's own storage, so there is no
+# separate refactorization, and one which fails is not repeated.
 function factorize(::BlockFactorization, A::BlockJacobian)
     S = A.structure
     for C in S.clusters
@@ -956,8 +960,6 @@ function factorize(::BlockFactorization, A::BlockJacobian)
     isnothing(S.singletons) || refactorize!(S.singletons)
     return S
 end
-refactorize!(f::BlockFactorization, F::BlockStructure, A::BlockJacobian) =
-    factorize(f, A)
 
 # the solve: the block diagonal on every slot, then each cluster's exact
 # solve on its own slots; in the factorization's precision

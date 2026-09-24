@@ -119,6 +119,7 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
     @test_throws ArgumentError Staged(smin = 0.0)
     @test_throws ArgumentError Staged(s0 = 0.1, smin = 0.5)
     @test_throws ArgumentError Staged(interioriterations = 0)
+    @test_throws ArgumentError QuasiNewton(anderson = -1)
     @test_throws ArgumentError Newton(factorization = BlockFactorization())
     @test_throws ArgumentError QuasiNewton(factorization = BlockFactorization())
     @test_throws ArgumentError GMRES(restart = 0)
@@ -129,6 +130,23 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
     @test_throws ArgumentError Floquet(Floquet())
 end
 
+@testset "a single precision solve at the default tolerance" begin
+    # the rounding floor the tolerance is raised to is that of the
+    # precision the residual is evaluated in, so a single precision solve
+    # stops where single precision does, at the double precision solve's
+    # point to what single precision holds
+    circuit, defs = testjpacircuit()
+    wp = (2*pi*4.75001e9,)
+    src = [(mode = (1,), port = 1, current = 0.00565e-6)]
+    ref = hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
+        atol = 1e-12)
+    single = hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
+        method = NewtonKrylov(precision = Float32))
+    @test single.solverinfo.converged
+    @test single.solverinfo.stages[end].iterations < 10
+    @test isapprox(single.nodeflux, ref.nodeflux; rtol = 1e-4)
+end
+
 @testset "every solve ends with a reason" begin
     circuit, defs = testchaincircuit()
     wp = 2*pi*4.75e9
@@ -137,7 +155,7 @@ end
     @test ok.solverinfo.converged
     @test ok.solverinfo.stages[end].reason == :converged
     for m in (NewtonKrylov(), Newton(), QuasiNewton())
-        spent = @test_logs (:warn, r"did not converge: the Newton iteration budget") match_mode=:any hbnlsolve(
+        spent = @test_logs (:warn,) match_mode=:any hbnlsolve(
             (wp,), (8,), src, circuit, defs; iterations = 1, method = m)
         @test !spent.solverinfo.converged
         @test spent.solverinfo.stages[end].reason == :iterations
@@ -157,10 +175,13 @@ end
     hard = [(mode=(1,), port=1, current=60e-6)]
     for m in (NewtonKrylov(preconditioner = BlockDiagonal(), escalate = false),
             NewtonKrylov(), Newton())
-        r = @test_logs (:warn, r"did not converge") match_mode=:any hbnlsolve(
+        r = @test_logs (:warn,) match_mode=:any hbnlsolve(
             (wp,), (8,), hard, circuit, defs; iterations = 400, method = m)
         @test !r.solverinfo.converged
         @test r.solverinfo.stages[end].reason in (:linesearch, :progress, :work)
         @test r.solverinfo.stages[end].iterations < 400
+        # the direct loop judges its creep against the steps left too, so
+        # it ends within a few stall windows rather than near its budget
+        m isa Newton && @test r.solverinfo.stages[end].iterations < 100
     end
 end

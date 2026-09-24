@@ -57,7 +57,7 @@ zero-frequency mode, see [`calcdcgaugeindices`](@ref). A net direct current
 injected into a floating component is carried by the explicit average
 voltage block when the component has a conductive path to somewhere that
 can absorb it; only a component with no such path has no solution, which
-`dcpinning` refuses (see `harmonics/directcurrent.jl`).
+`dcpinning` refuses.
 
 # Examples
 ```jldoctest
@@ -626,8 +626,8 @@ dcinjected(plan::DCConductancePlan, bnm::AbstractVector, Nmodes::Integer) =
     any(!iszero, dcsourcecurrent(plan, bnm, Nmodes))
 
 """
-    checkjunctiondc(sintd::AbstractArray, junctionbranches, branchnames;
-        atol = 1e-2)
+    checkjunctiondc(sintd::AbstractArray, junctionbranches, branchnames,
+        sinusoidal = nothing; atol = 1e-2)
 
 Warn about a Josephson junction carrying nearly its critical current at zero
 frequency.
@@ -745,6 +745,12 @@ The zero frequency scattering matrix read from a block's own data, or
 and does not reach zero, `:nonfinite` when the value there is unbounded,
 `:complex` when it has no real limit.
 
+A table which does not reach zero states `S(0)` only by holding or
+continuing its end values there; one which refuses to extrapolate, one
+which is zero beyond its band, which is a statement about the band and not
+about direct current, and a piecewise table outside its bands have no data
+at zero.
+
 Read and not decided: what to do about a block with no zero frequency data
 depends on whether direct current is asked of it, which is the caller's
 question. See [`dcblockdescriptor`](@ref).
@@ -754,10 +760,7 @@ function dclimit(sb::StampedScatteringBlock, n::Integer, atol::Real)
     # a pumped block's zero frequency behavior is that of its unconverted
     # response
     pr = blk isa LinearizedScattering ? blk.providers[1] : blk.provider
-    if pr isa TabulatedMatrixProvider && pr.extrapolation == :error &&
-            !(pr.frequencies[1] <= 0.0 <= pr.frequencies[end])
-        return nothing, :range
-    end
+    holdsdclimit(pr) || return nothing, :range
     S = Array{Complex{Float64},3}(undef, n, n, 1)
     evaluatescattering!(S, blk, [0.0])
     S0 = @view S[:,:,1]
@@ -766,6 +769,13 @@ function dclimit(sb::StampedScatteringBlock, n::Integer, atol::Real)
     m <= atol*max(1, maximum(abs, S0)) || return nothing, :complex
     return Matrix{Float64}(real.(S0)), :ok
 end
+
+# whether a provider states a zero frequency value; see `dclimit`
+holdsdclimit(p::TabulatedMatrixProvider) = holdsdata(p, 0.0) ||
+    p.extrapolation === :constant || p.extrapolation === :linear
+holdsdclimit(p::PiecewiseTabulatedProvider) = holdsdata(p, 0.0)
+holdsdclimit(p::RotatedMatrixProvider) = holdsdclimit(p.provider)
+holdsdclimit(p) = true
 
 """
     dcblockdescriptor(sb::StampedScatteringBlock; atol = 1e-10,
@@ -868,16 +878,6 @@ struct DCBlockRows{T}
 end
 
 Base.isempty(r::DCBlockRows) = isempty(r.descriptors)
-
-"""
-    freecurrents(r::DCBlockRows)
-
-The total number of port current directions the blocks leave undetermined.
-Nonzero means some current is fixed by node level Kirchhoff rather than by
-the block, which is the case a short or an ideal through presents.
-"""
-freecurrents(r::DCBlockRows) = sum(d -> d.freecurrents, r.descriptors;
-    init = 0)
 
 """
     dcblockrows(blocks, componentof, Nmodes, modeindex, nnodaldc, scale;
@@ -1011,15 +1011,15 @@ function addtransport!(Fc::AbstractVector, work::CanonicalWork,
         u::AbstractVector; residual::Bool = true)
     isnothing(work.transport) && return Fc
     Fw, uw = work.Fwindow, work.uwindow
-    _gatherperm!(Fw, Fc, work.window)
-    _gatherperm!(uw, u, work.window)
+    _gatherwindow!(Fw, Fc, work.window)
+    _gatherwindow!(uw, u, work.window)
     if isnothing(work.update)
         addtransportwindow!(Fw, uw, work; residual)
     else
         # in place, where the state is: three array operations and no copy
         applydcupdate!(Fw, uw, work.update; residual)
     end
-    _scatterperm!(Fc, Fw, work.window)
+    _scatterwindow!(Fc, Fw, work.window)
     return Fc
 end
 
@@ -1083,15 +1083,15 @@ end
 # application.
 #
 # One work item because the substitutions are sequential, so the kernel's
-# cost grows with the subsystem while the host copies it replaces cost a
-# fixed latency. It wins for a handful of unknowns and loses badly beyond
+# cost grows with the subsystem while copying it to the host and back costs
+# a fixed latency. It wins for a handful of unknowns and loses badly beyond
 # that. A handful is the common case, since there is one unknown per
 # floating static flux component and one per scattering block port current;
-# a larger subsystem keeps the host path, which is correct and merely
-# copies.
+# a larger subsystem is gathered on the backend, solved on the host with the
+# same factors and scattered back.
 
 # the largest subsystem the sequential device solve is launched for; the
-# measured crossover against the host copies
+# measured crossover against the copies to the host
 const DCDEVICESOLVEMAX = 8
 
 """
@@ -1107,13 +1107,17 @@ on, resident on a backend.
 - `work`: a device scratch vector of length `n`, the permuted right hand
     side and then the solution.
 - `n`: the subsystem size.
+- `lu`, `host`: the factorization on the host and a host vector of length
+    `n`, which a subsystem larger than `DCDEVICESOLVEMAX` is solved with.
 """
-struct DCFactorization{V,I}
+struct DCFactorization{V,I,F}
     index::I
     perm::I
     factors::V
     work::V
     n::Int
+    lu::F
+    host::Vector{Float64}
 end
 
 function DCFactorization(F::LinearAlgebra.LU, index::Vector{Int}, backend)
@@ -1121,7 +1125,7 @@ function DCFactorization(F::LinearAlgebra.LU, index::Vector{Int}, backend)
     return DCFactorization(tobackend(backend, index),
         tobackend(backend, Vector{Int}(F.p)),
         tobackend(backend, Vector{Float64}(vec(F.factors))),
-        tobackend(backend, zeros(Float64, n)), n)
+        tobackend(backend, zeros(Float64, n)), n, F, zeros(Float64, n))
 end
 
 # One work item: the substitutions are sequential and the system is a
@@ -1149,18 +1153,38 @@ end
     end
 end
 
+# the subsystem's coordinates of `r` into `b`, and back from `b` into `z`
+@kernel function dcgatherkernel!(b, @Const(r), @Const(index))
+    k = @index(Global)
+    @inbounds b[k] = r[index[k]]
+end
+@kernel function dcscatterkernel!(z, @Const(b), @Const(index))
+    k = @index(Global)
+    @inbounds z[index[k]] = b[k]
+end
+
 """
     applydcsolve!(z, r, d::DCFactorization)
 
 Solve the direct current subsystem for the coordinates of `r` it owns and
-write the answer into the same coordinates of `z`, in place and on the
-backend the factorization lives on.
+write the answer into the same coordinates of `z`, in place: on the backend
+the factorization lives on, or, for a subsystem larger than
+`DCDEVICESOLVEMAX`, on the host between a gather and a scatter there.
 """
 function applydcsolve!(z::AbstractVector, r::AbstractVector,
         d::DCFactorization)
     backend = KernelAbstractions.get_backend(z)
-    kernel! = dcsolvekernel!(backend)
-    kernel!(z, r, d.index, d.perm, d.factors, d.work, d.n; ndrange = 1)
+    if d.n <= DCDEVICESOLVEMAX
+        dcsolvekernel!(backend)(z, r, d.index, d.perm, d.factors, d.work,
+            d.n; ndrange = 1)
+    else
+        dcgatherkernel!(backend, 64)(d.work, r, d.index; ndrange = d.n)
+        KernelAbstractions.synchronize(backend)
+        copyto!(d.host, d.work)
+        ldiv!(d.lu, d.host)
+        copyto!(d.work, d.host)
+        dcscatterkernel!(backend, 64)(z, d.work, d.index; ndrange = d.n)
+    end
     KernelAbstractions.synchronize(backend)
     return z
 end
@@ -1438,7 +1462,8 @@ end
 #
 # `M` and `c` are read off the scalar implementation by probing it one
 # basis vector at a time rather than assembled a second time by hand, which
-# is O(window) work once and makes the two forms agree by construction.
+# is one pass over the window per probe, O(window^2) work once, and makes
+# the two forms agree by construction.
 
 """
     DCUpdate

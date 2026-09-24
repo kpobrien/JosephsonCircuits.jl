@@ -176,11 +176,13 @@ function planfrequencysweep(lsys::HBLinearizedSystem, backend;
     d = x -> tobackend(backend, x[perm])
     colof = tobackend(backend, colofhost)
     assemble! = sweepassemblykernel!(backend, 64)
-    plan = FrequencySweepPlan{typeof(colof),typeof(d(cst)),
-        typeof(tobackend(backend, lsys.wpumpmodes)),typeof(assemble!),
-        typeof(backend)}(
-        colof, d(cst), d(kinvL), d(kG), d(kC),
-        tobackend(backend, lsys.wpumpmodes), assemble!, backend,
+    # each array is moved to the backend once, and the plan's type read
+    # from the moved arrays
+    cstd = d(cst)
+    wpump = tobackend(backend, lsys.wpumpmodes)
+    plan = FrequencySweepPlan{typeof(colof),typeof(cstd),typeof(wpump),
+        typeof(assemble!),typeof(backend)}(
+        colof, cstd, d(kinvL), d(kG), d(kC), wpump, assemble!, backend,
         Int(lsys.Nmodes), nz)
     return plan, tobackend(backend, rowptrhost),
         tobackend(backend, colindhost), colindhost
@@ -342,7 +344,7 @@ The rows of a solution of the linearized system which the scattering
 parameter calculation reads: for each port, each of its two nodes which is
 not ground, and each mode.
 
-[`calcinputoutput!`](@ref) reads a solution only through
+[`calcoutputwaves!`](@ref) reads a solution only through
 [`calcportvoltage`](@ref), which touches these rows and no others. On a
 backend the solutions are produced there, so gathering these rows and
 copying back only them replaces a transfer of the whole solution, which is

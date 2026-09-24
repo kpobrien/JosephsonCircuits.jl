@@ -55,9 +55,11 @@ mode, input port and signal frequency, and are keyed arrays: the gain of
 the JPA below is read as
 `S(outputmode = (0,), outputport = 1, inputmode = (0,), inputport = 1, freqindex = :)`,
 or positionally as `S((0,), 1, (0,), 1, :)`. Mode `(0,)` is the signal
-itself and `(k,)` the idler offset by `k` pump harmonics, so
-`S((-1,), 1, (0,), 1, :)` is the conversion from the signal to the first
-idler. The fields:
+itself, at `ws`, and `(k,)` the mode at `ws + k*wp`. Under the default
+four wave mixing the idler is `(-2,)`, at `ws - 2*wp`, the negative
+frequency of the idler tone `2*wp - ws`, so `S((-2,), 1, (0,), 1, :)` is
+the conversion from the signal to the idler; with three wave mixing
+(`threewavemixing = true`) the idler is `(-1,)`. The fields:
 
 - `w`: the signal frequencies of the sweep, and `modes` the retained
   signal and idler modes.
@@ -67,9 +69,10 @@ idler. The fields:
 - `QE` and `QEideal`: the quantum efficiency of each output, and that of
   an ideal amplifier with the same gain, so `QE ./ QEideal` is the
   fraction of the ideal.
-- `CM`: the commutation relation of each output, which is `1` when the
-  scattering matrix is complete; its deviation from `1` measures modes the
-  truncation left out.
+- `CM`: the commutation relation of each output, which is `1` for an
+  output at a positive frequency and `-1` for one at a negative frequency,
+  an idler, when the scattering matrix is complete; its deviation from
+  those measures modes the truncation left out.
 - `Snoise` and `Cnoise` (on request): the scattering from the noise
   channels of the dissipative elements to the ports, and the added noise
   covariance at a given temperature.
@@ -106,7 +109,8 @@ frequency is the dot product with the pump frequencies.
 Convergence in the harmonics is checked by raising `Npumpharmonics` and
 `Nmodulationharmonics` until the outputs stop moving; the commutation
 relation `CM` of each output measures the modes the truncation left out,
-and is `1` when the scattering matrix is complete. Two pumps should be
+and is `1`, or `-1` for an output at a negative frequency, when the
+scattering matrix is complete. Two pumps should be
 incommensurate; a commensurate pair is written as one frequency with the
 other as a source at the mode index of the ratio, and a product that
 lands on zero frequency is refused.
@@ -142,11 +146,13 @@ is larger. A solve that does not converge returns its last iterate with
 iterations spent, the work budget spent, a line search without decrease,
 or a residual that has stopped coming down or comes down too slowly for
 the budget left. Check the flag before using a result.
+
+The options of a method are keywords of its object:
 `NewtonKrylov(precision = Float32)` iterates in single precision,
 `refresh = Probe()` rebuilds the preconditioner only when a measurement
 says it pays, and `linesearch = Backtracking(...)` sets how the step is
-shortened, by interpolation unless asked to halve, which is faster with
-an inexact preconditioner such as the block diagonal.
+shortened, by interpolation unless asked to halve, which suits an
+inexact preconditioner such as the block diagonal.
 
 ## The linearized sweep
 
@@ -158,14 +164,14 @@ every port and mode; the frequencies are split into `nbatches` batches
 over the threads, and on a device a batch is assembled and solved as
 one uniform batch. `factorization` is the sparse factorization of the
 system, [`KLUfactorization`](@ref) on the host for one pump and the
-dense node block [`BlockFactorization`](@ref) for two or more when its
-factors fit in memory, in single precision refined to double.
+dense node block [`BlockFactorization`](@ref) in double precision for
+two or more when its factors fit in memory.
 
 ```julia
 linear = hblinsolve(2pi*(1:0.01:10)*1e9, circuit)                 # a linear circuit
 lin = hblinsolve(ws, circuit; nonlinear = sol.nonlinear, Nmodulationharmonics = (2,))
-lin.S((0,), 2, (0,), 1, :)        # signal transmission from port 1 to port 2
-lin.S((-1,), 2, (0,), 1, :)       # conversion to the first idler
+lin.S((0,), 1, (0,), 1, :)        # the signal reflected at port 1, its gain
+lin.S((-2,), 1, (0,), 1, :)       # conversion to the idler at port 1
 ```
 
 ## Noise and quantum efficiency
@@ -203,7 +209,7 @@ rule through the components with the exact derivative of every value,
 which is what a gradient based optimizer wants.
 
 ```julia
-sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; sensitivitynames = ["Lj", "Cc"], returnSsensitivity = true)
+sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; sensitivitynames = ["jj", "cc"], returnSsensitivity = true)
 sol.linearized.Ssensitivity
 parameterized = Circuit([(:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(:Cc)),
     (:jj, 2, 0, JosephsonJunction(:Lj)), (:cj, 2, 0, Capacitor(1000e-15))])

@@ -173,14 +173,23 @@ struct RationalCoupling{M}
     Shost::SparseMatrixCSC{Float64,Int}
     Phost::SparseMatrixCSC{Float64,Int}
     # the port rows with a modulated output term, the only rows the
-    # stage correction acts on
+    # stage correction acts on, and the modulated outputs of every term
+    # after the first at each stage on those rows from the stacked stage
+    # unknowns, `W_ij = (C_j P_i)[modulated, :]` with `P_i` the stage's
+    # rows of `P_d + P_x`, stage by stage and term by term, on the backend
+    # and on the host
     modulated::Vector{Int}
+    W::Vector{M}
+    Whost::Vector{SparseMatrixCSC{Float64,Int}}
     # the output scatter entrywise in magnitude, which bounds its rounding
     # against the states themselves rather than against their largest:
     # the scatter and the states both run over the decades the poles of a
     # fit span, and a norm of each pairs the largest of one with the
-    # largest of the other whatever rows they are in
+    # largest of the other whatever rows they are in; and the largest row
+    # sum of each, which gives the cheap bound that decides whether the
+    # entrywise one is needed
     SCabs::Vector{M}
+    SCrows::Vector{Float64}
 end
 
 function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc::GaussCoefficients, h, Lscale,
@@ -208,7 +217,9 @@ function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc
     end
     Wd = sparse(di, dj, dv, 2nports, 4nports)
     Wx = sparse(xi, xj, xv, 2nports, 4nports)
-    Gs = blockdiag(blockgather, blockgather)
+    # qualified: the package's quantum optics library defines a dense
+    # `blockdiag` of its own
+    Gs = SparseArrays.blockdiag(blockgather, blockgather)
     # the stacked states at the stages from the incident waves and from
     # the states, and the states' update
     ui, uj, uv = Int[], Int[], Float64[]
@@ -281,12 +292,14 @@ function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc
     t = A -> sparse(transpose(A))
     d = A -> devicesparse(sparse(A), backend)
     SC = [blockscatter*C for C in Cblk]
+    Phost = sparse(Pd + Px)
+    modulated = sort!(unique!(reduce(vcat, [rowvals(C) for C in Cblk[2:end]]; init = Int[])))
+    Whost = [sparse((Cblk[j]*Phost[(i - 1)*nz + 1:i*nz, :])[modulated, :]) for i in 1:2 for j in 2:length(Cblk)]
     return RationalCoupling(nz, d(Pd), d(Px), d(Zz), d(Ezb), d(Ed), d(Ex),
         d(t(Pd)), d(t(Px)), d(t(Zz)), d(t(Ezb)), d(t(Ed)), d(t(Ex)),
         [d(M) for M in SC], [d(t(M)) for M in SC], terms, Cblk,
-        sparse(blockscatter), sparse(Pd + Px),
-        sort!(unique!(reduce(vcat, [rowvals(C) for C in Cblk[2:end]]; init = Int[]))),
-        [d(abs.(M)) for M in SC])
+        sparse(blockscatter), Phost, modulated, [d(W) for W in Whost], Whost,
+        [d(abs.(M)) for M in SC], [opnorm(M, Inf) for M in SC])
 end
 
 # the weight of every output term at the time `t`: one for the
@@ -303,9 +316,8 @@ function rationalstages(p::TransientProblem, gc::GaussCoefficients, h)
     tableau = [1/4 1/4-sqrt(3)/6; 1/4+sqrt(3)/6 1/4]
     stages = RationalStage[]
     for (k, b) in enumerate(p.blocks)
-        nz, np = size(b.A, 1), length(b.signal)
+        nz = size(b.A, 1)
         nz == 0 && continue
-        I2 = Matrix{Float64}(I, 2, 2)
         M = Matrix{Float64}(I, 2nz, 2nz) - h .* kron(tableau, b.A)
         F = lu(M)
         Zz = F \ kron(ones(2, 1), Matrix{Float64}(I, nz, nz))
@@ -319,7 +331,10 @@ function rationalstages(p::TransientProblem, gc::GaussCoefficients, h)
 end
 
 # the rational blocks' frequency dependent hybrid entries at the complex
-# frequency `s` as a sparse matrix on the state
+# frequency `s` as a sparse matrix on the state: their unconverted
+# response, which the frozen stage operator carries at the stage
+# frequency `mu/h` (a pumped block's converted outputs are the stage
+# correction's, see [`StageCorrection`](@ref))
 function rationalmatrix(p::TransientProblem, s, Lscale, n)
     rows, cols, vals = Int[], Int[], ComplexF64[]
     for b in p.blocks
@@ -337,75 +352,6 @@ function rationalmatrix(p::TransientProblem, s, Lscale, n)
     return sparse(rows, cols, vals, n, n)
 end
 
-# The transfer of every rational block at the complex stage frequency
-# `s`, `C (s I - A)^(-1) B` per output term: the first the unconverted
-# response, then each modulated output of a pumped block, in the order
-# of the coupling's terms, so that the stage operator can carry the
-# converted coupling at a step's weights (see [`rationalvalues!`](@ref)).
-# `nothing` for a block without states.
-function rationalstageterms(p::TransientProblem, s)
-    terms = Vector{Union{Nothing,Vector{Matrix{ComplexF64}}}}(undef, length(p.blocks))
-    for (bi, b) in enumerate(p.blocks)
-        if size(b.A, 1) == 0
-            terms[bi] = nothing
-            continue
-        end
-        X = (s*I - b.A) \ b.B
-        terms[bi] = vcat([b.C*X], [m.C*X for m in b.modulations])
-    end
-    return terms
-end
-
-"""
-    rationalvalues!(vals, p, s, Lscale, Jrs, transposed, terms, weights)
-
-Overwrite `vals`, the entries of the rational blocks on the Jacobian's
-pattern at the complex stage frequency `s`, from the blocks' stage
-transfers `terms` (see `rationalstageterms`) weighted: the
-unconverted response with one, and each modulated output of a pumped
-block with its entry of `weights`, in the order of the coupling's terms
-after the first, or with nothing of the modulated outputs when `weights`
-is `nothing`. A pumped block's stage operator is refreshed this way at
-every step with the mean of its two stages' weights, since its
-converted coupling can be as large as its unconverted one, which the
-frozen operator of the simplified Newton would not converge without.
-"""
-function rationalvalues!(vals, p::TransientProblem, s, Lscale, Jrs, transposed, terms, weights)
-    fill!(vals, 0)
-    colptr, rowval = patterncolumns(Jrs)
-    place = (r, c, val) -> begin
-        pos = 0
-        rr, cc = transposed ? (c, r) : (r, c)
-        for k in colptr[cc]:colptr[cc + 1] - 1
-            rowval[k] == rr && (pos = k; break)
-        end
-        pos > 0 || error("an entry of a rational block is absent from the Jacobian's pattern.")
-        vals[pos] += val
-    end
-    j = 1
-    for (bi, b) in enumerate(p.blocks)
-        isnothing(terms[bi]) && continue
-        n = length(b.signal)
-        Sr = copy(terms[bi][1])
-        for (mi, m) in enumerate(b.modulations)
-            j += 1
-            isnothing(weights) && continue
-            Sr .+= weights[j] .* terms[bi][mi + 1]
-        end
-        Bb = -s*Lscale .* Sr .* transpose(1 ./ sqrt.(b.R))
-        Cb = -Sr .* transpose(sqrt.(b.R))
-        for q in 1:n
-            row = b.auxbase + q
-            for r in 1:n
-                place(row, b.auxbase + r, Cb[q, r])
-                b.signal[r] > 0 && place(row, b.signal[r], Bb[q, r])
-                b.ref[r] > 0 && place(row, b.ref[r], -Bb[q, r])
-            end
-        end
-    end
-    return vals
-end
-
 # What a Gauss-Legendre system holds beyond the trapezoidal one: the
 # coefficients, the imaginary part of the stage matrix on the Jacobian's
 # pattern, the complex matrix the factorization reads, and the stage
@@ -414,68 +360,48 @@ struct GaussStage{V, M, R, SM}
     coefficients::GaussCoefficients
     imvals::V
     cjacobian::M
-    # the complex entries of the rational blocks at the stage frequency
-    # on the pattern, and the blocks' stage algebra: the grouped coupling
-    # of the blocks, or nothing without any, as a union within the
-    # backend's sparse matrix type, so that the stage's type, and with it
-    # the system's, the stepper's and every response's, is the backend's
-    # alone, a circuit with a block runs on the code compiled for one
-    # without, and a presence check is a branch rather than a
-    # specialization
+    # the complex entries of the rational blocks' unconverted responses
+    # at the stage frequency on the pattern, and the blocks' stage
+    # algebra: the grouped coupling of the blocks, or nothing without
+    # any, as a union within the backend's sparse matrix type, so that
+    # the stage's type, and with it the system's, the stepper's and every
+    # response's, is the backend's alone, a circuit with a block runs on
+    # the code compiled for one without, and a presence check is a branch
+    # rather than a specialization; and whether any block is pumped, which
+    # is when the stage solves carry a correction
     rationalvals::R
-    rational::Vector{RationalStage}
     coupling::Union{Nothing, RationalCoupling{SM}}
-    # the stage transfers of the blocks' output terms with the host
-    # pattern of the Jacobian, the host copy of the values and whether
-    # they are laid out transposed, for the refresh of a pumped block's
-    # coupling at every step; and whether any block is pumped, which is
-    # when the refresh happens
-    stageterms::Any
-    hostvals::Vector{ComplexF64}
-    transposedvals::Bool
     pumped::Bool
     # The only constructor, and it takes the parameters: `SM` appears in
     # the union field alone, so a circuit without a coupling passes
     # `nothing` and leaves it with nothing to infer from. `gaussstage`
     # reads it off the backend.
-    GaussStage{V, M, R, SM}(coefficients, imvals, cjacobian,
-            rationalvals, rational, coupling, stageterms, hostvals, transposedvals, pumped) where {V, M, R, SM} =
-        new{V, M, R, SM}(coefficients, imvals, cjacobian,
-            rationalvals, rational, coupling, stageterms, hostvals, transposedvals, pumped)
+    GaussStage{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped) where {V, M, R, SM} =
+        new{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped)
 end
 
 # the stage with its union field's type taken from the backend
-function gaussstage(gc, imvals, cjacobian, rationalvals, stages, coupling, backend,
-        stageterms, hostvals, transposedvals, pumped)
+function gaussstage(gc, imvals, cjacobian, rationalvals, coupling, backend, pumped)
     SM = typeof(devicesparse(sparse(zeros(1, 1)), backend))
     return GaussStage{typeof(imvals), typeof(cjacobian), typeof(rationalvals), SM}(gc, imvals, cjacobian,
-        rationalvals, stages, coupling, stageterms, hostvals, transposedvals, pumped)
+        rationalvals, coupling, pumped)
 end
 
-# the imaginary part of the stage matrix, `Im((mu/h)^2) C + Im(mu/h) G`,
-# placed on the pattern of the real Jacobian, which holds every entry of
-# `C` and `G`; on a device the pattern is stored transposed, as the
-# column structure of the transpose
+# The entries of a sparse matrix `A` placed on the pattern of the real
+# Jacobian, which holds every entry of the step matrix and of the blocks'
+# rows, as the values of the pattern; on a device the pattern is stored
+# transposed, as the column structure of the transpose, and `A` is
+# placed transposed on it.
 patterncolumns(Jrs::SparseMatrixCSC) = SparseArrays.getcolptr(Jrs), rowvals(Jrs)
 patterncolumns(Jrs::DeviceSparsePattern) = Array(Jrs.colptr), Array(Jrs.rowval)
-function gaussimaginary(gc::GaussCoefficients, h, C, G, Jrs, transposed)
-    ci, gi = imag((gc.mu/h)^2), imag(gc.mu/h)
-    Kim = ci .* C .+ gi .* G
-    imvals = zeros(nnz(Jrs))
+function patternvalues(A::SparseMatrixCSC{T}, Jrs, transposed::Bool) where {T}
     colptr, rowval = patterncolumns(Jrs)
-    for j in axes(Kim, 2), q in nzrange(Kim, j)
-        val = nonzeros(Kim)[q]
-        iszero(val) && continue
-        i = rowvals(Kim)[q]
-        r, c = transposed ? (j, i) : (i, j)
-        pos = 0
-        for k in colptr[c]:colptr[c + 1] - 1
-            rowval[k] == r && (pos = k; break)
-        end
-        pos > 0 || error("an entry of the stage matrix is absent from the Jacobian's pattern.")
-        imvals[pos] = val
-    end
-    return imvals
+    n = length(colptr) - 1
+    pattern = SparseMatrixCSC(n, n, Vector{Int}(colptr), Vector{Int}(rowval), ones(Bool, length(rowval)))
+    B = dropzeros(transposed ? sparse(transpose(A)) : A)
+    vals = zeros(T, length(rowval))
+    vals[sparseaddmap(pattern, B)] .= nonzeros(B)
+    return vals
 end
 
 # a stage of a stage pair: the column of an `(n, 2)` array, or the
@@ -485,15 +411,15 @@ stage(a::AbstractArray{<:Any,3}, i) = view(a, :, :, i)
 # The cubic Lagrange stencil that reads a current at a stage time of the
 # step from recorded time `k` to `k + 1` off the recorded grid: the four
 # grid indices and their weights, one sided at the ends of the record, and
-# linear on a record too short for four points. Fourth order, so a smooth
-# current keeps the method's order.
+# linear on a record too short for four points, whose last two weights
+# are zero. Fourth order, so a smooth current keeps the method's order.
+# Tuples, which a step reads without allocating.
 function gaussstencil(k::Int, nt::Int, c::Float64)
     if nt < 4
-        return [k, k + 1], [1 - c, c]
+        return (k, k + 1, k, k), (1 - c, c, 0.0, 0.0)
     end
     first = k == 1 ? 1 : k == nt - 1 ? nt - 3 : k - 1
-    indices = [first, first + 1, first + 2, first + 3]
     s = c + (k - first)
-    weights = [prod((s - m)/(j - m) for m in 0:3 if m != j) for j in 0:3]
-    return indices, weights
+    weight = j -> prod((s - m)/(j - m) for m in 0:3 if m != j)
+    return (first, first + 1, first + 2, first + 3), (weight(0), weight(1), weight(2), weight(3))
 end

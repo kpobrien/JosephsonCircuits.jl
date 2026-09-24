@@ -14,6 +14,9 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test JosephsonCircuits.defaultgridladder((2,2)) == [(2,2)]
         @test JosephsonCircuits.defaultgridladder((20,)) ==
             [(2,), (3,), (5,), (10,), (20,)]
+        # a tone with fewer than two harmonics keeps its own
+        @test JosephsonCircuits.defaultgridladder((8,1)) ==
+            [(2,1), (4,1), (8,1)]
     end
 
     @testset "hbsolve integration" begin
@@ -81,6 +84,63 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test r.nodeflux ≈ fresh.nodeflux rtol = 1e-8
     end
 
+    @testset "a carried point retreats on the grid it failed on" begin
+        # the whole drive converges on the coarsest grid at once, and the
+        # point carried to the middle grid fails there: the schedule
+        # retreats and climbs back on the middle grid before growing past
+        # it, and reaches the direct solve's point
+        c, d = testjpacircuitnumeric()
+        pump = (2*pi*4.75001e9,)
+        drive = [(mode = (1,), port = 1, current = 2e-9)]
+        controlled = recovery_solver(failat = [2])
+        r = hbnlsolve(pump, (8,), drive, c, d; keyedarrays = false,
+            method = Staged(inner = controlled.method,
+                grids = [(2,), (4,), (8,)], s0 = 1.0, smin = 0.1))
+        @test [st.grid for st in r.solverinfo.stages] ==
+            [(2,), (4,), (4,), (4,), (8,)]
+        @test r.solverinfo.converged
+        fresh = hbnlsolve(pump, (8,), drive, c, d; method = Newton(),
+            keyedarrays = false, atol = 1e-12)
+        @test r.nodeflux ≈ fresh.nodeflux rtol = 1e-8
+        # a first grid which converges at no drive is reported as that, and
+        # not as a fold at zero drive
+        stuck = recovery_solver(failat = collect(1:20))
+        q = @test_logs (:warn,) hbnlsolve(pump, (4,), drive, c, d;
+            keyedarrays = false, method = Staged(inner = stuck.method,
+                grids = [(4,)], s0 = 0.5, smin = 0.1))
+        @test !q.solverinfo.converged
+        @test isnan(q.solverinfo.sourcefold)
+    end
+
+    @testset "a netlist source is scaled with the drive and checked once" begin
+        # a junction biased near its critical current by a current source
+        # of the netlist, and pumped weakly: the continuation scales the
+        # bias with the pump, as `setdrive!` scales a problem's drive, so a
+        # stage at half the drive is the direct solve at half of both; and
+        # the warning of a junction near its critical current comes once,
+        # from the outcome, and not from every stage
+        Lj = 1000e-12
+        Ic = LjtoIc(Lj)
+        biased(Ib) = Circuit([:p1 => Port(1; Z0 = 50.0), :l => Inductor(1e-9),
+            :jj => JosephsonJunction(Lj), :c2 => Capacitor(1000e-15),
+            :ib => CurrentSource(Ib)],
+            [((:p1, 1), (:l, 1)), ((:l, 2), (:jj, 1), (:c2, 1), (:ib, 2)),
+             ((:jj, 2), (:c2, 2), (:p1, 2), (:ib, 1), Ground)])
+        wb = (2*pi*4.0e9,)
+        pump(I) = [(mode = (1,), port = 1, current = I)]
+        kw = (; dc = true, odd = true, even = true, keyedarrays = false)
+        r = @test_logs (:warn,) hbnlsolve(wb, (8,), pump(1e-9),
+            biased(0.995*Ic); method = Staged(s0 = 0.25), kw...)
+        @test r.solverinfo.converged
+        # one stage at half the drive, which the schedule then gives up at
+        half = @test_logs (:warn,) hbnlsolve(wb, (8,), pump(1e-9),
+            biased(0.995*Ic); method = Staged(grids = [(8,)], s0 = 0.5,
+                interioratol = 1e-12, maxattempts = 1), kw...)
+        ref = hbnlsolve(wb, (8,), pump(0.5e-9), biased(0.5*0.995*Ic);
+            method = Newton(), atol = 1e-12, kw...)
+        @test half.nodeflux ≈ ref.nodeflux rtol = 1e-8
+    end
+
     @testset "guards" begin
         @test_throws ArgumentError hbnlsolve((w1,w2), (8,4), src, circuit,
             defs; dc = true, odd = true, even = true, method = Staged(grids = [(2,2), (4,2)]))
@@ -91,7 +151,7 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
     end
 
     @testset "a spent schedule returns not converged" begin
-        r = @test_logs (:warn, r"maxattempts") match_mode=:any hbnlsolve(
+        r = @test_logs (:warn,) match_mode=:any hbnlsolve(
             (w1,w2), (8,4), src, circuit, defs; dc = true, odd = true,
             even = true, method = Staged(maxattempts = 1))
         @test !r.solverinfo.converged

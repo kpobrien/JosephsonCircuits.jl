@@ -158,7 +158,8 @@ the extra solves are exactly where the expensive failures hide.
     escalations marked.
 - `escalationrequested`: whether an escalation was requested after this
     solve; with `escalated` false, that is an escalation the preconditioner
-    refused because the grown factors would not fit its memory budget.
+    refused: it was exact already, had no larger coupling set to grow into,
+    or the grown factors would not fit its memory budget.
 - `deflationsize`, `deflationrebuilds`, `precondtime`: the active rank of
     the recycled deflation, how many times it has been built, and the wall
     time spent applying the preconditioner in this solve.

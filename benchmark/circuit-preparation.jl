@@ -9,11 +9,8 @@ const NLADDER = benchsize(4096)
 const NCOUPLED = benchsize(512)
 function measure(case, f, input)
     @nospecialize f input
-    GC.gc()
-    firstcall = @timed Base.invokelatest(f,input)
-    Base.invokelatest(f,input)
-    samples = [@timed Base.invokelatest(f,input) for _ in 1:BENCH_SAMPLES]
-    println(join((label,case,firstcall.time,firstcall.compile_time,
+    firstcall, compile, samples = benchtime(f, input)
+    println(join((label,case,firstcall.time,compile,
         median(s.time for s in samples),median(s.bytes for s in samples)), '\t'))
     flush(stdout)
     return firstcall.value

@@ -16,8 +16,10 @@ node is saved.
 - `current`: Vector of current source amplitudes in Ampere.
 - `frequency`: Vector of current source frequencies in Hz.
 - `phase`: Vector of current source phases in radians.
-- `sourcenodes`: Vector of tuples of nodes (src,dst) at which to place the
-    current source(s).
+- `sourcenodes`: Vector of tuples of nodes `(src, dst)` at which to place the
+    current source(s). A source draws its current from `src` and injects it
+    into `dst`, as SPICE orients a current source, so `(0, 1)` drives node
+    `1` from ground.
 - `tstep`: Time step in seconds.
 - `tstop`: Time for which to run the simulation in seconds.
 - `trise`: The simulation ramps up the current source amplitude with a
@@ -125,22 +127,26 @@ end
     wrspice_input_ac(netlist, freqs, portnodes, portcurrent; maxdata = 2e9)
 
 Generate the WRSPICE input for an AC small signal simulation of the circuit
-in `netlist`, driven by an AC current source of amplitude `portcurrent`
-across the node pair `portnodes`, given as one-based node indices with
-ground as index 1 (the source is written from `portnodes[2]` to
-`portnodes[1]`, each decremented to its SPICE node label), over `nsteps` linearly spaced
-frequencies from `fstart` to `fstop` in Hz. The second form takes the
-frequencies as a single number, or as a vector or range of which only the
-first and last entries are used, with `length(freqs) - 2` passed as the
-number of points. `maxdata` is the WRSPICE limit on the size of the data
-written, in kilobytes.
+in `netlist`, driven by an AC current source of the complex amplitude
+`portcurrent` across the node pair `portnodes`, given as one-based node
+indices with ground as index 1: the source draws its current from
+`portnodes[1]` and injects it into `portnodes[2]`, each decremented to its
+SPICE node label, so `[1, 2]` drives the SPICE node `1` from ground, with
+the magnitude and the phase of `portcurrent`, the phase written in degrees
+as SPICE reads it. The analysis is `.ac lin nsteps fstart fstop`, over
+linearly spaced frequencies from `fstart` to `fstop` in Hz. The second
+form takes the frequencies as a single number, or as a vector or range of
+which only the first and last entries are used, with `length(freqs) - 2`
+passed as `nsteps`, which WRSPICE answers with `length(freqs)` points.
+`maxdata` is the WRSPICE limit on the size of the data written, in
+kilobytes.
 
 # Examples
 ```jldoctest
 julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",100,4e9,5e9,[1,2],1e-6))
 * SPICE Simulation
-* AC current source with magnitude 1 and phase 0
-isrc 1 0 ac 1.0e-6 0.0
+* AC current source into the port
+isrc 0 1 ac 1.0e-6 0.0
 
 * Set up the AC small signal simulation
 .ac lin 100 4.0g 5.0g
@@ -167,8 +173,8 @@ write
 ```jldoctest
 julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",(4:0.01:5)*1e9,[1,2],1e-6))
 * SPICE Simulation
-* AC current source with magnitude 1 and phase 0
-isrc 1 0 ac 1.0e-6 0.0
+* AC current source into the port
+isrc 0 1 ac 1.0e-6 0.0
 
 * Set up the AC small signal simulation
 .ac lin 99 4.0g 5.0g
@@ -218,8 +224,8 @@ function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent; max
 
     control="""
 
-    * AC current source with magnitude 1 and phase 0
-    isrc $(portnodes[2]-1) $(portnodes[1]-1) ac $(abs(portcurrent)) $(angle(portcurrent))
+    * AC current source into the port
+    isrc $(portnodes[1]-1) $(portnodes[2]-1) ac $(abs(portcurrent)) $(rad2deg(angle(portcurrent)))
 
     * Set up the AC small signal simulation
     .ac lin $(nsteps) $(fstart*1e-9)g $(fstop*1e-9)g
@@ -278,103 +284,116 @@ function wrspice_cmd()
 end
 
 """
-    spice_run(input, spicecmd::String)
+    spice_run(input, spicecmd)
 
-Argument is a string or command containing the input commands for wrspice. 
-This function saves the string to disk, runs spice, parses the results with
-wrsplice_load(), then returns those parsed results.
+Run WRSPICE in batch mode on the input `input`, a string, with the command
+`spicecmd`, the path of the executable or the command [`wrspice_cmd`](@ref)
+returns, and return the rawfile the run writes as [`spice_raw_load`](@ref)
+reads it. The input and the rawfile are written in a temporary directory,
+which is removed when the run ends, however it ends. The `write` command of
+the input's control block must not name a file, so that the rawfile is the
+one given on the command line.
 
-The input should not should have a file name listed after the write command in
-the .control block so that we can specify the raw output file with a command
-line argument.
-
+A run which fails, writes no rawfile, or aborts, when WRSPICE writes the
+plot of its constants in place of the analysis, is an error which quotes
+what WRSPICE printed.
 """
-function spice_run(input,spicecmd)
-
-    #find the temporary directory
-    path = tempdir()
-
-    #generate unique filenames
-    inputfilename = joinpath(path,"spice-"* string(UUIDs.uuid1()) * ".cir")
-    outputfilename = joinpath(path,"spice-"* string(UUIDs.uuid1()) * ".raw")
-
-    #save the input file
-    open(inputfilename, "w") do f
-        write(f, input)
+function spice_run(input, spicecmd)
+    return mktempdir() do path
+        inputfilename = joinpath(path, "spice.cir")
+        outputfilename = joinpath(path, "spice.raw")
+        write(inputfilename, input)
+        # run in batch mode, keeping what WRSPICE prints for a failure
+        printed, errors = IOBuffer(), IOBuffer()
+        process = run(pipeline(
+            ignorestatus(`$spicecmd -b -r $outputfilename $inputfilename`);
+            stdout = printed, stderr = errors))
+        failed(why) = error("WRSPICE $(why); it printed:\n" *
+            strip(String(take!(printed)) * "\n" * String(take!(errors))))
+        success(process) || failed("exited with code $(process.exitcode)")
+        isfile(outputfilename) || failed("wrote no rawfile")
+        output = spice_raw_load(outputfilename)
+        lowercase(output.header.plotname) == "constants" &&
+            failed("aborted the analysis and wrote its constants")
+        return output
     end
-
-    # run the simulation
-    # run in batch mode, capturing the output which would go to stdout
-    reader = read(`$spicecmd -b -r $outputfilename $inputfilename`,String)
-
-    #parse the output
-    output=spice_raw_load(outputfilename)
-
-    #clean up the input and output files
-    rm(inputfilename)
-    rm(outputfilename)
-
-    return output
 end
 
 """
-    spice_run(input::AbstractVector,spicecmd; ntasks = Threads.nthreads())
+    spice_run(inputs::AbstractVector, spicecmd; ntasks::Int = Sys.CPU_THREADS)
 
-If the input to wrspice_run() is an array of strings, then call multiple
-processes in parallel. The number of parallel processes is decided from
-Threads.nthreads(). It can be changed manually.
-
+Run each input of `inputs` as [`spice_run`](@ref) does, `ntasks` WRSPICE
+processes at a time, and return their rawfiles in the order of the
+inputs. The processes run in parallel whatever the number of Julia
+threads, since the tasks only wait on them, so `ntasks` is the number of
+logical processors by default.
 """
-function spice_run(inputs::AbstractVector,spicecmd;ntasks::Int = Threads.nthreads())
-    # Set the number of simultaneous parallel simulations equal to
-    # the number of threads. ntasks can be manually changed here
-    # or by changing the number of threads. Note this is only faster because
-    # we are calling an external program which launches a new processes.
-    tsk(input) = spice_run(input,spicecmd)
-    return asyncmap(tsk,inputs;ntasks=ntasks);
+function spice_run(inputs::AbstractVector, spicecmd; ntasks::Int = Sys.CPU_THREADS)
+    return asyncmap(input -> spice_run(input, spicecmd), inputs; ntasks = ntasks)
 end
 
 """
     spice_hb_load(filename)
 
-Load a Xyce harmonic balance simulation.
+Load the frequency domain output of a Xyce harmonic balance simulation, a
+`.HB.FD.prn` file. Returns a named tuple with the value of each output
+variable at each frequency in `data`, one row per variable in the order
+of the header, the name of each row in `variables`, the frequencies in
+`f`, the index column in `index`, and the column names in `header`. A
+variable printed as the two columns `Re(name)` and `Im(name)` is the row
+`name`, its columns paired by their names; any other column, an
+expression `{...}` say, is a row of its own, with the column as its real
+part.
 """
 function spice_hb_load(filename)
 
-    data = Array{Float64}(undef,0)
+    data = Float64[]
     header = SubString{String}[]
 
-    #open a file handle
     open(filename, "r") do io
-        i=0
-        #loop over the contents of the header and data
-        while !eof(io)
-            i+=1
-            line = readline(io)
-            if line[1:5] == "Index"
-                append!(header,split(strip(line),r"\s+"))
-            elseif line == "End of Xyce(TM) Simulation"
+        for line in eachline(io)
+            s = strip(line)
+            isempty(s) && continue
+            if startswith(s, "Index")
+                append!(header, split(s, r"\s+"))
+            elseif s == "End of Xyce(TM) Simulation"
                 break
             else
-                vals = parse.(Float64,split(strip(line),r"\s+"))
-                for val in vals
-                    push!(data,val)
-                end
+                append!(data, parse.(Float64, split(s, r"\s+")))
             end
         end
     end
 
-    index = data[1:length(header):end]
-    f = data[2:length(header):end];
+    values = reshape(data, length(header), :)
+    index = values[1, :]
+    f = values[2, :]
 
-    data1 = zeros(Complex{Float64},(length(header)-2)÷2,length(data) ÷ length(header))
+    # the columns of each variable, its real and imaginary parts by name
+    variables = String[]
+    recolumn = Int[]
+    imcolumn = Int[]
+    for c in 3:length(header)
+        m = match(r"^(Re|Im)\((.*)\)$", header[c])
+        name = isnothing(m) ? String(header[c]) : String(m.captures[2])
+        k = findfirst(==(name), variables)
+        if isnothing(k)
+            push!(variables, name)
+            push!(recolumn, 0)
+            push!(imcolumn, 0)
+            k = length(variables)
+        end
+        if !isnothing(m) && m.captures[1] == "Im"
+            imcolumn[k] = c
+        else
+            recolumn[k] = c
+        end
+    end
 
-    for j = 1:(length(header)-2)÷2
-        data1[j,:] .= data[2+j:length(header):end]
-        data1[j,:] .+= im.*data[3+j:length(header):end]
-    end    
+    data1 = zeros(Complex{Float64}, length(variables), size(values, 2))
+    for k in eachindex(variables)
+        recolumn[k] > 0 && (data1[k, :] .+= view(values, recolumn[k], :))
+        imcolumn[k] > 0 && (data1[k, :] .+= im .* view(values, imcolumn[k], :))
+    end
 
-    return (data=data1,f=f,index=index,header=header)
-
+    return (data=data1, f=f, index=index, header=header, variables=variables)
 end
-

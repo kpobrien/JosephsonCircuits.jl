@@ -12,7 +12,7 @@ the pointwise time domain nonlinearity of the harmonic balance system:
   into the array the inverse real transform consumes
   ([`phivectortomatrix!`](@ref)), and
 - the map `B` from the frequency domain coefficients back to the node vector,
-  which folds together the unpacking ([`phimatrixtovector!`](@ref)), the
+  which folds together the unpacking of the transform's array, the
   `Lscale/Lj` branch scaling, the transposed incidence matrix product, the
   frequency dependent linear term `K`, and the complex to real conversion.
 
@@ -152,7 +152,11 @@ zeroing and the stores are contiguous. See [`NonlinearTermPlan`](@ref).
 """
 @kernel function forwardtermkernel!(phimatrix, @Const(n1), @Const(s1),
         @Const(n2), @Const(s2), @Const(flags), @Const(xr))
-    q = @index(Global)
+    forwardtermitem!(phimatrix, n1, s1, n2, s2, flags, xr, @index(Global))
+end
+
+# the work item `q` of `forwardtermkernel!`, which the host runs as a loop
+@inline function forwardtermitem!(phimatrix, n1, s1, n2, s2, flags, xr, q)
     T = eltype(xr)
     @inbounds begin
         f = flags[q]
@@ -174,6 +178,7 @@ zeroing and the stores are contiguous. See [`NonlinearTermPlan`](@ref).
         phimatrix[q] = (f & FCONJ) != Int32(0) ? Complex(re, -im_) :
             Complex(re, im_)
     end
+    return nothing
 end
 
 """
@@ -187,7 +192,13 @@ and the [`FWIDE`](@ref) flag is not consulted. See
 """
 @kernel function forwardtermkernelcomplex!(phimatrix, @Const(cn1), @Const(s1),
         @Const(cn2), @Const(s2), @Const(flags), @Const(xc))
-    q = @index(Global)
+    forwardtermitemcomplex!(phimatrix, cn1, s1, cn2, s2, flags, xc,
+        @index(Global))
+end
+
+# the work item `q` of `forwardtermkernelcomplex!`
+@inline function forwardtermitemcomplex!(phimatrix, cn1, s1, cn2, s2, flags,
+        xc, q)
     @inbounds begin
         p1 = cn1[q]
         p2 = cn2[q]
@@ -200,6 +211,7 @@ and the [`FWIDE`](@ref) flag is not consulted. See
         end
         phimatrix[q] = (flags[q] & FCONJ) != Int32(0) ? conj(v) : v
     end
+    return nothing
 end
 
 """
@@ -216,7 +228,13 @@ term off. See [`NonlinearTermPlan`](@ref).
 @kernel function backwardtermkernelcomplex!(out, @Const(bptr), @Const(bsrc),
         @Const(bcoef), @Const(phimatrix), @Const(kptr), @Const(kidx),
         @Const(kcoef), @Const(xc))
-    k = @index(Global)
+    backwardtermitemcomplex!(out, bptr, bsrc, bcoef, phimatrix, kptr, kidx,
+        kcoef, xc, @index(Global))
+end
+
+# the work item `k` of `backwardtermkernelcomplex!`
+@inline function backwardtermitemcomplex!(out, bptr, bsrc, bcoef, phimatrix,
+        kptr, kidx, kcoef, xc, k)
     @inbounds begin
         acc = zero(eltype(out))
         for t in bptr[k]:bptr[k+1]-1
@@ -227,6 +245,7 @@ term off. See [`NonlinearTermPlan`](@ref).
         end
         out[k] = acc
     end
+    return nothing
 end
 
 """
@@ -245,7 +264,13 @@ switches the linear term off. See [`NonlinearTermPlan`](@ref).
 @kernel function backwardtermkernel!(out, @Const(bptr), @Const(bsrc),
         @Const(bcoef), @Const(phimatrix), @Const(kptr), @Const(kidx),
         @Const(kcoef), @Const(xr), @Const(lptr), @Const(lwide))
-    k = @index(Global)
+    backwardtermitem!(out, bptr, bsrc, bcoef, phimatrix, kptr, kidx, kcoef, xr,
+        lptr, lwide, @index(Global))
+end
+
+# the work item `k` of `backwardtermkernel!`
+@inline function backwardtermitem!(out, bptr, bsrc, bcoef, phimatrix, kptr,
+        kidx, kcoef, xr, lptr, lwide, k)
     T = eltype(out)
     @inbounds begin
         p = lptr[k]
@@ -268,6 +293,7 @@ switches the linear term off. See [`NonlinearTermPlan`](@ref).
             out[p+1] = accim
         end
     end
+    return nothing
 end
 
 """
@@ -277,20 +303,25 @@ Expand the equivalent real representation of a node vector into the complex
 one, one work item per complex entry, reading the real slot layout the plan
 already carries. The imaginary part of a self conjugate mode is written as an
 explicit zero, so the result does not depend on what was in `xc` beforehand.
-Each work item owns its own entry, so this is conflict free. The scalar
-[`real_to_complex!`](@ref) it replaces on this path advances a serial cursor
-and reads a `BitVector`, neither of which a device can do. See
+Each work item owns its own entry, so this is conflict free. Unlike the
+scalar [`real_to_complex!`](@ref), which advances a serial cursor and reads a
+`BitVector`, it runs on a device. See
 [`NonlinearTermPlan`](@ref).
 """
 @kernel function realtocomplexkernel!(xc, @Const(xr), @Const(lptr),
         @Const(lwide))
-    k = @index(Global)
+    realtocomplexitem!(xc, xr, lptr, lwide, @index(Global))
+end
+
+# the work item `k` of `realtocomplexkernel!`
+@inline function realtocomplexitem!(xc, xr, lptr, lwide, k)
     T = eltype(xr)
     @inbounds begin
         p = lptr[k]
         xc[k] = lwide[k] == Int32(1) ? Complex(xr[p], xr[p+1]) :
             Complex(xr[p], zero(T))
     end
+    return nothing
 end
 
 """
@@ -304,7 +335,11 @@ disjoint from every other's, so this is conflict free. The inverse of
 """
 @kernel function complextorealkernel!(xr, @Const(xc), @Const(lptr),
         @Const(lwide))
-    k = @index(Global)
+    complextorealitem!(xr, xc, lptr, lwide, @index(Global))
+end
+
+# the work item `k` of `complextorealkernel!`
+@inline function complextorealitem!(xr, xc, lptr, lwide, k)
     @inbounds begin
         p = lptr[k]
         v = xc[k]
@@ -313,6 +348,7 @@ disjoint from every other's, so this is conflict free. The inverse of
             xr[p+1] = imag(v)
         end
     end
+    return nothing
 end
 
 """
@@ -576,24 +612,20 @@ The [`ValueMaps`](@ref) of a plan, found by probing.
 
 Each conversion is linear and each of its output entries reads one input
 entry, so tagging the inputs with their own indices and reading the outputs
-gives the map, and does so for whatever rule the conversion follows. A
-conversion whose structure under the tags differs from the plan's -- one
-which drops a zero, say -- has no fixed map and `nothing` is returned; the
-refresh then rebuilds the arrays instead.
+gives the map, and does so for whatever rule the conversion follows. The
+conversions keep every stored entry whatever its value, so the structure
+under the tags is the plan's; one which is not is refused.
 """
 function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
         invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC, Cnm::SparseMatrixCSC,
         Rbnm::SparseMatrixCSC, Ljb::SparseVector, layout::ModeLayout,
         freqindexmap::Vector{Int}) where {Ti,T}
-    # The three linear term matrices into `Knm`. Every entry of every
-    # matrix carries a value, so the structure is the union the real values
-    # produce, and the one whose map is read carries its tags on an axis of
-    # its own: the inductance and the capacitance contribute on the real
-    # axis and the conductance, through the `im`, on the imaginary one, so
-    # the other two are given values which keep off the axis being read and
-    # cannot cancel each other where they overlap, since the sum drops an
-    # exact zero. Unit frequency diagonals, so a zero frequency does not
-    # erase a tag.
+    # The three linear term matrices into `Knm`. The one whose map is read
+    # carries its tags on an axis of its own: the inductance and the
+    # capacitance contribute on the real axis and the conductance, through
+    # the `im`, on the imaginary one, so the other two are given values
+    # which keep off the axis being read. Unit frequency diagonals, so a
+    # zero frequency does not erase a tag.
     n = size(Knm, 1)
     ones_ = Diagonal(ones(n))
     tagged(A, v) = SparseMatrixCSC(size(A)..., copy(SparseArrays.getcolptr(A)),
@@ -601,20 +633,20 @@ function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
     tags(A) = Complex{Float64}.(1:nnz(A))
     fillc(A, v) = fill(Complex{Float64}(v), nnz(A))
     # The probe's structure is the union of the three, which holds every
-    # entry of `Knm` and possibly more: a term which vanishes at the zero
-    # frequency column is dropped from `Knm` by the sum and kept by the
-    # probe. So the probe is read onto the structure of `Knm`, entry by
-    # entry, and a missing one means there is no map.
+    # entry of `Knm` and possibly more: a frequency term of a zero frequency
+    # column is left out of `Knm` and kept by the probe. So the probe is
+    # read onto the structure of `Knm`, entry by entry.
+    moved() = throw(ArgumentError("the linear term's structure is not the plan's, which a rebound system cannot follow; build a new one."))
     function probe(zl, zg, zc, part)
         K = linearterm(zl, zg, zc, ones_, ones_, Float64)
-        size(K) == size(Knm) || return nothing
+        size(K) == size(Knm) || moved()
         m = zeros(Int, nnz(Knm))
         kcol, krow, knz = SparseArrays.getcolptr(K), rowvals(K), nonzeros(K)
         for j in axes(Knm, 2), t in nzrange(Knm, j)
             i = rowvals(Knm)[t]
             r = kcol[j]:(kcol[j+1] - 1)
             q = searchsortedfirst(view(krow, r), i)
-            (q <= length(r) && krow[r[q]] == i) || return nothing
+            (q <= length(r) && krow[r[q]] == i) || moved()
             m[t] = round(Int, part(knz[r[q]]))
         end
         return m
@@ -625,7 +657,6 @@ function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
         tagged(Cnm, fillc(Cnm, 2)), imag)
     mc = probe(tagged(invLnm, fillc(invLnm, im)), tagged(Gnm, fillc(Gnm, 1)),
         tagged(Cnm, tags(Cnm)), v -> -real(v))
-    (isnothing(ml) || isnothing(mg) || isnothing(mc)) && return nothing
 
     # `Knm` into its real form. Each real entry is one part of one entry
     # of `Knm` with a sign, so tagging the real parts with `k` and the
@@ -636,7 +667,7 @@ function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
     if hasrealbackward(plan)
         both = tagged(Knm, Complex{Float64}[k + im*(nz + k) for k in 1:nz])
         p1, i1, v1 = reallinearmap(Ti, Float64, both, layout)
-        (i1 == Array(plan.kidx) && p1 == Array(plan.kptr)) || return nothing
+        (i1 == Array(plan.kidx) && p1 == Array(plan.kptr)) || moved()
         for t in eachindex(i1)
             a, sa = _tagof(v1[t])
             iszero(a) && continue
@@ -649,7 +680,7 @@ function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
     end
     # and into its complex form, a permutation
     pc, ic, vc = complexlinearmap(Ti, Float64, tagged(Knm, tags(Knm)))
-    (ic == Array(plan.cidx) && pc == Array(plan.cptr)) || return nothing
+    (ic == Array(plan.cidx) && pc == Array(plan.cptr)) || moved()
     cmap = Ti[round(Ti, real(v)) for v in vc]
 
     # the Josephson coefficients: the junction and the incidence entry of
@@ -660,7 +691,7 @@ function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
     unit = SparseVector(length(Ljb), copy(Ljb.nzind), ones(Float64, length(Ljb.nzval)))
     _, bsrc, bsgn = backwardjosephsonmap(Ti, Float64, Rbnm, unit, 1.0, Nmodes,
         Nmatrix, freqindexmap, nc)
-    Array(plan.bsrc) == bsrc || return nothing
+    Array(plan.bsrc) == bsrc || moved()
     bjunc = Ti[(Int(src) - 1) ÷ Nmatrix + 1 for src in bsrc]
 
     d = x -> tobackend(plan.backend, x)
@@ -718,44 +749,6 @@ function refreshvalues!(plan::NonlinearTermPlan{Ti,T}, maps::ValueMaps,
 end
 
 """
-    refreshvalues!(plan::NonlinearTermPlan, Rbnm, Ljb, Lscale, Knm, layout,
-        freqindexmap)
-
-Rewrite the value arrays of a plan for new component values under the same
-structure: the Josephson coefficients `Lscale/Lj`, and the linear term in
-both representations. Everything else in the plan is structure, which the
-new values must share; the maps are rebuilt and their structure checked
-against the plan's before the values are copied in, on whichever backend
-the plan lives on.
-
-This is what makes a system reusable across the points of a sweep: the
-transforms, the index maps and the kernels stay, and the numbers move.
-"""
-function refreshvalues!(plan::NonlinearTermPlan{Ti,T}, Rbnm::SparseMatrixCSC,
-        Ljb::SparseVector, Lscale, Knm::SparseMatrixCSC, layout::ModeLayout,
-        freqindexmap::Vector{Int}) where {Ti,T}
-    nc = plan.ncomplex
-    Nmodes = length(freqindexmap)
-    Nmatrix = plan.nslots ÷ max(length(Ljb.nzval), 1)
-    bptr, bsrc, bcoef = backwardjosephsonmap(Ti, T, Rbnm, Ljb, Lscale,
-        Nmodes, Nmatrix, freqindexmap, nc)
-    length(bcoef) == length(plan.bcoef) || throw(ArgumentError(
-        "the Josephson structure moved between points, which a refreshed plan cannot follow; build a new system."))
-    copyto!(plan.bcoef, bcoef)
-    if hasrealbackward(plan)
-        kptr, kidx, kcoef = reallinearmap(Ti, T, Knm, layout)
-        (length(kcoef) == length(plan.kcoef) && kidx == Array(plan.kidx)) ||
-            throw(ArgumentError("the linear term's structure moved between points, which a refreshed plan cannot follow; build a new system."))
-        copyto!(plan.kcoef, kcoef)
-    end
-    cptr, cidx, ccoef = complexlinearmap(Ti, T, Knm)
-    (length(ccoef) == length(plan.ccoef) && cidx == Array(plan.cidx)) ||
-        throw(ArgumentError("the linear term's structure moved between points, which a refreshed plan cannot follow; build a new system."))
-    copyto!(plan.ccoef, ccoef)
-    return plan
-end
-
-"""
     tobackend(backend, v::AbstractArray)
 
 Move a host array to the given KernelAbstractions backend.
@@ -786,22 +779,36 @@ tobackend(::CPU, v::Array) = v
 
 Convert a node vector between the complex representation and the equivalent
 real one through the layout the plan carries, as a conflict free kernel on
-the plan's backend. These are the device capable counterparts of
+the plan's backend, or as a plain loop on the host. These are the device capable counterparts of
 [`real_to_complex!`](@ref) and [`complex_to_real!`](@ref) for the two
 representations of an [`HBSystem`](@ref) point, which advance a serial cursor
 and read a `BitVector`.
 """
 function applyrealtocomplex!(xc::AbstractVector, plan::NonlinearTermPlan,
     xr::AbstractVector)
-    plan.realtocomplex!(xc, xr, plan.lptr, plan.lwide; ndrange = plan.ncomplex)
-    KernelAbstractions.synchronize(plan.backend)
+    lptr, lwide, n = plan.lptr, plan.lwide, plan.ncomplex
+    if hostloop(plan.backend, n)
+        for k in 1:n
+            realtocomplexitem!(xc, xr, lptr, lwide, k)
+        end
+    else
+        plan.realtocomplex!(xc, xr, lptr, lwide; ndrange = n)
+        KernelAbstractions.synchronize(plan.backend)
+    end
     return xc
 end
 
 function applycomplextoreal!(xr::AbstractVector, plan::NonlinearTermPlan,
     xc::AbstractVector)
-    plan.complextoreal!(xr, xc, plan.lptr, plan.lwide; ndrange = plan.ncomplex)
-    KernelAbstractions.synchronize(plan.backend)
+    lptr, lwide, n = plan.lptr, plan.lwide, plan.ncomplex
+    if hostloop(plan.backend, n)
+        for k in 1:n
+            complextorealitem!(xr, xc, lptr, lwide, k)
+        end
+    else
+        plan.complextoreal!(xr, xc, lptr, lwide; ndrange = n)
+        KernelAbstractions.synchronize(plan.backend)
+    end
     return xr
 end
 
@@ -816,17 +823,32 @@ equivalent real representation and a complex vector in the complex one.
 """
 function applyforwardterm!(phimatrix::AbstractArray,
     plan::NonlinearTermPlan, xr::AbstractVector{<:Real})
-    plan.forward!(phimatrix, plan.n1, plan.s1, plan.n2, plan.s2, plan.flags,
-        xr; ndrange = plan.nslots)
-    KernelAbstractions.synchronize(plan.backend)
+    n1, s1, n2, s2, flags, n = plan.n1, plan.s1, plan.n2, plan.s2,
+        plan.flags, plan.nslots
+    if hostloop(plan.backend, n)
+        for q in 1:n
+            forwardtermitem!(phimatrix, n1, s1, n2, s2, flags, xr, q)
+        end
+    else
+        plan.forward!(phimatrix, n1, s1, n2, s2, flags, xr; ndrange = n)
+        KernelAbstractions.synchronize(plan.backend)
+    end
     return phimatrix
 end
 
 function applyforwardterm!(phimatrix::AbstractArray,
     plan::NonlinearTermPlan, xc::AbstractVector{<:Complex})
-    plan.forwardcomplex!(phimatrix, plan.cn1, plan.s1, plan.cn2, plan.s2,
-        plan.flags, xc; ndrange = plan.nslots)
-    KernelAbstractions.synchronize(plan.backend)
+    cn1, s1, cn2, s2, flags, n = plan.cn1, plan.s1, plan.cn2, plan.s2,
+        plan.flags, plan.nslots
+    if hostloop(plan.backend, n)
+        for q in 1:n
+            forwardtermitemcomplex!(phimatrix, cn1, s1, cn2, s2, flags, xc, q)
+        end
+    else
+        plan.forwardcomplex!(phimatrix, cn1, s1, cn2, s2, flags, xc;
+            ndrange = n)
+        KernelAbstractions.synchronize(plan.backend)
+    end
     return phimatrix
 end
 
@@ -861,10 +883,18 @@ function applybackwardterm!(out::AbstractVector{<:Real},
         "backward map cannot be applied. Build the system with "*
         "realbackward = true to use the real representation entry points."))
     kptr = addlinearterm ? plan.kptr : plan.kptrzero
-    plan.backward!(out, plan.bptr, plan.bsrc, plan.bcoef, phimatrix, kptr,
-        plan.kidx, plan.kcoef, xr, plan.lptr, plan.lwide;
-        ndrange = plan.ncomplex)
-    KernelAbstractions.synchronize(plan.backend)
+    bptr, bsrc, bcoef, kidx, kcoef, lptr, lwide, n = plan.bptr, plan.bsrc,
+        plan.bcoef, plan.kidx, plan.kcoef, plan.lptr, plan.lwide, plan.ncomplex
+    if hostloop(plan.backend, n)
+        for k in 1:n
+            backwardtermitem!(out, bptr, bsrc, bcoef, phimatrix, kptr, kidx,
+                kcoef, xr, lptr, lwide, k)
+        end
+    else
+        plan.backward!(out, bptr, bsrc, bcoef, phimatrix, kptr, kidx, kcoef,
+            xr, lptr, lwide; ndrange = n)
+        KernelAbstractions.synchronize(plan.backend)
+    end
     return out
 end
 
@@ -872,8 +902,17 @@ function applybackwardterm!(out::AbstractVector{<:Complex},
     plan::NonlinearTermPlan, phimatrix::AbstractArray,
     xc::AbstractVector{<:Complex}; addlinearterm::Bool = true)
     kptr = addlinearterm ? plan.cptr : plan.cptrzero
-    plan.backwardcomplex!(out, plan.bptr, plan.bsrc, plan.bcoef, phimatrix,
-        kptr, plan.cidx, plan.ccoef, xc; ndrange = plan.ncomplex)
-    KernelAbstractions.synchronize(plan.backend)
+    bptr, bsrc, bcoef, cidx, ccoef, n = plan.bptr, plan.bsrc, plan.bcoef,
+        plan.cidx, plan.ccoef, plan.ncomplex
+    if hostloop(plan.backend, n)
+        for k in 1:n
+            backwardtermitemcomplex!(out, bptr, bsrc, bcoef, phimatrix, kptr,
+                cidx, ccoef, xc, k)
+        end
+    else
+        plan.backwardcomplex!(out, bptr, bsrc, bcoef, phimatrix, kptr, cidx,
+            ccoef, xc; ndrange = n)
+        KernelAbstractions.synchronize(plan.backend)
+    end
     return out
 end

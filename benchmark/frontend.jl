@@ -57,11 +57,7 @@ function hierarchy(n)
 end
 
 function record(label, case, stage, f, x)
-    GC.gc()
-    first = @timed f(x)
-    f(x) # one additional warm-up, outside the sample set
-    samples = [@timed(f(x)) for _ in 1:BENCH_SAMPLES]
-    coldcompile = hasproperty(first, :compile_time) ? first.compile_time : NaN
+    first, coldcompile, samples = benchtime(f, x)
     println(join((label, case, stage, first.time, coldcompile,
         median(s.time for s in samples), median(s.bytes for s in samples),
         median(s.gcstats.malloc + s.gcstats.realloc + s.gcstats.poolalloc +
@@ -80,12 +76,12 @@ function main(label)
         c = record(label, name, "construct", construct, input)
         record(label, name, "parse", JosephsonCircuits.parsecircuitlevel, c)
         e = record(label, name, "elaborate", elaborate, c)
-        record(label, name, "lower", compile, e)
+        record(label, name, "compile", compile, e)
     end
     input = hierarchy(N1024)
     c = record(label, "hierarchy$(N1024)", "construct", construct, input)
     record(label, "hierarchy$(N1024)", "parse", JosephsonCircuits.parsecircuitlevel, c)
     e = record(label, "hierarchy$(N1024)", "elaborate", elaborate, c)
-    record(label, "hierarchy$(N1024)", "lower", compile, e)
+    record(label, "hierarchy$(N1024)", "compile", compile, e)
 end
 main(BENCH_LABEL)

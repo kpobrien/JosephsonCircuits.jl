@@ -102,10 +102,12 @@ function comparestruct(x,y)
 end
 
 """
-    comparearray(x::AbstractArray{T},y::AbstractArray{T}) where T
+    comparearray(x::AbstractArray{T},y::AbstractArray{T}; rtol = 1e-6) where T
 
-Whether two arrays have the same size and differ by at most `1e-6` in the
-2-norm.
+Whether two arrays have the same size and differ in the 2-norm by at most
+`rtol` times the larger of their norms, so that the comparison holds the
+same digits whatever the scale of the values, and an array compares equal
+to zero only when it is zero.
 
 # Examples
 ```jldoctest
@@ -114,18 +116,20 @@ false
 
 julia> JosephsonCircuits.comparearray([1,2],[1,2,])
 true
+
+julia> JosephsonCircuits.comparearray([3e-8, 4e-8], [0.0, 0.0])
+false
+
+julia> JosephsonCircuits.comparearray([3e-8, 4e-8], [3e-8, 4e-8*(1 + 1e-9)])
+true
 ```
 """
-function comparearray(x::AbstractArray{T},y::AbstractArray{T}) where T
-    if size(x) == size(y)
-        z = similar(x)
-        for i in eachindex(x)
-            z[i] = x[i]-y[i]
-        end
-        return LinearAlgebra.norm(z) <= 1e-6
-    else
-        return false
-    end
+function comparearray(x::AbstractArray{T},y::AbstractArray{T};
+        rtol = 1e-6) where T
+    size(x) == size(y) || return false
+    isempty(x) && return true
+    return LinearAlgebra.norm(x[i] - y[i] for i in eachindex(x)) <=
+        rtol*max(LinearAlgebra.norm(x), LinearAlgebra.norm(y))
 end
 
 """
@@ -139,7 +143,6 @@ and the solver diagnostics are ignored.
 compare(x,y)::Bool = isequal(x,y)
 compare(x::AbstractArray{Complex{Float64}},y::AbstractArray{Complex{Float64}}) = comparearray(x,y)
 compare(x::AbstractArray{Float64},y::AbstractArray{Float64}) = comparearray(x,y)
-compare(x::StepRangeLen, y::StepRangeLen) = true
 
 compare(x::Nothing,y::Nothing) = true
 compare(x::JosephsonCircuits.AbstractSparseVector,y::JosephsonCircuits.AbstractSparseVector) = compare(x.nzval,y.nzval) && compare(x.nzind,y.nzind)
@@ -175,7 +178,7 @@ function structurejacobian(d, Amatrixindices::Matrix,
 
     P, _ = realjacobianstructure(Amatrixindices,
         Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches, invLnm, Gnm, Cnm,
-        rl, cl)
+        rl)
     junctions = junctionstructure(eltype(P), Amatrixindices,
         Amatrixconjindices, Ljb, Lscale, Rbnm, Nmodes, Nbranches, Nfreq, CPU())
     plan = planstructurerealjacobian(P, eltype(P), junctions, d.sys.invLnm,

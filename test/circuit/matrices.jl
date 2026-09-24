@@ -19,6 +19,14 @@ using Test
         end
     end
 
+    @testset "definitions in any dictionary" begin
+        c = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 0, Capacitor(:C)),
+            (:L1, 1, 0, Inductor(:L))])
+        ref = numericmatrices(c, Dict(:C => 1e-12, :L => 1e-9))
+        other = numericmatrices(c, IdDict{Any,Any}(:C => 1e-12, :L => 1e-9))
+        @test other.Cnm == ref.Cnm && other.invLnm == ref.invLnm
+    end
+
     @testset "combine" begin
 
         a = rand()

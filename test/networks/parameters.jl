@@ -113,5 +113,40 @@ import StaticArrays
 
     end
 
+    @testset "sizes the conversions take" begin
+        # the two port conversions take 2 by 2 matrices, and the conversions
+        # which split the ports into inputs and outputs square matrices of
+        # even size
+        @test_throws DimensionMismatch JosephsonCircuits.ABCDtoS(rand(Complex{Float64}, 4, 4))
+        @test_throws DimensionMismatch JosephsonCircuits.StoABCD(rand(Complex{Float64}, 4, 4))
+        @test_throws DimensionMismatch JosephsonCircuits.ZtoA(rand(Complex{Float64}, 3, 3))
+        @test_throws DimensionMismatch JosephsonCircuits.StoT(rand(Complex{Float64}, 3, 3))
+    end
+
+    @testset "element types of the conversions" begin
+        # integer input, whose conversion is not integral: a 100 Ohm load
+        # on each 50 Ohm port reflects 1/3, and a 50 Ohm series impedance
+        # between two reflects 1/3 and transmits 2/3
+        @test isapprox(JosephsonCircuits.ZtoS([100 0; 0 100]), [1/3 0; 0 1/3])
+        @test isapprox(JosephsonCircuits.ZtoS(reshape([100, 200], 1, 1, 2)),
+            reshape([1/3, 3/5], 1, 1, 2))
+        @test isapprox(JosephsonCircuits.ABCDtoS([1 50; 0 1]), [1/3 2/3; 2/3 1/3])
+        @test isapprox(JosephsonCircuits.AtoS([1 50; 0 1]), [1/3 2/3; 2/3 1/3])
+
+        # real input with complex port impedances converts as complex input
+        for z in (50.0 + 10.0im, [50.0 + 10.0im, 30.0 - 5.0im])
+            Z = [60.0 10.0; 10.0 60.0]
+            @test isapprox(JosephsonCircuits.ZtoS(Z; portimpedances = z),
+                JosephsonCircuits.ZtoS(complex(Z); portimpedances = z))
+            A = [1.0 50.0; 0.0 1.0]
+            @test isapprox(JosephsonCircuits.ABCDtoS(A; portimpedances = z),
+                JosephsonCircuits.ABCDtoS(complex(A); portimpedances = z))
+            @test isapprox(JosephsonCircuits.AtoS(A; portimpedances = z),
+                JosephsonCircuits.AtoS(complex(A); portimpedances = z))
+            @test isapprox(JosephsonCircuits.StoZ(cat(Z/100, Z/200; dims = 3); portimpedances = z),
+                JosephsonCircuits.StoZ(complex(cat(Z/100, Z/200; dims = 3)); portimpedances = z))
+        end
+    end
+
 
 end

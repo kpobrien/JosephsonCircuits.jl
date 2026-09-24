@@ -132,18 +132,16 @@ include("circuit/parse.jl")
 # Flattening the hierarchy (`elaborate`) and lowering it to the integer
 # indexed tables the matrix builders read (`compile`).
 include("circuit/compile.jl")
-# Stamps of multiport scattering blocks into the harmonic balance system:
-# a linearized/ concern, included here because `compile` needs its block
-# types.
-include("linearized/scatteringblocks.jl")
 include("circuit/graph.jl")      # incidence matrix, spanning tree, loops
 include("circuit/matrices.jl")   # capacitance and inverse inductance matrices
 include("harmonics/sparse.jl")   # sparse matrix helpers shared by the solvers
-# The methods, preconditioners and factorizations a caller composes: a
-# solvers/ concern, included here because binding stores a method.
-include("solvers/options.jl")
 include("circuit/bind.jl")       # binding values and pattern-fixed assembly
 include("circuit/mna.jl")        # the modified nodal analysis augmentation
+
+# Stamps of multiport scattering blocks into the harmonic balance system:
+# a linearized/ concern, included before the harmonics chapter because its
+# direct current treatment dispatches on the stamped block type.
+include("linearized/scatteringblocks.jl")
 
 # --- harmonics/: the pieces a harmonic balance system is assembled from -
 include("harmonics/layout.jl")   # the equivalent real representation and the canonical state
@@ -161,6 +159,7 @@ include("harmonics/system.jl")
 include("linearized/system.jl")
 
 # --- solvers/: the linear algebra the system is handed to ---------------
+include("solvers/options.jl")    # the methods, preconditioners and factorizations a caller composes
 include("solvers/solverinfo.jl") # the per stage records and stall diagnostics
 include("solvers/factorizations.jl") # sparse factorizations, their cache and solves
 include("solvers/linesearch.jl") # the backtracking line search both loops share
@@ -231,11 +230,10 @@ include("spice/wrapper.jl")
 include("spice/raw.jl")
 include("spice/transient.jl") # the transient run through WRspice
 
-# Deprecated entry points, kept so that older scripts keep running with a
-# warning.
-include("deprecated.jl")
 # The deprecated tuple netlist: its conversion to a `Circuit`, the tuple
-# forms of the entry points and the netlist file reader and writer.
+# forms of the entry points and the netlist file reader and writer, and the
+# deprecated entry points, kept so that older scripts keep running with a
+# warning.
 include("circuit/legacy.jl")
 
 # Helpers the test suite uses to print and compare solver output.
@@ -345,6 +343,32 @@ function warmupsyms()
         Npumpharmonics, circuit, circuitdefs;atol=1e-12)
 end
 
+# The forms the documentation writes, which are what a session starts
+# with: the netlist of tuples with symbol names and integer nodes of its
+# first calculation, the pumped and the linear sweep of it, and a solve
+# cache over the same netlist with values written as parameters, stepped
+# through two points, the second of which rebinds the reused system.
+function warmupdocumented()
+    circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+        (:cc, 1, 2, Capacitor(100.0e-15)),
+        (:jj, 2, 0, JosephsonJunction(1000.0e-12)),
+        (:cj, 2, 0, Capacitor(1000.0e-15))])
+    ws = 2*pi*(4.5:0.5:5.0)*1e9
+    wp = (2*pi*4.75001*1e9,)
+    sources = [(mode = (1,), port = 1, current = 0.00565e-6)]
+    hbsolve(ws, wp, sources, (2,), (4,), circuit)
+    hblinsolve(ws, circuit)
+    parameterized = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+        (:cc, 1, 2, Capacitor(:Cc)),
+        (:jj, 2, 0, JosephsonJunction(:Lj)),
+        (:cj, 2, 0, Capacitor(1000.0e-15))])
+    cache = hbcache(wp, (4,), sources, parameterized,
+        Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15))
+    hbsolve!(cache, (Lj = 1000.0e-12,))
+    hbsolve!(cache, (Lj = 1010.0e-12,))
+    return nothing
+end
+
 # Connecting scattering parameter networks, with symbol and string names,
 # with single matrices and with frequency indexed arrays, through both the
 # graph based `connectS` and the linear system based `solveS`.
@@ -423,7 +447,8 @@ export hbsolve, hbnlsolve, hblinsolve, compile,
 # deliberately not exported as a user facing symbolic type, because its
 # closed operator set (see circuit/values.jl) would make a confusing public
 # boundary; users parameterize circuits with symbols, numbers, and ordinary
-# Julia functions. `@params` is imported for the warmups above only.
+# Julia functions. `@params`, which declares parameters as `CircuitValues`
+# symbols, is available as `JosephsonCircuits.@params`.
 import .CircuitValues: @params
 export FrequencyDependent, designsensitivities, designjacobian,
     hbcache, hbsolve!,
@@ -449,7 +474,7 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
 # the circuit integrated in time
 export TransientSource, TransientState, transientproblem, transientstate, transientsolve, transientsensitivity,
     transientdemodulate, transienttangent, transientadjoint, transientinjection,
-    Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse, TransientBatchSolution,
+    Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse, TransientBatchSolution, TransientStepError,
     transientiqplan, transientiq!, transientiq, transientiqvjp!,
     transientquantumplan, transientquantum, transientquantum!, transientquantumvjp!,
     transientnoisebaths, transientnoise, transientgain, transientquantumdiagnostics,
@@ -545,11 +570,12 @@ end
 PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
+    warmupdocumented()
     warmuptransient()
-    # `warmupnetwork()` is deliberately not part of the workload. It
-    # compiles every network parameter conversion for every input shape,
-    # which is a large fraction of the total precompile time, while a cold
-    # first call of any one conversion is cheap.
+    # The network parameter conversions are deliberately not part of the
+    # workload: compiling every conversion for every input shape is a large
+    # fraction of the total precompile time, while a cold first call of any
+    # one conversion is cheap.
     warmupconnect()
 end
 

@@ -109,14 +109,16 @@ using XicTools_jll
         inputb, _ = JC.wrspiceinput(pbias, WRspice(), 0.0, 1e-12, 10, 1e-12)
         @test occursin("isrcc2 0 2 -1.0e-8", inputb) ||
             occursin("isrcc2 0 2 1.0e-8", inputb)
-        # a net named as an integer past the node count collides with a
-        # phase node
-        colliding = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1000e-12)),
+        # a net named as an integer past the node count: the phase node is
+        # numbered past it, and the run keeps both traces
+        skipping = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1000e-12)),
             ("C2", "2", "0", Capacitor(1000e-15)), ("C3", "2", "4", Capacitor(10e-15)),
             ("R2", "4", "0", Resistor(1e4))])
-        pcol = transientproblem(colliding)
-        @test_throws ArgumentError JC.wrspiceinput(pcol, WRspice(),
-            0.0, 1e-12, 10, 1e-12)
+        pskip = transientproblem(skipping)
+        inputs, junctionss = JC.wrspiceinput(pskip, WRspice(),
+            0.0, 1e-12, 10, 1e-12, :phases)
+        @test !(junctionss[1].phasenode in pskip.circuit.nodenames)
+        @test occursin("\nsave v(1) v($(junctionss[1].phasenode))\nrun", inputs)
     end
 
     @testset "the executable through the extension" begin

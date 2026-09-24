@@ -496,7 +496,7 @@ import StaticArrays
 
 
         @test_throws(
-            ArgumentError("Canonical coupled line circuit number must be 1-10."),
+            ArgumentError("The canonical coupled line circuits with a lumped element model are 3, 8, 9 and 10, not 11."),
             JosephsonCircuits.canonical_coupled_line_circuits(11, Zeven, Zodd, neven, nodd),
         )
 
@@ -542,6 +542,13 @@ import StaticArrays
         JosephsonCircuits.S_hybrid_coupler_antisymmetric!(S2)
         @test isequal(S1,S2)
 
+        # a hybrid splits the power of each port equally between two others
+        for S in (JosephsonCircuits.S_hybrid_coupler_symmetric(),
+                JosephsonCircuits.S_hybrid_coupler_antisymmetric())
+            @test isapprox(abs2.(S), [0 1 1 0; 1 0 0 1; 1 0 0 1; 0 1 1 0]/2;
+                atol = 1e-15)
+        end
+
         # test for array input
         S1 = JosephsonCircuits.S_directional_coupler_symmetric(couplingdB)
         S2 = similar(S1,4,4,10)
@@ -561,8 +568,49 @@ import StaticArrays
 
         @test_throws(
             ArgumentError("Attenuation of 0 dB is below the minimum attenuation of 3.7653971144370946 dB for a passive circuit given the source and load impedances of 50 and 60 Ohms."),
-            JosephsonCircuits.Z_attenuator_inner(50,60,0),
+            JosephsonCircuits.ABCD_attenuator_T(50,60,0),
         )
+
+        # an attenuator between Zs and Zl reflects nothing on either side and
+        # transmits 10^(-dB/20), down to no attenuation at all, in each of
+        # its eight forms
+        ABCD = zeros(2, 2)
+        for (Zs, Zl, dBs) in ((50.0, 50.0, (0.0, 1e-9, 0.01, 10.0)),
+                (50.0, 75.0, (10.0, 20.0)))
+            for dB in dBs
+                forms = [
+                    JosephsonCircuits.ABCD_attenuator_T(Zs, Zl, dB),
+                    JosephsonCircuits.ABCD_attenuator_Pi(Zs, Zl, dB),
+                    copy(JosephsonCircuits.ABCD_attenuator_T!(ABCD, Zs, Zl, dB)),
+                    copy(JosephsonCircuits.ABCD_attenuator_Pi!(ABCD, Zs, Zl, dB)),
+                ]
+                if Zs == Zl
+                    append!(forms, [
+                        JosephsonCircuits.ABCD_attenuator_T(Zs, dB),
+                        JosephsonCircuits.ABCD_attenuator_Pi(Zs, dB),
+                        copy(JosephsonCircuits.ABCD_attenuator_T!(ABCD, Zs, dB)),
+                        copy(JosephsonCircuits.ABCD_attenuator_Pi!(ABCD, Zs, dB)),
+                    ])
+                end
+                tau = 10^(-dB/20)
+                for A in forms
+                    S = JosephsonCircuits.ABCDtoS(A; portimpedances = [Zs, Zl])
+                    @test isapprox(S, [0 tau; tau 0]; atol = 1e-14)
+                end
+            end
+        end
+    end
+
+    @testset "maxwell_combine" begin
+        # an entry given by several matrices is their mean, and a zero is
+        # averaged like any other value
+        d = Dict((1, 2) => [1.0 0.5; 0.5 4.0], (1, 3) => [2.0 0.25; 0.25 6.0],
+            (1, 4) => [3.0 0.125; 0.125 8.0])
+        @test JosephsonCircuits.maxwell_combine(4, d) == [
+            2.0 0.5 0.25 0.125; 0.5 4.0 0.0 0.0; 0.25 0.0 6.0 0.0;
+            0.125 0.0 0.0 8.0]
+        d = Dict((1, 2) => [0.0 1.0; 1.0 3.0], (1, 3) => [2.0 1.0; 1.0 5.0])
+        @test JosephsonCircuits.maxwell_combine(3, d)[1, 1] == 1.0
     end
 
 

@@ -4,6 +4,8 @@ include("layoutreference.jl")
 
 @testset verbose=true "the mode layout and its real form" begin
 
+    # the number of real slots of complex index i
+    width(L, i) = Int(L.ptr[i+1] - L.ptr[i])
 
     # simple block approach to serve as an independent reference for sparse matrices
     function complex_to_real_ref(A, rl, cl; conj_input = false, rs = 1.0, cs = 1.0)
@@ -11,8 +13,8 @@ include("layoutreference.jl")
         Ai, Av = JosephsonCircuits.SparseArrays.rowvals(A), JosephsonCircuits.SparseArrays.nonzeros(A)
         for j in 1:size(A,2), idx in JosephsonCircuits.SparseArrays.nzrange(A, j)
             i = Ai[idx]
-            r0, wr = rl.ptr[i], JosephsonCircuits._width(rl, i)
-            c0, wc = cl.ptr[j], JosephsonCircuits._width(cl, j)
+            r0, wr = rl.ptr[i], width(rl, i)
+            c0, wc = cl.ptr[j], width(cl, j)
             a = Av[idx] * ((wr == 1 ? rs : 1.0) * (wc == 1 ? cs : 1.0))
             d = conj_input ? -a : a
             push!(I, r0); push!(J, c0); push!(V, real(a))
@@ -25,12 +27,12 @@ include("layoutreference.jl")
         JosephsonCircuits.SparseArrays.sparse(I, J, V, rl.rdim, cl.rdim)
     end
 
-    canon(xc, L) = [JosephsonCircuits._width(L, i) == 1 ? Complex(real(xc[i]), 0.0) : xc[i] for i in 1:L.dim]
+    canon(xc, L) = [width(L, i) == 1 ? Complex(real(xc[i]), 0.0) : xc[i] for i in 1:L.dim]
     # A with q dropped wherever both modes are real
     function dropq(A, rl, cl)
         B = copy(A); Bi, Bv = JosephsonCircuits.SparseArrays.rowvals(B), JosephsonCircuits.SparseArrays.nonzeros(B)
         for j in 1:size(B,2), idx in JosephsonCircuits.SparseArrays.nzrange(B, j)
-            JosephsonCircuits._width(rl, Bi[idx]) == 1 && JosephsonCircuits._width(cl, j) == 1 &&
+            width(rl, Bi[idx]) == 1 && width(cl, j) == 1 &&
                 (Bv[idx] = Complex(real(Bv[idx]), 0.0))
         end
         B
@@ -47,23 +49,18 @@ include("layoutreference.jl")
 
     @testset "ModeLayout" begin
         L = JosephsonCircuits.ModeLayout([true,false,false,false,false], 10)
-        @test L.rdim == 18 && L.nreal == 1 && L.nmodes == 5
+        @test L.rdim == 18 && count(L.isreal) == 1 && L.nmodes == 5
         @test L.ptr == [1,2,4,6,8,10,11,13,15,17,19]
         @test L.inv == [1,2,2,3,3,4,4,5,5,6,7,7,8,8,9,9,10,10]
-        @test JosephsonCircuits.ModeLayout([1], 5, 10).ptr == L.ptr
-        @test JosephsonCircuits.ModeLayout([1,3], 4, 8).rdim == 12
+        @test JosephsonCircuits.ModeLayout([true,false,true,false], 8).rdim == 12
         @test JosephsonCircuits.ModeLayout(falses(4), 8).rdim == 16
         @test JosephsonCircuits.ModeLayout(trues(4), 8).rdim == 8
         @test_throws DimensionMismatch JosephsonCircuits.ModeLayout([true,false], 7)
-        @test_throws ArgumentError JosephsonCircuits.ModeLayout([6], 5, 10)
-        @test_throws ArgumentError JosephsonCircuits.ModeLayout([1,1], 5, 10)
-        # the compact width table agrees with ptr, at every size
+        # the bit per index of a real mode agrees with the slot ranges
         @test L.w isa BitVector
-        Lb = JosephsonCircuits.ModeLayout([true,false,false,false,false], 5_000_000)
-        @test all(JosephsonCircuits._rowwidth(Lb.w, i) == JosephsonCircuits._width(Lb, i) for i in 1:1000)
         for mask in ([true,true,false], falses(4), trues(3), rand(Bool, 7))
             M = JosephsonCircuits.ModeLayout(mask, length(mask) * 9)
-            @test all(JosephsonCircuits._rowwidth(M.w, i) == JosephsonCircuits._width(M, i) for i in 1:M.dim)
+            @test all(2 - M.w[i] == width(M, i) for i in 1:M.dim)
         end
     end
 
@@ -109,10 +106,10 @@ include("layoutreference.jl")
             @test LayoutReference.complex_to_real(A, rl, cl; realrowscale = 1, realcolscale = 1) == base
             s, xc = 0.5, canon(rand(ComplexF64, n), cl)
             # colscale scales the real modes of the input, rowscale those of the output
-            xs = [JosephsonCircuits._width(cl, i) == 1 ? s*xc[i] : xc[i] for i in 1:n]
+            xs = [width(cl, i) == 1 ? s*xc[i] : xc[i] for i in 1:n]
             @test LayoutReference.complex_to_real(A, rl, cl; realcolscale = s) * LayoutReference.complex_to_real(xc, cl.isreal) ≈ LayoutReference.complex_to_real(A * xs, rl.isreal)
             b  = A * xc
-            bs = [JosephsonCircuits._width(rl, i) == 1 ? s*b[i] : b[i] for i in 1:m]
+            bs = [width(rl, i) == 1 ? s*b[i] : b[i] for i in 1:m]
             @test LayoutReference.complex_to_real(A, rl, cl; realrowscale = s) * LayoutReference.complex_to_real(xc, cl.isreal) ≈ LayoutReference.complex_to_real(bs, rl.isreal)
             # against the reference, independently and together
             for (rr, cc) in ((2.0, 1.0), (1.0, 3.0), (2.0, 3.0), (0.0, 1.0), (1.0, 0.0))
@@ -128,23 +125,6 @@ include("layoutreference.jl")
         end
     end
 
-
-    # @testset "allocation-free in-place" begin
-    #     m = n = 400
-    #     rl = JosephsonCircuits.ModeLayout([true,false,false,false,false], m)
-    #     A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02); B = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02)
-    #     Bs = shared(A, rand(ComplexF64, JosephsonCircuits.SparseArrays.nnz(A)))
-    #     Ar = LayoutReference.complex_to_real(A, rl, rl); C = copy(A)
-    #     xc = rand(ComplexF64, n); xr = LayoutReference.complex_to_real(xc, rl.isreal)
-    #     # warm up every method that is tested below
-    #     LayoutReference.complex_to_real!(Ar, A, rl, rl); LayoutReference.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)
-    #     LayoutReference.complex_to_real!(xr, xc, rl.isreal); LayoutReference.real_to_complex!(xc, xr, rl.isreal); LayoutReference.is_complex_to_real_pattern(Ar, A, rl, rl)
-
-    #     @test (@allocated LayoutReference.complex_to_real!(Ar, A, rl, rl)) == 0
-    #     @test (@allocated LayoutReference.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)) == 0
-    #     @test (@allocated LayoutReference.real_to_complex!(C, Ar, rl, rl)) == 0
-    #     @test (@allocated LayoutReference.is_complex_to_real_pattern(Ar, A, rl, rl)) == 0
-    # end
 
     @testset "shape checks" begin
         m, n = 20, 15
@@ -301,20 +281,6 @@ include("layoutreference.jl")
     end
 
 
-    # @testset "dense: allocation-free in-place" begin
-    #     rm = [true,false,false,false,false]
-    #     m, n = 200, 200
-    #     A = rand(ComplexF64, m, n); B = rand(ComplexF64, m, n)
-    #     xc = rand(ComplexF64, n); xr = LayoutReference.complex_to_real(xc, rm)
-    #     LayoutReference.complex_to_real!(Ar, A, rm, rm); LayoutReference.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)
-    #     LayoutReference.complex_to_real!(xr, xc, rm); LayoutReference.real_to_complex!(xc, xr, rm)
-    #     @test (@allocated LayoutReference.complex_to_real!(Ar, A, rm, rm)) == 0
-    #     @test (@allocated LayoutReference.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)) == 0
-    #     @test (@allocated LayoutReference.real_to_complex!(C, Ar, rm, rm)) == 0
-    #     @test (@allocated LayoutReference.complex_to_real!(xr, xc, rm)) == 0
-    #     @test (@allocated LayoutReference.real_to_complex!(xc, xr, rm)) == 0
-    # end
-
     @testset "dense: shape checks" begin
         rm = [true,false,false,false,false]
         m, n = 20, 15
@@ -405,7 +371,7 @@ end
         @test L.ndc == 80                  # one per node
         @test JC.canonicaldim(L) == ml.rdim
         @test L.nvdc == 0
-        @test JC.isinternal(L)
+        @test iszero(L.nvdc)
         @test JC.nwindow(L) == 80
 
         # each node contributes 1 + 2*76 = 153 internal entries with the
@@ -423,7 +389,7 @@ end
         L = JC.compositelayout(ml, isdc)
         @test L.ndc == 80                  # only the zero frequency mode
         @test JC.canonicaldim(L) == ml.rdim
-        @test JC.isinternal(L)
+        @test iszero(L.nvdc)
     end
 
     @testset "the mode tuples pick out the zero frequency mode" begin
@@ -439,7 +405,7 @@ end
         @test JC.canonicaldim(L) == ml.rdim + 2
         @test JC.voltagerange(L) == (ml.rdim + 1):(ml.rdim + 2)
         @test JC.windowindices(L) == vcat(L.dcpos, ml.rdim + 1, ml.rdim + 2)
-        @test !JC.isinternal(L)
+        @test !iszero(L.nvdc)
         r = randn(ml.rdim)
         u = zeros(ml.rdim + 2); u[end-1:end] .= (3.0, 4.0)
         JC.gathercanonical!(u, r, L)
@@ -487,7 +453,7 @@ end
         sys = s.operatingpoint.sys
         ml = s.operatingpoint.modelayout
         L = JC.compositelayout(ml, s.frequencies.modes)
-        @test JC.isinternal(L)
+        @test iszero(L.nvdc)
         @test L.ndc > 0
 
         x = randn(L.rdim); v = randn(L.rdim)
@@ -637,7 +603,8 @@ end
 
         Jint = copy(d.Jr)
         JC.jacobian!(Jint, sys)
-        assembled = JC.canonicaljacobian(Jint, work)
+        assembled = JC.canonicaljacobian!(JC.canonicaljacobianplan(Jint, work),
+            Jint)
         @test size(assembled) == (n, n)
         @test Matrix(assembled) == free      # exactly, not to a tolerance
     end

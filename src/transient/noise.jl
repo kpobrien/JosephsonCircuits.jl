@@ -57,19 +57,16 @@ TransientNoiseBaths(p::TransientProblem, channels::Vector{TransientNoiseBath}) =
     TransientNoiseBaths(p, channels, @NamedTuple{channels::UnitRange{Int}, block::Int}[])
 Base.length(b::TransientNoiseBaths) = length(b.channels)
 
-# the commutator `I - S S'` of a group's emitted wave at a frequency in Hz
+# the scattering matrix of a group's block at a frequency in Hz and the
+# commutator `I - S S'` of its emitted wave; a block in equilibrium, a
+# rational one, was proved passive at every frequency by its
+# construction, to its own tolerance
 function groupcovariance(baths::TransientNoiseBaths, group, frequency)
     b = baths.problem.blocks[group.block]
     S = zeros(ComplexF64, length(b.signal), length(b.signal), 1)
     evaluateprovider!(S, b.definition.provider, [2pi*frequency])
-    K = Hermitian(I - S[:, :, 1]*S[:, :, 1]')
-    b.definition.noise isa NoiseCovariance && return K
-    # a block active at the frequency has no equilibrium noise; its
-    # construction should have refused it, and this is the last check
-    worst = minimum(eigvals(K))
-    worst >= -1e-6 || throw(ArgumentError(
-        lazy"the scattering block at $(b.path) is active at $(frequency) Hz: the minimum eigenvalue of I - S S' is $(worst), so it has no equilibrium noise."))
-    return K
+    S1 = S[:, :, 1]
+    return S1, Hermitian(I - S1*S1')
 end
 
 # The symmetrized covariance and the commutator of a group's emitted
@@ -82,7 +79,7 @@ end
 # before, or completed to it (see NoiseCovariance).
 function groupnoise(baths::TransientNoiseBaths, group, frequency)
     b = baths.problem.blocks[group.block]
-    K = groupcovariance(baths, group, frequency)
+    S, K = groupcovariance(baths, group, frequency)
     noise = b.definition.noise
     if noise isa NoiseCovariance
         V = zeros(ComplexF64, length(b.signal), length(b.signal), 1)
@@ -95,7 +92,7 @@ function groupnoise(baths::TransientNoiseBaths, group, frequency)
             lazy"the noise covariance of the scattering block at $(b.path) is not Hermitian at $(frequency) Hz: the largest entry of V - V' is $(skew)."))
         Vh = Hermitian(V[:, :, 1])
         noise.completed && return Matrix(completecovariance(Vh, Matrix(K))) ./ 2, Matrix(K)
-        margin = min(minimum(eigvals(Hermitian(Vh - K))), minimum(eigvals(Hermitian(Vh + K))))
+        margin = quantumnoisemargin(Vh, S)
         margin >= -noise.atol || throw(ArgumentError(
             lazy"the noise covariance of the scattering block at $(b.path) is less than the commutation relations require at $(frequency) Hz: the smallest eigenvalue of V - K or V + K, with K = I - S S', is $(margin). An amplifier of power gain G has to emit at least G - 1 at its output; see NoiseCovariance."))
         return Matrix(Vh) ./ 2, Matrix(K)
@@ -123,7 +120,7 @@ covariance is `V` and whose commutator is `I - S S'`, so the block adds
 the noise it states, held to the minimum the commutation relations
 require, and its output obeys them; a pumped block which states its
 noise is a group whose channels are correlated across the bath
-frequencies its harmonics relate (see [`PairTerm`](@ref)), and one
+frequencies its harmonics relate (see [`PairLadder`](@ref)), and one
 declared lossless is no bath. `temperature` is the default in
 kelvin, which a component's own stated temperature overrides. Every port
 must own a matched finite termination; an open resistor adds no bath. The same temperatures and models set the noise
@@ -135,7 +132,7 @@ function transientnoisebaths(p::TransientProblem; temperature = 0.0)
     isfinite(t) && t >= 0 || throw(ArgumentError("the bath temperature must be finite and nonnegative."))
     channels = TransientNoiseBath[]
     groups = @NamedTuple{channels::UnitRange{Int}, block::Int}[]
-    for (j, port) in enumerate(c.ports)
+    for (j, port) in enumerate(p.ports)
         isapprox(p.portconductances[j]*p.portimpedances[j], 1; rtol = 1e-12) || throw(ArgumentError(
             lazy"port $(port.number) needs its own matched termination for a bath."))
         temp = get(c.componenttemperatures, port.environment, t)
@@ -154,31 +151,23 @@ function transientnoisebaths(p::TransientProblem; temperature = 0.0)
     # independent channels are the eigenvectors of that covariance scaled
     # by the square roots of its eigenvalues, each entering the block's
     # port current rows as the source 2 eta of the hybrid equation. A
-    # lossless block emits nothing, and says so or is checked. A block
-    # which states its noise emits the covariance it states, whose
-    # commutator is that of its loss or gain.
+    # block declared lossless emits nothing, which its construction proved
+    # to its own tolerance, or the checks of a pumped block's family do
+    # (see `checkpumpedblocks`). A block which states its noise emits the
+    # covariance it states, whose commutator is that of its loss or gain.
     for b in p.blocks
-        # a pumped block declared lossless was checked so on its data and
-        # emits nothing; one which states its noise has its ports as a
-        # group, contracted with the pairs of bath frequencies its noise
-        # over their family correlates
-        b.definition isa LinearizedScattering && b.definition.noise isa Lossless && continue
         noise = b.definition.noise
+        noise isa Lossless && continue
         K = Symmetric(I - b.S*transpose(b.S))
-        if noise isa Lossless
-            # a declared lossless rational block is validated by its norms
-            lossless = size(b.A, 1) > 0 ? losslessnorms(b.definition.provider) : maximum(abs, K) <= 1e-10
-            lossless || throw(ArgumentError(
-                lazy"the scattering block at $(b.path) declares noise = Lossless(), but I - S S' does not vanish at every frequency; a block which dissipates must carry the noise its loss requires."))
-            continue
-        end
         temp = noise isa ThermalEquilibrium ? Float64(noise.temperature) : noise isa NoiseCovariance ? 0.0 : t
         n = length(b.signal)
         if size(b.A, 1) > 0 || noise isa NoiseCovariance
             # a rational block's covariance depends on frequency, and a
             # stated covariance and its commutator differ: one channel
             # per port, correlated by the group's covariance and
-            # commutator in the contraction
+            # commutator in the contraction, and for a pumped block with
+            # the pairs of bath frequencies its noise over their family
+            # correlates
             first = length(channels) + 1
             for q in 1:n
                 push!(channels, TransientNoiseBath(string(b.path, " port ", q), [b.auxbase + q], [2.0], 0, 0.0, temp))
@@ -228,46 +217,49 @@ struct GroupCorrection{C, M, H, I, W, P}
     # covariance over its occupation
     commutators::Vector{Vector{Union{Nothing,C}}}
     occupations::Vector{Vector{Float64}}
-    # the pair terms of a pumped block's group (see [`PairTerm`](@ref)),
+    # the ladders of a pumped block's group (see [`PairLadder`](@ref)),
     # empty for a group of one frequency at a time
-    pairs::Vector{Vector{P}}
+    ladders::Vector{Vector{P}}
     # the mask of the independent columns, zero on the groups'
     mask::W
     R::M
     H::H
     T::H
     A::H
-    # the scratch of the pair terms: the second frequency's columns, a
-    # real product and a real contraction
-    Rb::M
-    Tr::M
+    # the scratch of the ladders: their frequencies' columns, a real
+    # product and a real contraction
+    Rl::M
+    Tl::M
     Ar::M
 end
 
 """
-    PairTerm
+    PairLadder
 
-One ordered pair `(a, b)` of bath frequencies of a pumped block's group,
-with the four real blocks of the covariance of its quadratures,
-`E = (xx, xp, px, pp)`, from the normal correlator `N = <A_a A_b'>` and
-the anomalous one `M = <A_a transpose(A_b)>` of the complex amplitudes
-`A = x - i p` of the block's noise wave at the two frequencies,
-`xx = Re(N + M)/2`, `pp = Re(N - M)/2`, `xp = (Im N - Im M)/2`,
-`px = -(Im N + Im M)/2`, and the same four blocks `C` of the commutator
-with `N` and `M` replaced by `2i` times the commutators of the amplitudes.
+The covariance `E` and the commutator `C` of the quadratures of a pumped
+block's noise wave over one ladder of its bath frequencies, the indices
+`frequencies` of those the ladder relates, square over their quadratures
+in the order `(frequency, port, quadrature)`. The block between the
+frequencies `a` and `b` holds the four real blocks `xx`, `xp`, `px` and
+`pp` from the normal correlator `N = <A_a A_b'>` and the anomalous one
+`M = <A_a transpose(A_b)>` of the complex amplitudes `A = x - i p` of
+the wave at the two frequencies, `xx = Re(N + M)/2`, `pp = Re(N - M)/2`,
+`xp = (Im N - Im M)/2`, `px = -(Im N + Im M)/2`, and `C` the same with
+`N` and `M` replaced by `2i` times the commutators of the amplitudes.
 `N` can be nonzero when the frequencies differ by a multiple of the
 pump frequency and `M` when they sum to one, both read from the block's
 noise over the family of the bath frequencies, its harmonic covariances
 and the commutator of its multi-mode scattering matrix as
 [`pumpednoisematrices`](@ref) assembles and completes them over the
 modes of a solve at once (see [`bathfamily`](@ref)), so the two
-solvers share one definition of the block's noise.
+solvers share one definition of the block's noise. The contraction of
+a response's columns at the ladder's frequencies, `R`, is `R E R'` and
+`R C R'`, two products per ladder.
 """
-struct PairTerm{M}
-    a::Int
-    b::Int
-    E::NTuple{4,M}
-    C::NTuple{4,M}
+struct PairLadder{M}
+    frequencies::Vector{Int}
+    E::M
+    C::M
 end
 
 """
@@ -356,9 +348,10 @@ function bathfamily(block::LinearizedScattering, frequencies)
     return ladders
 end
 
-# The pair terms of a pumped block's group over the bath frequencies in
-# Hz, read from the block's noise one ladder of the pump at a time (see
-# bathfamily): the normal correlator between `a` and `b` is the entry
+# The ladders of a pumped block's group over the bath frequencies in Hz
+# (see `PairLadder`), read from the block's noise one ladder of the pump
+# at a time (see bathfamily): the normal correlator between `a` and `b`
+# is the entry
 # of the covariance at `(a, b)` and the anomalous one the entry at
 # `(a, -b)`, the commutators likewise, and a pair not on one ladder of
 # the pump, neither its difference nor its sum a multiple of the pump
@@ -371,14 +364,15 @@ end
 # normal one and `exp(i (wa + wb) reference)` for the anomalous one,
 # the complex amplitude of a quadrature pair at `w` referred to
 # `reference` being `exp(i w reference)` times the absolute one.
-function pumpedpairterms(block::LinearizedScattering, frequencies, backend, reference::Real)
+function pumpedladders(block::LinearizedScattering, frequencies, backend, reference::Real)
     n = block.nports
     wp = block.wp
     ladder(d) = abs(d - round(d/wp)*wp) <= 1e-6*wp
-    terms = PairTerm[]
+    ladders = PairLadder[]
     for L in bathfamily(block, frequencies)
+        terms = Tuple{Int,Int,NTuple{4,Matrix{Float64}},NTuple{4,Matrix{Float64}}}[]
         rows = L.rows
-        S, Kc, V = pumpednoisematrices(block, rows, L.cols, L.K)
+        _, Kc, V = pumpednoisematrices(block, rows, L.cols, L.K)
         isnothing(V) && (V = zeros(ComplexF64, size(Kc)))
         nr = length(rows)
         index(nu) = findfirst(r -> abs(r - nu) <= 1e-9*(abs(nu) + wp), rows)
@@ -402,14 +396,22 @@ function pumpedpairterms(block::LinearizedScattering, frequencies, backend, refe
             rn, ra = cis((nua - nub)*reference), cis((nua + nub)*reference)
             N, Kn, M, Km = rn .* N, rn .* Kn, ra .* M, ra .* Km
             blocks = (N, M) -> (real.(N .+ M) ./ 2, (imag.(N) .- imag.(M)) ./ 2, .-(imag.(N) .+ imag.(M)) ./ 2, real.(N .- M) ./ 2)
-            E = blocks(N, M)
-            C = blocks(2im .* Kn, 2im .* Km)
-            push!(terms, PairTerm(a, b, map(x -> tobackend(backend, Matrix{Float64}(x)), E), map(x -> tobackend(backend, Matrix{Float64}(x)), C)))
+            push!(terms, (a, b, map(x -> Matrix{Float64}(x), blocks(N, M)), map(x -> Matrix{Float64}(x), blocks(2im .* Kn, 2im .* Km))))
         end
+        isempty(terms) && continue
+        # the pairs' blocks placed on the ladder's quadratures
+        fl = sort!(unique!(reduce(vcat, [[t[1], t[2]] for t in terms])))
+        E, C = zeros(2n*length(fl), 2n*length(fl)), zeros(2n*length(fl), 2n*length(fl))
+        for (a, b, Eab, Cab) in terms
+            ra, rb = 2n*(searchsortedfirst(fl, a) - 1), 2n*(searchsortedfirst(fl, b) - 1)
+            for (i, (qa, qb)) in enumerate(((1, 1), (1, 2), (2, 1), (2, 2))), p in 1:n, q in 1:n
+                E[ra + 2(p - 1) + qa, rb + 2(q - 1) + qb] += Eab[i][p, q]
+                C[ra + 2(p - 1) + qa, rb + 2(q - 1) + qb] += Cab[i][p, q]
+            end
+        end
+        push!(ladders, PairLadder(fl, tobackend(backend, E), tobackend(backend, C)))
     end
-    # in the order one family over all the frequencies would give them
-    sort!(terms; by = t -> (t.a, t.b))
-    return terms
+    return ladders
 end
 
 function groupcorrection(baths::TransientNoiseBaths, frequencies, m::Int, backend, reference::Real)
@@ -418,8 +420,8 @@ function groupcorrection(baths::TransientNoiseBaths, frequencies, m::Int, backen
     commutators = Vector{Union{Nothing,Matrix{ComplexF64}}}[]
     D = typeof(tobackend(backend, zeros(ComplexF64, 1, 1)))
     DR = typeof(tobackend(backend, zeros(Float64, 1, 1)))
-    pairs = Vector{PairTerm{DR}}[]
-    pmax = 0
+    ladders = Vector{PairLadder{DR}}[]
+    pmax, lmax = 0, 0
     mask = ones(2nb*length(frequencies))
     for group in baths.groups
         cols = [[2*((f - 1)*nb + b - 1) + q for b in group.channels for q in 1:2] for f in eachindex(frequencies)]
@@ -431,7 +433,9 @@ function groupcorrection(baths::TransientNoiseBaths, frequencies, m::Int, backen
             # correlated across the bath frequencies: pair terms, and no
             # term of one frequency
             push!(covariances, Matrix{ComplexF64}[]); push!(commutators, Union{Nothing,Matrix{ComplexF64}}[]); push!(occupations, Float64[])
-            push!(pairs, PairTerm{DR}[PairTerm(t.a, t.b, t.E, t.C) for t in pumpedpairterms(block, frequencies, backend, reference)])
+            gl = PairLadder{DR}[PairLadder(L.frequencies, L.E, L.C) for L in pumpedladders(block, frequencies, backend, reference)]
+            lmax = max(lmax, maximum(L -> size(L.E, 1), gl; init = 0))
+            push!(ladders, gl)
             continue
         end
         stated = block.noise isa NoiseCovariance
@@ -440,41 +444,43 @@ function groupcorrection(baths::TransientNoiseBaths, frequencies, m::Int, backen
         Cs = Union{Nothing,Matrix{ComplexF64}}[stated ? Matrix(conj(K)) : nothing for (V, K) in gpairs]
         occ = [stated ? 1.0 : thermaloccupation(2pi*frequency, baths.channels[first(group.channels)].temperature)/2 for frequency in frequencies]
         push!(covariances, Ks); push!(commutators, Cs); push!(occupations, occ)
-        push!(pairs, PairTerm{DR}[])
+        push!(ladders, PairLadder{DR}[])
     end
     allocate = (T, dims...) -> KernelAbstractions.zeros(backend, T, dims...)
     return GroupCorrection([[tobackend(backend, c) for c in cols] for cols in columns],
         [D[tobackend(backend, K) for K in Ks] for Ks in covariances],
         [Union{Nothing,D}[isnothing(K) ? nothing : tobackend(backend, K) for K in Cs] for Cs in commutators],
-        occupations, pairs, tobackend(backend, mask), allocate(Float64, m, 2pmax), allocate(ComplexF64, m, pmax), allocate(ComplexF64, m, pmax),
-        allocate(ComplexF64, m, m), allocate(Float64, m, 2pmax), allocate(Float64, m, pmax), allocate(Float64, m, m))
+        occupations, ladders, tobackend(backend, mask), allocate(Float64, m, 2pmax), allocate(ComplexF64, m, pmax), allocate(ComplexF64, m, pmax),
+        allocate(ComplexF64, m, m), allocate(Float64, m, lmax), allocate(Float64, m, lmax), allocate(Float64, m, m))
 end
+
+# a group correction sharing the matrices of `gc`, which the contraction
+# only reads, with scratch of its own, for a worker of its own
+groupscratch(gc::GroupCorrection) = GroupCorrection(gc.columns, gc.covariances, gc.commutators, gc.occupations, gc.ladders,
+    gc.mask, similar(gc.R), similar(gc.H), similar(gc.T), similar(gc.A), similar(gc.Rl), similar(gc.Tl), similar(gc.Ar))
 
 # the groups' columns of a response masked out, for the independent
 # accumulation, once the groups have been contracted
 maskgroups!(response, gc::GroupCorrection) = (response .*= transpose(gc.mask); response)
 
 function groupcorrection!(covariance, commutator, response, gc::GroupCorrection)
-    # the pair terms of the pumped blocks' groups: the quadrature
-    # responses at the two frequencies of a pair contracted with the
-    # blocks of its covariance and its commutator
-    for g in eachindex(gc.pairs), t in gc.pairs[g]
-        p = size(t.E[1], 1)
-        Ra = view(gc.R, :, 1:2p)
-        Ra .= view(response, :, gc.columns[g][t.a])
-        Rb = view(gc.Rb, :, 1:2p)
-        Rb .= view(response, :, gc.columns[g][t.b])
-        T = view(gc.Tr, :, 1:p)
-        for (i, (qa, qb)) in enumerate(((1, 1), (1, 2), (2, 1), (2, 2)))
-            Xa = view(Ra, :, qa:2:2p)
-            Xb = view(Rb, :, qb:2:2p)
-            mul!(T, Xa, t.E[i])
-            mul!(gc.Ar, T, transpose(Xb))
-            covariance .+= gc.Ar
-            mul!(T, Xa, t.C[i])
-            mul!(gc.Ar, T, transpose(Xb))
-            commutator .+= gc.Ar
+    # the ladders of the pumped blocks' groups: the quadrature responses
+    # at the ladder's frequencies contracted with its covariance and its
+    # commutator
+    for g in eachindex(gc.ladders), L in gc.ladders[g]
+        q = size(L.E, 1)
+        w = q ÷ length(L.frequencies)
+        R = view(gc.Rl, :, 1:q)
+        for (i, f) in enumerate(L.frequencies)
+            view(R, :, (i - 1)*w + 1:i*w) .= view(response, :, gc.columns[g][f])
         end
+        T = view(gc.Tl, :, 1:q)
+        mul!(T, R, L.E)
+        mul!(gc.Ar, T, transpose(R))
+        covariance .+= gc.Ar
+        mul!(T, R, L.C)
+        mul!(gc.Ar, T, transpose(R))
+        commutator .+= gc.Ar
     end
     for g in eachindex(gc.columns), f in eachindex(gc.covariances[g])
         K = gc.covariances[g][f]
@@ -527,7 +533,7 @@ bilateral symmetrized current spectral density `h f/R coth(h f/2kT)`,
 bathamplitude(b::TransientNoiseBath, frequency, weight) = iszero(b.resistance) ?
     sqrt(planck_constant*frequency*weight) : 2sqrt(planck_constant*frequency*weight/b.resistance)
 
-# the rows and weights of a Norton current out of the first node and into
+# the rows and weights of a Norton current into the first node and out of
 # the second, skipping ground
 function noderows(n1::Int, n2::Int)
     rows, weights = Int[], Float64[]
@@ -632,15 +638,7 @@ end
 
 # the positions in the values of `F` of the entries `(rows[k], cols[k])`,
 # every one of which `F` holds
-function patternpositions(F::SparseMatrixCSC, rows, cols)
-    rv = rowvals(F)
-    return [begin
-        r = nzrange(F, cols[k])
-        i = first(r) + searchsortedfirst(view(rv, r), rows[k]) - 1
-        i in r && rv[i] == rows[k] || error("the pattern of the stationary operator lacks an entry of a term.")
-        i
-    end for k in eachindex(rows)]
-end
+patternpositions(F::SparseMatrixCSC, rows, cols) = [nzposition(F, rows[k], cols[k]) for k in eachindex(rows)]
 # the entries of a sparse matrix appended to the pattern's lists, offset
 function patternentries!(rows, cols, A::SparseMatrixCSC, r0::Int, c0::Int)
     for j in axes(A, 2), k in nzrange(A, j)
@@ -654,8 +652,7 @@ function stationaryoperator(sys::TransientSystem)
     p = sys.problem
     n = length(p)
     nl2 = 2length(p.lines)
-    C, G, L, RJ = hostsparse(sys.C), hostsparse(sys.G), hostsparse(sys.L), hostsparse(sys.RJ)
-    lmolj = Array(sys.lmolj)
+    C, G, L, RJ, lmolj = p.C, p.G, p.L, p.RJ, p.lmolj
     rows, cols = Int[], Int[]
     patternentries!(rows, cols, C, 0, 0)
     patternentries!(rows, cols, G, 0, 0)
@@ -676,7 +673,7 @@ function stationaryoperator(sys::TransientSystem)
     # the lines: `P` swaps the two ports of a line with the phase of its
     # delay, so column `q` of the forced currents is column `swap(q)` of
     # the injection, and the waves' rows carry the swap in the same way
-    Linj, E = hostsparse(sys.lineinjection), hostsparse(sys.linescatter)
+    Linj, E = (sys.Lscale/phi0) .* p.lineE, p.lineE
     z = [line.Z for line in p.lines for _ in 1:2]
     delays = [line.delay for line in p.lines for _ in 1:2]
     swap = [isodd(q) ? q + 1 : q - 1 for q in 1:nl2]
@@ -964,8 +961,7 @@ noisebudget(backend) = noisememorybudget[] > 0 ? noisememorybudget[] : freememor
 # remains the user's contract.
 function transientstationary(sys::TransientSystem, x, v, t, p::TransientProblem = sys.problem, waves = zeros(2length(p.lines)),
         states = zeros(blockstates(p)))
-    G, L, RJ = hostsparse(sys.G), hostsparse(sys.L), hostsparse(sys.RJ)
-    lmolj = Array(sys.lmolj)
+    G, L, RJ, lmolj = p.G, p.L, p.RJ, p.lmolj
     xh, vh = Array(x), Array(v)
     # the drive with the lines' arriving waves and the blocks' resting
     # waves, the rest of the equilibrium
@@ -1021,7 +1017,8 @@ end
     transientnoise(solution, measurement; frequencies = the bins of the
         record, weights = 1/T, cutoff = nothing,
         baths = transientnoisebaths(solution.problem), method = :adjoint,
-        inputs = nothing, commutationrtol = 1e-3, reuse = nothing)
+        inputs = nothing, commutationrtol = 1e-3, factorization = nothing,
+        reuse = nothing)
 
 The symmetrized quantum noise of a recorded transient, or of every
 condition of a [`TransientBatchSolution`](@ref) on one pass, in the temporal
@@ -1038,12 +1035,13 @@ its weights in Hz. By default the bath is periodic over the record, of
 duration `T = length(solution.times)*solution.dt`: its positive Fourier
 bins `f = k/T` with weights `1/T`, up to `cutoff` in Hz when one is
 given and to the Nyquist frequency of the record otherwise, which is the
-complete bath of the recorded steps. Its cost grows with the frequency
-count: the adjoint method contracts a sum per bath, frequency and time
-and factorizes the stationary operator once per frequency and distinct
-initial state, and the forward method drives two directions per bath
-and frequency, so a long record wants a cutoff, and loss spread along a
-line a few bands given as `frequencies`. Each bath at each frequency is a pair of
+complete bath of the recorded steps. The adjoint method contracts the
+bins of the default bath by fast Fourier transforms over the recorded
+times, and frequencies given by a sum per bath, frequency and time; it
+factorizes the stationary operator once per frequency and distinct
+initial state; the forward method drives two directions per bath and
+frequency, so a long record wants a cutoff there, and loss spread along
+a line a few bands given as `frequencies`. Each bath at each frequency is a pair of
 cosine and sine Norton currents of amplitude `2 sqrt(h f df/R)`, whose
 independent quadratures have variance `nbar + 1/2`, started from the
 stationary response of the circuit to them at the initial state, so
@@ -1063,8 +1061,12 @@ directions per bath and frequency through [`transienttangent`](@ref);
 [`transientadjoint`](@ref), whose derivatives with respect to the bath
 currents at every recorded time are the bath kernels, contracted against
 the frequencies as a discrete Fourier sum at the grid and the stage
-times the adjoint hands over, so the
-frequency count costs sums rather than integrations. Both return the
+times the adjoint hands over, by fast transforms on the bins of the
+record, so the frequency count costs sums rather than integrations;
+`factorization` is
+the sparse factorization the responses step on, as for
+[`transienttangent`](@ref), and `reuse` a [`TransientReuse`](@ref).
+Both return the
 same `covariance`, `commutator`, `expectedcommutator`, `diagnostics`
 (from [`transientquantumdiagnostics`](@ref)), and, with an input plan
 `inputs` on the same record, the incremental quadrature `gain` from its
@@ -1083,18 +1085,19 @@ end
 function transientnoise(sol::TransientBatchSolution, measurement::TransientQuantumPlan;
         frequencies = nothing, weights = nothing, cutoff = nothing, baths = nothing,
         method::Symbol = :adjoint, inputs = nothing, commutationrtol = 1e-3,
-        reuse = nothing)
+        factorization = nothing, reuse = nothing)
     recordedsolution(sol)
-    if isnothing(frequencies)
+    # the default bath lies on the bins of the record, which the adjoint
+    # contracts with fast Fourier transforms
+    onbins = isnothing(frequencies)
+    if onbins
         isnothing(weights) || throw(ArgumentError("the weights go with the frequencies; give both, or neither for the periodic bath of the record."))
         frequencies, weights = recordbath(sol, cutoff)
     else
         isnothing(weights) && throw(ArgumentError("give the weights of the bath frequencies in Hz."))
         isnothing(cutoff) || throw(ArgumentError("a cutoff bounds the default bath; the frequencies given are the bath."))
     end
-    problems, x0s, v0s = sol.problems, sol.initialflux, sol.initialrate
-    N = length(problems)
-    p = first(problems)
+    p = first(sol.problems)
     baths = isnothing(baths) ? transientnoisebaths(p) : baths
     baths.problem.circuit === p.circuit || throw(ArgumentError("the baths belong to another circuit."))
     method in (:forward, :adjoint) || throw(ArgumentError("method must be :forward or :adjoint."))
@@ -1109,9 +1112,7 @@ function transientnoise(sol::TransientBatchSolution, measurement::TransientQuant
     # the measurement's record is a window of the recorded times, whose
     # start is the phase reference of the bath quadratures; the baths are
     # driven from the record's start, which must be a classical equilibrium
-    nm = length(measurement.times)
     offset = windowoffset(sol, measurement)
-    reference = first(measurement.times)
     # a pumped block's declaration is checked over the modes its pair
     # terms are read from
     checkpumpedblocks(baths.problem, fs)
@@ -1119,11 +1120,11 @@ function transientnoise(sol::TransientBatchSolution, measurement::TransientQuant
     np = length(p.portimpedances)
     maximum(measurement.rows) <= np || throw(DimensionMismatch("a measurement port is absent from the circuit."))
     bins = noiseinputbins(inputs, measurement, fs, ws)
-    fact = transientfactorization(backend)
+    fact = isnothing(factorization) ? transientfactorization(backend) : factorization
     sys = transientsystem(reuse, p, sol.dt, sol.method, backend, fact)
     # invoked dynamically on the untyped kept system (see transientsolve)
     return Base.invokelatest(noisecore, sol, measurement, fs, ws, baths, method, inputs, Float64(commutationrtol),
-        reuse, sys, offset, bins)
+        reuse, sys, offset, bins, onbins)
 end
 
 # the noise on the forms the entry made of its arguments and on the
@@ -1131,7 +1132,7 @@ end
 # is read at the setup and at a tile, not at a step
 function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPlan, fs::Vector{Float64},
         ws::Vector{Float64}, baths::TransientNoiseBaths, method::Symbol, @nospecialize(inputs), commutationrtol::Float64,
-        @nospecialize(reuse), sys::TransientSystem, offset::Int, bins::Vector{Int})
+        @nospecialize(reuse), sys::TransientSystem, offset::Int, bins::Vector{Int}, onbins::Bool)
     problems = sol.problems
     N = length(problems)
     p = first(problems)
@@ -1181,12 +1182,17 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
         npre = lineprehistory(p, sys.h)
         flux0s, rate0s, waves0s = zeros(n, ndir, N), zeros(n, ndir, N), zeros(2length(p.lines), npre, ndir, N)
         states0s = zeros(blockstates(p), ndir, N)
-        for j in 1:N
-            flux0, rate0, waves0, states0 = stationaryresponses(sys, view(x0s, :, j), injection, fs, first(sol.times), reference)
-            flux0s[:, :, j] .= flux0 .* transpose(scale)
-            rate0s[:, :, j] .= rate0 .* transpose(scale)
-            waves0s[:, :, :, j] .= waves0 .* reshape(scale, 1, 1, :)
-            states0s[:, :, j] .= states0 .* transpose(scale)
+        # the stationary responses once per distinct initial state, which
+        # the conditions starting from it share
+        for group in initialstategroups(x0s)
+            flux0, rate0, waves0, states0 = stationaryresponses(sys, view(x0s, :, first(group)), injection, fs, first(sol.times),
+                reference)
+            for j in group
+                flux0s[:, :, j] .= flux0 .* transpose(scale)
+                rate0s[:, :, j] .= rate0 .* transpose(scale)
+                waves0s[:, :, :, j] .= waves0 .* reshape(scale, 1, 1, :)
+                states0s[:, :, j] .= states0 .* transpose(scale)
+            end
         end
         # the responses measured as the tangent produces them
         response .= measuredtangent(sol, sys, currents, baths, (flux0s, rate0s, waves0s, states0s), measurement, offset, reuse)
@@ -1221,16 +1227,22 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
         # tile one more adjoint over the same conditions, a trade of
         # passes for memory. The covariance, the commutator and the gain
         # are accumulated from each tile on the backend, so the host never
-        # holds a kernel or a response.
+        # holds a kernel or a response. On the bins of the record the sums
+        # over the times are discrete Fourier transforms, taken by fast
+        # ones over the columns of every grid and stage time kept for one
+        # adjoint, `96 nb m nt` bytes a condition with the transforms,
+        # which the conditions are then tiled by; a condition beyond the
+        # budget alone is contracted by the sums.
         budget = noisebudget(backend)
-        percondition = 16*nb*m*nf
+        onbins = onbins && 96*nb*m*nt <= budget
+        percondition = onbins ? 96*nb*m*nt + 16*nb*m*nf : 16*nb*m*nf
         ctile = clamp(budget ÷ percondition, 1, N)
         dcov, dcomm = [KernelAbstractions.zeros(backend, Float64, m, m, N) for _ in 1:2]
         dgain = KernelAbstractions.zeros(backend, Float64, m, ngain, N)
         # the frequency tiles outermost, so that the loss matrices of the
         # blocks' groups over a tile are evaluated once for every tile of
         # conditions
-        nft = clamp(budget ÷ (16*nb*m*ctile), 1, nf)
+        nft = onbins ? nf : clamp(budget ÷ (16*nb*m*ctile), 1, nf)
         # the pair terms of a pumped block's group correlate the bath
         # frequencies, which one tile must then hold together
         if nft < nf && any(g -> baths.problem.blocks[g.block].definition isa LinearizedScattering, baths.groups)
@@ -1245,26 +1257,19 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
         nworkers = maximum(t -> length(t[2]), schedule)
         reuses = workerreuses(reuse, sys, nworkers)
         for ftile in [f:min(f + nft - 1, nf) for f in 1:nft:nf]
-            corrections = [isempty(baths.groups) ? nothing : groupcorrection(baths, fs[ftile], m, backend, reference) for _ in 1:nworkers]
+            # the groups' matrices built once per tile of frequencies, and
+            # every other worker given scratch of its own on them
+            shared = isempty(baths.groups) ? nothing : groupcorrection(baths, fs[ftile], m, backend, reference)
+            corrections = [c == 1 || isnothing(shared) ? shared : groupscratch(shared) for c in 1:nworkers]
             tile! = (c, conditions) -> begin
                 sub = length(conditions) == N ? sol : sol[conditions]
                 noisetile!(view(dcov, :, :, conditions), view(dcomm, :, :, conditions), view(dgain, :, :, conditions),
                     sub, sys, view(x0s, :, conditions), weightsout, baths, injection, fs, ftile, amplitudes,
-                    reference, stageoffsets, inputs, bins, reuses[c], corrections[c])
+                    reference, stageoffsets, inputs, bins, reuses[c], corrections[c], onbins)
                 nothing
             end
             for (tile, chunks) in schedule
-                if length(chunks) == 1
-                    tile!(1, tile)
-                    continue
-                end
-                try
-                    Base.Threads.@sync for (c, conditions) in enumerate(chunks)
-                        Base.Threads.@spawn tile!(c, conditions)
-                    end
-                catch err
-                    throw(chunkerror(err))
-                end
+                runchunks(tile!, chunks)
             end
         end
         covariance .= Array(dcov)
@@ -1325,18 +1330,11 @@ function measuredtangent(sol::TransientBatchSolution, sys::TransientSystem, curr
         sub = length(conditions) == N ? sol : sol[conditions]
         measured, outputsink = measurementsink(measurement, offset, ndir*length(conditions), backend)
         initialstate = isnothing(initial) ? nothing : map(a -> collect(selectdim(a, ndims(a), conditions)), initial)
-        transienttangent(sub, currents; targets, initialstate, reuse = reuses[c], outputsink)
+        transienttangent(sub, currents; targets, initialstate, factorization = sys.factorization, reuse = reuses[c], outputsink)
         response[:, :, conditions] .= reshape(Array(measured), m, ndir, length(conditions))
         nothing
     end
-    length(tiles) == 1 && (tile!(1, tiles[1]); return response)
-    try
-        Base.Threads.@sync for (c, conditions) in enumerate(tiles)
-            Base.Threads.@spawn tile!(c, conditions)
-        end
-    catch err
-        throw(chunkerror(err))
-    end
+    runchunks(tile!, tiles)
     return response
 end
 
@@ -1349,36 +1347,48 @@ end
 # accumulated into the covariance, the commutator and the gain.
 function noisetile!(covariance, commutator, gain, sub::TransientBatchSolution, sys::TransientSystem, x0s, weightsout,
         baths::TransientNoiseBaths, injection, fs, ftile, amplitudes, reference, stageoffsets, @nospecialize(inputs), bins,
-        @nospecialize(reuse), @nospecialize(correction))
+        @nospecialize(reuse), @nospecialize(correction), onbins::Bool)
     backend = KernelAbstractions.get_backend(covariance)
     nb, m, Nt = length(baths), size(covariance, 1), size(covariance, 3)
     fsl = fs[ftile]
     nfl = length(fsl)
-    fsb = tobackend(backend, fsl)
-    accumulator = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, 2nfl)
-    # the block of columns and their quadratures, contracted when full
-    block = 64
-    columns = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, block)
-    quadratures = KernelAbstractions.zeros(backend, Float64, block, 2nfl)
-    filled = Ref(0)
-    flush! = () -> begin
-        filled[] == 0 && return nothing
-        mul!(accumulator, view(columns, :, 1:filled[]), view(quadratures, 1:filled[], :), 1.0, 1.0)
-        filled[] = 0
-        nothing
+    if onbins
+        # the columns at every grid and stage time kept, and contracted
+        # with every bin by the fast transforms along the times
+        kept = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, length(sub.times), 3)
+        sink = (k, values) -> (copyto!(view(kept, :, k, 1), vec(values)); nothing)
+        stagesink = (k, i, values) -> (copyto!(view(kept, :, k, i + 1), vec(values)); nothing)
+        adjoint = transientadjoint(sub, weightsout; quantity = :outgoing, targets = baths, factorization = sys.factorization,
+            reuse, sink, stagesink)
+        accumulator = tobackend(backend, bincontraction(Array(kept), fsl, sub.times, sub.dt, stageoffsets, reference))
+    else
+        accumulator = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, 2nfl)
+        fsb = tobackend(backend, fsl)
+        # the block of columns and their quadratures, contracted when full
+        block = 64
+        columns = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, block)
+        quadratures = KernelAbstractions.zeros(backend, Float64, block, 2nfl)
+        filled = Ref(0)
+        flush! = () -> begin
+            filled[] == 0 && return nothing
+            mul!(accumulator, view(columns, :, 1:filled[]), view(quadratures, 1:filled[], :), 1.0, 1.0)
+            filled[] = 0
+            nothing
+        end
+        contract! = (t, values) -> begin
+            filled[] == block && flush!()
+            filled[] += 1
+            copyto!(view(columns, :, filled[]), vec(values))
+            view(quadratures, filled[], 1:nfl) .= cospi.(2 .* fsb .* t)
+            view(quadratures, filled[], nfl + 1:2nfl) .= sinpi.(2 .* fsb .* t)
+            nothing
+        end
+        sink = (k, values) -> contract!(sub.times[k] - reference, values)
+        stagesink = (k, i, values) -> contract!(sub.times[k] + stageoffsets[i + 1] - reference, values)
+        adjoint = transientadjoint(sub, weightsout; quantity = :outgoing, targets = baths, factorization = sys.factorization,
+            reuse, sink, stagesink)
+        flush!()
     end
-    contract! = (t, values) -> begin
-        filled[] == block && flush!()
-        filled[] += 1
-        copyto!(view(columns, :, filled[]), vec(values))
-        view(quadratures, filled[], 1:nfl) .= cospi.(2 .* fsb .* t)
-        view(quadratures, filled[], nfl + 1:2nfl) .= sinpi.(2 .* fsb .* t)
-        nothing
-    end
-    sink = (k, values) -> contract!(sub.times[k] - reference, values)
-    stagesink = (k, i, values) -> contract!(sub.times[k] + stageoffsets[i + 1] - reference, values)
-    adjoint = transientadjoint(sub, weightsout; quantity = :outgoing, targets = baths, reuse, sink, stagesink)
-    flush!()
     # the stationary initial terms of every condition of the tile
     initials = stationaryinitialterms(sys, x0s, injection, fsl, first(sub.times), reference,
         reshape(adjoint.initialflux, :, m, Nt), reshape(adjoint.initialrate, :, m, Nt),
@@ -1430,6 +1440,35 @@ end
 # holds, the grid time and the two stage times of the step from it
 stagetimeoffsets(sol) = sol.method isa GaussLegendre ? (0.0, sol.dt*gausscoefficients().c[1], sol.dt*gausscoefficients().c[2]) : (0.0, 0.0, 0.0)
 
+# The contraction of the columns `kept`, `(row, time, s)` at the grid
+# times (`s = 1`) and at the two stage times of each step, with the
+# cosine and the sine of every frequency of `fs`, bins `b/T` of the record
+# of `nt` times at the spacing `h`, `T = nt h`, into `(row, 2 nf)`, the
+# cosines first: at the times `t_k + o_s - reference`, the offsets `o_s`
+# of the stages, `sum_k c_k exp(-2 pi i f (t_k + o_s - reference))` is the
+# phase of `t_1 + o_s - reference` times the discrete Fourier transform
+# of the columns at the bin, whose real part is the cosine sum and whose
+# imaginary part the sine sum negated.
+function bincontraction(kept::Array{Float64,3}, fs, times, h, offsets, reference)
+    nt = size(kept, 2)
+    T = nt*h
+    F = FFTW.fft(kept, 2)
+    nf = length(fs)
+    out = zeros(size(kept, 1), 2nf)
+    for (j, f) in enumerate(fs)
+        b = round(Int, f*T)
+        for s in 1:3
+            phase = cispi(-2f*(times[1] + offsets[s] - reference))
+            for r in axes(kept, 1)
+                c = phase*F[r, b + 1, s]
+                out[r, j] += real(c)
+                out[r, nf + j] -= imag(c)
+            end
+        end
+    end
+    return out
+end
+
 # the index of a plan's window in a solution's times, the plan's record
 # being a contiguous window of them
 function windowoffset(sol, plan::TransientQuantumPlan)
@@ -1442,7 +1481,8 @@ function windowoffset(sol, plan::TransientQuantumPlan)
 end
 
 """
-    transientgain(solution, measurement, inputs; reuse = nothing)
+    transientgain(solution, measurement, inputs; factorization = nothing,
+        reuse = nothing)
 
 The quadrature gain from the temporal modes of `inputs` to those of
 `measurement`, both [`TransientQuantumPlan`](@ref)s on windows of the
@@ -1458,26 +1498,25 @@ pulsed gain, carrying the transients of the probe's own edges; the
 the periodic Fourier mode of the window, extended over the record and
 started stationary, which is what a stationary amplifier's harmonic
 balance gain is. The two agree as the window grows past the circuit's
-memory.
+memory. `factorization` and `reuse` are the tangent's.
 """
-function transientgain(sol::TransientSolution, measurement::TransientQuantumPlan, inputs::TransientQuantumPlan; reuse = nothing)
+function transientgain(sol::TransientSolution, measurement::TransientQuantumPlan, inputs::TransientQuantumPlan;
+        factorization = nothing, reuse = nothing)
     # the gain runs on a batch, of which a solution is one condition
-    return transientgain(batchof(sol), measurement, inputs; reuse)[:, :, 1]
+    return transientgain(batchof(sol), measurement, inputs; factorization, reuse)[:, :, 1]
 end
 function transientgain(sol::TransientBatchSolution, measurement::TransientQuantumPlan,
-        inputs::TransientQuantumPlan; reuse = nothing)
+        inputs::TransientQuantumPlan; factorization = nothing, reuse = nothing)
     recordedsolution(sol)
-    problems = sol.problems
-    N = length(problems)
-    p = first(problems)
+    p = first(sol.problems)
     backend = KernelAbstractions.get_backend(sol.finalflux)
     (KernelAbstractions.get_backend(measurement.weights) == backend && KernelAbstractions.get_backend(inputs.weights) == backend) ||
         throw(ArgumentError("the plans and the solution must share a backend."))
     np = length(p.portimpedances)
     (maximum(measurement.rows) <= np && maximum(inputs.rows) <= np) || throw(DimensionMismatch("a plan's port is absent from the circuit."))
     mo, io = windowoffset(sol, measurement), windowoffset(sol, inputs)
-    nm, ni, nt = length(measurement.times), length(inputs.times), length(sol.times)
-    nin, m = length(inputs.ports), 2length(measurement.ports)
+    ni, nt = length(inputs.times), length(sol.times)
+    nin = length(inputs.ports)
     # the incident wave of a unit quadrature of each input mode on its
     # window, `Re` and `-Im` of the mode's spectrum with the bin
     # amplitudes `sqrt(h f / T)`, brought to the grid and, with the phase
@@ -1499,7 +1538,7 @@ function transientgain(sol::TransientBatchSolution, measurement::TransientQuantu
         currents[port, s, io:last, 2j] .= -scale .* imag.(view(wave, 1:last - io + 1))
     end
     # the modes measured as the tangent produces the waves
-    fact = transientfactorization(backend)
+    fact = isnothing(factorization) ? transientfactorization(backend) : factorization
     sys = transientsystem(reuse, p, sol.dt, sol.method, backend, fact)
     return measuredtangent(sol, sys, currents, porttargets(p), nothing, measurement, mo, reuse)
 end

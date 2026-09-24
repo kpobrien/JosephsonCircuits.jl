@@ -321,12 +321,11 @@ definition of the Armijo condition is not changed). We currently compute
 `correction == nothing` or `beta == 0` the path is the straight path
 `x + α*deltax`.
 
-When calling [`backtracking_linesearch!`](@ref), `F` should either hold the
-residual at `x` (the same residual from which `ϕ0` was computed) or that
-residual should be provided with the kwarg `Fbest`. The initial value of
-`Fbest` is saved and restored if the linesearch fails to find a point
-satisfying the sufficient-decrease condition or the residuals of the best
-found point if the line search is successful.
+`F` holds the residual at `x0`, from which `ϕ0` was computed, and `Fbest`
+is scratch: the search keeps there the residual of its best trial,
+starting from the residual at `x0`, and restores it into `F` when it ends
+without an accepted step. When `ϕfullstep` is given, `F` and `xcandidate`
+hold the full step instead, and `Fbest` must hold the residual at `x0`.
 
 [`quadratic_trial_step`](@ref) performs a quadratic interpolation on the
 full-step data to estimate the trial step `α` at which the minimum of the

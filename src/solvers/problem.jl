@@ -131,6 +131,9 @@ have to know. See [`DCAugmentation`](@ref).
 - `tplan`: the transposed gather maps the vector-Jacobian product walks.
 - `Pwork`, `Qwork`, `betawork`, `dirtd3`: transform workspaces.
 - `augmentation`: the direct current block, or `nothing`.
+- `atol`: the residual tolerance a root is held to, `norm(F) <= atol`: the
+  solve's `atol`, raised to the rounding floor of the source, or its
+  `rtol` times the residual at `u0`, whichever is larger.
 """
 struct HBNonlinearProblem{S,ML,J,X,B,TP,FD,TD,A}
     sys::S
@@ -145,9 +148,11 @@ struct HBNonlinearProblem{S,ML,J,X,B,TP,FD,TD,A}
     # incremented at every move of the evaluation point, so an operator
     # built at one point can tell that the problem has since moved on
     pointstamp::Base.RefValue{Int}
+    atol::Float64
 end
 
-function HBNonlinearProblem(sys, ml, u0, J, parts; augmentation = nothing)
+function HBNonlinearProblem(sys, ml, u0, J, parts; augmentation = nothing,
+        atol::Real, rtol::Real = 0.0)
     fd = sys.phimatrix; td = sys.phitd
     # The transpose plan is built here rather than on first use so the field
     # is concretely typed. A `Ref{Any}` filled lazily makes every call into
@@ -156,9 +161,15 @@ function HBNonlinearProblem(sys, ml, u0, J, parts; augmentation = nothing)
     # a counting sort over the plan's own index arrays and costs nothing.
     tp = plannonlineartermtranspose(sys.nonlineartermplan, ml,
         fd, td; backend = sys.nonlineartermplan.backend)
-    return HBNonlinearProblem(sys, ml, u0, J, parts, copy(sys.bnm),
+    p = HBNonlinearProblem(sys, ml, u0, J, parts, copy(sys.bnm),
         tp, Ref(similar(fd)), Ref(similar(fd)), Ref(similar(td)),
-        Ref(similar(td)), augmentation, Ref(0))
+        Ref(similar(td)), augmentation, Ref(0), Float64(atol))
+    iszero(rtol) && return p
+    # a relative tolerance is one of the residual at the problem's point
+    tol = max(atol, rtol*norm(hbresidual!(similar(u0), p, u0)))
+    return HBNonlinearProblem(p.sys, p.modelayout, p.u0, p.jacobian, p.parts,
+        p.bnm0, p.tplan, p.Pwork, p.Qwork, p.betawork, p.dirtd3,
+        p.augmentation, p.pointstamp, Float64(tol))
 end
 
 """
@@ -189,6 +200,15 @@ end
 
 Base.length(p::HBNonlinearProblem) = length(p.u0)
 
+# every vector an entry point is handed has the problem's length: a short
+# one would be read or written past its end, where the harmonic system
+# indexes without bounds checks, and a long one read in part
+function checklength(p::HBNonlinearProblem, x::AbstractVector, name)
+    length(x) == length(p) || throw(DimensionMismatch(
+        lazy"`$(name)` has length $(length(x)) but the problem has $(length(p)) unknowns."))
+    return nothing
+end
+
 """
     hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
         assemblejacobian = true, kwargs...)
@@ -197,14 +217,17 @@ Build the harmonic balance system as an [`HBNonlinearProblem`](@ref)
 without solving it, by calling [`hbnlsolve`](@ref) with
 `returnsystem = true` and the remaining keywords. `assemblejacobian =
 false` leaves out the assembled real Jacobian, which a matrix-free solver
-does not need.
+does not need. The tolerance a solve would hold a root to, from `atol`
+and `rtol`, is the problem's `atol`.
 """
 function hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
         assemblejacobian::Bool = true, kwargs...)
+    get(kwargs, :method, nothing) isa Staged && throw(ArgumentError(
+        "a `Staged` method solves a continuation of systems at its own truncations and drives, and has no single system to hand out; build the problem with the method of its stages."))
     d = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
         returnsystem = true, assemblejacobian = assemblejacobian, kwargs...)
     d.dcexplicit || return HBNonlinearProblem(d.sys, d.modelayout,
-        copy(d.xr), d.Jr, d)
+        copy(d.xr), d.Jr, d; atol = d.atol, rtol = d.rtol)
     # with an explicit direct current block the unknowns are the canonical
     # state and the Jacobian is the canonical one, so the problem handed out
     # is the system which was solved rather than the harmonic part of it
@@ -213,7 +236,8 @@ function hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
     u0 = zeros(Float64, canonicaldim(L))
     gathercanonical!(u0, d.xr, L)
     return HBNonlinearProblem(d.sys, d.modelayout, u0,
-        isnothing(a.jplan) ? nothing : a.jplan.J, d; augmentation = a)
+        isnothing(a.jplan) ? nothing : a.jplan.J, d; augmentation = a,
+        atol = d.atol, rtol = d.rtol)
 end
 
 """
@@ -223,6 +247,8 @@ The harmonic balance residual at `u`, in place.
 """
 function hbresidual!(F::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real})
+    checklength(p, F, "F")
+    checklength(p, u, "u")
     if !isaugmented(p)
         _movepoint!(p, u)
         residual!(F, p.sys)
@@ -254,6 +280,9 @@ whose `mul!` pays only the product itself.
 """
 function hbjvp!(Jv::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, v::AbstractVector{<:Real})
+    checklength(p, Jv, "Jv")
+    checklength(p, u, "u")
+    checklength(p, v, "v")
     if !isaugmented(p)
         _movepoint!(p, u)
         jacobianvectorproduct!(Jv, p.sys, v)
@@ -282,6 +311,7 @@ end
 Assemble the exact real Jacobian at `u`.
 """
 function hbjacobian!(J, p::HBNonlinearProblem, u::AbstractVector{<:Real})
+    checklength(p, u, "u")
     if !isaugmented(p)
         _movepoint!(p, u)
         jacobian!(J, p.sys)
@@ -318,9 +348,10 @@ Implements `size`, `eltype`, `LinearAlgebra.mul!`, and the same for its
 gather maps; see [`hbvjp!`](@ref)). Construction sets the system's
 evaluation point ONCE -- one forward transform -- and `mul!` never touches
 it again, so the products inside a Krylov loop pay exactly two transforms
-each and nothing more. After moving `u`, construct a new operator: that is
-the point update, and it is the same cost the internal solver pays once
-per Newton step.
+each and nothing more. The operator keeps a copy of `u`, so moving `u`
+afterwards, in place or not, leaves it where it was; construct a new
+operator at the new point: that is the point update, and it is the same
+cost the internal solver pays once per Newton step.
 
 ```julia
 J = JacobianOperator(prob, u)
@@ -347,6 +378,10 @@ struct JacobianOperator{P<:HBNonlinearProblem,U<:AbstractVector}
     stamp::Base.RefValue{Int}
 end
 function JacobianOperator(prob::HBNonlinearProblem, u)
+    checklength(prob, u, "u")
+    # its own copy of the point, so that the caller moving `u` in place
+    # does not move the operator
+    u = copy(u)
     isaugmented(prob) ? _setcanonical!(prob, u) : _movepoint!(prob, u)
     return JacobianOperator{typeof(prob),typeof(u)}(prob, u,
         Ref(prob.pointstamp[]))
@@ -374,6 +409,8 @@ Base.axes(J::JacobianOperator, i::Integer) = axes(J)[i]
 # has moved since; the product is two transforms plus the linear term
 function LinearAlgebra.mul!(y::AbstractVector, J::JacobianOperator,
         v::AbstractVector)
+    checklength(J.prob, y, "y")
+    checklength(J.prob, v, "v")
     _synchronize!(J)
     return isaugmented(J.prob) ? _canonicaljvp!(y, J.prob, v) :
         jacobianvectorproduct!(y, J.prob.sys, v)
@@ -439,37 +476,43 @@ canonical coordinates with the direct current subsystem solved exactly.
 Applied by `ldiv!` and by `mul!`, so it can be handed straight to any
 external Krylov solver: `Krylov.gmres(J, -F; N = preconditioner(prob, u),
 atol = 0.0)`. See [`JacobianOperator`](@ref) for why `atol = 0.0`.
+`updatepreconditioner!(P, u)` refactorizes it at another point, reusing
+its structure and symbolic analysis. Building or updating it sets the
+problem's evaluation point, which an operator built at another point
+notices and sets back.
 """
 function preconditioner(p::HBNonlinearProblem, u::AbstractVector;
         spec::AbstractModeCoupling = BlockDiagonal(), precision = Float64)
+    checklength(p, u, "u")
     d = p.parts
     pc = ModeCouplingPreconditioner(p.sys, d.Amatrixindicesaliased,
         d.Amatrixconjindices, d.Ljb, d.Lscale, d.Rbnm, d.Nmodes, d.Nbranches,
         d.Nfreq, d.invLnm, d.Gnm, d.Cnm, p.modelayout; spec = spec,
         precision = precision, Amatrixmodes = d.Amatrixmodes)
-    if isaugmented(p)
-        # the same wrapper the internal solve uses: the mode coupling
-        # preconditioner in the canonical coordinates, with the direct
-        # current subsystem factorized and solved exactly
-        cp = CanonicalPreconditioner(pc, p.augmentation.work)
-        updatepreconditioner!(cp, u)
-        return SizedPreconditioner(cp, length(u))
-    end
-    _movepoint!(p, u)
-    updatepreconditioner!(pc, u)
-    return SizedPreconditioner(pc, length(u))
+    # with an explicit direct current block, the same wrapper the internal
+    # solve uses: the mode coupling preconditioner in the canonical
+    # coordinates, with the direct current subsystem factorized and solved
+    # exactly
+    inner = isaugmented(p) ? CanonicalPreconditioner(pc, p.augmentation.work) :
+        pc
+    return updatepreconditioner!(
+        SizedPreconditioner(inner, length(u), p.pointstamp), u)
 end
 
 """
-    SizedPreconditioner(pc, n)
+    SizedPreconditioner(pc, n, pointstamp = Ref(0))
 
 A preconditioner carrying its dimension, so it satisfies the `size`/
-`eltype`/`mul!` contract external Krylov solvers check.
+`eltype`/`mul!` contract external Krylov solvers check, and the point
+stamp of the problem whose evaluation point it sets, which every update
+moves (see [`JacobianOperator`](@ref)); one of no problem's has its own.
 """
 struct SizedPreconditioner{P} <: AbstractWrappedPreconditioner
     pc::P
     n::Int
+    pointstamp::Base.RefValue{Int}
 end
+SizedPreconditioner(pc, n::Integer) = SizedPreconditioner(pc, Int(n), Ref(0))
 innerpreconditioner(p::SizedPreconditioner) = p.pc
 Base.size(p::SizedPreconditioner) = (p.n, p.n)
 Base.size(p::SizedPreconditioner, i::Integer) = p.n
@@ -479,10 +522,14 @@ Base.eltype(::SizedPreconditioner) = Float64
 # and three argument `ldiv!`, `\\` and `mul!`. IterativeSolvers.jl calls the
 # two argument in-place form on a view, KrylovKit and Krylov.jl call `mul!`,
 # LinearSolve calls the three argument `ldiv!`.
-applypreconditioner!(z::AbstractVector, p::SizedPreconditioner,
-    r::AbstractVector) = applypreconditioner!(z, p.pc, r)
+function applypreconditioner!(z::AbstractVector, p::SizedPreconditioner,
+        r::AbstractVector)
+    (length(z) == p.n && length(r) == p.n) || throw(DimensionMismatch(
+        lazy"the preconditioner of $(p.n) unknowns was applied to vectors of length $(length(r)) and $(length(z))."))
+    return applypreconditioner!(z, p.pc, r)
+end
 updatepreconditioner!(p::SizedPreconditioner, u::AbstractVector) =
-    (updatepreconditioner!(p.pc, u); p)
+    (updatepreconditioner!(p.pc, u); p.pointstamp[] += 1; p)
 # every other hook forwards through `AbstractWrappedPreconditioner`
 
 # =====================================================================
@@ -520,9 +567,6 @@ The scale is relative to the drive the problem was built with, so
 `setdrive!(prob, 1)` restores it.
 """
 function setdrive!(p::HBNonlinearProblem, scale::Real)
-    isnothing(p.bnm0) && throw(ArgumentError(
-        "this problem did not record its drive; build it with "*
-        "hbnonlinearproblem"))
     @. p.sys.bnm = scale*p.bnm0
     complex_to_real!(p.sys.bnmr, p.sys.bnm, p.modelayout.isreal)
     # the direct current injection is part of the same drive and moves with
@@ -581,6 +625,9 @@ multiplied back in through the coefficients of the other; see
 """
 function hbvjp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, w::AbstractVector{<:Real})
+    checklength(p, out, "out")
+    checklength(p, u, "u")
+    checklength(p, w, "w")
     if !isaugmented(p)
         _movepoint!(p, u)
         _ensurecos!(p.sys)
@@ -640,6 +687,9 @@ The exact second directional derivative
 function hbd2F!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, v::AbstractVector{<:Real},
         w::AbstractVector{<:Real})
+    for (x, name) in ((out, "out"), (u, "u"), (v, "v"), (w, "w"))
+        checklength(p, x, name)
+    end
     if !isaugmented(p)
         _movepoint!(p, u)
         hessianvectorproduct!(out, p.sys, v, w)
@@ -672,6 +722,9 @@ Bautin -- accurate.
 function hbd3F!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, v::AbstractVector{<:Real},
         w::AbstractVector{<:Real}, z::AbstractVector{<:Real})
+    for (x, name) in ((out, "out"), (u, "u"), (v, "v"), (w, "w"), (z, "z"))
+        checklength(p, x, name)
+    end
     if isaugmented(p)
         # affine again, so only the harmonic term survives; it is taken in
         # the internal coordinates and carried back
@@ -722,7 +775,7 @@ derivative is exact and constant, and a continuation tangent never needs a
 finite difference in the parameter.
 """
 function hbdFdp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem)
-    isnothing(p.bnm0) && throw(ArgumentError("this problem recorded no drive"))
+    checklength(p, out, "out")
     b = similar(p.sys.bnm)
     copyto!(b, p.bnm0)
     if !isaugmented(p)

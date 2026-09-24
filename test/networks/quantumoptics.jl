@@ -83,6 +83,12 @@ using Test
             JosephsonCircuits.block_to_pair2(JosephsonCircuits.symplectic_form_block(4)),
         )
 
+        # the permutation matrices reorder a matrix which is not square as
+        # the permutations do
+        M = rand(6, 4)
+        @test JosephsonCircuits.block_to_pair2(M) == JosephsonCircuits.block_to_pair(M)
+        @test JosephsonCircuits.pair_to_block2(M) == JosephsonCircuits.pair_to_block(M)
+
         # test the conversions and their inverses
         @test isapprox(
             JosephsonCircuits.symplectic_form_pair(4),
@@ -287,6 +293,15 @@ using Test
         @test JosephsonCircuits.is_cptp_quadrature_block(JosephsonCircuits.rand_cptp_quadrature_block(4)...)
         @test JosephsonCircuits.is_cptp_quadrature_block(JosephsonCircuits.rand_cptp_quadrature_block(Float64,4)...)
 
+        # an environment of other than as many modes as the system: the
+        # noise it adds has at most its rank
+        for nenv in (1, 3)
+            X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(Float64, 2; nenv = nenv)
+            @test JosephsonCircuits.is_cptp_quadrature_pair(X, Y) && rank(Y) <= 2*nenv
+            X, Y = JosephsonCircuits.rand_cptp_quadrature_block(2; nenv = nenv)
+            @test JosephsonCircuits.is_cptp_quadrature_block(X, Y) && rank(Y) <= 2*nenv
+        end
+
     end
 
     @testset "random cptp ladder" begin
@@ -297,6 +312,13 @@ using Test
         
         @test JosephsonCircuits.is_cptp_ladder_block(JosephsonCircuits.rand_cptp_ladder_block(4)...)
         @test JosephsonCircuits.is_cptp_ladder_block(JosephsonCircuits.rand_cptp_ladder_block(Complex{Float64},4)...)
+
+        for nenv in (1, 3)
+            X, Y = JosephsonCircuits.rand_cptp_ladder_pair(Complex{Float64}, 2; nenv = nenv)
+            @test JosephsonCircuits.is_cptp_ladder_pair(X, Y) && rank(Y) <= 2*nenv
+            X, Y = JosephsonCircuits.rand_cptp_ladder_block(2; nenv = nenv)
+            @test JosephsonCircuits.is_cptp_ladder_block(X, Y) && rank(Y) <= 2*nenv
+        end
 
     end
 
@@ -362,6 +384,30 @@ using Test
             JosephsonCircuits.scattering_to_quadrature_block!(zeros(10),zeros(5),ones(6)),
         )
 
+        # the block form of a non-square matrix holds the entries of its pair
+        # form, reordered, and converts back
+        for (n, m) in [(2, 1), (1, 2), (2, 3), (3, 2)]
+            S = randn(Complex{Float64}, n, m)
+            for w in ([1.0, -1.0, 1.0], [-1.0, 1.0, -1.0])
+                @test JosephsonCircuits.scattering_to_ladder_block(S, w) ==
+                    JosephsonCircuits.pair_to_block(JosephsonCircuits.scattering_to_ladder_pair(S, w))
+                @test JosephsonCircuits.scattering_to_quadrature_block(S, w) ==
+                    JosephsonCircuits.pair_to_block(JosephsonCircuits.scattering_to_quadrature_pair(S, w))
+                @test isapprox(JosephsonCircuits.ladder_to_scattering_block(
+                    JosephsonCircuits.scattering_to_ladder_block(S, w), w), S)
+                @test isapprox(JosephsonCircuits.quadrature_to_scattering_block(
+                    JosephsonCircuits.scattering_to_quadrature_block(S, w), w), S)
+                # the quadrature form is the ladder form in the quadrature
+                # basis of its rows and of its columns
+                @test isapprox(JosephsonCircuits.ladder_to_quadrature_pair(
+                    JosephsonCircuits.scattering_to_ladder_pair(S, w)),
+                    JosephsonCircuits.scattering_to_quadrature_pair(S, w))
+                @test isapprox(JosephsonCircuits.quadrature_to_ladder_block(
+                    JosephsonCircuits.scattering_to_quadrature_block(S, w)),
+                    JosephsonCircuits.scattering_to_ladder_block(S, w))
+            end
+        end
+
         X = randn(10)
         w = sign.(randn(5))
         @test isequal(
@@ -393,6 +439,15 @@ using Test
             ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
             JosephsonCircuits.ladder_to_scattering_pair(S,w),
         )
+
+        # complex floating point input carrying rounding is converted within
+        # the default tolerance, and the tolerances can be given
+        X = JosephsonCircuits.rand_unitary(6)
+        w = [1.0, -1.0, 1.0]
+        U = JosephsonCircuits.rand_unitary(12)
+        S = JosephsonCircuits.scattering_to_ladder_pair(X,w)*(U*U')
+        @test isapprox(JosephsonCircuits.ladder_to_scattering_pair(S,w), X)
+        @test isapprox(JosephsonCircuits.ladder_to_scattering_pair(S,w;rtol=1e-10), X)
 
         # real floating point input
         X = JosephsonCircuits.rand_unitary(Float64,10)
@@ -438,6 +493,15 @@ using Test
             ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
             JosephsonCircuits.ladder_to_scattering_block(S,w),
         )
+
+        # complex floating point input carrying rounding is converted within
+        # the default tolerance, and the tolerances can be given
+        X = JosephsonCircuits.rand_unitary(6)
+        w = [1.0, -1.0, 1.0]
+        U = JosephsonCircuits.rand_unitary(12)
+        S = JosephsonCircuits.scattering_to_ladder_block(X,w)*(U*U')
+        @test isapprox(JosephsonCircuits.ladder_to_scattering_block(S,w), X)
+        @test isapprox(JosephsonCircuits.ladder_to_scattering_block(S,w;rtol=1e-10), X)
 
         # real floating point input
         X = JosephsonCircuits.rand_unitary(Float64,10)
@@ -488,6 +552,15 @@ using Test
             JosephsonCircuits.quadrature_to_scattering_pair(S,w),
         )
 
+        # complex floating point input carrying rounding is converted within
+        # the default tolerance, and the tolerances can be given
+        X = JosephsonCircuits.rand_unitary(6)
+        w = [1.0, -1.0, 1.0]
+        U = JosephsonCircuits.rand_unitary(12)
+        S = JosephsonCircuits.scattering_to_quadrature_pair(X,w)*(U*U')
+        @test isapprox(JosephsonCircuits.quadrature_to_scattering_pair(S,w), X)
+        @test isapprox(JosephsonCircuits.quadrature_to_scattering_pair(S,w;rtol=1e-10), X)
+
         # real floating point input
         X = JosephsonCircuits.rand_unitary(Float64,10)
         w=sign.(randn(size(X,1)))
@@ -521,6 +594,15 @@ using Test
             JosephsonCircuits.quadrature_to_scattering_block(S,w),
         )
 
+        # complex floating point input carrying rounding is converted within
+        # the default tolerance, and the tolerances can be given
+        X = JosephsonCircuits.rand_unitary(6)
+        w = [1.0, -1.0, 1.0]
+        U = JosephsonCircuits.rand_unitary(12)
+        S = JosephsonCircuits.scattering_to_quadrature_block(X,w)*(U*U')
+        @test isapprox(JosephsonCircuits.quadrature_to_scattering_block(S,w), X)
+        @test isapprox(JosephsonCircuits.quadrature_to_scattering_block(S,w;rtol=1e-10), X)
+
         # real floating point input
         X = JosephsonCircuits.rand_unitary(Float64,10)
         w=sign.(randn(size(X,1)))
@@ -535,14 +617,57 @@ using Test
 
     @testset "port mode conversion" begin
 
-        for S in [rand(Complex{Float64},8,8),rand(Complex{Float64},8,12)]
-            Nmodes = 2
+        for (S, Nmodes) in [(rand(Complex{Float64},8,8), 2),
+                (rand(Complex{Float64},8,12), 2), (rand(Complex{Float64},12,12), 3),
+                (rand(Complex{Float64},12,18), 3), (rand(Complex{Float64},12,12), 2)]
             @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_scattering(JosephsonCircuits.modes_ports_to_ports_modes_scattering(S,Nmodes),Nmodes),S)
             @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_pair(JosephsonCircuits.modes_ports_to_ports_modes_pair(S,Nmodes),Nmodes),S)
             @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_block(JosephsonCircuits.modes_ports_to_ports_modes_block(S,Nmodes),Nmodes),S)
         end
 
-        # note add tests on errors
+        # permuting the pair or block form of a scattering matrix is the pair
+        # or block form of the permuted scattering matrix, for every number
+        # of ports and modes; with one port or one mode the two orderings
+        # are the same
+        for (Nports, Nmodes) in [(2, 3), (3, 2), (1, 3), (3, 1), (1, 1)]
+            N = Nports*Nmodes
+            S = rand(Complex{Float64}, N, N)
+            s = [isodd(i) ? 1.0 : -1.0 for i in 1:N]
+            for (perm, fpair, fblock, fscattering) in [
+                    (JosephsonCircuits.ports_modes_to_modes_ports_perm,
+                        JosephsonCircuits.ports_modes_to_modes_ports_pair,
+                        JosephsonCircuits.ports_modes_to_modes_ports_block,
+                        JosephsonCircuits.ports_modes_to_modes_ports_scattering),
+                    (JosephsonCircuits.modes_ports_to_ports_modes_perm,
+                        JosephsonCircuits.modes_ports_to_ports_modes_pair,
+                        JosephsonCircuits.modes_ports_to_ports_modes_block,
+                        JosephsonCircuits.modes_ports_to_ports_modes_scattering)]
+                p = perm(Nports, Nmodes)
+                @test isperm(p)
+                @test fscattering(S, Nmodes) == S[p, p]
+                @test fpair(JosephsonCircuits.scattering_to_ladder_pair(S, s), Nmodes) ==
+                    JosephsonCircuits.scattering_to_ladder_pair(S[p, p], s[p])
+                @test fblock(JosephsonCircuits.scattering_to_ladder_block(S, s), Nmodes) ==
+                    JosephsonCircuits.scattering_to_ladder_block(S[p, p], s[p])
+                if Nports == 1 || Nmodes == 1
+                    @test fscattering(S, Nmodes) == S
+                end
+            end
+        end
+
+        # an axis which does not hold whole ports
+        @test_throws(
+            DimensionMismatch("The number of scattering indices 6 of an axis must be a multiple of the number of modes 4."),
+            JosephsonCircuits.ports_modes_to_modes_ports_scattering(rand(6, 6), 4),
+        )
+        @test_throws(
+            DimensionMismatch("The number of scattering indices 3 of an axis must be a multiple of the number of modes 2."),
+            JosephsonCircuits.modes_ports_to_ports_modes_block(rand(6, 6), 2),
+        )
+        @test_throws(
+            DimensionMismatch("The length 5 of an axis of a pair or block form must be even."),
+            JosephsonCircuits.ports_modes_to_modes_ports_pair(rand(5, 5), 1),
+        )
 
     end
 
@@ -654,6 +779,22 @@ using Test
         @test isapprox(vectors * Diagonal(values) * transpose(vectors), A)
         @test isapprox(vectors * vectors', I(size(A, 1)))
 
+        # real symmetric matrices stored complex, and the same times a
+        # phase, whose unitary Z = U'*conj(V) has its eigenvalues clustered
+        # on a short arc: the widest gap is the rest of the circle
+        reconstructed = true
+        for n in (2, 4, 8), trial in 1:10
+            Q = Matrix(qr(randn(n, n)).Q)
+            for A in (Complex{Float64}.(Q * Diagonal(1 .+ rand(n)) * Q'),
+                    cis(0.3) .* (Q * Diagonal(randn(n)) * Q'))
+                A = (A + transpose(A)) / 2
+                values, vectors = JosephsonCircuits.autonne_takagi(A)
+                reconstructed &= isapprox(vectors * Diagonal(values) * transpose(vectors), A) &&
+                    isapprox(vectors * vectors', I(n))
+            end
+        end
+        @test reconstructed
+
         @test_throws(
             ErrorException(lazy"M must be symmetric."),
             JosephsonCircuits.autonne_takagi(Complex{Float64}[1 1;-1 1]),
@@ -670,6 +811,12 @@ using Test
         A = rand(Float64, 4, 4)
         Q, R = qr(A)
         A = Symmetric(Q * Diagonal([1.2, 1.20000000001, 0.1e-16, -0.5e-16]) * Q')
+        values, vectors = JosephsonCircuits.autonne_takagi(A)
+        @test isapprox(vectors * Diagonal(values) * transpose(vectors), A)
+        @test isapprox(vectors * vectors', I(size(A, 1)))
+
+        # an exactly zero eigenvalue
+        A = [1.0 0.0; 0.0 0.0]
         values, vectors = JosephsonCircuits.autonne_takagi(A)
         @test isapprox(vectors * Diagonal(values) * transpose(vectors), A)
         @test isapprox(vectors * vectors', I(size(A, 1)))
@@ -700,6 +847,21 @@ using Test
         @test JosephsonCircuits.is_symplectic_block(O)
         @test JosephsonCircuits.is_symplectic_block(Diagonal(D))
         @test JosephsonCircuits.is_symplectic_block(Q)
+
+        # single mode squeezers in a real orthogonal basis, which leave x
+        # and p uncoupled: the Takagi factorization is then of a real
+        # symmetric matrix stored complex
+        decomposed = true
+        for trial in 1:20
+            Or = Matrix(qr(randn(3, 3)).Q)
+            r = rand(3)
+            S = [Or*Diagonal(exp.(r))*Or' zeros(3, 3); zeros(3, 3) Or*Diagonal(exp.(-r))*Or']
+            O, D, Q = JosephsonCircuits.bloch_messiah_block(S)
+            decomposed &= isapprox(O * Diagonal(D) * Q, S) &&
+                JosephsonCircuits.is_symplectic_block(O) &&
+                JosephsonCircuits.is_symplectic_block(Q)
+        end
+        @test decomposed
 
         # add a test for this
         # Bloch-Messiah returns incorrect results #728
@@ -900,6 +1062,25 @@ using Test
         # parameter matrix
         @test JosephsonCircuits.is_unitary(JosephsonCircuits.halmos_dilation([0.1 0;0 0.1]))
 
+        # the closed form of the dilation of a passive matrix which is not
+        # normal
+        S = 0.5*JosephsonCircuits.rand_unitary(3)*Diagonal([0.2, 0.9, 1.0])*JosephsonCircuits.rand_unitary(3)
+        @test isapprox(JosephsonCircuits.halmos_dilation(S),
+            [S sqrt(Hermitian(I - S*S')); sqrt(Hermitian(I - S'*S)) -S'])
+
+        # a lossless matrix, whose singular values are one up to rounding,
+        # dilates to a unitary one; a matrix with gain is refused
+        dilated = true
+        for trial in 1:20
+            U = JosephsonCircuits.rand_unitary(4)
+            dilated &= JosephsonCircuits.is_unitary(JosephsonCircuits.halmos_dilation(U))
+        end
+        @test dilated
+        @test_throws(
+            ArgumentError,
+            JosephsonCircuits.halmos_dilation([2.0 0;0 0.5]),
+        )
+
     end
 
     @testset "Ymin_from_X_quadrature_pair and Ymin_from_X_quadrature_block" begin
@@ -936,6 +1117,9 @@ using Test
         S1 = JosephsonCircuits.A_B_to_symplectic_pair(A, B1)
         @test JosephsonCircuits.is_symplectic_pair(S1)
 
+        # rows of rank below 2n cannot be completed
+        @test_throws(ArgumentError,
+            JosephsonCircuits.A_B_to_symplectic_pair(zeros(2, 2), zeros(2, 4)))
     end
 
     @testset "B_from_X_Y_quadrature_block" begin
@@ -988,6 +1172,15 @@ using Test
 
     end
 
+    @testset "wmatrix" begin
+        # the in-place form fills and returns a matrix of the size it checks
+        w = zeros(2, 3)
+        @test JosephsonCircuits.wmatrix!(w, 0.1:0.1:0.3, (1.0,), [(1,), (-1,)]) === w
+        @test w == JosephsonCircuits.wmatrix(0.1:0.1:0.3, (1.0,), [(1,), (-1,)])
+        @test_throws(DimensionMismatch,
+            JosephsonCircuits.wmatrix!(zeros(3, 3), 0.1:0.1:0.3, (1.0,), [(1,), (-1,)]))
+    end
+
     @testset "interpolate_scattering" begin
 
         # test with extrapolation
@@ -999,6 +1192,24 @@ using Test
         w = 0.01:0.01:1.0
         S = JosephsonCircuits.ABCD_tline(50,w)
         @test isapprox(S,JosephsonCircuits.interpolate_scattering(w,conj.(S),-w))
+
+        # a matched delay line, whose phase winds four times across the
+        # band, between its samples: the exact response, conjugated at
+        # negative frequencies, and the value given outside the band
+        w0 = collect(range(1.0, 10.0, length = 101))
+        tau = 3.0
+        Sd = zeros(Complex{Float64}, 2, 2, length(w0))
+        Sd[2, 1, :] .= cis.(-w0 .* tau)
+        Sd[1, 2, :] .= Sd[2, 1, :]
+        wm = (w0[1:end-1] .+ w0[2:end]) ./ 2
+        Sm = JosephsonCircuits.interpolate_scattering(w0, Sd, wm)
+        @test isapprox(Sm[2, 1, :], cis.(-wm .* tau))
+        @test isapprox(Sm[1, 2, :], cis.(-wm .* tau))
+        Sm = JosephsonCircuits.interpolate_scattering(w0, Sd, -wm)
+        @test isapprox(Sm[2, 1, :], cis.(wm .* tau))
+        Sm = JosephsonCircuits.interpolate_scattering(w0, Sd, [20.0, -20.0];
+            extrap = true, extrap_value = 0.5im)
+        @test Sm[2, 1, :] == [0.5im, -0.5im]
 
         # test with incorrect dimensions
         w = 0.01:0.01:1.0

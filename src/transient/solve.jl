@@ -112,10 +112,12 @@ struct TransientSystem{B, M, MJ, V, VC, J, P, F, G, RM, RB}
     beta::Float64
     # the scaled matrices, on the backend, and the combinations a step
     # reads: `K = alpha*C + beta*G + L` of the residual and the operator,
-    # and `A = alpha*C + beta*G - L` (backward Euler: `C/h^2 + G/h`) and
-    # `B = (4/h) C` (backward Euler: `C/h`) of the right hand side, so a
-    # residual or a right hand side is one product per matrix rather than
-    # one per term, which on a device is one launch rather than five
+    # `B = (4/h) C` (backward Euler: `C/h`) of the right hand side of the
+    # step in its increment, and `A = alpha*C + beta*G - L` (backward
+    # Euler: `C/h^2 + G/h`) with `B` of the tangent's and the adjoint's,
+    # which carry the state rather than its increment, so a residual or a
+    # right hand side is one product per matrix rather than one per term,
+    # which on a device is one launch rather than five
     C::M
     G::M
     L::M
@@ -127,13 +129,24 @@ struct TransientSystem{B, M, MJ, V, VC, J, P, F, G, RM, RB}
     Gt::M
     Lt::M
     symmetric::Bool
-    # the largest absolute row or column sums of `C`, `G`, `L` and of the
-    # junction stamp `|RJ'| lmolj |RJ|`, which bound the rounding of a
-    # product with each or with its transpose by the size of what it
-    # multiplies: a product cancels along an algebraic direction, and its
-    # result then understates the rounding in it, so a convergence test
-    # that stops at roundoff reads these.
-    rowsums::NTuple{4, Float64}
+    # the largest absolute row or column sums of `C`, `G`, `L`, of the
+    # junction stamp `|RJ'| lmolj |RJ|` and of `RJ'`, which bound the
+    # rounding of a product with each or with its transpose by the size
+    # of what it multiplies: a product cancels along an algebraic
+    # direction, and its result then understates the rounding in it, so a
+    # convergence test that stops at roundoff reads these; and the
+    # entrywise magnitudes of those matrices, of their transposes and of
+    # the junction incidence, which bound it row by row where the sums,
+    # pairing the largest row of one with the largest entry of the other
+    # whatever rows they are in, do not suffice
+    rowsums::NTuple{5, Float64}
+    Cabs::M
+    Gabs::M
+    Labs::M
+    Gtabs::M
+    Ltabs::M
+    RJabs::MJ
+    RJtabs::MJ
     # the junction incidence, its transpose and the coefficients Lscale/Lj
     RJ::MJ
     RJt::MJ
@@ -266,12 +279,11 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
         backend::Backend, factorization::AbstractFactorization)
     nm = p.matrices
     Ntot = length(p)
-    Nnodal, Naux = p.Nnodal, p.Naux
+    Naux = p.Naux
     # the scale of the equations is the problem's, so that a state means
     # the same at every step
     Lscale = p.Lscale
-    C, G, L, lineE = transientlinearmatrices(nm, p.coupledbranches, p.circuit.topology.Rbn, p.gaugeindices, p.blocks, p.lines,
-        Lscale, Nnodal, Naux)
+    C, G, L, lineE = p.C, p.G, p.L, p.lineE
     symmetric = isempty(p.blocks)
     for l in p.lines
         l.delay >= h || throw(ArgumentError(
@@ -296,9 +308,8 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     end
     # the junction rows of the incidence matrix and the coefficients
     Ljb = nm.Ljb
-    RJ = SparseMatrixCSC{Float64,Int}(Rbnm[Ljb.nzind, :])
+    RJ, lmolj = p.RJ, p.lmolj
     RJt = sparse(transpose(RJ))
-    lmolj = Float64[Lscale/Ljb.nzval[i] for i in eachindex(Ljb.nzval)]
     # the drives and the constant current, scaled: a current I enters the
     # node equations as Lscale*I/phi0
     injection = (Lscale/phi0) .* p.injection
@@ -328,7 +339,7 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     Z = spzeros(Float64, Ntot, Ntot)
     Nbranches = p.circuit.topology.Nbranches
     Jrs, _ = realjacobianstructure(ami, amc, Ljb, Rbnm, 1, Nbranches, K, Z, Z,
-        layout, layout, Float64; transposed = devicej, backend)
+        layout, Float64; transposed = devicej, backend)
     junctions = junctionstructure(Float64, ami, amc, Ljb, Lscale, Rbnm, 1,
         Nbranches, 1, backend)
     wzero = Diagonal(zeros(Ntot))
@@ -339,23 +350,23 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     d = A -> devicesparse(A, backend)
     v = x -> tobackend(backend, x)
     gauss = if method isa GaussLegendre
-        imvals = gaussimaginary(gc, h, C, G, Jrs, devicej)
+        # the imaginary part of the stage matrix, `Im((mu/h)^2) C + Im(mu/h) G`,
+        # and the blocks' unconverted responses at the stage frequency, on
+        # the pattern of the real Jacobian
+        imvals = patternvalues(imag((gc.mu/h)^2) .* C .+ imag(gc.mu/h) .* G, Jrs, devicej)
         cjacobian = devicej ? DeviceValuedSparseMatrix(Jrs, tobackend(backend, zeros(ComplexF64, nnz(Jrs)))) :
             SparseMatrixCSC(size(Jrs)..., copy(SparseArrays.getcolptr(Jrs)), copy(rowvals(Jrs)), zeros(ComplexF64, nnz(Jrs)))
-        stageterms = rationalstageterms(p, gc.mu/h)
-        rationalvals = zeros(ComplexF64, nnz(Jrs))
-        rationalvalues!(rationalvals, p, gc.mu/h, Lscale, Jrs, devicej, stageterms, nothing)
+        rationalvals = patternvalues(rationalmatrix(p, gc.mu/h, Lscale, Ntot), Jrs, devicej)
         stages = rationalstages(p, gc, h)
         coupling = isempty(stages) ? nothing : rationalcoupling(p, stages, gc, h, Lscale, blockgather, blockscatter, backend)
         pumped = any(b -> !isempty(b.modulations), p.blocks)
-        gaussstage(gc, v(imvals), cjacobian, v(rationalvals), stages, coupling, backend,
-            (terms = stageterms, pattern = Jrs), rationalvals, devicej, pumped)
+        gaussstage(gc, v(imvals), cjacobian, v(rationalvals), coupling, backend, pumped)
     else
         nothing
     end
     Cd, RJd, lmoljd = d(C), d(RJ), v(lmolj)
     sums = A -> max(opnorm(A, 1), opnorm(A, Inf))
-    rowsums = (sums(C), sums(G), sums(L), opnorm(RJt, Inf)*maximum(lmolj; init = 0.0)*opnorm(RJ, Inf))
+    rowsums = (sums(C), sums(G), sums(L), opnorm(RJt, Inf)*maximum(lmolj; init = 0.0)*opnorm(RJ, Inf), opnorm(RJt, Inf))
     # the algebraic directions partitioned once, for the projection and
     # the invariant reading alike
     partition = algebraicpartition(p, L, RJ, injection, lineinjection, blockscatter)
@@ -364,6 +375,7 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     return TransientSystem{typeof(backend), typeof(Cd), typeof(RJd), typeof(lmoljd), typeof(cosphi), typeof(jacobian),
             typeof(plan), typeof(factorization), typeof(gauss), RM, RB}(p, backend, method, Float64(h), Lscale, alpha, beta,
         Cd, d(G), d(L), d(K), d(A), d(B), d(sparse(transpose(G))), d(sparse(transpose(L))), symmetric, rowsums,
+        d(abs.(C)), d(abs.(G)), d(abs.(L)), d(sparse(transpose(abs.(G)))), d(sparse(transpose(abs.(L)))), d(abs.(RJ)), d(abs.(RJt)),
         RJd, d(RJt), lmoljd, d(injection), v(constant), d(blockscatter),
         d(lineinjection), d(linegather), d(lineE),
         d(ports), d(portst), d(portdrives), v(p.portimpedances), v(p.portconductances), plan, jacobian,
@@ -528,12 +540,17 @@ end
 
 Result of [`transientsolve`](@ref). `times` is in seconds; `voltage`
 holds the port voltages in Volts and `incident` and `outgoing` the real
-instantaneous power waves in sqrt(W), one row per port in compiled port
-order and one column per saved time. `initialflux`, `initialrate`,
-`finalflux` and `finalrate` always hold the first and the last scaled
-state, and [`transientstate`](@ref)`(solution)` is the state to continue
-from. With `record = :phases` or `:states`, `phases` holds the junction
-phases the tangent and the adjoint read, at every saved time under the
+instantaneous power waves in sqrt(W), one row per port in the order of
+the port numbers, as harmonic balance's port axis, and one column per
+saved time. `initialflux`, `initialrate`, `finalflux` and `finalrate`
+always hold the first and the last scaled state, and `finalwaves` and
+`finalstates` the rest of the last, the waves leaving each line port
+over the delay window before the end as `(port, column)` and the states
+of the rational blocks, or `nothing` without lines or blocks, so that
+[`transientstate`](@ref)`(solution)` is the state to continue from
+whatever was recorded. With `record = :phases` or `:states`, `phases`
+holds the junction phases the tangent and the adjoint read, at every
+saved time under the
 trapezoidal rule and at the two stages of each step under
 [`GaussLegendre`](@ref), as `(junction, stage, time)`, `endphases`
 the phases at every saved time of the junctions on the algebraic
@@ -550,11 +567,14 @@ the lines read after it; on the solve's backend as every record is; with
 their rates at every saved time as well, and under
 [`GaussLegendre`](@ref) `stages` the two stage increments of the step
 ending at each saved time, as `(state, stage, time)`, which the
-sensitivity to a component value reads; with `record = :checkpoints`,
+sensitivity to a component value reads, and `blockstates` the rational
+blocks' states at every saved time; with `record = :checkpoints`,
 `checkpoints` holds the state and the stage predictor every
 `checkpointevery` steps, from which the responses replay the steps
 between, so that a record of any length costs the checkpoints and one
-window of phases. `stats` counts the
+window of phases. `initialwaves` and `initialstates` are the lines'
+waves and the blocks' states the solve started from, which the noise
+reads. `stats` counts the
 steps, the Newton corrections, the numeric factorizations, the retries
 of a rejected correction after a fresh factorization at its base point,
 and the Krylov iterations. The arrays live on the backend of the solve.
@@ -582,6 +602,11 @@ struct TransientSolution
     rate::Any
     stages::Any
     checkpoints::Any
+    # the rest of the state at the end, which `transientstate` continues
+    # from: the waves leaving the line ports over the delay window before
+    # the end, `(port, column)`, and the states of the rational blocks
+    finalwaves::Any
+    finalstates::Any
     initialflux::Any
     initialrate::Any
     finalflux::Any
@@ -596,35 +621,12 @@ end
 
 function transientstate(sol::TransientSolution)
     p = sol.problem
-    waves = if isempty(p.lines)
-        zeros(0, 1)
-    elseif !isnothing(sol.linewaves)
-        # the waves over the delay window before the end, as many columns
-        # as the lines read at this step: the last of the record, and, if
-        # the record is shorter than the window, the end of the history
-        # the solve started from before it, whose last column the record's
-        # first repeats. Only the window is read, so a long record is
-        # neither copied nor brought back from a device
-        nt = size(sol.linewaves, 2)
-        npre = lineprehistory(p, sol.dt)
-        if nt >= npre
-            Float64.(Array(view(sol.linewaves, :, nt - npre + 1:nt)))
-        else
-            nb = max(min(npre - nt, size(sol.history, 2) - 1), 0)
-            before = Float64.(Array(view(sol.history, :, size(sol.history, 2) - nb:size(sol.history, 2) - 1)))
-            hcat(before, Float64.(Array(sol.linewaves)))
-        end
-    else
-        throw(ArgumentError("the record holds no line waves to continue from; solve with a record other than checkpoints."))
-    end
-    states = if blockstates(p) == 0
-        zeros(0)
-    elseif !isnothing(sol.blockstates)
-        Float64.(Array(view(sol.blockstates, :, size(sol.blockstates, 2))))
-    else
-        throw(ArgumentError("the states of the rational blocks at the end of the solve are recorded with record = :states."))
-    end
-    return TransientState(Float64.(Array(sol.finalflux)), Float64.(Array(sol.finalrate)), waves, isempty(p.lines) ? 0.0 : sol.dt, states)
+    lines, blocks = !isempty(p.lines), blockstates(p) > 0
+    ((lines && isnothing(sol.finalwaves)) || (blocks && isnothing(sol.finalstates))) && throw(ArgumentError(
+        "the solution holds no final state of its lines and blocks to continue from; it is not a solve of the package's own rules."))
+    waves = lines ? Float64.(Array(sol.finalwaves)) : zeros(0, 1)
+    states = blocks ? Float64.(Array(sol.finalstates)) : zeros(0)
+    return TransientState(Float64.(Array(sol.finalflux)), Float64.(Array(sol.finalrate)), waves, lines ? sol.dt : 0.0, states)
 end
 
 # the levels of the record: the port waves, the junction phases the
@@ -640,11 +642,12 @@ end
 function portwaves!(voltage, incident, outgoing, sys::TransientSystem, v, drivevalues, work)
     stepmul!(work, sys.ports, v)
     voltage .= phi0 .* work
+    # the current into each port, in the work
     stepmul!(work, sys.portdrives, drivevalues)
-    current = work .- sys.portconductances .* voltage
+    work .-= sys.portconductances .* voltage
     z = sys.portimpedances
-    incident .= (voltage .+ z .* current) ./ (2 .* sqrt.(z))
-    outgoing .= (voltage .- z .* current) ./ (2 .* sqrt.(z))
+    incident .= (voltage .+ z .* work) ./ (2 .* sqrt.(z))
+    outgoing .= (voltage .- z .* work) ./ (2 .* sqrt.(z))
     return nothing
 end
 
@@ -743,11 +746,15 @@ where the solve runs, and `factorization` the sparse factorization, KLU
 on the CPU and cuDSS on a CUDA device by default. The
 Jacobian's pattern is fixed and its symbolic analysis done once; a linear
 circuit factorizes once. `atol` and `rtol` control the Newton residual
-of a step, not the temporal error, the absolute tolerance and one
-relative to the step's right hand side, and `iterations` bounds the
+of a step, not the temporal error: `rtol` relative to the largest of the
+terms the step's residual sums, and `atol` absolute, in the units of the
+scaled equations, where a current `I` is `Lscale*I/phi0` with `Lscale`
+the problem's inductance scale and `phi0` the reduced flux quantum, so
+that it is a current of `atol*phi0/Lscale`; a drive weaker than that is
+converged to `atol` alone, so lower it for one. `iterations` bounds the
 corrections of a step, the names [`hbnlsolve`](@ref) uses, where `rtol`
-is relative to the initial residual instead; a Newton step that fails
-throws.
+is relative to the initial residual instead; a step that fails throws a
+[`TransientStepError`](@ref).
 
 With `linearsolver = GMRES()` (or another of the package's Krylov
 solvers) under [`Trapezoidal`](@ref) or [`BackwardEuler`](@ref) each
@@ -767,11 +774,13 @@ whole flux and rate history as well, and `record = :checkpoints`, under
 [`GaussLegendre`](@ref), only the state every `checkpointevery` steps
 (the square root of the step count by default), from which the
 responses replay the steps between at the cost of one more solve, so
-the memory of a record of any length is bounded.
+the memory of a record of any length is bounded; the solve refactorizes
+at every checkpoint, as the replay starts each window, so that the
+replay retraces it exactly.
 `initialstate` is the [`TransientState`](@ref) of
 [`transientstate`](@ref), from physical values or from the end of
 another solution; the solver checks that it satisfies the algebraic
-equations of the circuit at the start.
+equations of the circuit at the start, to the tolerances of a step.
 """
 function transientsolve(p::TransientProblem, tspan; dt::Real,
         method::AbstractTransientIntegrator = GaussLegendre(), backend::Backend = CPU(),
@@ -821,22 +830,23 @@ end
 # each algebraic direction, where the conductance vanishes as well, the
 # rate is read by the same equation differentiated,
 # `z' ((L + J'(x)) v) = z' b'(t)`, so a rate violating it would ring
-# rather than decay. Returns the largest violation of both and the scale
-# to compare it with, on the host.
+# rather than decay. Returns, on the host, the largest violation of the
+# equations, `rows`, and of the differentiated constraints, `rates`, in
+# the scaled units, each with `rowscale` and `ratescale` the largest of
+# the terms it balances, and `violation` the larger of the two relative
+# to those terms, zero where there are none.
 function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem = sys.problem, linevalues = zeros(2length(p.lines)),
         blockwaves = nothing, linerates = zeros(2length(p.lines)))
-    isempty(p.inertialess) && return 0.0, 1.0
-    G, L, RJ = hostsparse(sys.G), hostsparse(sys.L), hostsparse(sys.RJ)
-    lmolj = Array(sys.lmolj)
+    isempty(p.inertialess) && return (; violation = 0.0, rows = 0.0, rowscale = 0.0, rates = 0.0, ratescale = 0.0)
+    G, L, RJ, lmolj = p.G, p.L, p.RJ, p.lmolj
     xh, vh = Array(x), Array(v)
     b = hostdrivecurrent(sys, t, p, linevalues, blockwaves)
     phi = RJ*xh
     hr = hostrelations(sys.relations)
     gv, lx, j = G*vh, L*xh, transpose(RJ)*(lmolj .* relationat(hr, phi))
     r = gv .+ lx .+ j .- b
-    # the violations are relative to the terms balanced
-    scale = max(norm(b, Inf), norm(gv, Inf), norm(lx, Inf), norm(j, Inf), 1.0)
-    worst = 0.0
+    rowscale = max(norm(b, Inf), norm(gv, Inf), norm(lx, Inf), norm(j, Inf))
+    rows = maximum(z -> abs(sum(view(r, z))), p.inertialess)
     # the rate of the drives by the five point central difference the
     # reading takes, the lines' forced currents carried along it at their
     # own rate
@@ -844,30 +854,38 @@ function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem
     bat = s -> hostdrivecurrent(sys, t + s*delta, p, linevalues .+ (s*delta) .* linerates, blockwaves)
     bdot = (8 .* (bat(1) .- bat(-1)) .- (bat(2) .- bat(-2))) ./ (12delta)
     lv, jv = L*vh, transpose(RJ)*(lmolj .* derivativeat(hr, phi) .* (RJ*vh))
-    ratescale = max(norm(bdot, Inf), norm(lv, Inf), norm(jv, Inf), 1.0)
+    ratescale = max(norm(bdot, Inf), norm(lv, Inf), norm(jv, Inf))
     lv .+= jv .- bdot
-    for z in p.inertialess
-        worst = max(worst, abs(sum(view(r, z)))/scale)
-    end
     # the constraints differentiated: the currents cancel in them
-    size(p.constraints, 1) == 0 || (worst = max(worst, norm(p.constraints*lv, Inf)/ratescale))
-    return worst, 1.0
+    rates = size(p.constraints, 1) == 0 ? 0.0 : norm(p.constraints*lv, Inf)
+    relative = (a, s) -> s > 0 ? a/s : 0.0
+    return (; violation = max(relative(rows, rowscale), relative(rates, ratescale)), rows, rowscale, rates, ratescale)
 end
+
+# Whether a state's violation of the algebraic equations, from
+# `transientconsistency`, is within the tolerances of a step: the
+# equations within `atol + rtol` of the terms they balance, and their
+# rate within `atol/h + rtol` of its terms, the rate at which a residual
+# of `atol` builds over one step
+consistentstate(c, atol, rtol, h) = c.rows <= atol + rtol*c.rowscale && c.rates <= atol/h + rtol*c.ratescale
 
 function transientintegrate(sys::TransientSystem, p::TransientProblem, t0, tf, nsteps, initialstate,
         saveevery, record, rtol, atol, iterations, linearsolver = nothing, reuse = nothing)
     savephases, savestates, _ = recordlevel(record, saveevery)
     backend = sys.backend
     n, np, nd = length(p), length(p.portimpedances), length(p.drives)
-    h, alpha, beta = sys.h, sys.alpha, sys.beta
+    h = sys.h
     trapezoidal = sys.method isa Trapezoidal
     x0, v0 = initialstate.flux, initialstate.rate
     (length(x0) == n && length(v0) == n) || throw(DimensionMismatch(lazy"the state has $(n) entries; use transientstate."))
     (all(isfinite, x0) && all(isfinite, v0)) || throw(ArgumentError("the initial state must be finite."))
     allocate = () -> KernelAbstractions.zeros(backend, Float64, n)
     x, v = tobackend(backend, Float64.(collect(x0))), tobackend(backend, Float64.(collect(v0)))
-    xnew, residual, rhs, work = allocate(), allocate(), allocate(), allocate()
+    xnew, residual, rhs = allocate(), allocate(), allocate()
     junction, junctionnew, correction, trial = allocate(), allocate(), allocate(), allocate()
+    # the increment of the step, the unknown of its Newton solve, the
+    # state at an increment, and the stiffness term of the right hand side
+    increment, stagex, lx = allocate(), allocate(), allocate()
     # a trial of the line search keeps its own residual, phases and
     # junction current, so that the base point's stay what a refreshed
     # Jacobian and correction are built from
@@ -877,32 +895,30 @@ function transientintegrate(sys::TransientSystem, p::TransientProblem, t0, tf, n
     phi, phinew, trialphi, jwork = [KernelAbstractions.zeros(backend, Float64, nj) for _ in 1:4]
     hostvalues = zeros(nd)
     values = tobackend(backend, zeros(nd))
-    prevvalues = zeros(nd)
     portwork = KernelAbstractions.zeros(backend, Float64, np)
     # the drive and the junction current at the start, and the check of
     # the algebraic equations along the inertialess directions
     drivecurrent!(b, sys, p, values, hostvalues, t0)
-    copyto!(prevvalues, hostvalues)
     junctionphases!(phi, sys, x)
     junctioncurrent!(junction, sys, phi, jwork)
-    violation, _ = transientconsistency(sys, x, v, t0, p)
-    violation <= atol + rtol || throw(ArgumentError(
+    consistentstate(transientconsistency(sys, x, v, t0, p), atol, rtol, h) || throw(ArgumentError(
         "the initial state violates the algebraic equations of the circuit along a direction without capacitance to ground (a node no capacitor touches, a capacitive island, a coupled inductor or gauge row); supply a consistent transientstate, or start the drive from an equilibrium."))
     # The Jacobian and its factorization at the start. A factorization is
-    # kept across steps and corrections while Newton converges in one
-    # correction with it, which the predictor from the last increment makes
-    # the rule for a junction whose phase moves little per step; when a
-    # second correction is needed, or the first fails, the Jacobian is
+    # kept across steps and corrections while each correction with it
+    # contracts the residual by at least a quarter, as the Gauss-Legendre
+    # rule keeps its frozen operator, the junction stiffness being a small
+    # part of the step matrix at any step that resolves the circuit; when a
+    # correction contracts less, or the first fails, the Jacobian is
     # reassembled at the current iterate and factorized, and the next step
     # then assembles at its predictor before its first correction rather
     # than trying the stale factorization again. A linear circuit therefore
-    # factorizes once, a weakly driven junction nearly so, and a strongly
-    # driven one once per step with one correction.
-    # a kept factorization is refreshed rather than analyzed again
+    # factorizes once, a moderately driven junction nearly so, and one
+    # driven hard enough to change its stiffness within a step once per
+    # step. A kept factorization is refreshed rather than analyzed again.
     factor = stepjacobian!(sys, phi, isnothing(reuse) ? nothing : reuse.factor)
-    factorizations, corrections, retries = 1, 0, 0
+    corrections = 0
     nonlinear = nj > 0
-    stalefailed = false
+    stalefailed = [false]
     # The iterative step: the step matrix applied matrix free at the
     # current iterate, the last factorization applied as the preconditioner,
     # and the workspace kept for the whole solve. The factorization is
@@ -929,11 +945,11 @@ function transientintegrate(sys::TransientSystem, p::TransientProblem, t0, tf, n
     # a trial, each keeping its own phases and junction current, the
     # refresh of the factorization at the base point's phases, and the
     # solve with the kept factorization, direct or preconditioned Krylov
-    baseresidual! = (norms, r, y) -> (norms[1] = stepresidual!(r, sys, y, phinew, junctionnew, jwork, work, rhs); nothing)
-    trialresidual! = (norms, r, y) -> (norms[1] = stepresidual!(r, sys, y, trialphi, trialjunction, jwork, work, rhs); nothing)
+    baseresidual! = (norms, r, d) -> (norms[1] = stepresidual!(r, sys, x, d, stagex, phinew, junctionnew, jwork, rhs); nothing)
+    trialresidual! = (norms, r, d) -> (norms[1] = stepresidual!(r, sys, x, d, stagex, trialphi, trialjunction, jwork, rhs); nothing)
     # the refresh refactorizes in place: KLU and cuDSS both return the
     # factorization they were given, so the closure need not rebind it
-    refresh! = () -> (stepjacobian!(sys, phinew, factor); nothing)
+    refresh! = mask -> (stepjacobian!(sys, phinew, factor); nothing)
     accept! = mask -> (copyto!(phinew, trialphi); copyto!(junctionnew, trialjunction); nothing)
     newtonwork = NewtonWork(backend, 1)
     tolerance = [0.0]
@@ -976,6 +992,7 @@ function transientintegrate(sys::TransientSystem, p::TransientProblem, t0, tf, n
     pr = sys.projection
     projecting = !isnothing(pr) && !isempty(pr.directions)
     gb, gbabs = projecting ? (zeros(length(pr.directions), 1), zeros(length(pr.directions), 1)) : (nothing, nothing)
+    moved! = w -> (increment .+= view(w, :, 1); nothing)
     readout!(t) = begin
         isnothing(sys.projection) || drivedotz!(rw.bdotz, sys.projection, problems, t, delta, rw.hv1, rw.hv2)
         readrate!(reshape(vread, n, 1), reshape(v, n, 1), reshape(x, n, 1), sys, rw)
@@ -1005,51 +1022,54 @@ function transientintegrate(sys::TransientSystem, p::TransientProblem, t0, tf, n
         t = step == nsteps ? tf : t0 + step*h
         copyto!(bprev, b)
         drivecurrent!(b, sys, p, values, hostvalues, t)
-        # the right hand side of the step from the previous state. For the
-        # trapezoidal rule on x' = v and C v' = b - G v - L x - J(x), with
-        # the rate update v_{n+1} = (2/h)(x_{n+1} - x_n) - v_n substituted,
-        #   (b_{n+1} + b_n) + [alpha*C + beta*G - L] x_n + (4/h) C v_n - J(x_n);
+        # The step in its increment `d = x_{n+1} - x_n`, `K d + J(x_n + d) = r`,
+        # as the Gauss-Legendre rule steps its stages: the right hand side
+        # holds no term of the state's own size, so the tolerance does not
+        # grow with an accumulated phase. For the trapezoidal rule on
+        # x' = v and C v' = b - G v - L x - J(x), with the rate update
+        # v_{n+1} = (2/h) d - v_n substituted,
+        #   r = (b_{n+1} + b_n) - 2 L x_n + (4/h) C v_n - J(x_n);
         # for backward Euler
-        #   b_{n+1} + C (x_n/h^2 + v_n/h) + G x_n/h.
-        stepmul!(rhs, sys.A, x)
-        stepmul!(work, sys.B, v)
+        #   r = b_{n+1} - L x_n + C v_n/h.
+        stepmul!(lx, sys.L, x)
+        stepmul!(rhs, sys.B, v)
         if trapezoidal
-            rhs .+= work .+ b .+ bprev .- junction
+            lx .*= 2
+            rhs .+= b .+ bprev .- junction .- lx
         else
-            rhs .+= work .+ b
+            rhs .+= b .- lx
         end
-        scale = max(norm(rhs, Inf), 1.0)
-        tolerance[1] = atol + rtol*scale
-        # Newton on x_{n+1}, from the previous increment
-        xnew .= x .+ lastincrement
-        converged, fresh, ncorr, nfact, nretry, nkrylov, stale = newtonsolve!(xnew, correction, trial,
+        # relative to the terms the residual sums, with atol absolute
+        tolerance[1] = atol + rtol*max(norm(rhs, Inf), norm(lx, Inf))
+        # Newton on the increment, from the previous one
+        copyto!(increment, lastincrement)
+        converged, ncorr, nkrylov, stale = newtonsolve!(increment, correction, trial,
             residual, trialresidual, baseresidual!, trialresidual!, refresh!, solve!,
-            tolerance, iterations, stalefailed, nonlinear, iterative, newtonwork; accept!)
+            tolerance, iterations, stalefailed, nonlinear, iterative, newtonwork; simplified = !iterative, accept!)
         corrections += ncorr
-        factorizations += nfact
-        retries += nretry
         krylov += nkrylov
-        converged || error(lazy"the Newton solve of step $(step) at t = $(t) s did not converge; reduce dt or check the initial state and the circuit.")
-        stalefailed = iterative ? stale : fresh
-        # the endpoint onto the constraints, its phases and junction
-        # current then those of the projected state
+        converged || throw(TransientStepError(step, t, [1], :newton))
+        stalefailed[1] = iterative ? stale : newtonwork.fresh[1]
+        xnew .= x .+ increment
+        # the endpoint onto the constraints, the increment moved with it,
+        # its phases and junction current then those of the projected state
         if projecting
-            mul!(vec(gb), pr.Ztinj, hostvalues)
-            gb .+= pr.Ztconstant
-            mul!(vec(gbabs), pr.Ztinjabs, abs.(hostvalues))
-            gbabs .+= abs.(pr.Ztconstant)
-            projectendpoint!(reshape(xnew, n, 1), rw.pw, pr, gb, gbabs, iterations) ||
-                error(lazy"the projection onto the algebraic constraints at t = $(t) s did not converge; reduce dt or check the state.")
+            mul!(vec(gb), pr.Zcinj, hostvalues)
+            gb .+= pr.Zcconstant
+            mul!(vec(gbabs), pr.Zcinjabs, abs.(hostvalues))
+            gbabs .+= abs.(pr.Zcconstant)
+            projectendpoint!(reshape(xnew, n, 1), rw.pw, pr, gb, gbabs, iterations, moved!) ||
+                throw(TransientStepError(step, t, [1], :projection))
             junctionphases!(phinew, sys, xnew)
             junctioncurrent!(junctionnew, sys, phinew, jwork)
         end
         # the rate of the new state and the state itself
         if trapezoidal
-            v .= (2/h) .* (xnew .- x) .- v
+            v .= (2/h) .* increment .- v
         else
-            v .= (xnew .- x) ./ h
+            v .= increment ./ h
         end
-        lastincrement .= xnew .- x
+        copyto!(lastincrement, increment)
         copyto!(x, xnew)
         copyto!(phi, phinew)
         copyto!(junction, junctionnew)
@@ -1066,18 +1086,21 @@ function transientintegrate(sys::TransientSystem, p::TransientProblem, t0, tf, n
         reuse.workspace = workspace
     end
     return TransientSolution(p, sys.method, h, times, voltage, incident, outgoing,
-        phases, nothing, endrates, nothing, nothing, flux, rate, nothing, nothing, initialflux, initialrate, copy(x), finalrate, nothing, nothing, nothing,
-        (; steps = nsteps, newtoncorrections = corrections, factorizations,
-            retries, kryloviterations = krylov, rtol, atol, iterations))
+        phases, nothing, endrates, nothing, nothing, flux, rate, nothing, nothing, nothing, nothing, initialflux, initialrate, copy(x), finalrate,
+        nothing, nothing, nothing,
+        (; steps = nsteps, newtoncorrections = corrections, factorizations = 1 + newtonwork.factorizations[1],
+            retries = newtonwork.retries[1], kryloviterations = krylov, rtol, atol, iterations))
 end
 
-# the residual of the step at a trial state, `K*x + J(x) - rhs`, with the
-# phases and the junction current of the trial kept for the Jacobian and
-# the next step
-function stepresidual!(residual, sys::TransientSystem, x, phi, junction, jwork, work, rhs)
-    junctionphases!(phi, sys, x)
+# the residual of the step at a trial increment `d` from the state `x`,
+# `K d + J(x + d) - rhs`, with the phases and the junction current of the
+# trial kept for the Jacobian and the next step, and `X` the work of the
+# state at the increment
+function stepresidual!(residual, sys::TransientSystem, x, d, X, phi, junction, jwork, rhs)
+    X .= x .+ d
+    junctionphases!(phi, sys, X)
     junctioncurrent!(junction, sys, phi, jwork)
-    stepmul!(residual, sys.K, x)
+    stepmul!(residual, sys.K, d)
     residual .+= junction .- rhs
     return norm(residual, Inf)
 end
@@ -1088,24 +1111,31 @@ end
 # and `trialresidual!(norms, r, y)` evaluate the residual at `y` into `r`
 # and its norm per column into `norms`, each keeping its own cache of what
 # the Jacobian reads, so that a rejected trial never overwrites the base
-# point's; `refresh!()` assembles and factorizes the Jacobians at the base
-# point; `solve!(c, r)` solves for the correction and returns whether the
-# solve found the factorization stale, and its iteration count;
-# `accept!(mask)` makes the trial's cache the base point's on the columns
-# of `mask`, whose residual is then adopted rather than evaluated again.
-# The policy: a kept factorization is tried for the first correction
-# unless the last step found it stale; a second correction, or a rejected
-# first one, refreshes it at the base point and rebuilds the correction
-# from the base point's residual; the line search halves a rejected
-# column's correction. With `simplified` the factorization is an
-# approximation of the Jacobian even when fresh, as the Gauss-Legendre
-# stage matrix is, so a second correction is the rule rather than a sign
-# of staleness; the refresh is then decided by the contraction of the
-# residual between corrections, a poor one on any column meaning the
-# frozen operator has drifted. Returns whether every column converged,
-# whether the factorization was refreshed, and the counts. `work` holds
-# the host vectors of the per column bookkeeping and the mask on the
-# backend.
+# point's; `refresh!(mask)` assembles and factorizes the Jacobians of the
+# columns of `mask` at the base point; `solve!(c, r)` solves for the
+# correction and returns whether the solve found the factorization stale,
+# and its iteration count; `accept!(mask)` makes the trial's cache the
+# base point's on the columns of `mask`, whose residual is then adopted
+# rather than evaluated again. The policy: a kept factorization is tried
+# for the first correction unless the last step found it stale
+# (`stalefailed`); a second correction, or a rejected first one,
+# refreshes it at the base point and rebuilds the correction from the
+# base point's residual; the line search halves a rejected column's
+# correction. With `simplified` a second correction is the rule rather
+# than a sign of staleness, since the factorization is an approximation
+# of the Jacobian even when fresh, as the Gauss-Legendre stage matrix is,
+# or a kept one whose junction stiffness is a small part of the step
+# matrix, as a direct trapezoidal step's is; the refresh is then decided
+# by the contraction of the residual between corrections, a poor one
+# meaning the frozen operator has drifted. Every decision is a column's
+# own, read from its own residuals, and a refresh factorizes the columns
+# which asked alone, so a condition takes the iterates it would take on
+# its own whatever conditions share its batch. Returns whether every
+# column converged, the corrections and Krylov iterations, and whether
+# the last solve found its factorization stale; `work` holds the host
+# vectors of the per column bookkeeping, the mask on the backend, which
+# columns were refreshed in this solve, and the refreshes and retries of
+# every column over the solves it has served.
 struct NewtonWork{V, M}
     norms::Vector{Float64}
     trialnorms::Vector{Float64}
@@ -1115,10 +1145,15 @@ struct NewtonWork{V, M}
     mask::M
     accepted::Vector{Bool}
     newly::Vector{Bool}
+    fresh::Vector{Bool}
+    flagged::Vector{Bool}
+    factorizations::Vector{Int}
+    retries::Vector{Int}
 end
 function NewtonWork(backend, ncolumns)
     return NewtonWork(zeros(ncolumns), zeros(ncolumns), fill(Inf, ncolumns), ones(ncolumns),
-        tobackend(backend, ones(ncolumns)), tobackend(backend, fill(false, ncolumns)), fill(false, ncolumns), fill(false, ncolumns))
+        tobackend(backend, ones(ncolumns)), tobackend(backend, fill(false, ncolumns)), fill(false, ncolumns), fill(false, ncolumns),
+        fill(false, ncolumns), fill(false, ncolumns), zeros(Int, ncolumns), zeros(Int, ncolumns))
 end
 # the columns of `dst` where `mask` holds are replaced by `src`'s, in one
 # broadcast, on a vector or on the columns of a matrix or of an array whose
@@ -1126,40 +1161,60 @@ end
 maskcolumns!(dst::AbstractVector, src, mask) = (dst .= ifelse.(mask, src, dst); dst)
 maskcolumns!(dst::AbstractMatrix, src, mask) = (dst .= ifelse.(transpose(mask), src, dst); dst)
 maskcolumns!(dst::AbstractArray{<:Any,3}, src, mask) = (dst .= ifelse.(reshape(mask, 1, :, 1), src, dst); dst)
-scalecolumns(steps, a::AbstractVector) = steps .* a
-scalecolumns(steps, a::AbstractMatrix) = transpose(steps) .* a
-scalecolumns(steps, a::AbstractArray{<:Any,3}) = reshape(steps, 1, :, 1) .* a
+# on the host a loop over the columns, without the reshaped mask
+function maskcolumns!(dst::Array{T,3}, src::Array{T,3}, mask::Vector{Bool}) where {T}
+    @inbounds for i in axes(dst, 3), col in axes(dst, 2)
+        mask[col] || continue
+        for row in axes(dst, 1)
+            dst[row, col, i] = src[row, col, i]
+        end
+    end
+    return dst
+end
+# the trial point `x - steps c` with a step per column, on a vector, or on
+# the columns of a matrix or of an array whose columns are the second
+# dimension, and on the host a loop, without the reshaped steps
+trialpoint!(trial::AbstractVector, x, steps, c) = (trial .= x .- steps .* c; trial)
+trialpoint!(trial::AbstractMatrix, x, steps, c) = (trial .= x .- transpose(steps) .* c; trial)
+trialpoint!(trial::AbstractArray{<:Any,3}, x, steps, c) = (trial .= x .- reshape(steps, 1, :, 1) .* c; trial)
+function trialpoint!(trial::Array{T,3}, x::Array{T,3}, steps::Vector{Float64}, c::Array{T,3}) where {T}
+    @inbounds for i in axes(c, 3), col in axes(c, 2), row in axes(c, 1)
+        trial[row, col, i] = x[row, col, i] - steps[col]*c[row, col, i]
+    end
+    return trial
+end
 
 function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidual!,
-        trialresidual!, refresh!, solve!, tol::AbstractVector, iterations, stalefailed, nonlinear, iterative,
+        trialresidual!, refresh!, solve!, tol::AbstractVector, iterations, stalefailed::AbstractVector{Bool}, nonlinear, iterative,
         work::NewtonWork; simplified::Bool = false, accept! = nothing, roundoff = nothing)
     norms, trialnorms, previous, steps = work.norms, work.trialnorms, work.previous, work.steps
+    fresh, flagged, accepted, newly = work.fresh, work.flagged, work.accepted, work.newly
     # The residual callbacks may supply a floor for each column. A trial's
     # floor belongs to that trial alone and is adopted only with its point.
     basefloor, trialfloor = isnothing(roundoff) ? (nothing, nothing) : roundoff
+    done = j -> isfinite(norms[j]) && norms[j] <= newtontolerance(tol, basefloor, j)
     converged = false
-    fresh = false
-    corrections, factorizations, retries, krylov = 0, 0, 0, 0
+    corrections, krylov = 0, 0
     laststale = false
     fill!(previous, Inf)
+    fill!(fresh, false)
     adopted = false
     for iteration in 0:iterations
         adopted || baseresidual!(norms, residual, x)
         adopted = false
-        if all(j -> isfinite(norms[j]) && norms[j] <= newtontolerance(tol, basefloor, j), eachindex(norms))
+        if all(done, eachindex(norms))
             converged = true
             break
         end
         iteration == iterations && break
-        refreshnow = if simplified
-            stalefailed || any(j -> norms[j] > newtontolerance(tol, basefloor, j) && norms[j] > 0.25*previous[j], eachindex(norms))
-        else
-            stalefailed || (!iterative && iteration >= 1)
-        end
-        if nonlinear && !fresh && refreshnow
-            refresh!()
-            factorizations += 1
-            fresh = true
+        # the refresh of the columns which have not converged and ask for
+        # it: the last step found theirs stale, or it has drifted
+        if nonlinear
+            for j in eachindex(norms)
+                drifted = simplified ? norms[j] > 0.25*previous[j] : !iterative && iteration >= 1
+                flagged[j] = !fresh[j] && !done(j) && (stalefailed[j] || drifted)
+            end
+            refreshcolumns!(refresh!, work)
         end
         copyto!(previous, norms)
         stale, nkrylov = solve!(correction, residual)
@@ -1167,14 +1222,15 @@ function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidua
         laststale = stale
         corrections += 1
         # the line search, per column: an accepted column is taken into the
-        # base point through the mask, a rejected one halves its step
+        # base point through the mask, a rejected one is retried on a
+        # fresh factorization at its base point if its own is not, and
+        # otherwise halves its step
         fill!(steps, 1.0)
-        accepted, newly = work.accepted, work.newly
         fill!(accepted, false)
         for _ in 0:12
             # an accepted column has a zero step, so its trial is its base
             copyto!(work.stepsdev, steps)
-            trial .= x .- scalecolumns(work.stepsdev, correction)
+            trialpoint!(trial, x, work.stepsdev, correction)
             trialresidual!(trialnorms, trialresidual, trial)
             fill!(newly, false)
             for j in eachindex(norms)
@@ -1202,34 +1258,74 @@ function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidua
                 adopted = true
             end
             all(accepted) && break
-            if !fresh && nonlinear && (!iterative || laststale)
-                # the retry: the Jacobian and the correction at the base
-                # point, whose residual and cache the trial left alone; an
-                # iterative solve retries only when its preconditioner was
-                # found stale, since otherwise the correction it returned
-                # is already the Newton one
-                refresh!()
-                factorizations += 1
-                retries += 1
-                fresh = true
+            # the retry: the Jacobian and the correction at the base point,
+            # whose residual and cache the trial left alone; an iterative
+            # solve retries only when its preconditioner was found stale,
+            # since otherwise the correction it returned is already the
+            # Newton one. The correction is solved again for every column,
+            # which gives the others the one they had.
+            for j in eachindex(norms)
+                flagged[j] = !accepted[j] && !fresh[j] && nonlinear && (!iterative || laststale)
+            end
+            if any(flagged)
+                work.retries .+= flagged
+                refreshcolumns!(refresh!, work)
                 laststale, nkrylov = solve!(correction, residual)
                 krylov += nkrylov
                 corrections += 1
-                continue
-            end
-            for j in eachindex(norms)
-                accepted[j] || (steps[j] *= 0.5)
             end
             # a rejected column keeps its base point: its step is zero for
             # the accepted ones now, so their trial columns are untouched
+            for j in eachindex(norms)
+                (accepted[j] || flagged[j]) || (steps[j] *= 0.5)
+            end
         end
         all(accepted) || break
     end
-    return converged, fresh, corrections, factorizations, retries, krylov, laststale
+    return converged, corrections, krylov, laststale
+end
+
+# the refresh of the flagged columns of a Newton solve, counted
+function refreshcolumns!(refresh!, work::NewtonWork)
+    any(work.flagged) || return nothing
+    refresh!(work.flagged)
+    work.fresh .|= work.flagged
+    work.factorizations .+= work.flagged
+    return nothing
 end
 
 newtontolerance(tol, ::Nothing, j) = tol[j]
 newtontolerance(tol, floor, j) = max(tol[j], isfinite(floor[j]) ? floor[j] : 0.0)
+
+# the columns a Newton solve left unconverged, at its last base point
+unconverged(work::NewtonWork, tol, floor) =
+    findall(j -> !(isfinite(work.norms[j]) && work.norms[j] <= newtontolerance(tol, floor, j)), eachindex(work.norms))
+
+"""
+    TransientStepError(step, time, conditions, cause)
+
+The error [`transientsolve`](@ref) throws when a step cannot be taken:
+the index `step` of the step, the `time` in seconds it ends at, the
+`conditions` of the batch which failed it, `[1]` for a single problem,
+the others having converged at that step, and its `cause`, `:newton`
+when the Newton solve of the step did not converge within `iterations`
+corrections, or `:projection` when the projection of its endpoint onto
+the algebraic constraints did not. A smaller `dt`, or an initial state
+consistent with the circuit, is the remedy.
+"""
+struct TransientStepError <: Exception
+    step::Int
+    time::Float64
+    conditions::Vector{Int}
+    cause::Symbol
+end
+function Base.showerror(io::IO, e::TransientStepError)
+    what = e.cause == :projection ? "the projection of the endpoint of step $(e.step) onto the algebraic constraints" :
+        "the Newton solve of step $(e.step)"
+    print(io, "TransientStepError: ", what, " at t = ", e.time, " s did not converge for condition",
+        length(e.conditions) == 1 ? " " : "s ", join(e.conditions, ", "),
+        "; reduce dt or check the initial states and the circuit.")
+end
 
 """
     transientdemodulate(solution, port, frequency; quantity = :outgoing,
@@ -1246,9 +1342,7 @@ function transientdemodulate(sol::TransientSolution, port::Integer, frequency::R
         quantity::Symbol = :outgoing, window = t -> 1.0)
     isfinite(frequency) || throw(ArgumentError("the frequency must be finite."))
     quantity in (:voltage, :incident, :outgoing) || throw(ArgumentError(lazy"quantity must be :voltage, :incident or :outgoing, not $(quantity)."))
-    p = findfirst(port_ -> port_.number == port, sol.problem.circuit.ports)
-    isnothing(p) && throw(ArgumentError(lazy"there is no port $(port)."))
-    signal = Array(view(getproperty(sol, quantity), p, :))
+    signal = Array(view(getproperty(sol, quantity), portindex(sol.problem, port), :))
     total, weight = 0.0im, 0.0
     tprev = sol.times[1]
     wprev = Float64(window(tprev))

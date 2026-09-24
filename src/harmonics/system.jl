@@ -63,7 +63,9 @@ struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,
     # host the way it was handed in. bnmr below is the same vector in the
     # real representation and moves with it.
     bnm::Tb
-    # Josephson junction data
+    # Josephson junction data, the system's own copies: `rebind!` writes
+    # into them, and a caller refilling the vectors it handed in (a cache
+    # at its next point) does not reach a system built on them
     Ljb::TLjb
     Ljbm::TLjbm
     Lscale::TLm
@@ -109,8 +111,8 @@ struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,
     thirdcurrent::Base.RefValue{Bool}
     # the current-phase relation of every junction. The empty table is
     # every junction sinusoidal, which is every circuit that does not ask
-    # for another, and the evaluations then take the `sin` and `cos` they
-    # always did. Held as a table rather than as `nothing` so that the type
+    # for another, and the evaluations then take `sin` and `cos` directly.
+    # Held as a table rather than as `nothing` so that the type
     # of a system, and with it everything compiled for it, does not depend
     # on what the circuit holds.
     relations::JunctionRelations{TAM,TAB}
@@ -150,11 +152,10 @@ matrix-free products are allocated; `CPU()` is the default and the reference.
 the backend, and the time domain workspaces derived from them with `similar`
 follow.
 `relations` are the [`JunctionRelations`](@ref) of the junctions, or
-`nothing` when every one of them is the sinusoidal Josephson relation,
-which is the case the evaluations take as the plain `sin` and `cos` they
-always did. They are moved to the backend and to the working precision
-here, and the cache of the second derivative is allocated only when there
-is one to hold.
+`nothing` when every one of them is the sinusoidal Josephson relation, for
+which the evaluations take `sin` and `cos` directly. They are moved to the
+backend and to the working precision here, and the cache of the second
+derivative is allocated only when there is one to hold.
 """
 function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
     Ljb, Ljbm, Lscale, Nbranches, freqindexmap, conjsourceindices, conjtargetindices,
@@ -183,13 +184,12 @@ function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
     nonlineartermplan = plannonlinearterm(Rbnm, Ljb, Lscale, Nbranches,
         freqindexmap, conjsourceindices, conjtargetindices, phimatrix, Knm,
         modelayout, backend; realbackward = realbackward)
-    # both representations of the source vector move to the backend. the real
-    # one already did; the complex one did not, so `residual!` on a complex
-    # vector broadcast a device array against a host one. `complex_to_real`
-    # below reads the host argument, which `tobackend` does not modify.
+    # both representations of the source vector live on the backend, as the
+    # system's own copies: `rebind!` and a drive scaling write into them.
+    # The junction vectors are copied for the same reason.
     return HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, Knm,
-        tobackend(backend, convert(Vector{Complex{TF}}, bnm)),
-        Ljb, Ljbm, Lscale, freqindexmap, conjsourceindices,
+        tobackend(backend, Vector{Complex{TF}}(bnm)),
+        copy(Ljb), copy(Ljbm), Lscale, freqindexmap, conjsourceindices,
         conjtargetindices, irfftplan, rfftplan, modelayout,
         realjacobianplan, complexjacobianplan, nonlineartermplan,
         tobackend(backend, convert(Vector{TF},
@@ -227,8 +227,9 @@ The same system at new component values: the linear term matrices, the
 source, the junction inductances and the scale are replaced by the new
 ones, in place where the arrays live and by a new struct sharing them where
 a scalar does. The transforms, the index maps, the kernels and every
-workspace stay, and nothing the size of the plan is allocated; with `maps`
-given the only allocations are the two temporaries of the source vector.
+workspace stay, and the values are written through `maps`, the
+[`ValueMaps`](@ref) of the system, so the only allocations are the two
+temporaries of the source vector.
 
 The structure must not have moved: a sparse pattern which differs from the
 one the system was built on is refused, because the plans are built on the
@@ -241,7 +242,7 @@ or `complexjacobianplan`, built for the new values by a solve which needs
 a Jacobian the system did not hold, is installed instead.
 """
 function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
-        maps::Union{Nothing,ValueMaps} = nothing,
+        maps::ValueMaps,
         realjacobianplan = sys.realjacobianplan,
         complexjacobianplan = sys.complexjacobianplan)
     for (old, new, what) in ((sys.invLnm, invLnm, "inverse inductance"),
@@ -255,19 +256,9 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
     copyto!(sys.Ljb.nzval, Ljb.nzval)
     copyto!(sys.Ljbm.nzval, Ljbm.nzval)
     TF = real(eltype(sys.phimatrix))
-    if isnothing(maps)
-        Knm = linearterm(sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
-            sys.wmodes2m, TF)
-        samestructure(Knm, sys.Knm) || throw(ArgumentError(
-            "the linear term changed its sparse structure between points, which a reused system cannot follow; build a new one."))
-        copyto!(nonzeros(sys.Knm), nonzeros(Knm))
-        refreshvalues!(sys.nonlineartermplan, sys.Rbnm, sys.Ljb, Lscale,
-            sys.Knm, sys.modelayout, sys.freqindexmap)
-    else
-        linearterm!(sys.Knm, maps, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
-            sys.wmodes2m)
-        refreshvalues!(sys.nonlineartermplan, maps, sys.Knm, sys.Ljb, Lscale)
-    end
+    linearterm!(sys.Knm, maps, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
+        sys.wmodes2m)
+    refreshvalues!(sys.nonlineartermplan, maps, sys.Knm, sys.Ljb, Lscale)
     # the plans the system keeps follow the values; every plan's junction
     # structure is refreshed, harmlessly twice when two plans share one
     if !isnothing(realjacobianplan) && realjacobianplan === sys.realjacobianplan
@@ -281,12 +272,9 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
     copyto!(sys.bnm, convert(Vector{Complex{TF}}, bnm))
     copyto!(sys.bnmr, convert(Vector{TF},
         complex_to_real(bnm, sys.modelayout.isreal)))
-    # the point is stale: it was set against the old values
-    sys.sincurrent[] = false
-    sys.coscurrent[] = false
-    sys.negsecondcurrent[] = false
-    sys.thirdcurrent[] = false
-    sys.cosfdcurrent[] = false
+    # nothing evaluated at the old point is kept: a rebound system is solved
+    # from the point its caller sets next
+    invalidate!(sys)
     return HBSystem(sys.Rbnm, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
         sys.wmodes2m, sys.Knm, sys.bnm, sys.Ljb, sys.Ljbm, Lscale,
         sys.freqindexmap, sys.conjsourceindices, sys.conjtargetindices,
@@ -299,10 +287,34 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
 end
 
 """
+    workspacetwin(sys::HBSystem)
+
+A system which shares with `sys` everything its evaluations only read -- the
+linear term, the junction data, the source, the maps, the transform plans,
+the nonlinear term plan and the junction relations -- and has a point and
+workspaces of its own, and no Jacobian assembly plans. Evaluating the twin
+writes nothing `sys` reads, so twins of one system serve calls which
+evaluate it at the same time; neither may be rebound (see [`rebind!`](@ref)),
+which would move the shared values under the other.
+"""
+function workspacetwin(sys::HBSystem)
+    return HBSystem(sys.Rbnm, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
+        sys.wmodes2m, sys.Knm, sys.bnm, sys.Ljb, sys.Ljbm, sys.Lscale,
+        sys.freqindexmap, sys.conjsourceindices, sys.conjtargetindices,
+        sys.irfftplan, sys.rfftplan, sys.modelayout, nothing, nothing,
+        sys.nonlineartermplan, sys.bnmr, similar(sys.x), similar(sys.xr),
+        similar(sys.phitd), similar(sys.sintd), similar(sys.costd),
+        Ref(false), Ref(false), similar(sys.negsecondtd), Ref(false),
+        similar(sys.thirdtd), Ref(false), sys.relations,
+        similar(sys.phimatrix), similar(sys.dirtd), similar(sys.dirtd2),
+        similar(sys.worktd), similar(sys.cosfd), Ref(false))
+end
+
+"""
     valuemaps(sys::HBSystem)
 
 The [`ValueMaps`](@ref) of a system, for rebinding it without rebuilding
-the plan, or `nothing` when a conversion has no fixed map.
+the plan.
 """
 valuemaps(sys::HBSystem) = valuemaps(sys.nonlineartermplan, sys.Knm,
     sys.invLnm, sys.Gnm, sys.Cnm, sys.Rbnm, sys.Ljb, sys.modelayout,
@@ -346,11 +358,54 @@ two temporaries. The mode frequency diagonals are fixed for the lifetime of
 an [`HBSystem`](@ref), so this is formed once when the system is constructed
 and handed to [`plannonlinearterm`](@ref), which stores it transposed in both
 representations.
+
+Every stored entry of the three matrices has its place in `K`, a zero valued
+one included, so that the structure of `K` is that of the circuit and not of
+the values it was formed at, which a system rebound to other values (see
+[`rebind!`](@ref)) relies on; only the frequency terms of a zero frequency
+column, which vanish whatever the values, are left out.
 """
 function linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal,
     ::Type{T} = Float64) where {T<:AbstractFloat}
-    K = invLnm + im*(Gnm*wmodesm) - Cnm*wmodes2m
+    K = spaddkeepzeros(spaddkeepzeros(invLnm,
+        scalecolumns(Gnm, im .* wmodesm.diag)),
+        scalecolumns(Cnm, .-wmodes2m.diag))
     return SparseMatrixCSC{Complex{T},Int}(K)
+end
+
+"""
+    scalecolumns(A::SparseMatrixCSC, d::AbstractVector)
+
+`A*Diagonal(d)` with every stored entry of a column whose `d` is nonzero
+kept, a zero valued one included, and the columns whose `d` is zero left
+empty.
+
+# Examples
+```jldoctest
+julia> A = JosephsonCircuits.SparseArrays.sparse([1, 2, 1], [1, 1, 2], [0.0, 2.0, 3.0], 2, 2);
+
+julia> JosephsonCircuits.scalecolumns(A, [2.0, 0.0])
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+ 0.0   ⋅
+ 4.0   ⋅
+```
+"""
+function scalecolumns(A::SparseMatrixCSC, d::AbstractVector)
+    colptr = Vector{Int}(undef, size(A, 2) + 1)
+    colptr[1] = 1
+    for j in axes(A, 2)
+        colptr[j+1] = colptr[j] + (iszero(d[j]) ? 0 : length(nzrange(A, j)))
+    end
+    rowval = Vector{Int}(undef, colptr[end] - 1)
+    nzval = Vector{promote_type(eltype(A), eltype(d))}(undef, colptr[end] - 1)
+    for j in axes(A, 2)
+        iszero(d[j]) && continue
+        for (i, t) in enumerate(nzrange(A, j))
+            rowval[colptr[j] + i - 1] = rowvals(A)[t]
+            nzval[colptr[j] + i - 1] = nonzeros(A)[t]*d[j]
+        end
+    end
+    return SparseMatrixCSC(size(A)..., colptr, rowval, nzval)
 end
 
 """
@@ -367,10 +422,9 @@ NOTE: `applyifft!` may overwrite `fd`.
 """
 function applyifft!(td::AbstractArray{T}, fd::AbstractArray{Complex{T}},
     irfftplan) where T
+    # the plan is the unnormalized backward transform, which is this
+    # convention as it is
     mul!(td, irfftplan, fd)
-    normalization = prod(size(td)[1:end-1])
-    # broadcasting keeps this device generic
-    td .*= normalization
     return td
 end
 
@@ -407,7 +461,7 @@ applyfft!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T},
     ::Nothing) where T = fd
 
 """
-    plan_applyffttranspose(fd::Array{Complex{T}}, td::Array{T})
+    plan_applyffttranspose(td::Array{T})
 
 Create the complex transform plan for [`applyffttranspose!`](@ref), the
 transpose of [`applyfft!`](@ref) on the same grid. A work array the size of
@@ -416,7 +470,7 @@ passes its own `padded` at apply time. The plan is created with
 `FFTW.UNALIGNED` so it can be executed against per-thread work arrays
 allocated elsewhere.
 """
-function plan_applyffttranspose(fd::Array{Complex{T}}, td::Array{T}) where T
+function plan_applyffttranspose(td::Array{T}) where T
     padded = zeros(Complex{T}, size(td))
     fftplan = FFTW.plan_fft(padded, 1:ndims(td)-1;
         flags = FFTW.ESTIMATE | FFTW.UNALIGNED, timelimit = Inf)
@@ -460,32 +514,46 @@ function applyffttranspose!(alpha::Array{Complex{T}}, P::Array{Complex{T}},
     return alpha
 end
 
-# out .= f.(src), specialized behind a function barrier
-function _applypointwise!(out::AbstractArray{T}, f::F,
-    src::AbstractArray{T}) where {T,F}
-    out .= f.(src)
-    return out
+# s .= sin.(x) and c .= cos.(x) in one pass, a loop on the host and a
+# kernel on a device
+function _applysincos!(s::Array{T}, c::Array{T}, x::Array{T}) where {T}
+    @inbounds for i in eachindex(x)
+        s[i], c[i] = sincos(x[i])
+    end
+    return s
+end
+
+@kernel function sincoskernel!(s, c, @Const(x))
+    i = @index(Global, Linear)
+    @inbounds s[i], c[i] = sincos(x[i])
+end
+
+function _applysincos!(s, c, x)
+    sincoskernel!(KernelAbstractions.get_backend(x))(s, c, x;
+        ndrange = length(x))
+    return s
 end
 
 # Ensure the cached pointwise current-phase relation, or its derivative,
 # of the time domain branch fluxes at the current point is up to date.
 #
 # A circuit whose junctions are all sinusoidal, which is every circuit that
-# does not ask for another relation, takes the same single broadcast of
-# `sin` or `cos` over the whole array that it always did: the table is
-# empty, the branch is one comparison outside the loop, and nothing about
-# the junction path changes. A circuit which does ask evaluates every
-# junction's polynomial by Horner along the junction axis.
+# does not ask for another relation, takes the sine and the cosine together
+# in one pass over the whole array whichever is asked for first: a point
+# which is kept needs both, the residual the sine and the Jacobian the
+# cosine, and one pass costs little more than either. A circuit which does
+# ask evaluates every junction's polynomial by Horner along the junction
+# axis, each when it is asked for.
 function _ensuresin!(sys::HBSystem)
     if !sys.sincurrent[]
         r = sys.relations
         if allsinusoidal(r)
-            _applypointwise!(sys.sintd, sin, sys.phitd)
+            _ensuresincos!(sys)
         else
             applyrelationlast!(sys.sintd, sys.phitd, r.value, r.sinusoidal,
                 r.anysinusoidal, sin)
+            sys.sincurrent[] = true
         end
-        sys.sincurrent[] = true
     end
     return sys
 end
@@ -494,13 +562,20 @@ function _ensurecos!(sys::HBSystem)
     if !sys.coscurrent[]
         r = sys.relations
         if allsinusoidal(r)
-            _applypointwise!(sys.costd, cos, sys.phitd)
+            _ensuresincos!(sys)
         else
             applyrelationlast!(sys.costd, sys.phitd, r.derivative,
                 r.sinusoidal, r.anysinusoidal, cos)
+            sys.coscurrent[] = true
         end
-        sys.coscurrent[] = true
     end
+    return sys
+end
+
+function _ensuresincos!(sys::HBSystem)
+    _applysincos!(sys.sintd, sys.costd, sys.phitd)
+    sys.sincurrent[] = true
+    sys.coscurrent[] = true
     return sys
 end
 
@@ -548,27 +623,25 @@ representation, dispatched on the element type. Returns `sys`.
 function setpoint!(sys::HBSystem, x::AbstractVector{<:Complex})
     copyto!(sys.x, x)
     applycomplextoreal!(sys.xr, sys.nonlineartermplan, sys.x)
-    return _setpoint!(sys)
+    return _setpoint!(sys, sys.x)
 end
 
 function setpoint!(sys::HBSystem, xr::AbstractVector{<:Real})
     copyto!(sys.xr, xr)
     applyrealtocomplex!(sys.x, sys.nonlineartermplan, sys.xr)
-    # the time domain branch fluxes come from the forward map of the plan,
-    # which reads the real representation directly
-    applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, sys.xr)
-    applyifft!(sys.phitd, sys.phimatrix, sys.irfftplan)
-    sys.sincurrent[] = false
-    sys.coscurrent[] = false
-    sys.negsecondcurrent[] = false
-    sys.thirdcurrent[] = false
-    sys.cosfdcurrent[] = false
-    return sys
+    return _setpoint!(sys, sys.xr)
 end
 
-function _setpoint!(sys::HBSystem)
-    applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, sys.x)
+# the time domain branch fluxes at the point, from the forward map of the
+# plan in the representation `z` is in
+function _setpoint!(sys::HBSystem, z::AbstractVector)
+    applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, z)
     applyifft!(sys.phitd, sys.phimatrix, sys.irfftplan)
+    return invalidate!(sys)
+end
+
+# mark every evaluation cached at the point out of date
+function invalidate!(sys::HBSystem)
     sys.sincurrent[] = false
     sys.coscurrent[] = false
     sys.negsecondcurrent[] = false
@@ -585,23 +658,22 @@ Evaluate the residual of the harmonic balance nonlinear system,
 place. Dispatches on the element type of `F`: a complex vector receives the
 complex representation and a real vector the equivalent real representation.
 """
-function residual!(F::AbstractVector{<:Complex}, sys::HBSystem)
+function residual!(F::AbstractVector, sys::HBSystem)
     _ensuresin!(sys)
     applyfft!(sys.phimatrix, sys.sintd, sys.rfftplan)
-    applybackwardterm!(F, sys.nonlineartermplan, sys.phimatrix, sys.x)
-    @. F -= sys.bnm
+    # the backward map of the plan writes the node vector in the
+    # representation of `F` and adds the linear term in the same pass
+    applybackwardterm!(F, sys.nonlineartermplan, sys.phimatrix,
+        _point(sys, F))
+    F .-= _source(sys, F)
     return F
 end
 
-function residual!(Fr::AbstractVector{<:Real}, sys::HBSystem)
-    _ensuresin!(sys)
-    applyfft!(sys.phimatrix, sys.sintd, sys.rfftplan)
-    # the backward map of the plan writes the node vector in the real
-    # representation and adds the linear term in the same pass
-    applybackwardterm!(Fr, sys.nonlineartermplan, sys.phimatrix, sys.xr)
-    Fr .-= sys.bnmr
-    return Fr
-end
+# the point and the source vector in the representation of a vector
+_point(sys::HBSystem, ::AbstractVector{<:Complex}) = sys.x
+_point(sys::HBSystem, ::AbstractVector{<:Real}) = sys.xr
+_source(sys::HBSystem, ::AbstractVector{<:Complex}) = sys.bnm
+_source(sys::HBSystem, ::AbstractVector{<:Real}) = sys.bnmr
 
 """
     jacobianvectorproduct!(Jv::AbstractVector, sys::HBSystem,
@@ -618,8 +690,8 @@ costs two Fourier transforms and the linear term; the time domain cosine is
 cached across products at the same point. Suitable as the operator for
 Krylov methods.
 """
-function jacobianvectorproduct!(Jv::AbstractVector{<:Complex},
-    sys::HBSystem, v::AbstractVector{<:Complex})
+function jacobianvectorproduct!(Jv::AbstractVector, sys::HBSystem,
+    v::AbstractVector)
     _ensurecos!(sys)
     plan = sys.nonlineartermplan
     applyforwardterm!(sys.phimatrix, plan, v)
@@ -628,18 +700,6 @@ function jacobianvectorproduct!(Jv::AbstractVector{<:Complex},
     applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
     applybackwardterm!(Jv, plan, sys.phimatrix, v)
     return Jv
-end
-
-function jacobianvectorproduct!(Jvr::AbstractVector{<:Real},
-    sys::HBSystem, vr::AbstractVector{<:Real})
-    _ensurecos!(sys)
-    plan = sys.nonlineartermplan
-    applyforwardterm!(sys.phimatrix, plan, vr)
-    applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, sys.costd, sys.dirtd)
-    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
-    applybackwardterm!(Jvr, plan, sys.phimatrix, vr)
-    return Jvr
 end
 
 # out .= a .* b and out .= -a .* b .* c behind function barriers
@@ -668,9 +728,8 @@ vectors the equivalent real representation. The product is symmetric in `v`
 and `w`. Useful for continuation and bifurcation tracking methods which
 require directional second derivatives.
 """
-function hessianvectorproduct!(Hvw::AbstractVector{<:Complex},
-    sys::HBSystem, v::AbstractVector{<:Complex},
-    w::AbstractVector{<:Complex})
+function hessianvectorproduct!(Hvw::AbstractVector, sys::HBSystem,
+    v::AbstractVector, w::AbstractVector)
     negsecond = _negsecond!(sys)
     plan = sys.nonlineartermplan
     applyforwardterm!(sys.phimatrix, plan, v)
@@ -682,21 +741,6 @@ function hessianvectorproduct!(Hvw::AbstractVector{<:Complex},
     # the linear terms are linear in x so they do not contribute
     applybackwardterm!(Hvw, plan, sys.phimatrix, v; addlinearterm = false)
     return Hvw
-end
-
-function hessianvectorproduct!(Hvwr::AbstractVector{<:Real},
-    sys::HBSystem, vr::AbstractVector{<:Real}, wr::AbstractVector{<:Real})
-    negsecond = _negsecond!(sys)
-    plan = sys.nonlineartermplan
-    applyforwardterm!(sys.phimatrix, plan, vr)
-    applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
-    applyforwardterm!(sys.phimatrix, plan, wr)
-    applyifft!(sys.dirtd2, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, negsecond, sys.dirtd, sys.dirtd2)
-    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
-    # the linear terms are linear in x so they do not contribute
-    applybackwardterm!(Hvwr, plan, sys.phimatrix, vr; addlinearterm = false)
-    return Hvwr
 end
 
 """

@@ -95,39 +95,59 @@ end
 
 """
     kluordered(A::SparseMatrixCSC; kwargs...)
+    kluordered(A::SparseMatrixCSC, ordering; kwargs...)
 
-`KLU.klu(A)` with its fill reducing ordering chosen by measurement. KLU's
+`KLU.klu(A)` with its fill reducing ordering chosen by measurement
+([`fillordering`](@ref)), or handed in as `ordering`, a permutation of
+the columns of `A` or `nothing` for KLU's own. KLU's
 own default, AMD on the pattern of `A + A'`, is the right ordering for
 most circuit matrices and a pathological one for some of the mode-coupling
 patterns the preconditioners of this package factorize: the harmonic band
 of a two-tone line is a mode lattice crossed with the spatial chain, a
-grid-like graph, and on the bandwidth-one pattern of a 128-junction line
-AMD produced 23 million fill entries and a 20 s factorization where METIS
-nested dissection gave 6 million and 0.4 s. Nested dissection is not
-uniformly better either: on the full Jacobian of the same line it fills
-60% more than AMD and factorizes in twice the time.
+grid-like graph, on which minimum degree fills many times more than nested
+dissection. Nested dissection is not uniformly better either: on the full
+Jacobian of the same line it fills more than AMD.
 
 So both permutations are computed, AMD and METIS nested dissection, each
 through the CHOLMOD library that ships with Julia, the flops of the
 factorization each would need are predicted from the elimination tree
 ([`symbolicfill`](@ref)), and the cheaper one is handed to KLU as a given
-ordering. Everything before the numeric factorization is symbolic and
-costs a few tenths of a second on a matrix of a million nonzeros, once per
-sparsity pattern; the numeric refactorizations of the same pattern reuse
-the choice. Should either ordering fail, KLU's default is used.
+ordering. Should either ordering fail, KLU's default is used. Everything
+before the numeric factorization is symbolic and depends only on the
+sparsity pattern: the numeric refactorizations of the pattern reuse the
+whole analysis, and a [`FactorizationCache`](@ref) keeps the ordering for
+every fresh factorization of it. `kwargs` are `check` and `allowsingular`
+of `KLU.klu`.
 """
-function kluordered(A::SparseMatrixCSC{Tv,Ti}; check::Bool = true,
+function kluordered(A::SparseMatrixCSC{Tv,Ti},
+    ordering = fillordering(KLUfactorization(), A); check::Bool = true,
     allowsingular::Bool = false) where {Tv,Ti}
-    n = size(A, 1)
-    # a matrix which is not square is left to `KLU.klu` to refuse
-    perm = n == size(A, 2) ? (try _bestordering(A) catch; nothing end) : nothing
-    isnothing(perm) && return KLU.klu(A; check = check, allowsingular = allowsingular)
+    isnothing(ordering) && return KLU.klu(A; check = check, allowsingular = allowsingular)
     nzval = Tv <: Complex ? convert(Vector{ComplexF64}, A.nzval) :
         convert(Vector{Float64}, A.nzval)
-    K = KLU.KLUFactorization(n, A.colptr .- one(Ti), A.rowval .- one(Ti), nzval)
-    p = Ti.(perm .- 1)
+    K = KLU.KLUFactorization(size(A, 1), A.colptr .- one(Ti), A.rowval .- one(Ti), nzval)
+    p = Ti.(ordering .- 1)
     KLU.klu_analyze!(K, p, copy(p); check = check)
     return KLU.klu_factor!(K; check = check, allowsingular = allowsingular)
+end
+
+"""
+    fillordering(factorization::AbstractFactorization, A)
+
+The fill reducing ordering `factorization` chooses for the sparsity pattern
+of `A`: for a [`KLUfactorization`](@ref) the better of AMD and METIS
+nested dissection by predicted flops ([`kluordered`](@ref)), or `nothing`
+for KLU's own when neither can be formed or `A` is not square; `nothing`
+for any other factorization, which orders a matrix itself. The ordering
+depends only on the pattern, so one choice serves every factorization of
+it: a [`FactorizationCache`](@ref) keeps the one it chose, and one chosen
+elsewhere can be handed to it ([`seedordering!`](@ref)).
+"""
+fillordering(::AbstractFactorization, A) = nothing
+function fillordering(::KLUfactorization, A::SparseMatrixCSC)
+    # a matrix which is not square is left to `KLU.klu` to refuse
+    size(A, 1) == size(A, 2) || return nothing
+    return try _bestordering(A) catch; nothing end
 end
 
 # the symmetric pattern of `A`, as CHOLMOD wants it: `A + A'` with unit
@@ -166,10 +186,53 @@ function _bestordering(A::SparseMatrixCSC)
     return best
 end
 
-# Refactorize from the nonzero values directly, skipping the sparse matrix
-# structure check `KLU.klu!` would do; the pattern is fixed by construction.
-function klunzval!(F,A;kwargs...)
-    return KLU.klu!(F,A.nzval;kwargs...)
+"""
+    klupivotgrowth(F::KLU.KLUFactorization)
+
+The largest pivot of the KLU factorization `F` in magnitude. KLU factorizes
+the matrix with each row scaled to a largest entry of one, so this bounds
+the growth of the elimination from below, and it is what a pivot which
+has become small inflates: eliminating with a pivot of size `d` adds
+entries of size `1/d` to the rows it updates, and to their diagonal when
+the pattern is structurally symmetric, as circuit matrices are. `O(n)`,
+read from the diagonal of `U` KLU keeps.
+"""
+function klupivotgrowth(F::KLU.KLUFactorization{Tv}) where {Tv}
+    growth = 0.0
+    GC.@preserve F begin
+        udiag = unsafe_wrap(Array, Ptr{Tv}(F.numeric.Udiag), F.n)
+        for u in udiag
+            growth = max(growth, abs(u))
+        end
+    end
+    return growth
+end
+
+"""
+    klurefactor!(F::KLU.KLUFactorization, A::SparseMatrixCSC, pivottol;
+        kwargs...)
+
+Refactorize `F` from the values of `A`, whose pattern is the one `F` was
+analyzed for, with the pivot sequence of its last factorization
+(`KLU.klu!`), and factorize the same values again with fresh partial
+pivoting (`KLU.klu_factor!`, which reuses the symbolic analysis) when that
+sequence is unstable for them: when a pivot is exactly zero, or when the
+pivot growth ([`klupivotgrowth`](@ref)) exceeds `1/pivottol`. `kwargs` are
+those of `KLU.klu!`. Returns `F`.
+"""
+function klurefactor!(F::KLU.KLUFactorization, A::SparseMatrixCSC,
+    pivottol::Real; kwargs...)
+    stable = try
+        # the values straight into the factorization, without the structure
+        # check `KLU.klu!` makes of a sparse matrix: the pattern is fixed
+        KLU.klu!(F, nonzeros(A); kwargs...)
+        iszero(pivottol) || klupivotgrowth(F) <= inv(pivottol)
+    catch e
+        e isa SingularException || rethrow()
+        false
+    end
+    stable || KLU.klu_factor!(F; kwargs...)
+    return F
 end
 
 # fallback method to handle everything but QR adjoint
@@ -226,11 +289,15 @@ function myldiv!(x::StridedVecOrMat{<:Number},Fadj::LinearAlgebra.AdjointFactori
 end
 
 """
-    FactorizationCache(factorization)
+    FactorizationCache(factorization = nothing)
 
 A mutable holder for a factorization object, so that
-[`tryfactorize!`](@ref) can refactorize into it across calls. Starts
-empty (`nothing`) when constructed without an argument.
+[`tryfactorize!`](@ref) can refactorize into it across calls, and for the
+fill reducing ordering of the sparsity pattern it factorizes, so that a
+fresh factorization of the same pattern takes that ordering rather than
+choosing again ([`fillordering`](@ref)). Starts empty (`nothing`) when
+constructed without an argument. The ordering is chosen by the first fresh
+factorization of a pattern, or handed in by [`seedordering!`](@ref).
 
 # Examples
 ```jldoctest
@@ -240,10 +307,41 @@ julia> JosephsonCircuits.FactorizationCache(JosephsonCircuits.KLU.klu(JosephsonC
 """
 mutable struct FactorizationCache
     factorization
+    # the fill reducing ordering and the pattern it was chosen for, the
+    # `colptr` and `rowval` of the matrix; `nothing` until one is chosen
+    ordering
+    pattern
 end
 
-function FactorizationCache()
-    return FactorizationCache(nothing)
+FactorizationCache(factorization = nothing) =
+    FactorizationCache(factorization, nothing, nothing)
+
+"""
+    seedordering!(cache::FactorizationCache, A::SparseMatrixCSC, ordering)
+
+Hand `cache` the fill reducing ordering `ordering` of the sparsity pattern
+of `A`, as [`fillordering`](@ref) chose it, so that its fresh
+factorizations of that pattern take it instead of choosing one: how the
+caches of several workers factorizing one pattern share one choice.
+Returns `cache`.
+"""
+function seedordering!(cache::FactorizationCache, A::SparseMatrixCSC, ordering)
+    isnothing(ordering) || (length(ordering) == size(A, 2) && isperm(ordering)) ||
+        throw(ArgumentError(
+            "an ordering is a permutation of the columns of the pattern it is seeded for."))
+    cache.ordering = ordering
+    cache.pattern = (SparseArrays.getcolptr(A), rowvals(A))
+    return cache
+end
+
+# whether the ordering `cache` holds was chosen for the pattern of `A`: the
+# pattern arrays are compared by identity, and by value for a copy
+function orderedfor(cache::FactorizationCache, A::SparseMatrixCSC)
+    isnothing(cache.pattern) && return false
+    colptr, rowval = cache.pattern
+    Acolptr, Arowval = SparseArrays.getcolptr(A), rowvals(A)
+    return (colptr === Acolptr || colptr == Acolptr) &&
+        (rowval === Arowval || rowval == Arowval)
 end
 
 """
@@ -254,46 +352,62 @@ Factorize `A`, a matrix or a [`BlockJacobian`](@ref), with the method
 `factorization` and store the result in `cache`. When the cache already
 holds a factorization and the method supports refactorization, its symbolic
 analysis is reused; a `SingularException` during that refactorization falls
-back to a fresh factorization, since reusing the symbolic analysis
-occasionally fails numerically where a fresh one succeeds.
-`kwargs` are forwarded to `factorize` (the block size of a
-[`BlockFactorization`](@ref) of a sparse matrix).
+back to a fresh factorization, since reusing the symbolic analysis can
+fail numerically where a fresh one succeeds. (KLU checks the pivots it
+reuses itself and repivots in place; see [`klurefactor!`](@ref).)
+A fresh factorization by a method which is handed its fill reducing
+ordering (KLU) takes the ordering the cache holds for the pattern of `A`,
+choosing and keeping one when it holds none. `kwargs` are forwarded to
+`factorize` (the block size of a [`BlockFactorization`](@ref) of a sparse
+matrix).
 """
 function tryfactorize!(cache::FactorizationCache,
     factorization::AbstractFactorization, A; kwargs...)
 
-    if isnothing(cache.factorization)
-        cache.factorization = factorize(factorization, A; kwargs...)
-        return cache
+    if !isnothing(cache.factorization)
+        refreshed = try
+            # the sparsity structure is unchanged, so refactorize in place;
+            # a method without in place refactorization (QR) returns nothing
+            refactorize!(factorization, cache.factorization, A)
+        catch e
+            # reusing the symbolic analysis can fail numerically; factorize
+            # afresh
+            isa(e, SingularException) || rethrow()
+            nothing
+        end
+        isnothing(refreshed) || return cache
     end
-    refreshed = try
-        # the sparsity structure is unchanged, so refactorize in place; a
-        # method without in place refactorization (QR) returns nothing
-        refactorize!(factorization, cache.factorization, A)
-    catch e
-        # reusing the symbolic analysis occasionally fails numerically;
-        # factorize afresh
-        isa(e, SingularException) || rethrow()
-        nothing
-    end
-    isnothing(refreshed) && (cache.factorization = factorize(factorization, A;
-        kwargs...))
+    cache.factorization = freshfactorization!(cache, factorization, A;
+        kwargs...)
     return cache
+end
+
+# a fresh factorization of `A`, with the ordering the cache holds for its
+# pattern when the method is handed one
+freshfactorization!(cache::FactorizationCache,
+    factorization::AbstractFactorization, A; kwargs...) =
+    factorize(factorization, A; kwargs...)
+function freshfactorization!(cache::FactorizationCache,
+    factorization::KLUfactorization, A::SparseMatrixCSC)
+    orderedfor(cache, A) ||
+        seedordering!(cache, A, fillordering(factorization, A))
+    return kluordered(A, cache.ordering; factorization.kwargs...)
 end
 
 
 """
     trysolve!(x,factorization,b)
 
-First try to solve a linear system using ldiv! then if it errors, use \\. The
-motivation for this function is some factorizations such as `qr` with sparse
-matrices don't support ldiv!. 
+Solve the linear system factorized by `factorization` for the right hand
+side `b` into `x` with `ldiv!`, and with `\\` for a factorization which has
+no `ldiv!` for these arguments: after a `MethodError` of `ldiv!` itself or
+an `ArgumentError`. Any other error is rethrown.
 """
 function trysolve!(x,factorization,b)
     try
         myldiv!(x,factorization,b)
     catch e
-        if e isa MethodError || e isa ArgumentError
+        if (e isa MethodError && e.f === ldiv!) || e isa ArgumentError
             x .= factorization \ b
         else
             rethrow()

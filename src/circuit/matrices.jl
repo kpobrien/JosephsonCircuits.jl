@@ -40,9 +40,10 @@ by [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `portenvironmentindices::Vector{Int}`: vector of indices at which the port
     owned environments occur, ordered by port number, with zero for a port
     which owns none.
-- `noiseportimpedanceindices::Vector{Int}`: vector of indices at which
-    resistive elements other than port impedances occur, for noise
-    calculations.
+- `noiseportimpedanceindices::Vector{Int}`: the indices of the components
+    which add thermal noise, for the noise calculations: the resistors
+    other than a port's own termination, and the lossy capacitors and
+    inductors.
 - `Lmean`: the mean of the linear and Josephson inductances, zero when the
     circuit has none; the solvers replace it by the solver scale of
     [`calcsolverscale`](@ref) under the same name.
@@ -111,47 +112,11 @@ circuit = Circuit(
 JosephsonCircuits.testshow(stdout,symbolicmatrices(circuit))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], Lj, Any[1, Rleft, Ipump, Cc, Lj, Cj])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Rleft], [2], Int64[], Lj, Any[Rleft, Rleft, Ipump, Cc, Lj, Cj])
 ```
 """
-function symbolicmatrices(circuit::CompilableCircuit; Nmodes::Int = 1,
-    )
+function symbolicmatrices(circuit::CompilableCircuit; Nmodes::Int = 1)
     return numericmatrices(circuit, Dict(), Nmodes = Nmodes)
-end
-
-"""
-    symbolicmatrices(psc::CompiledCircuit;
-    Nmodes::Int = 1)
-
-Return the symbolic matrices describing the circuit properties.
-
-See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
-[`assemblematrices`](@ref), [`orderedports`](@ref),
-[`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
-
-# Examples
-```julia
-@variables Ipump Rleft Cc Lj Cj
-circuit = Circuit(
-    [:p1 => Port(1; Z0 = Rleft),
-     :i1 => CurrentSource(Ipump),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
-     :gnd => Ground()],
-    [[(:p1, 1), (:i1, 1), (:cc, 1)],
-     [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
-psc = JosephsonCircuits.compile(circuit)
-JosephsonCircuits.testshow(stdout,symbolicmatrices(psc))
-
-# output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], Lj, Any[1, Rleft, Ipump, Cc, Lj, Cj])
-```
-"""
-function symbolicmatrices(psc::CompiledCircuit;
-    Nmodes::Int = 1)
-    return numericmatrices(psc, Dict(), Nmodes = Nmodes)
 end
 
 """
@@ -172,7 +137,7 @@ See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 [`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
 
 # Examples
-```julia
+```jldoctest
 circuit = Circuit(
     [:p1 => Port(1; Z0 = :Rleft),
      :i1 => CurrentSource(:Ipump),
@@ -187,9 +152,9 @@ circuitdefs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15, :Rlef
 JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Any[1, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
-```julia
+```jldoctest
 circuit = Circuit(
     [:p1 => Port(1; Z0 = :Rleft),
      :i1 => CurrentSource(:Ipump),
@@ -205,25 +170,22 @@ psc = JosephsonCircuits.compile(circuit)
 JosephsonCircuits.testshow(stdout,numericmatrices(psc, circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Any[1, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 """
-function numericmatrices(circuit::CompilableCircuit, circuitdefs::Dict;
-    Nmodes::Int = 1)
-    psc = compile(circuit)
-
-    # the circuit graph: the incidence matrix and the branch map alone,
-    # which is all the assembly reads
-
-    return numericmatrices(psc, circuitdefs, Nmodes = Nmodes)
+function numericmatrices(circuit::CompilableCircuit,
+    circuitdefs::AbstractDict; Nmodes::Int = 1)
+    return numericmatrices(compile(circuit), circuitdefs, Nmodes = Nmodes)
 end
 
 function numericmatrices(psc::CompiledCircuit,
-    circuitdefs::Dict; Nmodes::Int = 1)
+    circuitdefs::AbstractDict; Nmodes::Int = 1)
 
     # convert as many values as we can to numerical values using definitions
-    # from circuitdefs
-    vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
+    # from circuitdefs, in the one dictionary type the solvers take, so that
+    # a dictionary of another type is accepted and compiles nothing new
+    vvn = componentvaluestonumber(psc.componentvalues,
+        definitiontable(circuitdefs))
     return numericmatrices(psc, vvn; Nmodes = Nmodes)
 end
 

@@ -19,8 +19,8 @@ struct Parameter <: CircuitValue; name::Symbol; end
 struct Constant  <: CircuitValue; val::ComplexF64; end
 struct Unary{F}  <: CircuitValue; f::F; a::CircuitValue; end
 struct Binary{F} <: CircuitValue; f::F; a::CircuitValue; b::CircuitValue; end
-# A frequency dependent leaf: an opaque callable of the signed mode
-# frequency, evaluated by `evalproviders`. The frequency law itself is
+# A frequency dependent leaf: an opaque callable of a positive frequency,
+# evaluated by `evalproviders`. The frequency law itself is
 # arbitrary Julia inside the closure; the operators of this module only
 # combine whole component values with each other.
 struct Provider  <: CircuitValue; f::Any; end
@@ -138,6 +138,12 @@ _p!(s,p::Parameter)=(push!(s,p.name);s); _p!(s,::Constant)=s
 _p!(s,::Provider)=s
 _p!(s,u::Unary)=_p!(s,u.a); _p!(s,b::Binary)=(_p!(s,b.a);_p!(s,b.b);s)
 
+# whether an expression depends on the frequency, through a `Provider` leaf
+hasprovider(::Provider) = true
+hasprovider(u::Unary) = hasprovider(u.a)
+hasprovider(b::Binary) = hasprovider(b.a) || hasprovider(b.b)
+hasprovider(_) = false
+
 #     substituteparams(expr, d)
 #
 # Replace the parameters named in the dictionary `d` by their values and
@@ -157,7 +163,7 @@ substituteparams(b::Binary, d) =
 
 #     evalproviders(expr, w)
 #
-# Replace every `Provider` leaf by its value at the signed frequency `w`.
+# Replace every `Provider` leaf by its value at the frequency `w`.
 # The constant folding constructors collapse the result, so an expression
 # whose only unresolved leaves were providers comes back a `Constant`.
 evalproviders(c::Constant, w) = c
@@ -175,7 +181,7 @@ evalproviders(b::Binary, w) = mk(b.f, evalproviders(b.a, w), evalproviders(b.b, 
 # `conj`, `real` and `imag` commute with the derivative.
 derivative(p::Parameter, name::Symbol) = Constant(p.name === name ? 1 : 0)
 derivative(::Constant, name::Symbol) = Constant(0)
-derivative(::Provider, name::Symbol) = throw(ArgumentError("a frequency dependent value has no derivative with respect to a design parameter."))
+derivative(::Provider, name::Symbol) = throw(ArgumentError(lazy"a frequency dependent value has no derivative with respect to the design parameter $(name)."))
 function derivative(u::Unary, name::Symbol)
     a = u.a
     da = derivative(a, name)
@@ -251,7 +257,7 @@ const CircuitValue = CircuitValues.CircuitValue
 """
     FrequencyDependent(f)
 
-A frequency dependent component value. `f` is called with each signed mode
+A frequency dependent component value. `f` is called with a positive
 frequency in radians per second and returns the component value at that
 frequency. The function may be arbitrary Julia: a closure over other
 parameters, a special function, an interpolation of tabulated data.
@@ -261,10 +267,13 @@ R0 = 50.0; wc = 2*pi*10e9
 Resistor(FrequencyDependent(w -> R0*(1 + im*w/wc)))
 ```
 
-`f` receives signed frequencies, so a law defined only for positive
-frequencies should apply its own conjugate rule for negative ones inside
-the closure. `FrequencyDependent(identity)` is the frequency itself, which
-may be written into an expression like any other value.
+The value describes the element at positive frequencies. A mode of
+negative frequency, such as an idler, takes the complex conjugate of the
+value at the magnitude of its frequency, `conj(f(abs(w)))`, which is the
+value of a real element there, as the data of a scattering block is
+extended by [`ConjugateSymmetry`](@ref). `FrequencyDependent(identity)` is
+the frequency itself, which may be written into an expression like any
+other value.
 
 The value is a [`CircuitValue`](@ref) whose leaf is the closure, so it
 combines with numbers and other component values using the operators of
@@ -284,8 +293,9 @@ FrequencyDependent(f) = CircuitValues.Provider(f)
     componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
 
 Resolve each component value in `componentvalues` with [`valuetonumber`](@ref)
-and return the results as a `Vector{Any}`: the table mixes port numbers,
-real and complex values, symbolic values and frequency dependent providers,
+and return the results as a `Vector{Any}`: the table mixes real and
+complex values (a port's entry is its reference impedance), symbolic values
+and frequency dependent providers,
 and the groups the assembly reads are typed when they are gathered from it
 (see `grouptype`), so the table itself has one type for every circuit.
 
@@ -305,35 +315,64 @@ julia> JosephsonCircuits.@params Lj1 Lj2;JosephsonCircuits.componentvaluestonumb
 function componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
     # A comprehension over a vector of known length preallocates its result,
     # where `map` over `zip(values, Iterators.repeated(dict))` widens the
-    # result element by element. The definitions a parameterized value
-    # substitutes are normalized once for the whole table rather than once
-    # per value.
-    any(v -> v isa CircuitValue, componentvalues) ||
+    # result element by element. The definitions a parameter or a
+    # parameterized value reads are gathered by name once for the whole
+    # table rather than once per value.
+    any(v -> v isa CircuitValue || v isa Symbol || v isa AbstractString,
+        componentvalues) ||
         return Any[valuetonumber(value,circuitdefs) for value in componentvalues]
-    d = normalizedefinitions(circuitdefs)
-    return Any[value isa CircuitValue ? valuetonumber(value, d) :
-        valuetonumber(value, circuitdefs) for value in componentvalues]
+    byname = definitionsbyname(circuitdefs)
+    d = normalizedefinitions(byname)
+    return Any[resolvevalue(value, byname, d, circuitdefs)
+        for value in componentvalues]
 end
+
+# One value of the table, with the definitions gathered by name. A name,
+# written as a symbol, a string or a bare parameter, is looked up as it is
+# defined, so a definition which is not a number (a provider, an
+# expression) serves every spelling of it; an expression substitutes the
+# numbers.
+resolvevalue(value::Union{Symbol,AbstractString}, byname, d, circuitdefs) =
+    definedvalue(byname, definitionname(value))
+function resolvevalue(value::CircuitValues.Parameter, byname, d, circuitdefs)
+    v = get(byname, value.name, nothing)
+    return (isnothing(v) || v isa Number) ? valuetonumber(value, d) : v
+end
+resolvevalue(value::CircuitValue, byname, d, circuitdefs) =
+    valuetonumber(value, d)
+resolvevalue(value, byname, d, circuitdefs) = valuetonumber(value, circuitdefs)
 
 """
     valuetonumber(value::Symbol,circuitdefs)
 
-A symbol is a key of `circuitdefs`; return the value stored under it.
+A symbol names a parameter; return the value `circuitdefs` defines it as,
+under whichever key names it: its symbol, its string or its parameter
+object (see [`definitionsbyname`](@ref)). A name `circuitdefs` does not
+define comes back as the parameter, which the check of the values reports
+naming its component.
 
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.valuetonumber(:Lj1,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
 1.0e-12
+
+julia> JosephsonCircuits.valuetonumber(:Lj1,Dict("Lj1"=>1e-12))
+1.0e-12
 ```
 """
 function valuetonumber(value::Symbol,circuitdefs)
-    return circuitdefs[value]
+    return definedvalue(definitionsbyname(circuitdefs), value)
 end
+
+# the value a name is defined as, or the parameter it names when it is not
+definedvalue(byname::Dict{Symbol,Any}, name::Symbol) =
+    get(byname, name, CircuitValues.Parameter(name))
 
 """
     valuetonumber(value::String,circuitdefs)
 
-A string is a key of `circuitdefs`; return the value stored under it.
+A string names a parameter, as a symbol does; see
+[`valuetonumber(::Symbol, ::Any)`](@ref).
 
 # Examples
 ```jldoctest
@@ -342,7 +381,7 @@ julia> JosephsonCircuits.valuetonumber("Lj1",Dict("Lj1"=>1e-12,"Lj2"=>2e-12))
 ```
 """
 function valuetonumber(value::String,circuitdefs)
-    return circuitdefs[value]
+    return definedvalue(definitionsbyname(circuitdefs), Symbol(value))
 end
 
 # the definitions as pairs, from a dictionary or any iterable of pairs
@@ -358,8 +397,8 @@ value.
 
 A fully defined value comes back as a plain number, real when its imaginary
 part is zero. A value which still depends on an undefined parameter comes
-back as an expression; this is how a value depending on the symbolic
-frequency variable reaches [`freqsubst`](@ref) with that variable free.
+back as an expression, which the check of the values reports naming its
+component.
 """
 valuetonumber(value::CircuitValue, circuitdefs) =
     valuetonumber(value, normalizedefinitions(circuitdefs))
@@ -383,14 +422,38 @@ purpose (a component whose value is itself a key, for instance) does not
 stop every parameterized value from resolving; a parameter left undefined
 comes back unresolved from [`valuetonumber`](@ref).
 """
-function normalizedefinitions(circuitdefs)
+normalizedefinitions(circuitdefs) =
+    normalizedefinitions(definitionsbyname(circuitdefs))
+function normalizedefinitions(byname::Dict{Symbol,Any})
     d = Dict{Symbol,ComplexF64}()
-    for (k,v) in _definitionpairs(circuitdefs)
+    for (name, v) in byname
         v isa Number || continue
-        key = k isa CircuitValues.Parameter ? k.name : Symbol(k)
-        d[key] = ComplexF64(v)
+        d[name] = ComplexF64(v)
     end
     return d
+end
+
+"""
+    definitionsbyname(circuitdefs)
+
+The definitions keyed by the name of the parameter each key names (see
+`definitionname`), with their values as given; a key which names
+no parameter is left out. A parameter may be defined under its symbol,
+its string or its parameter object, and one defined under two of them with
+different values is refused rather than resolved by the order of the
+dictionary.
+"""
+function definitionsbyname(circuitdefs)
+    byname = Dict{Symbol,Any}()
+    for (k, v) in _definitionpairs(circuitdefs)
+        name = definitionname(k)
+        isnothing(name) && continue
+        if haskey(byname, name) && !isequal(byname[name], v)
+            throw(ArgumentError(lazy"The parameter $(name) is defined twice, as $(byname[name]) and as $(v)."))
+        end
+        byname[name] = v
+    end
+    return byname
 end
 
 """
@@ -430,3 +493,151 @@ julia> JosephsonCircuits.valuetonumber(1.0,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
 function valuetonumber(value, circuitdefs)
     return value
 end
+
+# === resolving and checking the values of a circuit ===
+
+"""
+    symbolicindices(A)
+
+Return the indices in `A.nzval` where the elements of the matrix `A` are
+symbolic variables.
+
+# Examples
+```jldoctest
+julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,1.0,2+3im]);JosephsonCircuits.symbolicindices(A)
+Int64[]
+```
+"""
+function symbolicindices(A)
+
+    indices = Vector{Int}(undef,0)
+
+    for (i,j) in enumerate(A)
+        if checkissymbolic(j)
+            push!(indices,i)
+        end
+    end
+    return indices
+
+end
+
+function symbolicindices(A::SparseMatrixCSC)
+    return symbolicindices(A.nzval)
+end
+
+"""
+    checkissymbolic(a)
+
+Check if `a` is a symbolic variable. Define a function to do this because
+the test depends on which representation the value came from: the core
+answer for `CircuitValue`, which a frequency dependent closure is a leaf
+of, and the Symbolics extension adds the methods for its own wrappers.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.@params w;JosephsonCircuits.checkissymbolic(w)
+true
+
+julia> JosephsonCircuits.checkissymbolic(1.0)
+false
+```
+"""
+function checkissymbolic(a)
+    return a isa CircuitValue
+end
+
+"""
+    circuitvariables(a)
+
+The free parameters of a component value. Returns an empty collection for
+a numeric value and the `CircuitValues.Parameter`s of a
+[`CircuitValue`](@ref) (not `Symbol`s). The Symbolics extension adds a
+method for `Num`.
+"""
+circuitvariables(a) = Symbol[]
+
+"""
+    substitutefreq(value, w)
+
+Resolve a component value at the mode frequency `w`: the identity for a
+plain number, and for a [`CircuitValue`](@ref) the evaluation of its
+frequency dependent leaves (see [`FrequencyDependent`](@ref)) at the
+magnitude of `w`, followed by the constant folding of the expression around
+them. A value states the element at positive frequencies, and a mode of
+negative frequency takes its conjugate where the value is placed (see
+[`modevalue`](@ref)), which is the value a real element has there. A value
+which does not resolve to a number is returned as it is, for the caller to
+diagnose. The Symbolics extension adds the `Num` method.
+"""
+substitutefreq(value, w) = value
+function substitutefreq(value::CircuitValue, w)
+    v = CircuitValues.evalproviders(value, abs(w))
+    return v isa CircuitValues.Constant ?
+        (iszero(imag(v.val)) ? real(v.val) : v.val) : v
+end
+
+"""
+    substitutedefs(value, circuitdefs)
+
+Substitute the circuit definitions into a component value for printing.
+
+Mirrors `Symbolics.substitute`, which is the identity on a value that
+carries no free parameters. Mapping this to `valuetonumber` instead is
+wrong: that resolves a bare `Symbol` or `String` against the definitions
+dictionary and throws for a component name, which is not a value at all.
+"""
+substitutedefs(value, circuitdefs) = value
+substitutedefs(value::CircuitValue, circuitdefs) =
+    valuetonumber(value, circuitdefs)
+# the parameters as `Parameter` objects rather than bare symbols, so that
+# they print and compare as the user wrote them
+circuitvariables(a::CircuitValue) =
+    [CircuitValues.Parameter(n) for n in sort!(collect(CircuitValues.parameters(a)))]
+
+"""
+    checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector)
+
+Check that no circuit component value still depends on a free parameter.
+One which does indicates a parameter which was not assigned a numerical
+value in the circuit definitions dictionary `circuitdefs`, and an
+informative `ArgumentError` is thrown naming the components and the
+undefined parameters. A frequency dependent value carries a closure of
+the frequency rather than a parameter and is resolved per frequency by
+[`freqsubst`](@ref), so it passes. Called by [`hbnlsolve`](@ref) and
+[`hblinsolve`](@ref) before any computation, so a forgotten entry in
+`circuitdefs` fails immediately with the actual cause instead of a
+downstream error about a symbolic value in a matrix.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, FrequencyDependent(w -> 1/(w*50.0))])
+
+julia> JosephsonCircuits.@params R2;try JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, R2]) catch e; occursin("R1 has the value", sprint(showerror, e)) end
+true
+```
+"""
+function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector)
+    messages = String[]
+    for i in eachindex(vvn)
+        if checkissymbolic(vvn[i])
+            undefined = circuitvariables(vvn[i])
+            if !isempty(undefined)
+                push!(messages, string("The component ", componentnames[i],
+                    " has the value ", vvn[i],
+                    ", which contains the symbolic variables [",
+                    join(string.(undefined), ", "), "] that were not "*
+                    "assigned numerical values."))
+            end
+        end
+    end
+    if !isempty(messages)
+        throw(ArgumentError(join(messages, " ")*" Add the missing "*
+            "variables to the circuit definitions dictionary "*
+            "circuitdefs. If a variable represents the frequency of a "*
+            "frequency dependent component, write the value as a "*
+            "FrequencyDependent closure of the frequency instead."))
+    end
+    return nothing
+end
+
+# the `Num` method is defined in the Symbolics extension

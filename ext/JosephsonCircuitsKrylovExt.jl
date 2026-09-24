@@ -6,9 +6,12 @@ selected with `linearsolver = KrylovJL(:gmres)` (or any other Krylov.jl
 solver name). Only the linear solve changes: the forcing term, the line
 search, the preconditioner escalation and the stagnation handling are those
 of `nlsolvekrylov!`, and the package's preconditioner is passed to Krylov.jl
-as its right preconditioner `N`. Deflation harvesting is unavailable here:
-it reads the package's own Arnoldi workspace, which Krylov.jl does not
-expose, so the per cycle callback `oncycle` is accepted and ignored.
+as its right preconditioner `N`. A solve is given the iteration budget of
+the package's own GMRES, and a method which can restart (`:gmres`,
+`:fgmres`, `:fom`) restarts at its restart length. Deflation harvesting is
+unavailable here: it reads the package's own Arnoldi workspace, which
+Krylov.jl does not expose, so the per cycle callback `oncycle` is accepted
+and ignored.
 """
 module JosephsonCircuitsKrylovExt
 
@@ -20,38 +23,59 @@ const JC = JosephsonCircuits
 # `mul!`, which Krylov.jl accepts directly, and the preconditioner as an
 # `AbstractPreconditioner`, which Krylov.jl applies through `mul!`. A bare
 # closure `Mop!(z, r)`, the older spelling, is wrapped into that interface.
-# Either way the preconditioner is applied standalone here: a form which
-# fuses its application with the Jacobian product inside the package's own
-# GMRES (`preconditionedproduct!`) falls back to its unfused, exact form.
 struct MopWrap{F} <: JC.AbstractPreconditioner; Mop!::F; end
 JC.applypreconditioner!(z, m::MopWrap, r) = (m.Mop!(z, r); z)
 aspreconditioner(M::JC.AbstractPreconditioner) = M
 aspreconditioner(M) = MopWrap(M)
 
+# An operator of dimension `n` applied through `mul!` and reporting the
+# element type `T` of the iteration. Krylov.jl compares the element type of
+# the operator with that of the vectors and warns when they differ, and
+# the package's operators and preconditioners report double precision
+# whatever the precision of the iteration they serve.
+struct TypedOperator{T,A}
+    op::A
+    n::Int
+end
+TypedOperator{T}(op, n::Integer) where {T} = TypedOperator{T,typeof(op)}(op, Int(n))
+Base.size(A::TypedOperator) = (A.n, A.n)
+Base.size(A::TypedOperator, i::Integer) = A.n
+Base.eltype(::TypedOperator{T}) where {T} = T
+LinearAlgebra.mul!(y::AbstractVector, A::TypedOperator, x::AbstractVector) =
+    mul!(y, A.op, x)
+
+# the methods of Krylov.jl which restart after `memory` iterations when
+# asked to, and otherwise keep every basis vector until `itmax`
+const RESTARTABLE = (:gmres, :fgmres, :fom)
+
 function JC.hblinearsolve!(ls::JC.KrylovJL, deltax, jvp, F, ws, Mop!;
         rtol, atol, maxrestarts, oncycle = nothing)
     n = length(F)
-    A = jvp
+    T = real(eltype(F))
+    A = TypedOperator{T}(jvp, n)
     solver = getfield(Krylov, ls.method)
-    # the package's own GMRES restarts up to `maxrestarts` times over a
-    # Krylov space of `size(ws.H, 2)`, so the comparable iteration budget
-    # is their product
-    itmax = max(size(ws.H, 2)*(maxrestarts+1), 10)
+    # the budget of the package's own GMRES: `maxrestarts` cycles of the
+    # workspace's restart length, and for a method which restarts, the same
+    # cycles, so its basis is that length rather than every step taken
+    m = size(ws.H, 2)
+    itmax = m*maxrestarts
+    restarts = ls.method in RESTARTABLE ? (; restart = true, memory = m) : (;)
     # Krylov.jl defaults `atol` to `sqrt(eps())`, which is wrong inside a
     # Newton loop: the right hand side is the residual being driven to
     # zero, and an absolute floor would eventually accept every solve
-    # without doing anything. `nlsolvekrylov!` passes `atol = ftol/10`; an
-    # explicit `atol` in the solver's own keywords wins.
-    kw = haskey(ls.kwargs, :atol) ? ls.kwargs : merge((; atol = atol), ls.kwargs)
+    # without doing anything. `nlsolvekrylov!` passes `atol = ftol/10`.
     # Krylov.jl records the residual history only when asked; without it
     # every solve reported its starting residual and an unconverged solve
-    # was read as one which made no progress at all
-    kw = haskey(kw, :history) ? kw : merge(kw, (; history = true))
+    # was read as one which made no progress at all. The solver's own
+    # keywords win over all of these, and the tolerances are taken in the
+    # precision of the iteration, which Krylov.jl requires.
+    kw = merge((; atol = atol, history = true), restarts, ls.kwargs)
+    kw = merge(kw, (; atol = T(kw.atol)))
     x, st = if isnothing(Mop!)
-        solver(A, F; rtol = rtol, itmax = itmax, kw...)
+        solver(A, F; rtol = T(rtol), itmax = itmax, kw...)
     else
-        solver(A, F; N = JC.SizedPreconditioner(aspreconditioner(Mop!), n),
-            rtol = rtol, itmax = itmax, kw...)
+        solver(A, F; N = TypedOperator{T}(aspreconditioner(Mop!), n),
+            rtol = T(rtol), itmax = itmax, kw...)
     end
     copyto!(deltax, x)
     # the record `nlsolvekrylov!` expects; Krylov.jl has no notion of

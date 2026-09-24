@@ -33,14 +33,14 @@ features:
     details: Pulsed and multi-tone drives, the tangent and adjoint of the recorded steps, and quantum noise in temporal modes.
     link: /transient
   - title: Extensions
-    details: Enable GPU support by loading CUDA.jl and cuDSS.jl. Use external solvers and optimizers from Krylov.jl and NonlinearSolve.jl. Time domain simulations with WRspice by loading XicTools.jll.
+    details: Enable GPU support by loading CUDA.jl and cuDSS.jl. Use external solvers and optimizers from Krylov.jl and NonlinearSolve.jl. Time domain simulations with WRspice by loading XicTools_jll.
   - title: Reference
     details: Every exported function and type.
     link: /reference
 ---
 ```
 
-JosephsonCircuits or "JC" is a high-performance frequency domain and time domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. JC simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2], with mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
+JosephsonCircuits or "JC" is a high-performance frequency domain and time domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. JC simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2] (with mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
@@ -86,7 +86,7 @@ using Pkg
 Pkg.add(name="JosephsonCircuits",rev="main")
 ```
 
-To run the examples below, you will need to install Plots.jl using the command:
+To run the [examples](examples.md), which plot their results, you will need to install Plots.jl using the command:
 ```
 Pkg.add("Plots")
 ```
@@ -105,7 +105,7 @@ Simulations of the linearized system can be effectively parallelized, so we sugg
 ```
 Threads.nthreads()
 ```
-For context, the simulation times reported for the examples below use 16 threads on an AMD Ryzen 9 9950X system running Linux.
+For context, the simulation times reported in the [examples](examples.md) use 16 threads on an AMD Ryzen 9 9950X system running Linux.
 
 The examples can be run in the command line (REPL) after starting Julia or you can run them in a Jupyter notebook with [IJulia](https://github.com/JuliaLang/IJulia.jl) or in Visual Studio Code with the [Julia extension](https://code.visualstudio.com/docs/languages/julia).
 
@@ -159,7 +159,6 @@ We prioritize speed (including compile time and time to first use), simplicity, 
 ## Future developments
 
 * Design optimization.
-* More nonlinear components such as kinetic inductors.
 
 ## Related packages and software
 * [Xyce.jl](https://github.com/JuliaComputing/Xyce.jl) provides a wrapper for [Xyce](https://xyce.sandia.gov/), the open source parallel circuit simulator from Sandia National Laboratories which can perform time domain and harmonic balance method simulations.

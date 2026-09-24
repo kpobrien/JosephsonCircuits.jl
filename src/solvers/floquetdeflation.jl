@@ -182,21 +182,17 @@ construction:
 - `harvest = 4`: smallest singular directions taken per harvest.
 - `ritz = 0`: harmonic Ritz directions nearest zero taken per harvest.
   A complex Ritz pair contributes its real and imaginary parts as two real
-  candidates spanning the same invariant subspace. Off by default: on a
-  128-junction two-tone line the singular directions alone take 1590
-  Arnoldi steps (1732 Jacobian products in all), and adding one or two
-  Ritz directions per harvest takes 1955 and 1943 (2125 and 2119); over a
-  seven-point cached sweep 10541 against 12623. The Ritz directions of a
-  strongly nonnormal operator carry large corrections without being the
-  directions GMRES stalls on, and the trim by correction strength then
-  keeps them over the singular ones.
+  candidates spanning the same invariant subspace. Off by default: the
+  Ritz directions of a strongly nonnormal operator carry large corrections
+  without being the directions GMRES stalls on, and the trim by correction
+  strength then keeps them over the singular ones, so adding them takes
+  more Arnoldi steps than the singular directions alone.
 - `candidates = 3*size`: the candidate bank's capacity. The active
   directions of the last rebuild are always kept; older candidates are
   dropped first. A rebuild resets the bank to the active set, so the
   capacity only matters between rebuilds, and anything at or above
   `size + harvest + 2*ritz` behaves the same; below that a harvest
-  displaces its own newest candidates (measured: an escalation returns on
-  the 128-junction line at `candidates = size`).
+  displaces its own newest candidates.
 - `ranktol = eps(T)^(3/8)`: relative singular value threshold for the
   residual-image rank. The candidates' images are equalized to unit norm,
   so a small singular value of their block means two images nearly
@@ -207,16 +203,14 @@ construction:
   margin (`eps^(3/8)` is `1.4e-6` in double precision).
 - `benefittol = 1e-6`: the `eta` below which a direction is judged already
   handled by the base.
-
-`state = nothing`, the constructor's own keyword, is a [`FloquetState`](@ref)
-to continue from; a fresh `FloquetState(b)` is built when none is given.
-
 - `cycleharvest = true`: harvest at the end of every restart cycle
   ([`harvestcycle!`](@ref)) rather than only from the cycle left in the
   workspace when the solve returns.
-- `state`: a [`FloquetState`](@ref) to start from, the candidates of a
-  previous solve of a nearby system; it is mutated by the harvests of this
-  solve.
+
+The constructor's own keyword `state = nothing` is a [`FloquetState`](@ref)
+to start from, the candidates of a previous solve of a nearby system, which
+the harvests of this solve mutate; a fresh `FloquetState(b)` is built when
+none is given.
 
 The intended base is the mode block diagonal, and everything here is either
 a dense level 3 kernel on a small block or a device gemv, with the `k` by
@@ -505,9 +499,10 @@ function _rebuildfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     # something: `eta` is the fraction of the direction the base
     # preconditioner fails to reconstruct from its own image. A direction
     # the base already inverts accurately contributes nothing but cost,
-    # whatever its physical interest. The columns are ordered by correction
-    # magnitude, so the survivors are a prefix and the cap at `size` keeps
-    # the directions carrying the most correction.
+    # whatever its physical interest. The columns are ordered by the
+    # magnitude of their correction `norm(W[:, j])`, so the cap at `size`
+    # keeps the survivors carrying the most correction; the survivors need
+    # not be a prefix, since `eta` also divides by `norm(X[:, j])`.
     strength = [norm(view(W, :, j))/
         max(norm(view(X, :, j)), floatmin(T)) for j in 1:r]
     keep = [j for j in 1:r if strength[j] > pc.spec.benefittol]
@@ -541,8 +536,8 @@ end
 
 # Bring the active blocks up to date when the point has moved or a
 # candidate has been seeded, but the base has not been rebuilt. There is
-# only one build path here: unlike the Galerkin forms, nothing is carried
-# between rebuilds, because `inv(P)*U` is never formed in the first place.
+# only one build path here: nothing is carried between rebuilds, because
+# `inv(P)*U` is never formed in the first place.
 function _refreshfloquet!(pc::FloquetPreconditioner)
     pc.fresh && return pc
     if isexactpreconditioner(pc.inner)

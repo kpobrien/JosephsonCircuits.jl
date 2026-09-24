@@ -1063,7 +1063,7 @@ using Test
 
     @testset "calcnodesorting" begin
         @test_throws(
-            ArgumentError("Unknown sorting type."),
+            ArgumentError("Unknown sorting :test; use :number, :name or :none."),
             JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:test)
         )
 
@@ -1078,7 +1078,7 @@ using Test
         )
 
         @test_throws(
-            ArgumentError("Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."),
+            ArgumentError("The node \"a\" is not an integer. Name the nodes with integers, or set the keyword argument `sorting=:name` or `sorting=:none`."),
             JosephsonCircuits.calcnodesorting(["30","11","0","a"];sorting=:number)
         )
     end

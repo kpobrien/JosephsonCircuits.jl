@@ -17,7 +17,7 @@ function testtransientiq(backend = JosephsonCircuits.CPU())
         for window in (:hann, :rectangular)
             plan = transientiqplan(prob, times, frequencies; duration = 0.2e-9,
                 ports, window, stride = 7, phasereference = 0.17e-9, backend)
-            @test plan.rows == [2, 1, 2]
+            @test plan.rows == [1, 2, 1]
             measured = transientiq(plan, device(traces))
             expected = zeros(ComplexF64, size(measured))
             for c in eachindex(frequencies),

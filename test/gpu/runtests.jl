@@ -89,6 +89,37 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         end
     end
 
+    @testset "the operating point of a device solve" begin
+        # an operating point is a host object: a device solve hands it a
+        # host twin of its system, relations included, on which its
+        # residual vanishes at the point, with the Jacobian the host solve
+        # assembles there; the sensitivities through it are the host's
+        L0 = 1e-9
+        w = 2*pi*4.75e9
+        src = [(mode = (1,), port = 1, current = 4*0.00565e-6)]
+        poly = NonlinearInductor(L0, PolynomialCPR([1.0, 0.25, -1/6, 0.0, 1/120]))
+        jpa = Circuit([("p1","1","0",Port(1)), ("c1","1","2",Capacitor(100e-15)),
+            ("lj","2","0",poly), ("c2","2","0",Capacitor(1e-12))])
+        opat(; kw...) = hbnlsolve((w,), (8,), src, jpa, Dict{Symbol,Float64}();
+            keyedarrays = false, returnoperatingpoint = true, atol = 1e-12,
+            kw...).operatingpoint
+        oa = opat()
+        ob = opat(backend = CUDABackend())
+        @test ob.sys.phimatrix isa Array
+        @test agree(oa.jacobian, ob.jacobian; rtol = 1e-8)
+        xr = JosephsonCircuits.complex_to_real(ob.x, ob.modelayout.isreal)
+        JosephsonCircuits.setpoint!(ob.sys, xr)
+        F = JosephsonCircuits.residual!(similar(xr), ob.sys)
+        @test norm(F) < 1e-10
+        ws = 2*pi*(4.55:0.3:5.5)*1e9
+        kw = (; returnSsensitivity = true, sensitivitynames = ["Lj1", "C2"],
+            keyedarrays = false)
+        sa = hbsolve(ws, (w1,), src1, (2,), (8,), circuit, defs; kw...)
+        sb = hbsolve(ws, (w1,), src1, (2,), (8,), circuit, defs;
+            backend = CUDABackend(), kw...)
+        @test agree(sa.linearized.Ssensitivity, sb.linearized.Ssensitivity)
+    end
+
     @testset "hbnlsolve newtonkrylov, two tone" begin
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
             dc = true, odd = true, even = true, method = NewtonKrylov())
@@ -124,6 +155,18 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             backend = CUDABackend())
         @test rb.solverinfo.converged
         @test agree(ra.S, rb.S)
+    end
+
+    @testset "the direct methods' factorization on the device" begin
+        # with no factorization given, the direct methods factorize where
+        # the solve runs
+        ra = hbnlsolve((w1,), (8,), src1, circuit, defs; method = Newton())
+        for m in (Newton(), QuasiNewton())
+            rb = hbnlsolve((w1,), (8,), src1, circuit, defs; method = m,
+                backend = CUDABackend())
+            @test rb.solverinfo.converged
+            @test agree(ra.S, rb.S)
+        end
     end
 
     @testset "direct current on the device" begin
@@ -166,6 +209,32 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test bb.solverinfo.converged
         @test agree(ba.S, bb.S)
         @test agree(ba.dcnodevoltage, bb.dcnodevoltage; rtol = 1e-8)
+
+        # five of the blocks in a chain, whose subsystem is larger than the
+        # one work item solve takes and is solved on the host between a
+        # gather and a scatter on the device
+        comps = Pair{Symbol,Any}[:p1 => Port(1; Z0 = R)]
+        for k in 1:5
+            push!(comps, Symbol(:x, k) => blk, Symbol(:c, k) => Capacitor(1e-12))
+        end
+        push!(comps, :jj => JosephsonJunction(500e-12), :r2 => Resistor(R),
+            :cend => Capacitor(1e-12))
+        nets = Any[[(:p1,1), (:x1,1), (:c1,1)]]
+        for k in 1:4
+            push!(nets, [(Symbol(:x, k),2), (Symbol(:x, k + 1),1), (Symbol(:c, k + 1),1)])
+        end
+        push!(nets, [(:x5,2), (:r2,1), (:jj,1), (:cend,1)])
+        push!(nets, vcat(Any[(:p1,2), (:r2,2), (:jj,2), (:cend,2)],
+            [(Symbol(:c, k),2) for k in 1:5], [Ground]))
+        chain = Circuit(comps, nets)
+        ca = hbnlsolve((w1,), (4,), srcb, chain, Dict{Any,Any}();
+            dc = true, odd = true, even = true, method = NewtonKrylov())
+        cb = hbnlsolve((w1,), (4,), srcb, chain, Dict{Any,Any}();
+            dc = true, odd = true, even = true, method = NewtonKrylov(),
+            backend = CUDABackend())
+        @test cb.solverinfo.converged
+        @test agree(ca.S, cb.S)
+        @test agree(ca.dcnodevoltage, cb.dcnodevoltage; rtol = 1e-8)
     end
 
     @testset "a cached sweep on the device" begin
@@ -275,8 +344,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         # converge, not carry the accuracy of the answer, so they may be
         # held in single precision while the iteration stays double;
         # `applypreconditioner!` converts the residual down and the
-        # correction back. cuDSS is the only factorization here which
-        # honours a precision: KLU and UMFPACK are compiled for double and
+        # correction back. cuDSS honours a precision, as the block
+        # factorization does: KLU and UMFPACK are compiled for double and
         # promote a single precision matrix.
         ra = hbnlsolve((w1,), (8,), src1, circuit, defs; method = NewtonKrylov())
         its = Int[]
@@ -708,6 +777,42 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             @test CUDSS.cudss_get(solver, "pivot_epsilon") == 1e-6
             @test CUDSS.cudss_get(solver, "ir_n_steps") == 3
         end
+    end
+
+    @testset "a sweep a frequency dependent value keeps on the host" begin
+        # the stored values change with the frequency, so the sweep runs on
+        # host threads with a host factorization whatever the backend, and
+        # a device factorization asked for is refused
+        lin = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:Z, 1, 2, Resistor(FrequencyDependent(w -> 5.0 + im*w*1e-9))),
+            (:C, 2, 0, Capacitor(1e-12))])
+        wsl = 2*pi*(4.5:0.1:5.0)*1e9
+        la = hblinsolve(wsl, lin; keyedarrays = false)
+        lb = hblinsolve(wsl, lin; keyedarrays = false, backend = CUDABackend())
+        @test agree(la.S, lb.S; rtol = 1e-12)
+        @test_throws ArgumentError hblinsolve(wsl, lin; backend = CUDABackend(),
+            factorization = CUDSSFactorization())
+    end
+
+    @testset "a tabulated block zero beyond its band" begin
+        # a through block tabulated over 4-6 GHz in front of a pumped JPA:
+        # the upper sidebands leave the band, where the block is zero on
+        # the device as on the host
+        fs = 2*pi*collect(range(4e9, 6e9; length = 21))
+        Sthru = cat([ComplexF64[0 0.9; 0.9 0] for _ in fs]...; dims = 3)
+        thru = ScatteringParameters((fs, Sthru); zref = 50.0,
+            extrapolation = :zero)
+        cz = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:x, 1, 2, thru),
+            (:C1, 2, 3, Capacitor(100e-15)), (:Lj1, 3, 0, JosephsonJunction(1000e-12)),
+            (:C2, 3, 0, Capacitor(1000e-15))])
+        wsz = 2*pi*(4.5:0.1:5.0)*1e9
+        wpz = (2*pi*4.75001e9,)
+        srcz = [(mode = (1,), port = 1, current = 0.00565e-6)]
+        za = hbsolve(wsz, wpz, srcz, (8,), (8,), cz; keyedarrays = false)
+        zb = hbsolve(wsz, wpz, srcz, (8,), (8,), cz; keyedarrays = false,
+            backend = CUDABackend())
+        @test agree(za.linearized.S, zb.linearized.S; rtol = 1e-10)
+        @test agree(za.linearized.QE, zb.linearized.QE; rtol = 1e-10)
     end
 
     # the I/Q and quantum measurements on the device

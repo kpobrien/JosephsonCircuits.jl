@@ -20,7 +20,7 @@ using Test
 function structurejacobiantransposed(d, Ami, Amc, Ljb, Lscale, Rbnm, Nmodes,
     Nbranches, Nfreq, invLnm, Gnm, Cnm, rl, cl)
     P, _ = JosephsonCircuits.realjacobianstructure(Ami, Amc, Ljb, Rbnm,
-        Nmodes, Nbranches, invLnm, Gnm, Cnm, rl, cl; transposed = true)
+        Nmodes, Nbranches, invLnm, Gnm, Cnm, rl; transposed = true)
     junctions = JosephsonCircuits.junctionstructure(eltype(P), Ami, Amc, Ljb,
         Lscale, Rbnm, Nmodes, Nbranches, Nfreq, JosephsonCircuits.CPU())
     return P, JosephsonCircuits.planstructurerealjacobian(P, eltype(P),

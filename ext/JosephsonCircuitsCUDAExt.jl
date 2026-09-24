@@ -34,12 +34,13 @@ import JosephsonCircuits: fftplans, freememory, batchedinverse!, batchedmul!,
 
 # Real transform plans on the device with the same dimensions, direction
 # and normalization convention as the FFTW plans of the CPU backend: the
-# transform runs over all but the last dimension and the caller applies the
-# `prod(size(td)[1:end-1])` normalization.
+# transform runs over all but the last dimension, the inverse is the
+# unnormalized backward transform, and the caller scales the forward one by
+# `1/prod(size(td)[1:end-1])`.
 function fftplans(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
     stepsperperiod::Int, backend::CUDABackend) where T
     dims = 1:length(size(fd))-1
-    irfftplan = CUFFT.plan_irfft(fd, stepsperperiod, dims)
+    irfftplan = CUFFT.plan_brfft(fd, stepsperperiod, dims)
     rfftplan = CUFFT.plan_rfft(td, dims)
     return irfftplan, rfftplan
 end

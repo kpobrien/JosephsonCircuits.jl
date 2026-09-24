@@ -10,8 +10,8 @@ Reusable causal I/Q measurement plan. `times` are the right edges of complete
 windows; `centertimes` subtract the filter's `groupdelay`. Frequencies and
 `bandwidth3db` are in Hz, times in seconds. `noisebandwidth` is
 one-sided, `sum(abs2, taps)/(2dt)`, for the unity-DC-gain low-pass filter.
-`ports` are the port numbers of the carriers and `rows` the compiled port
-index of each, the row of its trace.
+`ports` are the port numbers of the carriers and `rows` the row of each
+port's trace, the ports in the order of their numbers.
 
 The FFT workspace is mutable. Use separate plans for concurrent measurements.
 """
@@ -63,6 +63,21 @@ function transientiqbandwidth(taps, dt)
     return (lo+hi)/2
 end
 
+# The sample times of a record as a vector and their spacing, checked
+# finite and uniformly increasing, at least four of them. The spacing is
+# estimated over the whole record rather than from its first two times,
+# whose difference loses precision late in a record.
+function uniformtimes(times)
+    ts = Float64.(collect(times))
+    length(ts) >= 4 && all(isfinite, ts) ||
+        throw(ArgumentError("At least four finite sample times are required."))
+    dt = (last(ts) - first(ts))/(length(ts) - 1)
+    atol = 64eps(maximum(abs, ts))
+    dt > 0 && all(x -> x > 0 && isapprox(x, dt; rtol = 1e-10, atol), diff(ts)) ||
+        throw(ArgumentError("The sample times must be uniformly increasing."))
+    return ts, dt
+end
+
 """
     transientiqplan(problem, times, frequencies; duration, window = :hann,
         ports = the first port, stride = 1, phasereference = first(times),
@@ -96,13 +111,8 @@ function transientiqplan(problem, times, frequencies; duration, window = :hann,
         ports = fill(porttargets(transientproblemof(problem))[1], length(frequencies)), stride = 1,
         phasereference = first(times), backend = CPU())
     p = transientproblemof(problem)
-    ts, fs = Float64.(collect(times)), Float64.(collect(frequencies))
-    length(ts) >= 4 && all(isfinite, ts) ||
-        throw(ArgumentError("At least four finite sample times are required."))
-    dt = ts[2]-ts[1]
-    dt > 0 && all(d -> isapprox(d, dt; rtol = 1e-10,
-            atol = 64eps(maximum(abs, ts))), diff(ts)) ||
-        throw(ArgumentError("Sample times must be uniformly increasing."))
+    ts, dt = uniformtimes(times)
+    fs = Float64.(collect(frequencies))
     !isempty(fs) && all(f -> isfinite(f) && 0 < f < 0.5/dt, fs) ||
         throw(ArgumentError("Carrier frequencies must lie strictly between zero and Nyquist."))
     length(ports) == length(fs) || throw(ArgumentError("Provide one port number per carrier."))

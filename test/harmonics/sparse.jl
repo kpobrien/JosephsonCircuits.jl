@@ -14,50 +14,6 @@ using Test
         )
     end
 
-    @testset "diagcombine" begin
-        @test_throws(
-            DimensionMismatch("Sizes are not consistent."),
-            JosephsonCircuits.diagcombine([[111 121;211 221],[112 122;212 222],[113 123]])
-        )
-    end
-
-    @testset "diagcombine!" begin
-        @test_throws(
-            ArgumentError("`mode_index` = 0 must be greater than zero."),
-            JosephsonCircuits.diagcombine!(zeros(4,4),zeros(2,2),0)
-        )
-        @test_throws(
-            ArgumentError("`mode_index` = 10 must be less than or equal to the number of modes, which is 2 from the matrix sizes."),
-            JosephsonCircuits.diagcombine!(zeros(4,4),zeros(2,2),10)
-        )
-    end
-
-    @testset "axis_to_modes" begin
-        @test_throws(
-            DimensionMismatch("The input array needs 3 or more dimensions (two for ports and one for modes)."),
-            JosephsonCircuits.axis_to_modes([111 122],3)
-        )
-        @test_throws(
-            ArgumentError("`modes_axis` must be 3 or more (the first two dimensions are ports."),
-            JosephsonCircuits.axis_to_modes([111 121;211 221;;; 112 122;212 222;;; 113 123;213 223],0)
-        )
-        @test_throws(
-            ArgumentError("`modes_axis` must be less than or equal to the number of dimensions in input array."),
-            JosephsonCircuits.axis_to_modes([111 121;211 221;;; 112 122;212 222;;; 113 123;213 223],4)
-        )
-    end
-
-    @testset "axis_to_modes!" begin
-        @test_throws(
-            DimensionMismatch("The S parameter array `S` must have 3 dimensions (the first two dimensions are ports and the last is the modes)."),
-            JosephsonCircuits.axis_to_modes!([1.0 1.0;1.0 1.0],[1.0,1.0])
-        )
-        @test_throws(
-            DimensionMismatch("The first two dimensions of `out` must equal the first two dimensions of `S` times `Nmodes`."),
-            JosephsonCircuits.axis_to_modes!(zeros(4,5),zeros(2,2,2))
-        )
-    end
-
     @testset "spaddkeepzeros" begin
         A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,0],2,2);
         B = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1],3,2);
@@ -68,37 +24,6 @@ using Test
     end
 
     @testset "sparseadd!" begin
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("As cannot have more nonzero elements than A"),
-                JosephsonCircuits.sparseadd!(As,A,indexmap)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("The indexmap must be the same length as As"),
-                JosephsonCircuits.sparseadd!(A,As,indexmap[1:end-1])
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],3,3)
-            @test_throws(
-                DimensionMismatch("A and As must be the same size."),
-                JosephsonCircuits.sparseadd!(A,As,indexmap)
-            )
-        end
-
         begin
             A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
             As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
@@ -130,187 +55,23 @@ using Test
             )
         end
      
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("As cannot have more nonzero elements than A"),
-                JosephsonCircuits.sparseadd!(As,2,A,Ad,indexmap)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("The indexmap must be the same length as As"),
-                JosephsonCircuits.sparseadd!(A,2,As,Ad,indexmap[1:end-1])
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],3,3)
-            @test_throws(
-                DimensionMismatch("A and As must be the same size."),
-                JosephsonCircuits.sparseadd!(A,2,As,Ad,indexmap)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2,1])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("A and Ad must be the same size."),
-                JosephsonCircuits.sparseadd!(A,2,As,Ad,indexmap)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("As cannot have more nonzero elements than A"),
-                JosephsonCircuits.sparseadd!(As,2,Ad,A,indexmap)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("The indexmap must be the same length as As"),
-                JosephsonCircuits.sparseadd!(A,2,Ad,As,indexmap[1:end-1])
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],3,3)
-            @test_throws(
-                DimensionMismatch("A and As must be the same size."),
-                JosephsonCircuits.sparseadd!(A,2,Ad,As,indexmap)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2,1])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("A and Ad must be the same size."),
-                JosephsonCircuits.sparseadd!(A,2,Ad,As,indexmap)
-            )
-        end
-    end
-
-    @testset "sparseaddconjsubst!" begin
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-            wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1,2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("A and conjflag must be the same size."),
-                JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,
-                    wmodesm)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-            wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("As cannot have more nonzero elements than A"),
-                JosephsonCircuits.sparseaddconjsubst!(As,2,A,Ad,indexmap,wmodesm .< 0,
-                    wmodesm)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-            wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("The indexmap must be the same length as As"),
-                JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap[1:end-1],
-                    wmodesm .< 0,wmodesm)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-            wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
-            wmodesm2 = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1,2])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("A and wmodesm must be the same size."),
-                JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,
-                    wmodesm2)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2,1])
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-            wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("A and Ad must be the same size."),
-                JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,
-                    wmodesm)
-            )
-        end
-
-        begin
-            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-            Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-            As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-            As2 = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],3,3)
-            wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
-            indexmap = JosephsonCircuits.sparseaddmap(A,As)
-            @test_throws(
-                DimensionMismatch("A and As must be the same size."),
-                JosephsonCircuits.sparseaddconjsubst!(A,2,As2,Ad,indexmap,
-                    wmodesm .< 0,wmodesm)
-            )
-        end
     end
 
     @testset "sparseaddmap" begin
         begin
             As = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
             A = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [4,2],2,2)
-            @test_throws(
-                ErrorException("Coordinate not found. Are the positions of elements in As a subset of the positions of elements in A?"),
-                JosephsonCircuits.sparseaddmap(A,As)
-            )
+            @test_throws ArgumentError JosephsonCircuits.sparseaddmap(A,As)
+        end
+
+        # the same map whatever the index type of the matrices
+        begin
+            A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+            As = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [4,2],2,2)
+            A32 = JosephsonCircuits.SparseArrays.sparse(Int32[1,2,1], Int32[1,2,2], [1,2,-3],2,2)
+            As32 = JosephsonCircuits.SparseArrays.sparse(Int32[1,2], Int32[1,2], [4,2],2,2)
+            @test JosephsonCircuits.sparseaddmap(A32,As32) ==
+                JosephsonCircuits.sparseaddmap(A,As) == [1, 3]
         end
 
         begin
@@ -352,66 +113,16 @@ using Test
             )
         end
 
-        # each frequency dependent value is resolved at the mode frequency
-        # of its own column
+        # each frequency dependent value is resolved at the magnitude of
+        # the mode frequency of its own column
         begin
             wmodes = [-1,2];
             f = JosephsonCircuits.FrequencyDependent
             A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], Any[f(w->1.0*w),f(w->2.0*w),f(w->3.0*w)],2,2),2);
             B = JosephsonCircuits.freqsubst(A,wmodes)
-            @test B[1,1] == -1.0 && B[2,2] == 2.0
-            @test B[3,3] == -2.0 && B[4,4] == 4.0
-            @test B[1,3] == -3.0 && B[2,4] == 6.0
-        end
-    end
-
-    @testset "spmatmul!" begin
-        begin
-            a = JosephsonCircuits.sprand(100,100,0.1);
-            b = JosephsonCircuits.sprand(100,100,0.1);
-            c = a*b;
-            d = copy(c)
-            xb = fill(false, size(a,1));
-            @test_throws(
-                DimensionMismatch("Number of columns in A must equal number of rows in B."),
-                JosephsonCircuits.spmatmul!(c,a[:,1:end-1],b,xb)
-            )
-        end
-
-        begin
-            a = JosephsonCircuits.sprand(100,100,0.1)
-            b = JosephsonCircuits.sprand(100,100,0.1)
-            c = a*b
-            d = copy(c)
-            xb = fill(false, size(a,1))
-            @test_throws(
-                DimensionMismatch("Number of rows in C must equal number of rows in A."),
-                JosephsonCircuits.spmatmul!(c,a[1:end-1,:],b,xb)
-            )
-        end
-
-        begin
-            a = JosephsonCircuits.sprand(100,100,0.1)
-            b = JosephsonCircuits.sprand(100,100,0.1)
-            c = a*b
-            d = copy(c)
-            xb = fill(false, size(a,1))
-            @test_throws(
-                DimensionMismatch("Length of xb vector must equal number of rows in A."),
-                JosephsonCircuits.spmatmul!(c,a,b,xb[1:end-1])
-            )
-        end
-
-        begin
-            a = JosephsonCircuits.sprand(100,100,0.1)
-            b = JosephsonCircuits.sprand(100,100,0.1)
-            c = a*b
-            d = copy(c)
-            xb = fill(false, size(a,1))
-            @test_throws(
-                DimensionMismatch("Number of columns in C must equal number of columns in B."),
-                JosephsonCircuits.spmatmul!(c[:,1:end-1],a,b,xb)
-            )
+            @test B[1,1] == 1.0 && B[2,2] == 2.0
+            @test B[3,3] == 2.0 && B[4,4] == 4.0
+            @test B[1,3] == 3.0 && B[2,4] == 6.0
         end
     end
 

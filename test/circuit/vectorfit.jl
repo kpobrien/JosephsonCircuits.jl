@@ -60,7 +60,8 @@ using Test
     @test_throws ArgumentError RationalScattering(data, 3; margin = Inf)
     @test_throws ArgumentError RationalScattering(data, 3; pruneslack = -0.5)
     @test_throws ArgumentError RationalScattering(data, 3; rounds = 0)
-    for kw in ((; margin = 1e-9), (; rounds = 40), (; pruneslack = 0.0), (; pruneslack = 1.0))
+    @test_throws ArgumentError RationalScattering(data, 3; scalelimit = 0.5)
+    for kw in ((; margin = 1e-9), (; rounds = 40), (; scalelimit = 0.1), (; pruneslack = 0.0), (; pruneslack = 1.0))
         tuned = RationalScattering(data, 3; kw...)
         JC.evaluateprovider!(fit, tuned.provider, 2pi .* fs)
         @test maximum(abs.(fit .- hb.S)) < 1e-10
@@ -147,6 +148,20 @@ using Test
             fill(-1.001, 1, 1), [0.1, 1.0, 10.0]; dc = ones(1, 1))
         @test first(JC.hinfnorm(got1...)) <= 1 + 1e-8
         @test only(real.(got1[4] + got1[3]*((0.0*I - got1[1]) \ got1[2]))) ≈ 1 atol=1e-10
+    end
+    # A violation narrower than the grid the enforcement sweeps, a high Q
+    # resonance standing above one, is found where its pole is and
+    # corrected there: the fit comes back passive with no contraction,
+    # and away from the resonance its response is where it was, where a
+    # sweep which saw nothing left a contraction of the whole block, or
+    # a refusal
+    Sat(A, B, C, D, w) = only(D .+ C*((im*w*I - A) \ B))
+    for peak in (1.002, 1.05)
+        Ar, Br = [0.0 1.0; -1.0 -2e-4], reshape([0.0, 1.0], 2, 1)
+        Cr, Dr = reshape([0.0, (peak - 0.5)*2e-4], 1, 2), fill(0.5, 1, 1)
+        fixed = @test_logs JC.enforcepassivity(Ar, Br, Cr, Dr, collect(range(0.5, 1.5; length = 401)))
+        @test first(JC.hinfnorm(fixed...)) <= 1
+        @test maximum(abs(Sat(fixed..., w) - Sat(Ar, Br, Cr, Dr, w)) for w in (0.6, 0.9, 1.1, 1.4)) < 1e-4
     end
     # The correction is assembled one output port block at a time,
     # which rests on the normal matrix being the same block for

@@ -107,6 +107,25 @@ end
     @test hbnlp_relerr(JC.hbvjp!(zeros(n), prob, u, w), ref) < 1e-10
 end
 
+@testset "vectors of another length are refused" begin
+    # the harmonic system indexes without bounds checks, so a vector of the
+    # wrong length is refused at the entry point, before it is read
+    nm, prob = HBNLP_PROBLEMS[1]
+    n = length(prob)
+    u = zeros(n)
+    for x in (zeros(n - 1), zeros(n + 1))
+        @test_throws DimensionMismatch JC.hbresidual!(x, prob, u)
+        @test_throws DimensionMismatch JC.hbresidual!(zeros(n), prob, x)
+        @test_throws DimensionMismatch JC.hbjvp!(zeros(n), prob, u, x)
+        @test_throws DimensionMismatch JC.hbvjp!(x, prob, u, zeros(n))
+        @test_throws DimensionMismatch mul!(x, JC.JacobianOperator(prob, u), zeros(n))
+        @test_throws DimensionMismatch ldiv!(x, JC.preconditioner(prob, u), zeros(n))
+        @test_throws DimensionMismatch JC.hbd2F!(zeros(n), prob, u, x, zeros(n))
+        @test_throws DimensionMismatch JC.hbd3F!(zeros(n), prob, u, zeros(n), zeros(n), x)
+        @test_throws DimensionMismatch JC.hbdFdp!(x, prob)
+    end
+end
+
 @testset "the operator's point is frozen" begin
     # an operator built at one point keeps evaluating there after the
     # problem's point has moved: a residual elsewhere, or a second
@@ -125,6 +144,11 @@ end
     @test hbnlp_relerr(mul!(zeros(n), J1, v), Jr1*v) < 1e-12
     @test hbnlp_relerr(mul!(zeros(n), transpose(J1), v), transpose(Jr1)*v) < 1e-10
     @test hbnlp_relerr(mul!(zeros(n), J2, v), Jr2*v) < 1e-12
+    # a preconditioner built or updated elsewhere moves the point too
+    P = JC.preconditioner(prob, u2)
+    @test hbnlp_relerr(mul!(zeros(n), J1, v), Jr1*v) < 1e-12
+    JC.updatepreconditioner!(P, u2)
+    @test hbnlp_relerr(mul!(zeros(n), J1, v), Jr1*v) < 1e-12
 end
 
 @testset "a circuit without junctions" begin
@@ -221,12 +245,19 @@ end
     @test hbnlp_relerr(y, 2 .* (Jr*v) .+ 3 .* ones(n)) < 1e-12
     @test JC.jacobianprototype(prob) !== prob.jacobian
     @test nnz(JC.jacobianprototype(prob)) == nnz(prob.jacobian)
+    # the operator keeps its point when the caller moves `u` in place and
+    # something else then moves the problem
+    u .*= 2
+    JC.hbresidual!(zeros(n), prob, u)
+    @test hbnlp_relerr(J*v, Jr*v) < 1e-12
 end
 
 @testset "matrix-free construction skips the Jacobian" begin
     circuit, defs = testjpacircuitnumeric()
     args = ((2*pi*4.75001e9,), (8,), [(mode=(1,),port=1,current=0.02e-6)],
             circuit, defs)
+    # a continuation has no single system to hand out
+    @test_throws ArgumentError JC.hbnonlinearproblem(args...; method = Staged())
     pf = JC.hbnonlinearproblem(args...; assemblejacobian = false)
     pa = JC.hbnonlinearproblem(args...; assemblejacobian = true)
     @test isnothing(pf.jacobian)
@@ -364,6 +395,41 @@ end
     @test s.solverinfo.converged
     @test isapprox(maximum(abs.(s.nodeflux)),
                    maximum(abs.(ref.nodeflux)); rtol=1e-8)
+
+    # the documented loop: the preconditioner built once and updated at
+    # each point, to the tolerance the problem carries; with the full
+    # Jacobian its solve is the Newton step
+    looped = JC.ExternalSolver() do prob, u0
+        u = copy(u0); F = similar(u)
+        JC.hbresidual!(F, prob, u)
+        P = JC.preconditioner(prob, u; spec = FullJacobian())
+        for k in 1:40
+            norm(F) <= prob.atol && return (u, true)
+            u .-= P \ F
+            JC.hbresidual!(F, prob, u)
+            JC.updatepreconditioner!(P, u)
+        end
+        return (u, norm(F) <= prob.atol)
+    end
+    s = JC.hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
+        method = looped, atol = 1e-12)
+    @test s.solverinfo.converged
+    @test isapprox(s.nodeflux, ref.nodeflux; rtol = 1e-8)
+    # a solver claiming a root it has not reached is held to the tolerance,
+    # and the record reports where it started and where it stopped
+    twosteps = JC.ExternalSolver() do prob, u0
+        u = copy(u0); F = similar(u); J = copy(prob.jacobian)
+        for _ in 1:2
+            JC.hbresidual!(F, prob, u); JC.hbjacobian!(J, prob, u)
+            u .-= J \ F
+        end
+        return (u, true)
+    end
+    t = @test_logs (:warn,) JC.hbnlsolve(wp, (8,), src, circuit, defs;
+        keyedarrays = false, method = twosteps, atol = 1e-12)
+    @test !t.solverinfo.converged
+    @test t.solverinfo.stages[end].reason === :external
+    @test t.solverinfo.finalresidual < t.solverinfo.initialresidual
 end
 
 end
@@ -407,6 +473,12 @@ end
     @test size(Jop) == (n, n)
     @test isapprox(Jop*v, J*v; rtol = 1e-12)
     @test isapprox(transpose(Jop)*z, Jt; rtol = 1e-12)
+    # and keeps its point when a preconditioner is built or updated at
+    # another, which sets the point of the system under the block
+    Pw = JC.preconditioner(prob, w)
+    @test isapprox(Jop*v, J*v; rtol = 1e-12)
+    JC.updatepreconditioner!(Pw, z)
+    @test isapprox(Jop*v, J*v; rtol = 1e-12)
 
     # the preconditioner is the canonical wrapper, and applies
     pc = JC.preconditioner(prob, u)

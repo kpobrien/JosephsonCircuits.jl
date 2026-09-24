@@ -57,6 +57,81 @@ end
     @test caches[1].reuse.sys !== caches[2].reuse.sys
     @test caches[1].nm.Cnm !== caches[2].nm.Cnm
 
+    # sensitivities at the same time from one pump solution: what
+    # differentiates its operating point evaluates on a system of its own,
+    # so the calls neither see each other nor move the point
+    nl = hbnlsolve((2*pi*4.75e9,), (4,), src, c, defs;
+        returnoperatingpoint = true, keyedarrays = false)
+    names = ["jj", "cc", "cj"]
+    nm = JC.numericmatrices(c, defs; Nmodes = length(nl.modes))
+    idx = [JC.componentindex(c, n) for n in names]
+    function derivatives()
+        dFr = JC.calcresidualsensitivity(nl.operatingpoint, c, nm, idx)
+        S = hblinsolve(ws, c, defs; Nmodulationharmonics = (2,),
+            nonlinear = nl, nbatches = 1, keyedarrays = false,
+            sensitivitynames = names, returnSsensitivity = true,
+            sensitivityresidual = dFr,
+            sensitivitymode = :forward).Ssensitivity
+        return Matrix(dFr), S
+    end
+    alone = derivatives()
+    together = [fetch(t) for _ in 1:4
+        for t in [Threads.@spawn derivatives() for _ in 1:8]]
+    @test all(d -> isapprox(d[1], alone[1]; rtol = 1e-12) &&
+        isapprox(d[2], alone[2]; rtol = 1e-12), together)
+
+    # the same with a direct current block, a scattering block and a
+    # polynomial current-phase relation, whose derivatives also read the
+    # block rows of the canonical work and the cached second derivative of
+    # the relation, with the forward and the reverse contraction
+    # interleaved; no array of the operating point moves
+    Z0, R = 50.0, 5.0
+    series(w) = (z = R/Z0; [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
+    dseries(w) = (z = R/Z0; d = 2/(Z0*(z+2)^2); [d -d; -d d])
+    cb = compile(Circuit([:p1 => Port(1; termination = nothing),
+            :r1 => Resistor(50.0),
+            :cc => ScatteringParameters(series; nports = 2,
+                grounded = false, derivatives = (R = dseries,)),
+            :jj => NonlinearInductor(1e-9,
+                PolynomialCPR([1.0, 0.25, -1/6, 0.0, 1/120])),
+            :c2 => Capacitor(1000e-15)],
+        [((:p1, 1), (:r1, 1), (:cc, 1, 1)), ((:cc, 2, 1), (:jj, 1), (:c2, 1)),
+            ((:cc, 1, 2), (:cc, 2, 2), (:jj, 2), (:c2, 2), (:r1, 2), (:p1, 2),
+                Ground)]))
+    nlb = hbnlsolve((2*pi*4.75e9,), (4,),
+        [(mode = (1,), port = 1, current = 0.00565e-6),
+            (mode = (0,), port = 1, current = 1e-8)], cb, Dict{Any,Any}();
+        dc = true, odd = true, even = true, method = Newton(),
+        returnoperatingpoint = true, keyedarrays = false)
+    opb = nlb.operatingpoint
+    nmb = JC.numericmatrices(cb, Dict{Any,Any}(); Nmodes = opb.Nmodes)
+    namesb = ["jj", "r1", "c2"]
+    idxb = [JC.componentindex(cb, n) for n in namesb]
+    pairs = JC.designblockjacobian(cb, [:R])
+    sig = JC.truncfreqs(JC.calcfreqsdft((2,)); dc = true, odd = true,
+        even = true)
+    arrays(x) = [copy(getfield(x, f)) for f in fieldnames(typeof(x))
+        if getfield(x, f) isa AbstractArray]
+    snapshot() = map(arrays, (opb, opb.sys, opb.dc, opb.dc.work))
+    held = snapshot()
+    function blockderivatives(mode)
+        dFr = JC.calcresidualsensitivity(opb, cb, nmb, idxb)
+        S = hblinsolve(ws[1:2], cb, Dict{Any,Any}(), sig; nonlinear = nlb,
+            nbatches = 2, keyedarrays = false, sensitivitynames = namesb,
+            returnSsensitivity = true, sensitivityresidual = dFr,
+            sensitivitymode = mode).Ssensitivity
+        return Matrix(dFr),
+            Matrix(JC.calcblockresidualsensitivity(opb, cb, pairs)), S
+    end
+    fwd, rev = blockderivatives(:forward), blockderivatives(:reverse)
+    @test norm(fwd[2]) > 0 && norm(fwd[3]) > 0
+    @test isapprox(fwd[3], rev[3]; rtol = 1e-8)
+    interleaved = [fetch(t) for t in [Threads.@spawn blockderivatives(
+        isodd(k) ? :forward : :reverse) for k in 1:8]]
+    @test all(k -> all(isapprox(a, b; rtol = 1e-12) for (a, b) in
+        zip(interleaved[k], isodd(k) ? fwd : rev)), 1:8)
+    @test isequal(snapshot(), held)
+
     # the transient batches its problems over the threads, and the
     # tangent, the adjoint, the noise and the gain share one reuse object
     # between them

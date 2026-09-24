@@ -41,8 +41,8 @@ preconditioner is not exact, and a Krylov solve it fails is escalated to
 the same factors in the iteration's precision
 ([`escalatepreconditioner!`](@ref)). A direct solve factorizes in the
 precision of its iteration and refuses a factorization asking for
-another. cuDSS is the only factorization here which honours a precision;
-KLU and UMFPACK factorize in double whatever they are handed.
+another. cuDSS and [`BlockFactorization`](@ref) honour a precision; KLU
+and UMFPACK factorize in double whatever they are handed.
 
 Requires `CUDSS.jl` and `CUDA.jl` to be loaded; without them the returned
 factorization raises an informative error when used, so the constructor itself
@@ -59,8 +59,7 @@ analysis is almost all of the cost of a factorization and is paid once.
 
 cuDSS is handed the whole matrix, block diagonal or not: it discovers the
 independent blocks of a mode block diagonal itself and works on them
-together, and measured faster that way than when handed the blocks as a
-uniform batch.
+together, which is faster than handing it the blocks as a uniform batch.
 """
 struct CUDSSFactorization <: AbstractFactorization
     precision::Union{Nothing,Type{<:AbstractFloat}}
@@ -112,16 +111,11 @@ correctness and one of speed.
     sixteen is wrong by order one.
 
 !!! warning "A step in the cost at sixteen systems, at every right hand side count"
-    cuDSS 0.8 takes about eight times as long per refactorization and solve
-    for a batch of sixteen as for a batch of fifteen, and then the same
-    time for every batch from sixteen to sixty four. On a 600 by 600 sparse
-    system the cost per refactorization and solve was 2.0 ms at fifteen
-    systems and 16.6 ms at sixteen, and the ratio was 8.2, 8.4, 8.4 and 7.8
-    at one, two, four and eight right hand sides. Because the cost above
-    the step does not grow with the batch, splitting into chunks of fifteen
-    always wins: sixty four systems as five chunks is about 9.5 ms against
-    16.2 ms as one batch. This is not documented by NVIDIA and does not
-    appear to have been reported.
+    cuDSS 0.8 takes several times as long per refactorization and solve
+    for a batch of sixteen as for a batch of fifteen, at every number of
+    right hand sides, and then the same time for every batch from sixteen
+    to sixty four. Because the cost above the step does not grow with the
+    batch, splitting into chunks of fifteen always wins.
 
 The cap costs nothing on this path, since the speedup of batching a
 frequency sweep through cuDSS saturates by about a dozen systems. It

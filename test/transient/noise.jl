@@ -12,6 +12,29 @@ using Test
 @testset "the quantum noise of a transient" begin
     JC = JosephsonCircuits
 
+    @testset "the default bath's bins by transform against explicit sums" begin
+        # the transform of the record gives each bin the phase of the
+        # record's origin, of the stage offsets and of the reference time,
+        # which a record starting at zero would not exercise: an odd and an
+        # even record away from zero, with the Gauss-Legendre stage times
+        h, reference = 1.3e-11, 1.23e-9
+        gc = JC.gausscoefficients()
+        offsets = (0.0, h*gc.c[1], h*gc.c[2])
+        for nt in (31, 64)
+            times = 2.7e-9 .+ h .* (0:nt - 1)
+            fs = (1:fld(nt - 1, 2)) ./ (nt*h)
+            kept = [sin(r + 0.7k + 1.9s) for r in 1:3, k in 1:nt, s in 1:3]
+            sums = zeros(3, 2length(fs))
+            for (j, f) in enumerate(fs), s in 1:3, k in 1:nt
+                arg = 2f*(times[k] + offsets[s] - reference)
+                sums[:, j] .+= kept[:, k, s] .* cospi(arg)
+                sums[:, length(fs) + j] .+= kept[:, k, s] .* sinpi(arg)
+            end
+            @test JC.bincontraction(kept, fs, times, h, offsets, reference) ≈
+                sums rtol=1e-12
+        end
+    end
+
     @testset "a passive two port against the linearized solver" begin
         c = Circuit([:p1 => Port(1), :p2 => Port(2), :c1 => Capacitor(0.3e-12),
                 :c2 => Capacitor(0.5e-12), :loss => Resistor(30.0)],
@@ -54,6 +77,17 @@ using Test
         end
         @test adjoint.covariance ≈ forward.covariance rtol=1e-10
         @test adjoint.gain ≈ forward.gain rtol=1e-10
+        # the noise and the gain step on the factorization they are given,
+        # as the solve and the responses do, so a reuse keeps the system
+        # a solve on it built
+        klu = KLUfactorization(; check = true)
+        kept = TransientReuse()
+        ksol = transientsolve(prob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases, factorization = klu, reuse = kept)
+        ksys = kept.system
+        @test transientnoise(ksol, plan; frequencies = [3e9], weights = [1/T], factorization = klu, reuse = kept).covariance ≈
+            adjoint.covariance rtol=1e-12
+        @test transientgain(ksol, plan, plan; factorization = klu, reuse = kept) isa Matrix{Float64}
+        @test kept.system === ksys
         # the pulsed gain of a probe applied inside the window against the
         # periodic gain: a rectangular probe of three cycles in the 1 ns
         # window differs by its edges, and the difference falls as the
@@ -390,7 +424,7 @@ using Test
         # feedthrough of opposite signs at the two ports gives a loss
         # matrix with imaginary off-diagonal entries, which does not
         mixed(noise) = RationalScattering(-al .* Matrix(1.0I, 2, 2), al .* Matrix(1.0I, 2, 2), 0.6 .* [0.0 1.0; 1.0 0.0], [0.3 0.0; 0.0 -0.3]; zref = 50.0, noise)
-        K = JosephsonCircuits.groupcovariance(transientnoisebaths(transientproblem(mk(mixed(Passive())))), (channels = 3:4, block = 1), 3e9)
+        _, K = JosephsonCircuits.groupcovariance(transientnoisebaths(transientproblem(mk(mixed(Passive())))), (channels = 3:4, block = 1), 3e9)
         @test abs(imag(K[1, 2])) > 0.1
         nm, _ = noiseof(mk(mixed(Passive())))
         @test nm.diagnostics.passed

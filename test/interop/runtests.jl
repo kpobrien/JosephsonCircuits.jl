@@ -166,6 +166,15 @@ end
         @test isapprox(maximum(abs.(s.nodeflux)),
                        maximum(abs.(ref.nodeflux)); rtol = 1e-8)
     end
+    # a single precision iteration: the tolerances reach Krylov.jl in the
+    # iteration's precision and the operators report it, so Krylov.jl
+    # neither refuses the solve nor warns
+    s32 = @test_logs min_level = Base.CoreLogging.Warn JCX.hbnlsolve(wp, (8,),
+        src, circuit, defs; keyedarrays = false, method = NewtonKrylov(
+            precision = Float32, linearsolver = JCX.KrylovJL(:gmres)))
+    @test s32.solverinfo.converged
+    @test isapprox(maximum(abs.(s32.nodeflux)), maximum(abs.(ref.nodeflux));
+        rtol = 1e-4)
     # the residual a Krylov.jl solve reports is its final one, not the
     # right hand side: a solve cut short by its iteration limit has made
     # progress and says so

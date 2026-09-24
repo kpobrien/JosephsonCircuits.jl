@@ -95,7 +95,7 @@ function testjobs()
             "networks/networks.jl", "solvers/newtonkrylov.jl",
             "wrspicecrosscheck.jl", "harmonics/nonlinearterm.jl",
             "circuit/values.jl", "spice/transient.jl",
-            "harmonics/frequencies.jl", "transient/iq.jl", "deprecated.jl",
+            "harmonics/frequencies.jl", "transient/iq.jl",
             "spice/export.jl", "circuit/legacy.jl", "linearized/outputs.jl",
             "circuit/bind.jl", "circuit/oracles.jl", "circuit/graph.jl",
             "harmonics/sparse.jl",

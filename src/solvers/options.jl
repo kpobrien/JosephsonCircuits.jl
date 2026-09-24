@@ -62,17 +62,34 @@ for the batched paths, which reach their solver without one.
 solverkwargs(::Union{Nothing,AbstractFactorization}) = NamedTuple()
 
 """
-    KLUfactorization(; kwargs...)
+    KLUfactorization(; pivottol = 1e-6, kwargs...)
 
 The [`AbstractFactorization`](@ref) using KLU.jl, a sparse LU factorization
-suited to circuit matrices. This is the default on the host. `kwargs` are
-passed to `KLU.klu`. The fill reducing ordering is chosen by
-[`kluordered`](@ref) rather than left at KLU's default.
+suited to circuit matrices. This is the default on the host. The fill
+reducing ordering is chosen by [`kluordered`](@ref) rather than left at
+KLU's default.
+
+A refactorization reuses the pivot sequence of the factorization before
+it, which the values of a later matrix can make unstable: a pivot which
+has become small inflates the entries its elimination updates, and the
+solution loses about as many digits as they grow. `pivottol` bounds that
+growth. When the largest pivot of the refactorized matrix, whose rows KLU
+scales to a largest entry of one, exceeds `1/pivottol`, the same values
+are factorized again with fresh partial pivoting, reusing the symbolic
+analysis ([`klurefactor!`](@ref)). Partial pivoting keeps the growth of
+a fresh factorization far below the default bound, so a stable
+refactorization is not repeated; `pivottol = 0` keeps every
+refactorization. `kwargs` are passed to `KLU.klu`.
 """
 struct KLUfactorization <: AbstractFactorization
+    pivottol::Float64
     kwargs::NamedTuple
 end
-KLUfactorization(; kwargs...) = KLUfactorization(NamedTuple(kwargs))
+function KLUfactorization(; pivottol::Real = 1e-6, kwargs...)
+    0 <= pivottol <= 1 || throw(ArgumentError(
+        lazy"`pivottol` = $(pivottol) must be in [0, 1]."))
+    return KLUfactorization(Float64(pivottol), NamedTuple(kwargs))
+end
 
 """
     LUfactorization(; kwargs...)
@@ -157,8 +174,8 @@ BlockDiagonal(; factorization::MaybeFactorization = nothing) =
 
 Every mode coupling: the full Jacobian, an exact preconditioner and a
 direct solve. With a [`BlockFactorization`](@ref) this is the dense block
-factorization over the circuit graph, the fastest measured method on three
-or more tones.
+factorization over the circuit graph, which [`Automatic`](@ref) chooses
+for two or more tones when its factors fit in memory.
 """
 struct FullJacobian <: AbstractModeCoupling
     factorization::MaybeFactorization
@@ -171,7 +188,8 @@ FullJacobian(; factorization::MaybeFactorization = nothing) =
 
 The couplings whose harmonic offset is within `p`, an `Integer` number of
 offset shells or a per tone tuple of bounds; see [`modebandmask`](@ref).
-Grown by one offset per tone on escalation.
+Grown on escalation by one shell, or to the next offset each tone's grid
+realizes.
 """
 struct HarmonicBand <: AbstractModeCoupling
     p::Union{Integer,Tuple{Vararg{Integer}}}
@@ -210,8 +228,8 @@ couplings left between clusters are contractive; see
 [`spectralclusters`](@ref). Probed at the first point and again whenever
 the solver reports a slow linear solve; the clusters only grow within a
 solve. With a [`BlockFactorization`](@ref) each cluster is one dense block
-factorization over the circuit graph, which halves the memory of
-[`FullJacobian`](@ref) on three tones.
+factorization over the circuit graph, whose factors take less memory than
+those of [`FullJacobian`](@ref).
 """
 struct Clusters <: AbstractModeCoupling
     factorization::MaybeFactorization
@@ -372,8 +390,7 @@ Arnoldi count, and the rebuild is skipped when `k` steps at the measured
 cost of a step are cheaper than the measured rebuild plus a fresh solve.
 Everything is measured, so the rule adapts to the device and the
 factorization; it pays when a rebuild is expensive next to a solve, as
-with a [`BlockFactorization`](@ref) of three tones, where it saved a
-fifth to a third of the time. A rebuild forced by a failed, stalled or
+with a [`BlockFactorization`](@ref) of three tones. A rebuild forced by a failed, stalled or
 non-descent solve is never skipped.
 Because the decision rests on measured times, the path a solve takes,
 and the answer within the tolerance, can differ between two runs of the
@@ -503,8 +520,7 @@ for more, the set whose factors fit in memory. `linearsolver` is a
 [`GMRES`](@ref) or a [`KrylovJL`](@ref)
 solver, `refresh` [`Always`](@ref) (the default), [`Probe`](@ref) (which
 rebuilds the preconditioner only when a measured probe says a rebuild
-pays, and is faster by a fifth to a third on the hard cases, at the price
-of a solve path which depends on measured times and so can differ
+pays, at the price of a solve path which depends on measured times and so can differ
 between two runs) or [`Never`](@ref). `escalate` allows a preconditioner
 which fails to reach its tolerance to be grown (a band by one offset per
 tone, any other set to the full Jacobian; see
@@ -532,8 +548,9 @@ every step, interpolating by default; halving
 (`Backtracking(interpolate = false)`) suits an inexact preconditioner
 such as [`BlockDiagonal`](@ref). `precision` is the floating
 point type of the iteration: the system on the backend, the Krylov
-vectors, and the factors of a sparse preconditioner; a single precision
-solve needs a relative tolerance `rtol` it can meet.
+vectors, and the factors of a sparse preconditioner; the residual
+tolerance is raised to the rounding floor of the source in that
+precision, as `atol` describes.
 
 The forcing sequence (Eisenstat-Walker choice 2 clamped to `[1e-10, 0.9]`,
 starting at 0.3) and the stagnation threshold (a solve which does not
@@ -565,8 +582,8 @@ end
     Newton(; factorization = nothing, linesearch = Backtracking())
 
 Newton's method on the equivalent real system with the exact assembled
-real Jacobian, factorized by `factorization` (the host's KLU when
-`nothing`), the length of every step chosen by `linesearch`, a
+real Jacobian, factorized by `factorization` (when `nothing`, KLU on the
+host and cuDSS on a device), the length of every step chosen by `linesearch`, a
 [`Backtracking`](@ref), interpolating by default.
 """
 struct Newton <: AbstractHBNonlinearSolver
@@ -599,8 +616,8 @@ end
 
 The holomorphic Jacobian approximation with Anderson acceleration of depth
 `anderson` (the maximum number of previous iterates used for the
-extrapolation; less than one disables it), factorized by `factorization`
-(the host's KLU when `nothing`), the length of every step chosen by
+extrapolation; zero disables it), factorized by `factorization` (when
+`nothing`, KLU on the host and cuDSS on a device), the length of every step chosen by
 `linesearch`, a [`Backtracking`](@ref), interpolating by default; the
 curvilinear search of a rejected Anderson candidate follows it too. The
 harmonic balance residual is not complex differentiable, so this Jacobian
@@ -622,6 +639,8 @@ end
 function QuasiNewton(; anderson::Integer = 5,
     factorization::MaybeFactorization = nothing,
     linesearch::Backtracking = Backtracking())
+    anderson >= 0 || throw(ArgumentError(
+        lazy"`anderson` = $(anderson) must be nonnegative; zero disables the acceleration."))
     checkdirectfactorization(factorization, "QuasiNewton")
     return QuasiNewton(Int(anderson), factorization, linesearch)
 end
@@ -696,7 +715,10 @@ Solve the operating point with a caller supplied root finder.
 `f(prob, u0)` receives an [`HBNonlinearProblem`](@ref) and the initial
 value in the real representation, and returns `(u, converged)`. Everything
 it needs is on `prob`: [`hbresidual!`](@ref), [`hbjvp!`](@ref),
-[`JacobianOperator`](@ref) and [`preconditioner`](@ref).
+[`JacobianOperator`](@ref), [`preconditioner`](@ref), and the tolerance
+of the solve, `prob.atol`. The root is held to that tolerance as well:
+a `u` whose residual norm exceeds it has not converged, whatever
+`converged` says.
 
 This is the plug point for a solver the package does not know about. A
 NonlinearSolve.jl algorithm, a hand written continuation stepper or a
@@ -711,14 +733,17 @@ solve.
 ExternalSolver() do prob, u0
     u = copy(u0); F = similar(u)
     hbresidual!(F, prob, u)
+    # built once, and refactorized at each new point on its structure
+    P = preconditioner(prob, u)
     for k in 1:40
+        norm(F) <= prob.atol && return (u, true)
         J = JacobianOperator(prob, u)
-        P = preconditioner(prob, u)
         d, st = Krylov.gmres(J, -F; N = P, rtol = 1e-10, atol = 0.0)
         st.solved || return (u, false)
         u .+= d; hbresidual!(F, prob, u)
+        JosephsonCircuits.updatepreconditioner!(P, u)
     end
-    return (u, norm(F) <= tol)
+    return (u, norm(F) <= prob.atol)
 end
 ```
 
@@ -728,13 +753,9 @@ end
     the Newton residual is smaller than that -- which is the whole point of
     the last few Newton steps -- every linear solve returns immediately
     having done zero iterations, reports success, and hands back a zero
-    step. Newton then stagnates while nothing reports a failure.
-
-    Measured on a JPA with the default `atol`: 40 Newton iterations, final
-    residual 3.2e-10, never converged. With `atol = 0.0`: 7 Newton
-    iterations, residual 7.4e-17. Any external Krylov solver used inside a
-    Newton loop wants its absolute tolerance set to zero and its stopping
-    left to the relative one.
+    step. Newton then stagnates while nothing reports a failure. Any
+    external Krylov solver used inside a Newton loop wants its absolute
+    tolerance set to zero and its stopping left to the relative one.
 """
 struct ExternalSolver{F} <: AbstractHBNonlinearSolver
     f::F
@@ -747,9 +768,9 @@ ExternalSolver(f::Function) = ExternalSolver{typeof(f)}(f)
 # (a frequency as an integer, a source as a named tuple of whatever number
 # types, the definitions as a dictionary of any key and value types) and
 # convert them once here, so that the solves below are compiled for one form
-# of each rather than once per way of writing them: a solver body of a
-# thousand lines compiled for `Tuple{Int64}` and again for `Tuple{Float64}`
-# costs seconds each time and computes the same numbers.
+# of each rather than once per way of writing them: a solver body compiled
+# for `Tuple{Int64}` and again for `Tuple{Float64}` computes the same
+# numbers at twice the compile time.
 
 """
     SourceTuple{N}

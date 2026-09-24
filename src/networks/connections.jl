@@ -1,5 +1,149 @@
 
 """
+    foreachbatch(f, indices, batchsize)
+
+Call `f` on the consecutive batches of at most `batchsize` of the
+frequency indices `indices`, each batch a view of them: on the calling
+task when they form a single batch, so that an exception is thrown as it
+is rather than wrapped in a `TaskFailedException`, and otherwise each
+batch on a task of its own. Nothing is called when `indices` is empty.
+"""
+function foreachbatch(f::F, indices, batchsize::Integer) where {F}
+    n = length(indices)
+    if n == 0
+        return nothing
+    elseif batchsize >= n
+        f(indices)
+    else
+        Threads.@sync for batch in Base.Iterators.partition(1:n, batchsize)
+            Threads.@spawn f(view(indices, batch))
+        end
+    end
+    return nothing
+end
+
+# the batch size of a connection of `n` frequencies on `nbatches` tasks: a
+# connection is cheap per frequency, so the frequencies are split between
+# tasks only when there are more of them than tasks
+connectbatchsize(n, nbatches) = nbatches > 1 && n > nbatches ? cld(n, nbatches) : n
+
+# the checks of a connection of the ports `k` and `l` of `Sa` into `Sout`
+function checkintraconnect(Sout, Sa, k::Int, l::Int)
+    if ndims(Sa) != ndims(Sout)
+        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have the same number of dimensions."))
+    end
+
+    if ndims(Sa) < 2
+        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have at least two dimensions."))
+    end
+
+    if size(Sa,1) != size(Sa,2)
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
+    end
+
+    if size(Sout,1) != size(Sout,2)
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
+    end
+
+    if size(Sa,1) -2 != size(Sout,1)
+        throw(DimensionMismatch(lazy"Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
+    end
+
+    for i in 3:ndims(Sa)
+        if size(Sa,i) != size(Sout,i)
+            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa` and `Sout` must be equal."))
+        end
+    end
+
+    if k > size(Sa,1)
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
+    end
+
+    if l > size(Sa,1)
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sa`."))
+    end
+
+    if l < 1
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
+    end
+
+    if k < 1
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
+    end
+
+    if l == k
+        throw(ArgumentError(lazy"`k` and `l` cannot be equal because a port cannot be merged with itself."))
+    end
+
+    return nothing
+end
+
+# the noise covariances `C` must have the size of the scattering parameters
+# `S`, which the messages name `Cname` and `Sname`
+function checkcovariance(C, S, Cname, Sname)
+    if size(C) != size(S)
+        throw(DimensionMismatch(lazy"The size of `$(Cname)` must the same as the size of `$(Sname)`."))
+    end
+    return nothing
+end
+
+# the checks of a connection of port `k` of `Sa` to port `l` of `Sb` into
+# `Sout`
+function checkinterconnect(Sout, Sa, Sb, k::Int, l::Int)
+    if ndims(Sa) != ndims(Sb)
+        throw(DimensionMismatch(lazy"`Sa` and `Sb` must have the same number of dimensions."))
+    end
+
+    if ndims(Sa) != ndims(Sout)
+        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
+    end
+
+    if ndims(Sa) < 2
+        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
+    end
+
+    if size(Sa,1) != size(Sa,2)
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
+    end
+
+    if size(Sb,1) != size(Sb,2)
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sb` must be equal."))
+    end
+
+    if size(Sout,1) != size(Sout,2)
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
+    end
+
+    if size(Sa,1) + size(Sb,1) - 2 != size(Sout,1)
+        throw(DimensionMismatch(lazy"First two dimensions of `Sout` must be `m+n-2`."))
+    end
+
+    for i in 3:ndims(Sa)
+        if size(Sa,i) != size(Sout,i)
+            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
+        end
+    end
+
+    if k > size(Sa,1)
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
+    end
+
+    if l > size(Sb,1)
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sb`."))
+    end
+
+    if l < 1
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
+    end
+
+    if k < 1
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
+    end
+
+    return nothing
+end
+
+"""
     intraconnectS(Sa::AbstractArray, k::Int, l::Int;
         nbatches::Int = Base.Threads.nthreads())
 
@@ -75,62 +219,12 @@ See [`intraconnectS`](@ref) for description.
 function intraconnectS!(Sout, Sa, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads())
 
-    # validate all of the inputs
-    if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have the same number of dimensions."))
-    end
-
-    if ndims(Sa) < 2
-        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have at least two dimensions."))
-    end
-
-    if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
-    end
-
-    if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
-    end
-
-    if size(Sa,1) -2 != size(Sout,1)
-        throw(DimensionMismatch(lazy"Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
-    end
-
-    for i in 3:ndims(Sa)
-        if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa` and `Sout` must be equal."))
-        end
-    end
-
-    if k > size(Sa,1)
-        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
-    end
-
-    if l > size(Sa,1)
-        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sa`."))
-    end
-
-    if l < 1
-        throw(ArgumentError(lazy"Port `l` is smaller than one."))
-    end
-
-    if k < 1
-        throw(ArgumentError(lazy"Port `k` is smaller than one."))
-    end
-
-    if l == k
-        throw(ArgumentError(lazy"`k` and `l` cannot be equal because a port cannot be merged with itself."))
-    end
+    checkintraconnect(Sout, Sa, k, l)
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    if  nbatches > 1 && length(indices) > nbatches
-        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
-        Threads.@sync for batch in batches
-            Base.Threads.@spawn intraconnectS_inner!(Sout,Sa,k,l,batch)
-        end
-    else
-        intraconnectS_inner!(Sout,Sa,k,l,indices)
+    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+        intraconnectS_inner!(Sout, Sa, k, l, batch)
     end
 
     return Sout
@@ -163,7 +257,6 @@ function intraconnectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
             -Sa[l,l,b]
         )
         gammaii_Sii_lu = lu_2x2(gammaii_Sii)
-        # gammaii_Sii_lu =  lu(gammaii_Sii)
 
         # ii and jj are the indices which extend up to m and skip k,l
         # i and j extend up to m-2 and are consecutive 
@@ -175,7 +268,6 @@ function intraconnectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
 
                 # solve the linear system
                 ai1jj, ai2jj = ldiv_2x2(gammaii_Sii_lu,Sie)
-                # ai1jj, ai2jj = gammaii_Sii_lu \ Sie
 
                 for iindex in eachindex(ranges)
                     for ii in ranges[iindex]
@@ -271,70 +363,14 @@ See [`intraconnectS`](@ref) for description.
 function intraconnectS!(Sout, Cout, Sa, Ca, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads())
 
-    # validate all of the inputs
-    if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have the same number of dimensions."))
-    end
-
-    if ndims(Sa) < 2
-        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have at least two dimensions."))
-    end
-
-    if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
-    end
-
-    if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
-    end
-
-    if size(Sa,1) -2 != size(Sout,1)
-        throw(DimensionMismatch(lazy"Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
-    end
-
-    for i in 3:ndims(Sa)
-        if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa` and `Sout` must be equal."))
-        end
-    end
-
-    if k > size(Sa,1)
-        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
-    end
-
-    if l > size(Sa,1)
-        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sa`."))
-    end
-
-    if l < 1
-        throw(ArgumentError(lazy"Port `l` is smaller than one."))
-    end
-
-    if k < 1
-        throw(ArgumentError(lazy"Port `k` is smaller than one."))
-    end
-
-    if l == k
-        throw(ArgumentError(lazy"`k` and `l` cannot be equal because a port cannot be merged with itself."))
-    end
-
-    if size(Ca) != size(Sa)
-        throw(DimensionMismatch(lazy"The size of `Ca` must the same as the size of `Sa`."))
-    end
-
-    if size(Cout) != size(Sout)
-        throw(DimensionMismatch(lazy"The size of `Cout` must the same as the size of `Sout`."))
-    end
+    checkintraconnect(Sout, Sa, k, l)
+    checkcovariance(Ca, Sa, "Ca", "Sa")
+    checkcovariance(Cout, Sout, "Cout", "Sout")
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    if  nbatches > 1 && length(indices) > nbatches
-        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
-        Threads.@sync for batch in batches
-            Base.Threads.@spawn intraconnectS_inner!(Sout,Cout,Sa,Ca,k,l,batch)
-        end
-    else
-        intraconnectS_inner!(Sout,Cout,Sa,Ca,k,l,indices)
+    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+        intraconnectS_inner!(Sout, Cout, Sa, Ca, k, l, batch)
     end
 
     return Sout, Cout
@@ -358,6 +394,7 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
     ik_kl_kk_il = similar(Sa,m-2)
 
     @inbounds for b in batch
+        # the transpose of gammaii - Sii, whose solves give rows
         gammaii_Sii = StaticArrays.SMatrix{2,2}(
             -Sa[k,k,b],
             one(Sa[k,l,b])-Sa[k,l,b],
@@ -365,22 +402,17 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
             -Sa[l,l,b]
         )
         gammaii_Sii_lu = lu_2x2(gammaii_Sii)
-        # gammaii_Sii_lu =  lu(gammaii_Sii)
 
-        # compute the terms we will use in the inner loop
+        # compute the terms we will use in the inner loop: the rows of
+        # Sei*inv(gammaii - Sii), with Sei the columns k and l of Sa, so
+        # il_lk_ll_ik = (Sa[i,l]*(1-Sa[l,k])+Sa[l,l]*Sa[i,k])/denom
+        # ik_kl_kk_il = (Sa[i,k]*(1-Sa[k,l])+Sa[k,k]*Sa[i,l])/denom
+        # denom = (1-Sa[k,l])*(1-Sa[l,k]) - Sa[k,k]*Sa[l,l]
         for iindex in eachindex(ranges)
             for ii in ranges[iindex]
                 i = ii-iindex+1
-
-                # solve the linear system to compute il_lk_ll_ik and
-                # ik_kl_kk_il where
-                # il_lk_ll_ik = (Sa[i,l]*(1-Sa[l,k])+Sa[l,l]*Sa[i,k])/denom
-                # ik_kl_kk_il = (Sa[i,k]*(1-Sa[k,l])+Sa[k,k]*Sa[i,l])/denom
-                # denom = (1-Sa[k,l])*(1-Sa[l,k]) - Sa[k,k]*Sa[l,l]
                 Sie = StaticArrays.SVector{2}(Sa[ii,k,b],Sa[ii,l,b])
                 il_lk_ll_ik[i], ik_kl_kk_il[i] = ldiv_2x2(gammaii_Sii_lu,Sie)
-                # il_lk_ll_ik[i], ik_kl_kk_il[i] = gammaii_Sii_lu \ Sie
-
             end
         end
 
@@ -390,14 +422,9 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
             for jj in ranges[jindex]
                 j = jj-jindex+1
 
-                # solve the linear system to compute jl_lk_ll_jk and
-                # jk_kl_kk_jl where
-                # jl_lk_ll_jk = (Sa[j,l]*(1-Sa[l,k])+Sa[l,l]*Sa[j,k])/denom
-                # jk_kl_kk_jl = (Sa[j,k]*(1-Sa[k,l])+Sa[k,k]*Sa[j,l])/denom
-                # denom = (1-Sa[k,l])*(1-Sa[l,k]) - Sa[k,k]*Sa[l,l]
-                Sie = StaticArrays.SVector{2}(Sa[jj,k,b],Sa[jj,l,b])
-                jl_lk_ll_jk, jk_kl_kk_jl = ldiv_2x2(gammaii_Sii_lu,Sie)
-                # jl_lk_ll_jk, jk_kl_kk_jl = gammaii_Sii_lu \ Sie
+                # the same terms for row jj, computed above
+                jl_lk_ll_jk = il_lk_ll_ik[j]
+                jk_kl_kk_jl = ik_kl_kk_il[j]
 
                 for iindex in eachindex(ranges)
                     for ii in ranges[iindex]
@@ -519,88 +546,24 @@ end
         nbatches = Base.Threads.nthreads())
 
 In place version of [`interconnectS`](@ref) with noise covariances,
-writing into `Sout` and `Cout`.
+writing into `Sout` and `Cout` and returning both.
 
 """
 function interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads())
 
-    # validate all of the inputs
-    if ndims(Sa) != ndims(Sb)
-        throw(DimensionMismatch(lazy"`Sa` and `Sb` must have the same number of dimensions."))
-    end
-
-    if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
-    end
-
-    if ndims(Sa) < 2
-        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
-    end
-
-    if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
-    end
-
-    if size(Sb,1) != size(Sb,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sb` must be equal."))
-    end
-
-    if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
-    end
-
-    if size(Sa,1) + size(Sb,1) - 2 != size(Sout,1)
-        throw(DimensionMismatch(lazy"First two dimensions of `Sout` must be `m+n-2`."))
-    end
-
-    for i in 3:ndims(Sa)
-        if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
-        end
-    end
-
-    if k > size(Sa,1)
-        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
-    end
-
-    if l > size(Sb,1)
-        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sb`."))
-    end
-
-    if l < 1
-        throw(ArgumentError(lazy"Port `l` is smaller than one."))
-    end
-
-    if k < 1
-        throw(ArgumentError(lazy"Port `k` is smaller than one."))
-    end
-
-    if size(Ca) != size(Sa)
-        throw(DimensionMismatch(lazy"The size of `Ca` must the same as the size of `Sa`."))
-    end
-
-    if size(Cb) != size(Sb)
-        throw(DimensionMismatch(lazy"The size of `Cb` must the same as the size of `Sb`."))
-    end
-
-    if size(Cout) != size(Sout)
-        throw(DimensionMismatch(lazy"The size of `Cout` must the same as the size of `Sout`."))
-    end
+    checkinterconnect(Sout, Sa, Sb, k, l)
+    checkcovariance(Ca, Sa, "Ca", "Sa")
+    checkcovariance(Cb, Sb, "Cb", "Sb")
+    checkcovariance(Cout, Sout, "Cout", "Sout")
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    if nbatches > 1 && length(indices) > nbatches
-        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
-        Threads.@sync for batch in batches
-            Base.Threads.@spawn interconnectS_inner!(Sout,Cout,Sa,Sb,Ca,Cb,k,l,batch)
-        end
-
-    else
-        interconnectS_inner!(Sout,Cout,Sa,Sb,Ca,Cb,k,l,indices)
+    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+        interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k, l, batch)
     end
 
-    return Sout
+    return Sout, Cout
 end
 
 """
@@ -643,7 +606,6 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
             one(Sa[k,k,b]),
             -Sb[l,l,b]
         )
-        # gammaii_Sii_lu = lu(gammaii_Sii)
         gammaii_Sii_lu = lu_2x2(gammaii_Sii)
 
         # solve the linear system to compute Sa[i,k]*Sb[l,l]/denom and
@@ -664,8 +626,7 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
             end
         end
 
-        # # calculate the denominator, for debugging
-        # denom = one(Sa[k,k,b])-Sa[k,k,b]*Sb[l,l,b]
+        # with denom = 1 - Sa[k,k,b]*Sb[l,l,b]
 
         # ii and jj index across the concatenated Sa and Sb arrays skipping
         # the k'th and l'th elements. Imagine the Sa nxn array in the upper
@@ -692,14 +653,6 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
                             Ca[k,jj,b]*a_ik_b_ll[ii] +
                             Cb[l,l,b]*a_ik[ii]*conj(a_ik[jj]) +
                             Ca[k,k,b]*a_ik_b_ll[ii]*conj(a_ik_b_ll[jj])
-
-                        # # a non-optimized version of the above for debugging
-                        # Sout[i,j,b] = Sa[ii,jj,b] + Sa[k,jj,b]*Sb[l,l,b]*Sa[ii,k,b]/denom
-                        # Cout[i,j,b] = Ca[ii,jj,b] +
-                        #     Ca[ii,k,b]*conj(Sa[jj,k,b]*Sb[l,l,b]/denom) +
-                        #     Ca[k,jj,b]*Sa[ii,k,b]*Sb[l,l,b]/denom +
-                        #     Cb[l,l,b]*Sa[ii,k,b]/denom*conj(Sa[jj,k,b]/denom) +
-                        #     Ca[k,k,b]*Sb[l,l,b]*Sa[ii,k,b]/denom*conj(Sb[l,l,b]*Sa[jj,k,b]/denom)
                     end
                 end
 
@@ -715,13 +668,6 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
                             Ca[k,jj,b]*b_il[ii-m] +
                             Cb[l,l,b]*b_il_a_kk[ii-m]*conj(a_ik[jj]) +
                             Ca[k,k,b]*b_il[ii-m]*conj(a_ik_b_ll[jj])
-
-                        # # a non-optimized version of the above for debugging
-                        # Sout[i,j,b] = Sa[k,jj,b]*Sb[ii-m,l,b]/denom
-                        # Cout[i,j,b] = Cb[ii-m,l,b]*conj(Sa[jj,k,b]/denom) +
-                        #     Ca[k,jj,b]*Sb[ii-m,l,b]/denom +
-                        #     Cb[l,l,b]*Sb[ii-m,l,b]*Sa[k,k,b]/denom*conj(Sa[jj,k,b]/denom) +
-                        #     Ca[k,k,b]*Sb[ii-m,l,b]/denom*conj(Sa[jj,k,b]*Sb[l,l,b]/denom)
                     end
                 end
 
@@ -747,13 +693,6 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
                             Cb[l,jj-m,b]*a_ik[ii] +
                             Ca[k,k,b]*a_ik_b_ll[ii]*conj(b_il[jj-m]) +
                             Cb[l,l,b]*a_ik[ii]*conj(b_il_a_kk[jj-m])
-
-                        # # a non-optimized version of the above for debugging
-                        # Sout[i,j,b] = Sb[l,jj-m,b]*Sa[ii,k,b]/denom
-                        # Cout[i,j,b] = Ca[ii,k,b]*conj(Sb[jj-m,l,b]/denom) +
-                        #     Cb[l,jj-m,b]*Sa[ii,k,b]/denom +
-                        #     Ca[k,k,b]*Sa[ii,k,b]*Sb[l,l,b]/denom*conj(Sb[jj-m,l,b]/denom) +
-                        #     Cb[l,l,b]*Sa[ii,k,b]/denom*conj(Sb[jj-m,l,b]*Sa[k,k,b]/denom)
                     end
                 end
 
@@ -770,14 +709,6 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
                             Cb[l,jj-m,b]*b_il_a_kk[ii-m] +
                             Ca[k,k,b]*b_il[ii-m]*conj(b_il[jj-m]) +
                             Cb[l,l,b]*b_il_a_kk[ii-m]*conj(b_il_a_kk[jj-m])
-
-                        # # a non-optimized version of the above for debugging
-                        # Sout[i,j,b] = Sb[ii-m,jj-m,b] + Sb[l,jj-m,b]*Sa[k,k,b]*Sb[ii-m,l,b]/denom
-                        # Cout[i,j,b] = Cb[ii-m,jj-m,b] +
-                        #     Cb[ii-m,l,b]*conj(Sb[jj-m,l,b]*Sa[k,k,b]/denom) +
-                        #     Cb[l,jj-m,b]*Sb[ii-m,l,b]*Sa[k,k,b]/denom +
-                        #     Ca[k,k,b]*Sb[ii-m,l,b]/denom*conj(Sb[jj-m,l,b]/denom) +
-                        #     Cb[l,l,b]*Sa[k,k,b]*Sb[ii-m,l,b]/denom*conj(Sa[k,k,b]*Sb[jj-m,l,b]/denom)
                     end
                 end
 
@@ -873,67 +804,12 @@ In place version of [`interconnectS`](@ref), writing into `Sout`.
 function interconnectS!(Sout, Sa, Sb, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads())
 
-    # validate all of the inputs
-    if ndims(Sa) != ndims(Sb)
-        throw(DimensionMismatch(lazy"`Sa` and `Sb` must have the same number of dimensions."))
-    end
-
-    if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
-    end
-
-    if ndims(Sa) < 2
-        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
-    end
-
-    if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
-    end
-
-    if size(Sb,1) != size(Sb,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sb` must be equal."))
-    end
-
-    if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
-    end
-
-    if size(Sa,1) + size(Sb,1) - 2 != size(Sout,1)
-        throw(DimensionMismatch(lazy"First two dimensions of `Sout` must be `m+n-2`."))
-    end
-
-    for i in 3:ndims(Sa)
-        if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
-        end
-    end
-
-    if k > size(Sa,1)
-        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
-    end
-
-    if l > size(Sb,1)
-        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sb`."))
-    end
-
-    if l < 1
-        throw(ArgumentError(lazy"Port `l` is smaller than one."))
-    end
-
-    if k < 1
-        throw(ArgumentError(lazy"Port `k` is smaller than one."))
-    end
+    checkinterconnect(Sout, Sa, Sb, k, l)
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    if nbatches > 1 && length(indices) > nbatches
-        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
-        Threads.@sync for batch in batches
-            Base.Threads.@spawn interconnectS_inner!(Sout,Sa,Sb,k,l,batch)
-        end
-
-    else
-        interconnectS_inner!(Sout,Sa,Sb,k,l,indices)
+    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+        interconnectS_inner!(Sout, Sa, Sb, k, l, batch)
     end
 
     return Sout
@@ -956,9 +832,6 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
     range2a = m+1:m+l-1
     range2b = m+l+1:m+n
 
-    # this indexes across the entire array
-    # ranges = (range1a, range1b, range2a, range2b)
-
     # this indexes across the first part
     ranges1 = (range1a, range1b)
 
@@ -975,7 +848,6 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
             one(Sa[k,k,b]),
             -Sb[l,l,b]
         )
-        # gammaii_Sii_lu = lu(gammaii_Sii)
         gammaii_Sii_lu = lu_2x2(gammaii_Sii)
 
         # ii and jj are the indices which extend up to m+n and skip k,l
@@ -989,7 +861,6 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
                 Sie = StaticArrays.SVector{2}(Sa[k,jj,b],zero(Sa[k,jj,b]))
 
                 # solve the linear system
-                # ai1jj, ai2jj = gammaii_Sii_lu \ Sie
                 ai1jj, ai2jj = ldiv_2x2(gammaii_Sii_lu,Sie)
 
                 # upper left quadrant
@@ -1020,7 +891,6 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
                 Sie = StaticArrays.SVector{2}(zero(Sb[l,jj-m,b]),Sb[l,jj-m,b])
 
                 # solve the linear system.
-                # ai1jj, ai2jj = gammaii_Sii_lu \ Sie
                 ai1jj, ai2jj = ldiv_2x2(gammaii_Sii_lu,Sie)
 
                 # upper right quadrant
@@ -1189,7 +1059,10 @@ end
     cascadeS(Sa, Sb)
 
 Cascade the scattering parameter matrix `Sa` with the scattering matrix `Sb`
-and return the combined scattering matrix.
+and return the combined scattering matrix. Each is a `2n` port network
+whose first `n` ports are its inputs and last `n` its outputs, and the
+outputs of `Sa` are joined to the inputs of `Sb`, all at one reference
+impedance.
 
 # Examples
 ```jldoctest
@@ -1214,11 +1087,7 @@ Theory and Techniques, vol. 9, no. 5, pp. 454-454, September 1961, doi:
 function cascadeS(Sa, Sb)
 
     S = similar(Sa)
-    # make a view of T,S and loop
-    # make a temporary array 
-
-    # assume the port impedances are all the same for all ports and
-    # frequencies. loop over the dimensions of the array greater than 2
+    # loop over the dimensions of the array greater than 2
     for i in CartesianIndices(axes(S)[3:end])
         cascadeS!(view(S,:,:,i),view(Sa,:,:,i),view(Sb,:,:,i))
     end
@@ -1234,6 +1103,10 @@ See [`cascadeS`](@ref) for description.
 
 """
 function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
+    n = size(Sa,1)
+    if size(Sa) != (n, n) || isodd(n) || size(Sb) != (n, n) || size(S) != (n, n)
+        throw(DimensionMismatch(lazy"`Sa`, `Sb` and `S` must be square with the same even number of ports, not of sizes $(size(Sa)), $(size(Sb)) and $(size(S))."))
+    end
     range1 = 1:size(Sa,1)÷2
     range2 = size(Sa,1)÷2+1:size(Sa,1)
 
@@ -1449,18 +1322,31 @@ end
 
 
 
+"""
+    PassiveNetwork(network_name, scattering_parameters; noise = false)
+    PassiveNetwork(network_name, scattering_parameters, noise_covariances)
+    PassiveNetwork(network_name, scattering_parameters, port_names;
+        noise = false)
+    PassiveNetwork(network_name, scattering_parameters, noise_covariances,
+        port_names)
+
+A network to connect: its name, its scattering parameters, their noise
+covariances and the names of its ports, `(network_name, i)` for port `i`
+by default. Without noise covariances, `noise = false` leaves an empty
+array in their place, which [`connectS!`](@ref) and [`solveS!`](@ref)
+replace with the passive covariance `I - S*S'` of the scattering
+parameters `S` as they are when noise is connected, and `noise = true`
+computes that covariance at construction. The `noise` keyword of the
+constructors given noise covariances has no effect.
+"""
 struct PassiveNetwork{T,N}
     network_name::T
     scattering_parameters::N
     noise_covariances::N
     port_names::Vector{Tuple{T, Int}}
 
-    # the different options:
-    # if noise = true, then compute the noise covariance matrix
-    # if noise = false, then make an empty noise covariance matrix
-
     # 1. network_name, scattering_parameters
-    function PassiveNetwork(network_name::T, scattering_parameters::N; noise = true) where {T,N}
+    function PassiveNetwork(network_name::T, scattering_parameters::N; noise = false) where {T,N}
         new{T,N}(
             network_name,
             scattering_parameters,
@@ -1500,111 +1386,116 @@ struct PassiveNetwork{T,N}
     end
 end
 
+"""
+    calc_noise_covariances(scattering_parameters; noise = true)
+
+Return the noise covariances `I - S*S'` of a passive network at every
+frequency of its scattering parameters `S` (Bosma's theorem), or, with
+`noise = false`, an empty array of their type, which stands for that
+covariance where networks are connected: see [`PassiveNetwork`](@ref).
+"""
 function calc_noise_covariances(scattering_parameters::AbstractArray;noise = true)
-    # define the output matrix
+    if !noise
+        # an empty array of the type of the scattering parameters, which
+        # `similar` with other dimensions does not give for every array type
+        return scattering_parameters[ntuple(i -> 1:0,
+            ndims(scattering_parameters))...]
+    end
     noise_covariances = similar(scattering_parameters)
-    # evaluate the in place version of the function
-    if noise
-        for i in CartesianIndices(axes(scattering_parameters)[3:end])
-            calcCnoise!(view(noise_covariances,:,:,i),view(scattering_parameters,:,:,i))
-        end
-    else
-        fill!(noise_covariances,zero(eltype(noise_covariances)))
+    for i in CartesianIndices(axes(scattering_parameters)[3:end])
+        calcCnoise!(view(noise_covariances,:,:,i),view(scattering_parameters,:,:,i))
     end
     return noise_covariances
+end
+
+# a noise covariance left empty, which stands for the passive covariance of
+# the scattering parameters of its network
+isdefaultcovariance(C::AbstractArray) = ndims(C) > 0 && all(iszero, size(C))
+
+# the noise covariances of the networks, with each empty one, that of a
+# network given without noise covariances, computed from the network's
+# scattering parameters as they are now, once for networks which share
+# their scattering parameters
+function passivecovariances(scattering_parameters::AbstractVector,
+        noise_covariances::AbstractVector)
+    covariances = copy(noise_covariances)
+    computed = IdDict{Any,Int}()
+    for i in eachindex(covariances)
+        isdefaultcovariance(covariances[i]) || continue
+        S = scattering_parameters[i]
+        j = get(computed, S, 0)
+        if j == 0
+            covariances[i] = calc_noise_covariances(S)
+            computed[S] = i
+        else
+            covariances[i] = covariances[j]
+        end
+    end
+    return covariances
+end
+
+# the scattering parameters of the networks named `names` must be square
+# matrices, with the same trailing (frequency) dimensions and element type
+function checknetworks(names::AbstractVector, scattering_parameters::AbstractVector)
+    sizeS = size(scattering_parameters[1])[3:end]
+    typeS = eltype(scattering_parameters[1])
+    for i in eachindex(names, scattering_parameters)
+        S = scattering_parameters[i]
+        if size(S,1) != size(S,2)
+            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix $(names[i]) must be the same."))
+        end
+        if sizeS != size(S)[3:end]
+            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(names[1]) is $(size(scattering_parameters[1])) and size of $(names[i]) is $(size(S))."))
+        end
+        if typeS != eltype(S)
+            throw(ArgumentError(lazy"The element types of the scattering matrices must be the same. Element type of $(names[1]) is $(typeS) and element type of $(names[i]) is $(eltype(S))."))
+        end
+    end
+    return nothing
+end
+
+checknetworks(networks::AbstractVector{<:PassiveNetwork}) =
+    checknetworks([network.network_name for network in networks],
+        [network.scattering_parameters for network in networks])
+
+# the networks must have different names
+function checknetworknames(networks::AbstractVector{<:PassiveNetwork})
+    if !allunique(network.network_name for network in networks)
+        throw(ArgumentError(lazy"Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
+    end
+    return nothing
 end
 
 function calc_port_names(network_name,scattering_parameters)
     return [(network_name,i) for i in 1:size(scattering_parameters,1)]
 end
 
-function add_covariances_and_port_names(networks::AbstractVector; noise = true)
+# the networks as `PassiveNetwork`s, their ports named and each noise
+# covariance given with them or else left empty, to be computed from the
+# scattering parameters when noise is connected
+function add_covariances_and_port_names(networks::AbstractVector)
 
-    # loop through the networks 
-    # identify which scattering parameter 
-    # matrices are unique
+    checknetworks([network[1] for network in networks],
+        [network[2] for network in networks])
 
-    # also add a size check on the noise covariance matrices
-
-    # compute the size and element type of the first scattering matrix and
-    # check the rest against this
-    sizeS = size(networks[1][2])[3:end]
-    typeS = eltype(networks[1][2])
-    for network in networks
-        if size(network[2],1) != size(network[2],2)
-            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(network[2],1)),$(size(network[2],2))) of the scattering matrix $(network[1]) must be the same."))
-        end
-        if sizeS != size(network[2])[3:end]
-            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(network[1]) is $(size(network[2]))."))
-        end
-        if typeS != eltype(network[2])
-            throw(ArgumentError(lazy"The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(network[1]) is $(eltype(network[2]))."))
-        end
-    end
-
-
-    network_names = [network[1] for network in networks]
-    scattering_parameters = [network[2] for network in networks]
-    noise_covariances = similar(scattering_parameters)
-
-    aliased_scattering_parameters_dict = Dict{Tuple{UInt64},Int64}()
-    # if the noise covariance matrix is user supplied then i shouldn't reuse it
-    for (i,network) in enumerate(networks)
-
-        # check if there is a user supplied noise covariance matrix
-        # if there is, then we shouldn't reuse it for all the identical aliased
-        # scattering parameter matrices because it may have been defined not
-        # according to Bosma's theorem (eg. it is a higher temperature or more
-        # noisy device).
-        if !(length(network) > 2 && typeof(network[2]) == typeof(network[3]))
-
-            # check if this scattering parameter matrix aliases another one
-            key = Base.dataids(network[2])
-            if haskey(aliased_scattering_parameters_dict,key)
-                # if not user supplied and is aliased, then reuse the covariance matrix
-                # from the index
-                noise_covariances[i] = noise_covariances[aliased_scattering_parameters_dict[key]]
-
-            else
-                # if not user supplied and is not aliased, then generate a covariance matrix
-                # and store the index for future use
-                noise_covariances[i] = calc_noise_covariances(scattering_parameters[i];noise = noise)
-                aliased_scattering_parameters_dict[key] = i
-            end
-        else
-            noise_covariances[i] = network[3]
-        end
-
-    end
-
-    return [PassiveNetwork(network_names[i],scattering_parameters[i],noise_covariances[i],get_ports(networks[i])) for i in eachindex(networks)]
+    return [PassiveNetwork(network[1], network[2], givencovariance(network),
+        get_ports(network)) for network in networks]
 end
 
-# """
-#     add_ports(networks)
-
-# Return the vector of networks `networks` with ports added.
-
-# # Examples
-# ```jldoctest
-# julia> networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];JosephsonCircuits.add_ports(networks)
-# 2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
-#  (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
-#  (:S2, [0.5 0.5; 0.5 0.5], [(:S2, 1), (:S2, 2)])
-
-# julia> networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,1),(:S3,2)])];JosephsonCircuits.add_ports(networks)
-# 2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
-#  (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
-#  (:S2, [0.5 0.5; 0.5 0.5], [(:S3, 1), (:S3, 2)])
-# ```
-# """
-# function add_ports(networks::AbstractVector)
-#     return [(network[1],network[2],get_ports(network)) for network in networks]
-# end
-
-# function add_ports(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
-#     return networks
-# end
+# the noise covariances given with a network, `(name, S, C)` or
+# `(name, S, C, ports)`, which must be the size of its scattering
+# parameters, or else an empty array
+function givencovariance(network)
+    S = network[2]
+    if length(network) > 2 && typeof(network[3]) == typeof(S)
+        C = network[3]
+        if size(C) != size(S)
+            throw(DimensionMismatch(lazy"The size $(size(C)) of the noise covariances of $(network[1]) must be the size $(size(S)) of its scattering parameters."))
+        end
+        return C
+    end
+    return calc_noise_covariances(S; noise = false)
+end
 
 """
     get_ports(network::Tuple{T, N}) where {T,N}
@@ -1658,7 +1549,7 @@ end
 
 """
     find_duplicate_network_names(
-        networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
+        networks::AbstractVector{PassiveNetwork{T,N}}) where {T,N}
 
 Return a vector of tuples of (networkname, counts) where counts is the number
 of times a given network name appears.
@@ -1811,7 +1702,9 @@ of vectors of tuples where the tuple contains the network and the port such as
 [[(:S1,1),(:S2,1)]] to a vector of tuples where the tuple contains the two
 networks and ports being connected [(:S1,:S2,1,1)]. With
 `small_splitters = true` an N port splitter is built by combining N-2 three
-port splitters; with `false` it is a single N port splitter.
+port splitters; with `false` it is a single N port splitter. Each splitter
+is a network with a new name: a UUID for network names which are strings
+or symbols, and the integer after the largest name for integer names.
 
 # References
 S. F. Cao, Y. C. Jiao, and Z. Zhang. "Applications of Generalized Cascade
@@ -1823,21 +1716,7 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     connections::AbstractVector{Vector{Tuple{T,Int}}};
     small_splitters = true) where {T,N}
 
-    # compute the size and element type of the first scattering matrix and
-    # check the rest against this
-    sizeS = size(networks[1].scattering_parameters)[3:end]
-    typeS = eltype(networks[1].scattering_parameters)
-    for network in networks
-        if size(network.scattering_parameters,1) != size(network.scattering_parameters,2)
-            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(network.scattering_parameters,1)),$(size(network.scattering_parameters,2))) of the scattering matrix $(network.network_name) must be the same."))
-        end
-        if sizeS != size(network.scattering_parameters)[3:end]
-            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(network.network_name) is $(size(network.scattering_parameters))."))
-        end
-        # if typeS != eltype(network.scattering_parameters)
-        #     throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(network.network_name) is $(eltype(network.scattering_parameters))."))
-        # end
-    end
+    checknetworks(networks)
 
     # copy the networks vector. don't deepcopy so we don't duplicate all of
     # the arrays contained in the vector.
@@ -1851,6 +1730,9 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     # size the scattering matrix and the value is the matrix itself.
     splitters = Dict{Int,N}()
     splitter_covariances = Dict{Int,N}()
+
+    # the names taken, so that each splitter gets a new one
+    names = Set{T}(network.network_name for network in networks)
 
     # loop over the connections, converting to the flattened format and adding
     # splitters where more than two ports are connected.
@@ -1877,7 +1759,7 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
                 for i in 1:Nsplitters
 
                     # make a new name for the splitter
-                    id = T(string(UUIDs.uuid1()))
+                    id = splittername!(names)
 
                     # compute the size of the splitter
                     # assume we will always make a 3 port splitter
@@ -1930,7 +1812,7 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
 
             else
                 # make a new name
-                id = T(string(UUIDs.uuid1()))
+                id = splittername!(names)
 
                 # compute the size of the splitter
                 sizeS = NTuple{ndims(netflat[1].scattering_parameters)}(ifelse(j<=2,length(c),size(netflat[1].scattering_parameters,j)) for j in 1:ndims(netflat[1].scattering_parameters))
@@ -1955,6 +1837,19 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     end
 
     return netflat, conflat
+end
+
+# a network name for a splitter which no other network has, recorded in
+# `names`: a new UUID for names which are strings or symbols, and the integer
+# after the largest name for integer names
+function splittername!(names::Set{T}) where {T}
+    if T <: Integer
+        id = isempty(names) ? one(T) : maximum(names) + one(T)
+    else
+        id = T(string(UUIDs.uuid1()))
+    end
+    push!(names, id)
+    return id
 end
 
 """
@@ -1984,7 +1879,8 @@ parameter and noise covariance matrices in place. `userinput` records
 which matrices are the user's and must not be overwritten;
 `scattering_parameter_storage` and `noise_covariance_storage` hold
 reusable buffers by size; `noise` selects whether the noise covariances
-are propagated.
+are propagated. Return the destination node, which is merged into the
+source node unless the two are the same.
 
 """
 function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
@@ -2023,9 +1919,6 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     if isnothing(dst_port_index)
         throw(ArgumentError(lazy"Destination port $(dst_port) not found in the ports $(ports[dst_node]) of the destination node $(dst_node)."))
     end
-    # println("src_node => dst_node: ",src_node," => ",dst_node)
-    # println("src_port => dst_port: ",src_port," => ",dst_port)
-    # println("src_port_index => dst_port_index: ",src_port_index," => ",dst_port_index)
 
     # if src_node == dst_node, then make a self connection
     if src_node == dst_node
@@ -2152,19 +2045,32 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
             end
         end
     end
-    return nothing
+    return dst_node
+end
+
+# the networks as `PassiveNetwork`s with their ports named, and splitters
+# added where more than two ports meet, and the connections between pairs
+# of their ports, of every mode
+function flattennetworks(networks::AbstractVector, connections::AbstractVector;
+        small_splitters::Bool, Nmodes::Integer)
+    networks_ports = add_covariances_and_port_names(networks)
+    connections_modes = add_modes(connections, Nmodes)
+    return add_splitters(networks_ports, connections_modes;
+        small_splitters = small_splitters)
 end
 
 """
     connectS_initialize(networks::AbstractVector, connections::AbstractVector;
-        small_splitters::Bool = true, noise::Bool = false, Nmodes::Integer = 1)
+        small_splitters::Bool = true, noise = nothing, Nmodes::Integer = 1)
 
 Return the directed graph of connections between the networks and the
 arrays [`connectS!`](@ref) works on: the forward adjacency lists, the
 ports, and the scattering parameter and noise covariance matrices of every
-network, with splitters added where more than two ports meet. With
-`noise = true` the noise covariance `I - S S'` of each passive network is
-computed from its scattering parameters unless one was supplied; with
+network, with splitters added where more than two ports meet. A network
+given without noise covariances has an empty array in their place, which
+`connectS!` replaces with the passive covariance `I - S S'` of its
+scattering parameters when it is called with `noise = true`; the `noise`
+keyword of this function is deprecated and has no effect. With
 `Nmodes > 1` each physical port of `connections` is expanded into its
 `Nmodes` mode ports (see [`add_modes`](@ref)).
 
@@ -2175,36 +2081,40 @@ connections = [[("S1",1),("S2",2)]];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [[0.0 0.0; 0.0 0.0], [0.0 0.0; 0.0 0.0]])
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [Matrix{Float64}(undef, 0, 0), Matrix{Float64}(undef, 0, 0)])
 ```
 """
 function connectS_initialize(networks::AbstractVector, connections::AbstractVector;
-    small_splitters::Bool = true, noise::Bool = false, Nmodes::Integer = 1) 
+    small_splitters::Bool = true, noise::Union{Bool,Nothing} = nothing,
+    Nmodes::Integer = 1)
 
-    networks_ports = add_covariances_and_port_names(networks; noise = noise)
+    if !isnothing(noise)
+        Base.depwarn(lazy"The `noise` kwarg of `connectS_initialize` is deprecated and has no effect: `connectS!` computes the noise covariances of the networks given without them, from their scattering parameters at the time, when it is called with `noise = true`. Please remove it to avoid errors in future versions.", :connectS_initialize; force=true)
+    end
 
-    connections_modes = add_modes(connections, Nmodes)
+    networks_flat, connections_flat = flattennetworks(networks, connections;
+        small_splitters = small_splitters, Nmodes = Nmodes)
 
-    networks_flat, connnections_flat = add_splitters(networks_ports,
-        connections_modes; small_splitters = small_splitters)
-
-    return connectS_initialize(networks_flat, connnections_flat)
+    return connectS_initialize(networks_flat, connections_flat)
 end
 
 """
-    connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+    connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
-Return a directed graph of connections between the networks.
+The method of [`connectS_initialize`](@ref) for networks with their ports
+named and splitters added, and connections between pairs of ports: return
+the directed graph of connections between the networks and the arrays
+[`connectS!`](@ref) works on.
 
 # Examples
 ```jldoctest
-networks = [("S1", [0.0 1.0; 1.0 0.0], [("S1", 1), ("S1", 2)]), ("S2", [0.5 0.5; 0.5 0.5], [("S2", 1), ("S2", 2)])];
+networks = [JosephsonCircuits.PassiveNetwork("S1", [0.0 1.0; 1.0 0.0]), JosephsonCircuits.PassiveNetwork("S2", [0.5 0.5; 0.5 0.5])];
 connections = [("S1","S2",1,2)];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [[0.0 0.0; 0.0 0.0], [0.0 0.0; 0.0 0.0]])
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [Matrix{Float64}(undef, 0, 0), Matrix{Float64}(undef, 0, 0)])
 ```
 """
 function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
@@ -2216,30 +2126,8 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     noise_covariances = [network.noise_covariances for network in networks]
 
 
-    # compute the size and element type of the first scattering matrix and
-    # check the rest against this
-    sizeS = size(scattering_parameters[1])[3:end]
-    typeS = eltype(scattering_parameters[1])
-    for i in eachindex(scattering_parameters)
-        if size(scattering_parameters[i],1) != size(scattering_parameters[i],2)
-            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
-        end
-        if sizeS != size(scattering_parameters[i])[3:end]
-            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
-        end
-        if typeS != eltype(scattering_parameters[i])
-            throw(ArgumentError(lazy"The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
-        end
-    end
-
-    # make a dictionary where the keys are the network names and the values
-    # are the node indices.
-    networkindices = Dict(network.network_name=>i for (i,network) in enumerate(networks))
-
-    # check if there are duplicate networks
-    if length(networkindices) != length(scattering_parameters)
-        throw(ArgumentError(lazy"Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
-    end
+    checknetworks(networks)
+    checknetworknames(networks)
 
     # check if the port indices are unique
     duplicateconnections = find_duplicate_connections(connections)
@@ -2336,12 +2224,16 @@ end
         noise_covariances::AbstractVector{N}; noise::Bool = false,
         nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
-Return the non-empty elements of the updated `scattering_parameters`,
-`noise_covariances` and `ports` after applying all of the connections in
-the connection forward adjacency list `fconnectionlist` to the graph `g`,
-the forward adjacency weight list `fweightlist`, the vector of ports
-`ports`, and the vectors of scattering parameter and noise covariance
-matrices. The noise covariances are propagated only when `noise = true`.
+Return the scattering parameters, noise covariances and ports of the
+networks which remain after applying all of the connections in the
+connection forward adjacency list `fconnectionlist` to the graph `g`, the
+forward adjacency weight list `fweightlist`, the vector of ports `ports`,
+and the vectors of scattering parameter and noise covariance matrices:
+one network for each set of networks the connections join. The noise
+covariances are propagated only when `noise = true`, and those of the
+networks given without covariances are then computed from their
+scattering parameters at each call, so the scattering parameter arrays of
+the networks can be updated in place between calls.
 
 # Examples
 ```jldoctest
@@ -2374,9 +2266,14 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     # scattering_parameters so there is no need to deepycopy
     # scattering_parameters.
     scattering_parameters = copy(scattering_parameters)
-    noise_covariances = copy(noise_covariances)
+    # the passive covariances of networks given without noise covariances
+    # are computed now, from their scattering parameters as they are
+    noise_covariances = noise ? passivecovariances(scattering_parameters,
+        noise_covariances) : copy(noise_covariances)
 
     userinput = ones(Bool,length(scattering_parameters))
+    # the networks not merged into another by a connection
+    remaining = trues(length(scattering_parameters))
     scattering_parameter_storage = Dict{Int,N}()
     noise_covariance_storage = Dict{Int,N}()
     # find the minimum weight and the second to minimum weight
@@ -2398,7 +2295,6 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
             end
         end
     end
-    # println("minweight ",minweight)
     while !all(isempty.(fweightlist))
         for i in eachindex(fweightlist)
             j = 1
@@ -2407,12 +2303,11 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
                 weight = fweightlist[i][j]
                 if weight <= minweight
                     # perform the connection if this is the minimum weight
-                    # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
-                    # println(fweightlist[i])
-                    make_connection!(g,fconnectionlist,fweightlist,ports,
-                        scattering_parameters,noise_covariances,i,j,nbatches,
-                        userinput,scattering_parameter_storage,
+                    dst = make_connection!(g,fconnectionlist,fweightlist,
+                        ports,scattering_parameters,noise_covariances,i,j,
+                        nbatches,userinput,scattering_parameter_storage,
                         noise_covariance_storage,noise)
+                    dst == i || (remaining[dst] = false)
                     # set j = 1 to start looping through again
                     j = 1
                     n = length(fweightlist[i])
@@ -2433,9 +2328,9 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         secondtominweight = Inf
     end
     if noise
-        return (S=scattering_parameters[map(!isempty,scattering_parameters)],C=noise_covariances[map(!isempty,scattering_parameters)],ports=ports[map(!isempty,scattering_parameters)])
+        return (S=scattering_parameters[remaining],C=noise_covariances[remaining],ports=ports[remaining])
     else
-        return (S=scattering_parameters[map(!isempty,scattering_parameters)],ports=ports[map(!isempty,scattering_parameters)])
+        return (S=scattering_parameters[remaining],ports=ports[remaining])
     end
 end
 
@@ -2451,10 +2346,13 @@ vector of tuples of the network name and scattering parameter matrix such as
 ("network2name",rand(Complex{Float64},2,2)]. `connections` is a vector of
 vectors of tuples of networks names and ports such as [[("network1name",1),
 ("network2name",2)]] where network1 and network2 are the two networks being
-connected and 1 and 2 are integers describing the ports to connect.
+connected and 1 and 2 are integers describing the ports to connect. The
+scattering parameters of all the networks are `Array`s of one type.
 
+The ports joined by a connection must share one real reference impedance.
 This function supports connections between more than two ports by
-automatically adding splitters. With `noise = true` the noise covariance
+automatically adding splitters, ideal lossless junctions for that
+impedance (see [`S_splitter!`](@ref)). With `noise = true` the noise covariance
 matrices are connected as well, the passive covariance `I - S S'` being
 used for a network given without one; with `Nmodes > 1` the scattering
 matrices are multi-mode and `connections` names physical ports, each
@@ -2481,21 +2379,22 @@ JosephsonCircuits.connectS(networks,connections)
 function connectS(networks, connections; noise::Bool = false,
     small_splitters::Bool = true, Nmodes::Integer = 1,
     nbatches::Int = Base.Threads.nthreads())
-    init = connectS_initialize(networks,connections; noise = noise,
+    init = connectS_initialize(networks,connections;
         small_splitters = small_splitters, Nmodes = Nmodes)
     return connectS!(init...;noise = noise, nbatches = nbatches)
 end
 
 """
-    parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
+    parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
 Return the indices of the internal ports `porti_indices`, the external ports
-`porte_indices`, the vector of port tuples `ports`, the vector of scattering
-parameter data `networkdata`, the connection matrix `gamma`, the sparse matrix
-containing indices in networkdata `Sindices`, and an empty sparse matrix of
-scattering parameter data `S`. The scattering parameter data consists of the
-input networks assembled as a block diagonal matrix.
+`porte_indices`, the vector of port tuples `ports`, the vectors of the
+networks' scattering parameters and noise covariances, the connection
+matrix `gamma`, the sparse matrix `Sindices` of the indices into the
+networks' arrays of its entries, and a sparse matrix `S` of that
+structure with its values unset. `S` holds the networks' scattering
+parameters at one frequency as a block diagonal matrix.
 
 # References
 V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
@@ -2514,20 +2413,8 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
     m = 0
     # number of nonzero elements in S
     M = 0
-    # compute the size and element type of the first scattering matrix and
-    # check the rest against this
-    sizeS = size(scattering_parameters[1])[3:end]
-    typeS = eltype(scattering_parameters[1])
+    checknetworks(networks)
     for i in eachindex(scattering_parameters)
-        if size(scattering_parameters[i],1) != size(scattering_parameters[i],2)
-            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
-        end
-        if sizeS != size(scattering_parameters[i])[3:end]
-            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
-        end
-        if typeS != eltype(scattering_parameters[i])
-            throw(ArgumentError(lazy"The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
-        end
         m+=size(scattering_parameters[i],1)
         M+=size(scattering_parameters[i],1)*size(scattering_parameters[i],2)
     end
@@ -2540,13 +2427,7 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
         networkdataindices[i] = networkdataindices[i-1] + size(scattering_parameters[i-1],1)
     end
 
-    # make a dictionary where the keys are the network names and the values
-    # are the node indices.
-    networkindices = Dict(network.network_name=>i for (i,network) in enumerate(networks))
-
-    if length(networkindices) != length(scattering_parameters)
-        throw(ArgumentError(lazy"Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
-    end
+    checknetworknames(networks)
 
     # a vector of tuples containing the ports for each of the networks in the
     # same order the networks were supplied. eg.
@@ -2678,14 +2559,10 @@ function solveS_initialize(networks::AbstractVector,
         internal_ports::Bool = false, Nmodes::Integer = 1,
         nbatches::Integer = Base.Threads.nthreads())
 
-    networks_ports = add_covariances_and_port_names(networks;noise = noise)
+    networks_flat, connections_flat = flattennetworks(networks, connections;
+        small_splitters = small_splitters, Nmodes = Nmodes)
 
-    connections_modes = add_modes(connections, Nmodes)
-
-    networks_flat,connnections_flat = add_splitters(networks_ports,
-        connections_modes; small_splitters = small_splitters)
-
-    return solveS_initialize(networks_flat, connnections_flat;
+    return solveS_initialize(networks_flat, connections_flat;
         noise = noise, factorization = factorization,
         internal_ports = internal_ports, nbatches = nbatches)
 end
@@ -2713,13 +2590,17 @@ function solveS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
 
     gammaii = gamma[porti_indices,porti_indices]
 
-    sizeSe = NTuple{ndims(scattering_parameters[1]),Int}(ifelse(i<=2,length(portse),size(scattering_parameters[1],i)) for i in 1:ndims(scattering_parameters[1]))
-    Se = zeros(eltype(N),sizeSe)
-    Ce = zeros(eltype(N),sizeSe)
-
-    sizeSi = tuple(length(portsi),length(portse),[size(scattering_parameters[1],i) for i in 3:ndims(scattering_parameters[1])]...)
-    Si = ifelse(internal_ports,zeros(eltype(N),sizeSi),zeros(eltype(N),0))
-    Ci = ifelse(internal_ports,zeros(eltype(N),sizeSi),zeros(eltype(N),0))
+    # the outputs: the scattering parameters of the external ports, and
+    # their noise covariances; and, when asked for, those of the waves the
+    # internal ports emit
+    trailing = size(scattering_parameters[1])[3:end]
+    Se = zeros(eltype(N), length(portse), length(portse), trailing...)
+    Ce = noise ? zeros(eltype(N), length(portse), length(portse), trailing...) :
+        zeros(eltype(N), 0)
+    Si = internal_ports ? zeros(eltype(N), length(portsi), length(portse),
+        trailing...) : zeros(eltype(N), 0)
+    Ci = internal_ports && noise ? zeros(eltype(N), length(portsi),
+        length(portsi), trailing...) : zeros(eltype(N), 0)
 
 
     # make gammaii - Sii. Sii can contain zeros (eg. a match at some
@@ -2773,7 +2654,7 @@ end
 function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             See_indices, Sei_indices, Sie_indices, Sii_indices,
             gammaii_indexmap, Sii_indexmap, scattering_parameters,
-            noise_covariances, indices, batch, factorization, noise)
+            noise_covariances, batch, factorization, noise)
 
     # make a copy of the scattering matrices for each thread
     See = copy(See)
@@ -2793,17 +2674,29 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
     Sie_dense = zeros(eltype(Se),size(Sie,1),size(Sie,2))
     ai = similar(Se,size(Sii,1),size(See,1))
 
+    # for the noise of the waves the internal ports emit: dense matrices of
+    # the size of Sii, and the internal port each internal port is connected
+    # to, the permutation gammaii is
+    if !isempty(Ci)
+        ni = size(Sii, 1)
+        Cii_dense = zeros(eltype(Ci), ni, ni)
+        Yii = similar(Cii_dense)
+        Yiit = similar(Cii_dense)
+        Wii = similar(Cii_dense)
+        partner = [gammaii.rowval[gammaii.colptr[q]] for q in 1:ni]
+    end
+
     # generate an empty FactorizationCache struct
     cache = FactorizationCache()
 
     # update the scattering matrices for the first element in the batch
     solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
-        Sie_indices, Sii_indices, scattering_parameters, indices[batch[1]])
+        Sie_indices, Sii_indices, scattering_parameters, first(batch))
 
     if noise
         # update the noise covariance matrices for the first element in the batch
         solveS_update!(Cee, Cei, Cie, Cii, See_indices, Sei_indices,
-            Sie_indices, Sii_indices, noise_covariances, indices[batch[1]])
+            Sie_indices, Sii_indices, noise_covariances, first(batch))
     end
 
     # make gammaii - Sii. Sii can contain zeros (eg. a match at some
@@ -2816,17 +2709,14 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
         # only perform the updates for the second or later element in the
         # batch
         if i > 1
-            # solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
-            #     Sie_indices, Sii_indices, networkdata, indices[j])
-
             # update the scattering matrices for the other elements in the batch
             solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
-                Sie_indices, Sii_indices, scattering_parameters, indices[j])
+                Sie_indices, Sii_indices, scattering_parameters, j)
 
             if noise
                 # update the noise covariance matrices for the other elements in the batch
                 solveS_update!(Cee, Cei, Cie, Cii, See_indices, Sei_indices,
-                    Sie_indices, Sii_indices, noise_covariances, indices[j])
+                    Sie_indices, Sii_indices, noise_covariances, j)
             end
 
             fill!(gammaii_Sii,0)
@@ -2864,7 +2754,8 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             Ce[:,:,j] .= Cee .+  ai'*Cie .+ Cei*ai .+ ai'*Cii*ai
         end
 
-        # if we are solving for the internal modes we need to evaluate this
+        # the scattering parameters, without noise, or those of the internal
+        # ports
         if !noise || !isempty(Si)
 
             # copy only the nonzero elements. the rest of the temporary array
@@ -2883,13 +2774,38 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             # Eq. 3.9 from Wedge thesis or Eq. 28 from Monaco and Tiberio
             # Snet = See + Sei*inv(gamma_ii - Sii)*Sie
             #      = See + Sei*((gamma_ii - Sii) \ Sie)
-            Se[:,:,j] .= See + Sei*ai
+            # (with noise it was computed above)
+            if !noise
+                Se[:,:,j] .= See + Sei*ai
+            end
 
             if !isempty(Si)
                 # derived from Eqns. 24, 28
                 # Si = Sie + Sii*inv(gamma_ii-Sii)*Sie
                 #    = Sie + Sii*(gamma_ii-Sii)\Sie
                 Si[:,:,j] .= Sie .+ Sii*ai
+            end
+        end
+
+        if !isempty(Ci)
+            # the internal ports emit bi = gammaii*ai for the waves ai they
+            # take in, and with the noise waves ci of the networks
+            # (gammaii - Sii)*ai = Sie*ae + ci, so bi carries
+            # gammaii*M*ci with M = inv(gammaii - Sii), whose covariance is
+            # gammaii*M*Cii*M'*gammaii
+            fill!(Cii_dense, zero(eltype(Cii_dense)))
+            for k in 1:length(Cii.colptr)-1
+                for l in Cii.colptr[k]:(Cii.colptr[k+1]-1)
+                    Cii_dense[Cii.rowval[l],k] = Cii.nzval[l]
+                end
+            end
+            # M*Cii*M' = (M*(M*Cii)')'
+            trysolve!(Yii, cache.factorization, Cii_dense)
+            adjoint!(Yiit, Yii)
+            trysolve!(Wii, cache.factorization, Yiit)
+            # gammaii permutes the rows and the columns
+            for q in axes(Wii, 2), p in axes(Wii, 1)
+                Ci[p,q,j] = conj(Wii[partner[q],partner[p]])
             end
         end
     end
@@ -2907,7 +2823,9 @@ In place version of [`solveS`](@ref), taking the arrays returned by
 [`solveS_initialize`](@ref), which it is meant to be called with as
 `solveS!(init...)`. It allows a network connection to be updated in place:
 change the arrays referenced by `networks`, then recompute the scattering
-parameters of the connected system.
+parameters of the connected system. With noise, the passive covariances of
+the networks given without covariances are computed from their scattering
+parameters at each call.
 
 # Examples
 ```jldoctest
@@ -2931,17 +2849,21 @@ function solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
     factorization, internal_ports, noise)
 
     # solve the linear system for the specified frequencies. the response for
-    # each frequency is independent so it can be done in parallel; however
-    # we want to reuse the factorization object and other input arrays. 
-    # perform array allocations and factorization "nbatches" times.
-    # parallelize using tasks
+    # each frequency is independent, so the frequencies are split into
+    # `nbatches` batches run in parallel, each reusing its own factorization
+    # and arrays across its frequencies
     indices = CartesianIndices(axes(scattering_parameters[1])[3:end])
-    batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
-    Threads.@sync for batch in batches
-        Base.Threads.@spawn solveS_inner!(Se,Si,Ce, Ci, gammaii, See, Sei,
-            Sie, Sii, See_indices, Sei_indices, Sie_indices, Sii_indices,
+    # the passive covariances of networks given without noise covariances
+    # are computed now, from their scattering parameters as they are
+    if noise
+        noise_covariances = passivecovariances(scattering_parameters,
+            noise_covariances)
+    end
+    foreachbatch(indices, cld(length(indices), nbatches)) do batch
+        solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
+            See_indices, Sei_indices, Sie_indices, Sii_indices,
             gammaii_indexmap, Sii_indexmap, scattering_parameters,
-            noise_covariances, indices, batch, factorization, noise)
+            noise_covariances, batch, factorization, noise)
     end
 
     if noise
@@ -2958,16 +2880,20 @@ end
         nbatches::Integer = Base.Threads.nthreads())
 
 Perform the connections between the networks in `networks` specified by the
-vector of vectors of tuples `connections`. Return the sparse matrix of
-scattering parameters for the external ports `S` and the external ports
-`ports`. Also return the internal port scattering parameters `Sinternal` and
-the internal ports `portsinternal`.
+vector of vectors of tuples `connections` by solving one sparse linear
+system per frequency for the waves at the connected (internal) ports, and
+return the scattering parameters of the unconnected (external) ports. The
+ports joined by a connection must share one real reference impedance, and
+a connection of more than two ports is an ideal lossless junction for it
+(see [`S_splitter!`](@ref)).
 
 # Arguments
 - `networks`: a vector of tuples of the network name, scattering parameter
     matrix, and optionally the ports  such as
     [("network1name",rand(Complex{Float64},2,2))] or
-    [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])].
+    [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])]. The scattering
+    parameters of all the networks are arrays of one type, such as
+    `Array`s; views of arrays are not supported.
 - `connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}`: a vector of
     vectors of tuples of networks names and ports such as [[("S1",1),("S2",2)]]
     or [[("network1name",1),("network2name",2)]] where network1 and network2
@@ -2983,8 +2909,15 @@ the internal ports `portsinternal`.
     `I - S S'`; one given as `(name, S, C)` uses `C`.
 - `factorization = KLUfactorization()`: the sparse factorization of the
     connection system; [`LUfactorization`](@ref) is another good choice.
-- `internal_ports::Bool = false`: return the scattering parameters for the
-    internal ports.
+    The connection system is singular when the connections close a
+    lossless loop of zero length, such as two ports of a lossless junction
+    joined to each other, which [`connectS`](@ref) resolves;
+    [`QRfactorization`](@ref) solves such a system. Near it, as for a
+    resonator between nearly lossless mirrors, the error of `solveS`
+    grows as the inverse of the distance to singularity, while the
+    pairwise connections of `connectS` stay accurate.
+- `internal_ports::Bool = false`: also return the waves at the internal
+    ports.
 - `Nmodes::Integer = 1`: the number of modes of each physical port when
     the scattering matrices are multi-mode, in which case `connections`
     names physical ports and each is expanded to its modes (see
@@ -2994,10 +2927,19 @@ the internal ports `portsinternal`.
     launched.
 
 # Returns
-- `S`: sparse matrix of scattering parameters for the external ports.
+A named tuple of:
+- `S`: the scattering parameters of the external ports, an array of size
+    `(ne, ne, ...)` with the trailing dimensions of the networks' arrays.
+- `C`: with `noise = true`, the noise covariances of the waves the
+    connected network emits at the external ports, of the size of `S`.
 - `ports`: the vector of tuples of network name and port number for the
     external ports.
-- `Sinternal`: sparse matrix of scattering parameters for the internal ports.
+- `Sinternal`: with `internal_ports = true`, the waves leaving the networks
+    at the internal ports for a unit wave incident at each external port, of
+    size `(ni, ne, ...)`; otherwise an empty vector.
+- `Cinternal`: with `noise = true`, the noise covariances of the waves
+    leaving the networks at the internal ports, of size `(ni, ni, ...)` with
+    `internal_ports = true`; otherwise an empty vector.
 - `portsinternal`: the vector of tuples of network name and port number for the
     internal ports.
 
@@ -3035,4 +2977,146 @@ function solveS(networks::AbstractVector, connections::AbstractVector;
         Nmodes = Nmodes, nbatches = nbatches)
 
     return solveS!(init...)
+end
+
+# === the 2 by 2 solves of a connection ===
+#
+# Joining two ports solves a 2 by 2 system per connection and frequency,
+# factorized here without allocating, and without pivoting away from a
+# symbolic entry which is not an exact zero.
+
+"""
+    ldiv_2x2(fact,b)
+
+Solve the linear system A*x = b for x using left division when given `fact`
+which is the LU factorization of `A`.
+"""
+function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
+    p1, p2 = fact.p
+
+    # solve P*L*y = b where L = [l11 0; l21 l22] and P = [1 0; 0 1] if not
+    # pivoting and [0 1;1 0] if pivoting
+    if p1 == 1 && p2 == 2
+        y1 = b[1]/fact.L[1,1]
+        y2 = (b[2]-y1*fact.L[2,1])/fact.L[2,2]
+    elseif p1 == 2 && p2 == 1
+        y1 = b[2]/fact.L[1,1]
+        y2 = (b[1]-y1*fact.L[2,1])/fact.L[2,2]
+    else
+        throw(ArgumentError(lazy"Unknown pivot."))
+    end
+
+    # solve U*x = y where U = [u11 u12; 0 u22]
+    if iszero(fact.U[2,2])
+        # if U[2,2] is zero, the matrix is singular and the linear system
+        # has potentially no solution or no unique solution. assume the matrix
+        # is rank 1 (solution not unique) then check if the solution we find
+        # solves the linear system.
+        x2 = zero(y2)
+    else
+        x2 = y2/fact.U[2,2]
+    end
+
+    x1 = (y1-x2*fact.U[1,2])/fact.U[1,1]
+    x = StaticArrays.SVector{2}(x1, x2)
+
+    if iszero(fact.U[2,2])
+        # if the matrix is singular, check that we are returning a valid
+        # solution to the linear system
+        if p1 == 1 && p2 == 2
+            P = StaticArrays.SMatrix{2,2}(1,0,0,1)
+        else
+            P = StaticArrays.SMatrix{2,2}(0,1,1,0)
+        end
+        if !(isequal(P*fact.L*fact.U*x,b) || isapprox(P*fact.L*fact.U*x,b))
+            throw(ArgumentError(lazy"Failed to solve linear system."))
+        end
+    end
+
+    return x
+end
+
+"""
+    lu_2x2(A)
+
+Return the LU factorization of a 2 by 2 matrix as a StaticArrays.LU struct.
+Perform the LU factorization even if `A` is singular.
+"""
+function lu_2x2(A::AbstractArray)
+    # decide whether or not to pivot
+    if iszero(A[2,1]) && iszero(A[1,1])
+        # if A[2,1] and A[1,1] are both zero, no point in pivoting
+        # the matrix is singular, but still has an LU decomposition.
+        u11 = zero(A[1,1])
+        u12 = A[1,2]
+        l21 = zero(A[2,1])
+        u22 = A[2,2] - l21*u12
+        p = StaticArrays.SVector{2}(1,2)
+    elseif  pivot_rows(A[1,1],A[2,1])
+        u11 = A[2,1]
+        u12 = A[2,2]
+        l21 = A[1,1]/u11
+        u22 = A[1,2] - l21*u12
+        p = StaticArrays.SVector{2}(2,1)
+    else
+        u11 = A[1,1]
+        u12 = A[1,2]
+        l21 = A[2,1]/u11
+        u22 = A[2,2] - l21*u12
+        p = StaticArrays.SVector{2}(1,2)
+    end
+
+    L = LinearAlgebra.LowerTriangular(StaticArrays.SMatrix{2,2}(one(l21),l21,zero(l21),one(l21)))
+    U = LinearAlgebra.UpperTriangular(StaticArrays.SMatrix{2,2}(u11,zero(u11),u12,u22))
+
+    return StaticArrays.LU(L,U,p)
+end
+
+"""
+    pivot_rows(A11::Union{T,Complex{T}},
+    A21::Union{T,Complex{T}}) where {T<:AbstractFloat}
+
+Return true if pivoting during LU decomposition.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.pivot_rows(0.1+0.0im,0.9+0.1im)
+true
+
+julia> JosephsonCircuits.pivot_rows(0.9+0.1im,0.1+0.0im)
+false
+```
+"""
+function pivot_rows(A11::Union{T,Complex{T}},A21::Union{T,Complex{T}}) where {T<:AbstractFloat}
+    # pivoting on the larger entry helps stability but does not work for
+    # symbolic values
+    if abs(A11) < abs(A21)
+        return true
+    else
+        return false
+    end
+end
+
+"""
+    pivot_rows(A11,A21)
+
+Return true if pivoting during LU decomposition.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.pivot_rows(0,:A21)
+true
+
+julia> JosephsonCircuits.pivot_rows(1,:A21)
+false
+```
+"""
+function pivot_rows(A11,A21)
+    # pivoting only on an exact zero works for symbolic values, at some cost
+    # in numerical stability
+    if iszero(A11)
+        return true
+    else
+        return false
+    end
 end

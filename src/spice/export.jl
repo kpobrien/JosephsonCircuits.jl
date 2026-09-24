@@ -1,10 +1,13 @@
-
+# The export of a compiled circuit as a WRSPICE netlist: the two terminal
+# entries merged by branch into one table, and each branch of the table
+# written as one line.
 
 """
     sumvalues(type::Symbol, value1, value2)
 
 Sum together two values in different ways depending on the circuit component
-type.
+type: capacitances and coupling coefficients add, and inductances and
+resistances combine in parallel.
 
 # Examples
 ```jldoctest
@@ -12,6 +15,9 @@ julia> JosephsonCircuits.sumvalues(:L, 1.0, 4.0)
 0.8
 
 julia> JosephsonCircuits.sumvalues(:Lj, 1.0, 4.0)
+0.8
+
+julia> JosephsonCircuits.sumvalues(:R, 1.0, 4.0)
 0.8
 
 julia> JosephsonCircuits.sumvalues(:C, 1.0, 4.0)
@@ -24,264 +30,129 @@ julia> JosephsonCircuits.sumvalues(:K, 1.0, 4.0)
 function sumvalues(type::Symbol, value1, value2)
     if type == :C || type == :K
         return value1+value2
-    elseif type == :Lj || type == :L
+    elseif type == :Lj || type == :L || type == :R
         return 1/(1/value1+1/value2)
     else
         error(lazy"unknown component type in sumvalues")
     end
 end
 
+# the real value a SPICE element takes: one with an imaginary part, a lossy
+# element, or one which is not a number, a frequency dependent value or an
+# undefined parameter, has no SPICE element
+function spicevalue(value, name)
+    value isa Number || throw(ArgumentError(
+        lazy"the value of $(name) is $(value), which is not a number; the netlist export needs every parameter defined and no frequency dependent value."))
+    iszero(imag(value)) || throw(ArgumentError(
+        lazy"the value of $(name) is complex, $(value); a SPICE element takes a real value, so a lossy element has no line in the netlist."))
+    return real(value)
+end
+
 """
-    calcnodes(nodeindex::Int, mutualinductorindex::Int,
-        componenttypes::Vector{Symbol}, nodeindexarray::Matrix,
-        couplings::Vector{NTuple{3,Int}})
+    spicebranches(psc::CompiledCircuit, componentvalues::AbstractVector)
 
-Calculate the two nodes (or mutual inductor indices) given the index in the
-typvector and the component type. For component types where order matters,
-such as mutual inductors, the nodes are not sorted. For other component types
-where order does not matter, the nodes are sorted. 
+The entries of a compiled circuit merged by branch, as the netlist export
+writes them. Entries of one kind between the same two nodes are one
+branch, whatever their order in the table, with their values combined by
+[`sumvalues`](@ref); the couplings between the same two inductors are one
+branch too, and an inductor which a mutual inductor couples is a branch of
+its own, since the coupling names it. Ports, whose terminations are
+resistors of the table, and current sources are left out.
 
-# Examples
-```jldoctest
-circuit = Circuit(
-    [:p1 => Port(1; Z0 = :Rleft),
-     :i1 => CurrentSource(:Ipump),
-     :l1 => Inductor(:L1),
-     :l2 => Inductor(:L2),
-     :k1 => MutualInductor(:K1, :l1, :l2),
-     :k2 => MutualInductor(:K2, :l1, :l2),
-     :c2 => Capacitor(:C2),
-     :c3 => Capacitor(:C3),
-     :gnd => Ground()],
-    [[(:p1, 1), (:i1, 1), (:l1, 1)],
-     [(:l2, 1), (:c2, 1), (:c3, 1)],
-     [(:p1, 2), (:i1, 2), (:l1, 2), (:l2, 2), (:c2, 2), (:c3, 2),
-      (:gnd, 1)]])
-psc = JosephsonCircuits.compile(circuit)
-println(JosephsonCircuits.calcnodes(1,1,psc.componenttypes,psc.nodeindices,psc.couplings))
-println(JosephsonCircuits.calcnodes(5,1,psc.componenttypes,psc.nodeindices,psc.couplings))
-
-# output
-(1, 2)
-(1, 3)
-```
+Returns `(branches, position)`: the branches in the order they first
+appear, each a named tuple of its `type`, the flat `index` of its first
+entry, whose name and terminal order its line takes, and its merged
+`value`; and the position of each merged branch in `branches` by
+`(type, node1, node2)`, the node indices sorted, or `(:K, inductor1,
+inductor2)`. Every value must be a real number (see `spicevalue`).
 """
-function calcnodes(nodeindex::Int, mutualinductorindex::Int,
-    componenttypes::Vector{Symbol}, nodeindexarray::Matrix,
-    couplings::Vector{NTuple{3,Int}})
-
-    # calculate the nodes
-    if componenttypes[nodeindex] == :K
-        # don't sort these because the mutual inductance changes sign
-        # if the nodes are changed. this is OK because only values with
-        # the same inductor ordering will be summed. the compiled circuit
-        # already resolved which two inductors each coupling joins
-        _, inductor1, inductor2 = couplings[mutualinductorindex]
-        return inductor1, inductor2
-
-    else
-        if nodeindexarray[1,nodeindex] < nodeindexarray[2,nodeindex]
-            return nodeindexarray[1,nodeindex], nodeindexarray[2,nodeindex]
+function spicebranches(psc::CompiledCircuit, componentvalues::AbstractVector)
+    length(componentvalues) == length(psc.componenttypes) || throw(DimensionMismatch(
+        lazy"the circuit has $(length(psc.componenttypes)) components and $(length(componentvalues)) values."))
+    coupled = Dict{Int,NTuple{2,Int}}()
+    inductorscoupled = Set{Int}()
+    for (k, l1, l2) in psc.couplings
+        coupled[k] = (l1, l2)
+        push!(inductorscoupled, l1, l2)
+    end
+    branches = @NamedTuple{type::Symbol, index::Int, value::Float64}[]
+    position = Dict{Tuple{Symbol,Int,Int},Int}()
+    for (i, type) in enumerate(psc.componenttypes)
+        (type === :P || type === :I) && continue
+        value = spicevalue(componentvalues[i], psc.componentnames[i])
+        if type === :L && i in inductorscoupled
+            push!(branches, (type = type, index = i, value = value))
+            continue
+        end
+        key = if type === :K
+            (type, coupled[i]...)
         else
-            return nodeindexarray[2,nodeindex], nodeindexarray[1,nodeindex]
+            (type, minmax(psc.nodeindices[1, i], psc.nodeindices[2, i])...)
         end
-    end
-end
-
-"""
-    componentdictionaries(componenttypes::Vector{Symbol},
-        nodeindexarray::Matrix{Int}, couplings::Vector{NTuple{3,Int}})
-"""
-function componentdictionaries(componenttypes::Vector{Symbol},
-    nodeindexarray::Matrix{Int}, couplings::Vector{NTuple{3,Int}})
-
-    if  length(componenttypes) != size(nodeindexarray,2)
-        throw(DimensionMismatch(lazy"Input arrays must have the same length"))
-    end
-
-    if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch(lazy"The length of the first axis must be 2"))
-    end
-
-    # key = (componenttype,node1,node2), value = counts
-    countdict = Dict{Tuple{eltype(componenttypes),eltype(nodeindexarray),eltype(nodeindexarray)},Int}()
-    sizehint!(countdict,length(componenttypes))
-
-    # key = (node1,node2,count), value = index in componenttypes
-    indexdict = Dict{Tuple{eltype(componenttypes),eltype(nodeindexarray),eltype(nodeindexarray),Int},Int}()
-    sizehint!(indexdict,length(componenttypes))
-
-    mutualinductorindex = 0
-    for i in eachindex(componenttypes)
-
-        if componenttypes[i] == :K
-            mutualinductorindex+=1
-        end
-
-        node1, node2 = calcnodes(i, mutualinductorindex, componenttypes,
-            nodeindexarray, couplings)
-
-        countkey = (componenttypes[i], node1, node2)
-        if haskey(countdict,countkey)
-            countdict[countkey] += 1
+        j = get(position, key, 0)
+        if j == 0
+            push!(branches, (type = type, index = i, value = value))
+            position[key] = length(branches)
         else
-            countdict[countkey] = 1
+            b = branches[j]
+            branches[j] = (type = b.type, index = b.index,
+                value = sumvalues(type, b.value, value))
         end
-
-        indexkey = (componenttypes[i], node1, node2, countdict[countkey])
-        indexdict[indexkey] = i
     end
-
-    return countdict, indexdict
+    return branches, position
 end
 
 """
-    sumbranchvalues!(type::Symbol, node1::Int, node2::Int,componentvalues::Vector,
-        countdict, indexdict)
+    calcCjIcmean(Ic::AbstractVector, C::AbstractVector)
 
-Given a branch and a type, return the sum of all of the values of the same
-type and branch. The sum will behave differently depending on the type.
-
-# Examples
-```jldoctest
-vvn = Real[1, 50.0, 1.0e-13, 2.0e-9, 2.0e-9, 5.0e-13, 5.0e-13, 0.1]
-countdict = Dict((:L, 1, 3) => 2, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:C, 2, 3) => 1, (:I, 1, 3) => 1)
-indexdict = Dict((:C, 2, 3, 1) => 3, (:C, 1, 3, 1) => 6, (:R, 1, 2, 1) => 2, (:L, 1, 3, 1) => 4, (:C, 1, 3, 2) => 7, (:L, 1, 3, 2) => 5, (:P, 1, 2, 1) => 1, (:I, 1, 3, 1) => 8)
-println(JosephsonCircuits.sumbranchvalues!(:C, 1, 3, vvn, countdict, indexdict))
-
-# output
-(true, 1.0e-12, 6)
-```
-"""
-function sumbranchvalues!(type::Symbol, node1::Int, node2::Int,
-    componentvalues::Vector, countdict::Dict, indexdict::Dict)
-    countkey = (type, node1, node2)
-    countflag = false
-    # the value table is untyped; the zero stands in only when no branch of
-    # this kind sits between the nodes, in which case `countflag` says so
-    value = 0.0
-    index = 0
-
-    if haskey(countdict,countkey)
-        counts = countdict[countkey]
-        if counts > 0
-            countflag = true
-            index = indexdict[(type, node1, node2, 1)]
-            value = componentvalues[index]
-
-            for count in 2:counts
-                index1 = indexdict[(type, node1, node2, count)]
-                value = sumvalues(type, value, componentvalues[index1])
-            end
-            countdict[countkey] = 0
-        end
-    end
-
-    return countflag, value, index
-
-end
-
-"""
-    calcCjIcmean(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-        componentvalues::Vector, couplings::Vector{NTuple{3,Int}},
-        countdict::Dict, indexdict::Dict)
-
-Calculate the junction properties including the max and min critical currents
-and ratios of critical current to junction capacitance. This is necessary in
-order to set the junction properties of the JJ model in WRSPICE.
+The critical current and the capacitance of the one WRSPICE `jj` model the
+junctions of a netlist share, from the critical current `Ic` and the
+shunt capacitance `C` of each junction branch: the mean `Icmean` of the
+critical currents, and `Cj = CjoIc*Icmean` with `CjoIc` the smallest ratio
+of a branch's capacitance to its critical current, clamped to the WRSPICE
+maximum of `0.99e-6`. Every junction then takes its critical current and
+the capacitance the model gives it, and the rest of its shunt capacitance
+is a separate capacitor, which is why the smallest ratio is the one. A
+junction without shunt capacitance, and critical currents below 0.02 or
+above 50 times the mean, which the model cannot span, are refused. Returns
+`(Cj, Icmean)`.
 
 # Examples
 ```jldoctest
-componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
-nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
-componentvalues = Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
-couplings = NTuple{3,Int}[]
-countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
-indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
-Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
-    componentvalues, couplings, countdict, indexdict)
+julia> Ic = JosephsonCircuits.LjtoIc.([1.0e-9, 1.1e-9]);
 
-# output
+julia> JosephsonCircuits.calcCjIcmean(Ic, [1.0e-12, 1.2e-12])
 (3.1100514732000003e-13, 3.1414661345454545e-7)
-```
-```jldoctest
-componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
-nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
-componentvalues = Real[1, 50.0, 1.0e-13, 2.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
-couplings = NTuple{3,Int}[]
-countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
-indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
-Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
-    componentvalues, couplings, countdict, indexdict)
 
-# output
+julia> Ic = JosephsonCircuits.LjtoIc.([2.0e-9, 1.1e-9]);
+
+julia> JosephsonCircuits.calcCjIcmean(Ic, [1.0e-12, 1.2e-12])
 (2.2955141825999997e-13, 2.3187011945454544e-7)
 ```
 """
-function calcCjIcmean(componenttypes::Vector{Symbol},
-    nodeindexarray::Matrix{Int}, componentvalues::Vector,
-    couplings::Vector{NTuple{3,Int}}, countdict::Dict, indexdict::Dict)
-
-    # make a copy of these dictionaries so that i don't modify them
-    countdictcopy = copy(countdict)
-    indexdictcopy = copy(indexdict)
-
-    # first loop to calculate the junction and junction capacitance parameters.
-    # in WRSPICE, a JJ needs a capacitor. 
-    Icmean = 0
-    Icmax = 0
-    Icmin = 0
-    Cjmean = 0
-    CjoIc = 0
-
-    nJJ = 0
-    mutualinductorindex = 0
-    for i in eachindex(componenttypes)
-
-        if componenttypes[i] == :K
-            mutualinductorindex+=1
+function calcCjIcmean(Ic::AbstractVector, C::AbstractVector)
+    length(Ic) == length(C) || throw(DimensionMismatch(
+        lazy"$(length(Ic)) critical currents and $(length(C)) capacitances."))
+    Icmean = 0.0
+    Icmax = 0.0
+    Icmin = 0.0
+    CjoIc = 0.0
+    for (n, (ic, c)) in enumerate(zip(Ic, C))
+        Icmean = Icmean + (ic - Icmean)/n
+        ratio = c/ic
+        if n == 1
+            CjoIc = ratio
+            Icmin = ic
         end
-
-        node1, node2 = calcnodes(i, mutualinductorindex, componenttypes,
-            nodeindexarray, couplings)
-
-        # sum the values on the branch
-        flag, value, index = sumbranchvalues!(componenttypes[i], node1, node2, componentvalues, countdictcopy, indexdictcopy)
-
-        if flag == true && componenttypes[i] == :Lj
-            nJJ += 1
-
-            capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, componentvalues, countdictcopy, indexdictcopy)
-
-            Ictmp = real(LjtoIc(value))
-            Icmean = Icmean + (Ictmp-Icmean)/nJJ
-
-            CjoIctmp = real(capvalue/Ictmp)
-
-            if nJJ == 1
-                CjoIc = CjoIctmp
-                Icmin = Ictmp
-            end
-            
-            if Ictmp < Icmin
-                Icmin = Ictmp
-            end
-
-            if Ictmp > Icmax
-                Icmax = Ictmp
-            end
-
-            # we can always add a separate junction capacitance so we want to find the minimum
-            # Cj / Ic to use in the jj model. 
-            if CjoIctmp == 0.0
-                error(lazy"Cj cannot be zero in the WRSPICE JJ model.")
-            elseif CjoIctmp < CjoIc
-                CjoIc = CjoIctmp
-            end
+        Icmin = min(Icmin, ic)
+        Icmax = max(Icmax, ic)
+        if ratio == 0.0
+            error(lazy"Cj cannot be zero in the WRSPICE JJ model.")
         end
+        CjoIc = min(CjoIc, ratio)
     end
 
-    # check that the junction sizes are within the range WRSPICE allows
+    # the range of junction sizes the jj model allows
     if Icmin/Icmean < 0.02
         error(lazy"Minimum junction too much smaller than average for WRSPICE.")
     end
@@ -289,10 +160,8 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
         error(lazy"Maximum junction too much larger than average for WRSPICE.")
     end
 
-    # check if the ratio of Cj / Ic is within the range allowed by WRSPICE
-    if CjoIc > 0.99e-6
-        CjoIc = 0.99e-6
-    end
+    # the largest ratio of Cj / Ic WRSPICE allows
+    CjoIc = min(CjoIc, 0.99e-6)
 
     return CjoIc*Icmean, Icmean
 end
@@ -300,8 +169,7 @@ end
 # SPICE takes an element's type from the first character of its name and does
 # not accept "/" in one. A legacy netlist satisfies both already, so its
 # output is unchanged; a hierarchical instance path from a typed circuit
-# satisfies neither, and was written out verbatim as a line SPICE cannot
-# read.
+# satisfies neither, and is written with the prefix and "_" in place of "/".
 function spicename(name::AbstractString, prefix::Char)
     s = replace(String(name), '/' => '_')
     if prefix == 'B' && length(s) > 2 && uppercase(s[1:2]) == "LJ"
@@ -309,6 +177,18 @@ function spicename(name::AbstractString, prefix::Char)
         return string(prefix, s[3:end])
     end
     return (isempty(s) || uppercase(first(s)) != prefix) ? string(prefix, s) : s
+end
+
+# The first number free to name the phase node of a jj instance: past the
+# count of the nets and past every net named by an integer, so a phase node
+# never coincides with a net of the circuit.
+function firstphasenode(nodenames::AbstractVector{<:AbstractString})
+    n = length(nodenames) - 1
+    for name in nodenames
+        v = tryparse(Int, name)
+        isnothing(v) || (n = max(n, v))
+    end
+    return n + 1
 end
 
 """
@@ -330,10 +210,22 @@ node, whose voltage WRSPICE reports as the junction phase in radians, in
 [`wrspice_input_transient`](@ref) or [`wrspice_input_ac`](@ref). A fully
 numeric circuit needs no `circuitdefs`; a compiled circuit whose values
 are already numbers can be given those values directly as a vector in
-compiled component order. A resistor of infinite resistance is an open
-and writes no line. An ideal [`TransmissionLine`](@ref) is written as
+compiled component order. `port` is the port number the sources are
+applied to, recorded in the output.
+
+The elements of one kind between the same two nodes are written as one
+line, named after the first of them, whatever their order in the circuit:
+capacitances add, and inductances, junctions and resistances combine in
+parallel (see [`spicebranches`](@ref)). An inductor which a mutual
+inductor couples keeps a line of its own, which the coupling names. A
+resistor of infinite resistance is an open and writes no line. A port
+writes the resistor of its termination, and a current source writes no
+line: the drives are given to [`wrspice_input_transient`](@ref) or
+[`wrspice_input_ac`](@ref), and [`WRspice`](@ref) writes the sources of a
+transient problem itself. An ideal [`TransmissionLine`](@ref) is written as
 the SPICE lossless line element with its impedance and delay; any other
-scattering block has no SPICE element and is refused.
+scattering block has no SPICE element and is refused, as is a value which
+is complex or not a number.
 
 Component values are resolved with `circuitdefs`. With `jj = true` each
 Josephson junction is written as an instance of one WRSPICE `jj` model
@@ -341,9 +233,13 @@ whose critical current is the mean over the junctions and whose
 capacitance to critical current ratio is the smallest such ratio over
 them, clamped to the WRSPICE maximum of `0.99e-6` (see
 [`calcCjIcmean`](@ref)); the part of each junction's shunt capacitance
-above what the model provides is written as a separate capacitor. With
-`jj = false` each junction is written as its linear inductance. `port` is
-the port number the sources are applied to, recorded in the output.
+above what the model provides is written as a separate capacitor. The
+model needs a shunt capacitance on every junction and junctions of
+comparable size, and its relation is the sinusoidal one, so a
+[`NonlinearInductor`](@ref) with another relation is refused. The phase
+nodes of the instances are numbered past the circuit's nets, so none
+coincides with a net. With `jj = false` each junction is written as its
+linear inductance, which none of the model's conditions apply to.
 
 # Examples
 ```jldoctest
@@ -373,7 +269,7 @@ RP1_termination 1 0 50.0
 C1 1 2 100.0f
 B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 674.18508376f
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9)
 
 * SPICE Simulation
 RP1_termination 1 0 50.0
@@ -457,7 +353,7 @@ B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 1674.18508376f
 L2 2 0 1000.0000000000001p
 K1 L1 L2 0.1
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9)
 
 * SPICE Simulation
 RP1_termination 1 0 50.0
@@ -502,7 +398,7 @@ B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 1674.18508376f
 L2 2 0 1000.0000000000001p
 K1 L2 L1 0.1
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9)
 
 * SPICE Simulation
 RP1_termination 1 0 50.0
@@ -541,37 +437,47 @@ function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
             lazy"the circuit has $(length(others)) scattering block(s) ($(blocknames)), which the netlist export cannot express; export lumped elements and transmission lines only."))
     end
 
+    # the jj model is the sinusoidal junction
+    if jj && !isempty(psc.junctioncprs)
+        path = psc.componentnames[minimum(keys(psc.junctioncprs))]
+        throw(ComponentNotSupportedError(
+            lazy"the NonlinearInductor at $(path) has a current-phase relation other than the sinusoidal one, which the WRSPICE jj model cannot express; export with jj = false to write its linear inductance."))
+    end
+
     # placeholders; only a single port is handled
     portnodes = 1
     portcurrent = 1
 
-    countdict, indexdict = componentdictionaries(
-        psc.componenttypes,
-        psc.nodeindices,
-        psc.couplings,
-        )
-
     Nnodes = length(psc.nodenames)
-    componenttypes = psc.componenttypes
     componentnames = psc.componentnames
     nodeindexarray = psc.nodeindices
     uniquenodevector = psc.nodenames
-    mutualinductorbranchnames = coupledinductornames(psc)
-    couplings = psc.couplings
+    branches, position = spicebranches(psc, componentvalues)
+    couplingof = Dict(k => (l1, l2) for (k, l1, l2) in psc.couplings)
 
-    # calculate the junction properties
-    Cj, Icmean = calcCjIcmean(componenttypes, nodeindexarray, componentvalues,
-        couplings, countdict, indexdict)
+    # the capacitance on the branch of each junction, which the jj model
+    # takes its share of, wherever the capacitors sit in the table
+    function shunt(b)
+        n1, n2 = minmax(nodeindexarray[1, b.index], nodeindexarray[2, b.index])
+        j = get(position, (:C, n1, n2), 0)
+        return j == 0 ? (0.0, 0) : (branches[j].value, branches[j].index)
+    end
 
-    CjoIc = Cj/Icmean
+    # the jj model shared by the junctions
+    CjoIc = 0.0
+    Icmean = 0.0
+    if jj && any(b -> b.type === :Lj, branches)
+        junctionbranches = [b for b in branches if b.type === :Lj]
+        Cj, Icmean = calcCjIcmean(
+            [LjtoIc(b.value) for b in junctionbranches],
+            [first(shunt(b)) for b in junctionbranches])
+        CjoIc = Cj/Icmean
+    end
 
-    # define scale factors for prefixes
-    # multiply by these scale factors
+    # multiply by these scale factors for the prefixes
     femto = 1e15
     pico = 1e12
-    nano = 1e9
     micro = 1e6
-    giga = 1e-9
 
     # Set vm, (reference icrit)*rsub, which determines the junction resistance
     # default is 16.5e-3 which is extremely lossy. The allowed range is 8e-3 to
@@ -587,60 +493,45 @@ function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
     # one entry per jj model instance: the flat component index of the
     # junction it realizes and the name of its phase node
     junctions = @NamedTuple{index::Int, phasenode::String}[]
+    phasenode = firstphasenode(uniquenodevector)
 
-    # write the netlist
-    # make a copy of the dictionaries so we don't modify the originals
-    # not strictly necessary since we don't use them again after the loop below.
-    countdictcopy = copy(countdict)
-    indexdictcopy = copy(indexdict)
-    nJJ = 0
-    mutualinductorindex = 0
-    for i in eachindex(componenttypes)
-
-        if componenttypes[i] == :K
-            mutualinductorindex+=1
-        end
-
-        node1, node2 = calcnodes(i, mutualinductorindex, componenttypes,
-            nodeindexarray, couplings)
-
-        # sum up the values on the branch
-        flag, value, index = sumbranchvalues!(componenttypes[i], node1, node2, componentvalues, countdictcopy, indexdictcopy)
-
-        if flag == true && componenttypes[i] == :Lj
-
-            Ictmp = real(LjtoIc(value))
-
-            # a junction is written as a jj model instance, or as an inductor
-            if jj == true
-                nJJ += 1
-                # push!(netlist,"B$(nJJ) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
-                push!(netlist,"$(spicename(componentnames[i],'B')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
-                push!(junctions,(index = i, phasenode = string(Nnodes+nJJ-1)))
-                capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, componentvalues, countdictcopy, indexdictcopy)
-
-                # add any additional capacitance
-                if real(capvalue) > Ictmp*CjoIc
-                    push!(netlist,"$(spicename(componentnames[capindex],'C')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(femto*real(capvalue-Ictmp*CjoIc))f")
-                end
-            else
-                push!(netlist,"$(spicename(componentnames[i],'L')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
-            end
-        elseif flag == true && componenttypes[i] == :L
-            push!(netlist,"$(spicename(componentnames[i],'L')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
-        elseif flag == true && componenttypes[i] == :C
-            push!(netlist,"$(spicename(componentnames[i],'C')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*femto))f")
-        elseif flag == true && componenttypes[i] == :K
+    for b in branches
+        i = b.index
+        value = b.value
+        if b.type == :K
             # the coupled inductors by the names their own lines carry
-            push!(netlist,"$(spicename(componentnames[i],'K')) $(spicename(mutualinductorbranchnames[2*mutualinductorindex-1],'L')) $(spicename(mutualinductorbranchnames[2*mutualinductorindex],'L')) $(real(value))")
-        elseif flag == true && componenttypes[i] == :R
+            l1, l2 = couplingof[i]
+            push!(netlist,"$(spicename(componentnames[i],'K')) $(spicename(componentnames[l1],'L')) $(spicename(componentnames[l2],'L')) $(value)")
+            continue
+        end
+        node1 = uniquenodevector[nodeindexarray[1, i]]
+        node2 = uniquenodevector[nodeindexarray[2, i]]
+        if b.type == :Lj && jj
+            Ictmp = LjtoIc(value)
+            push!(netlist,"$(spicename(componentnames[i],'B')) $(node1) $(node2) $(phasenode) jjk ics=$(LjtoIc(value)*micro)u")
+            push!(junctions,(index = i, phasenode = string(phasenode)))
+            phasenode += 1
+
+            # the shunt capacitance beyond the model's
+            capvalue, capindex = shunt(b)
+            if capvalue > Ictmp*CjoIc
+                push!(netlist,"$(spicename(componentnames[capindex],'C')) $(node1) $(node2) $(femto*(capvalue-Ictmp*CjoIc))f")
+            end
+        elseif b.type == :Lj || b.type == :L
+            push!(netlist,"$(spicename(componentnames[i],'L')) $(node1) $(node2) $(value*pico)p")
+        elseif b.type == :C
+            # a junction's shunt capacitance is written with the junction
+            n1, n2 = minmax(nodeindexarray[1, i], nodeindexarray[2, i])
+            jj && haskey(position, (:Lj, n1, n2)) && continue
+            push!(netlist,"$(spicename(componentnames[i],'C')) $(node1) $(node2) $(value*femto)f")
+        elseif b.type == :R
             # every resistor, the environment a port owns included. The port
             # itself writes no line, so its source impedance reaches the
             # exported circuit only through this one; dropping it as a
             # lowering artifact would export a different circuit. An
             # infinite resistance is an open, which is no element at all.
-            isfinite(real(value)) || continue
-            push!(netlist,"$(spicename(componentnames[i],'R')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
+            isfinite(value) || continue
+            push!(netlist,"$(spicename(componentnames[i],'R')) $(node1) $(node2) $(value)")
         end
     end
 
@@ -654,8 +545,8 @@ function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
         push!(netlist,"$(spicename(b.path,'T')) $(node(b.signalnodes[1])) $(node(b.refnodes[1])) $(node(b.signalnodes[2])) $(node(b.refnodes[2])) z0=$(provider.Z0) td=$(provider.delay)")
     end
 
-    if jj == true && nJJ > 0
-        push!(netlist,".model jjk jj(rtype=0,cct=1,icrit=$(micro*Icmean)u,cap=$(femto*Icmean*real(CjoIc))f,force=1,vm=$(vm)")
+    if !isempty(junctions)
+        push!(netlist,".model jjk jj(rtype=0,cct=1,icrit=$(micro*Icmean)u,cap=$(femto*Icmean*CjoIc)f,force=1,vm=$(vm))")
     end
 
     return  (netlist=join(netlist,"\n"),portnodes=portnodes,port=port,portcurrent=portcurrent,Nnodes = Nnodes,junctions=junctions)

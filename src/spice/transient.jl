@@ -49,7 +49,9 @@ junctions of every run share one `jj` model, whose subgap loss is set
 as small as the model allows but is not zero, where the package's
 junctions are lossless. The solution's final state fields are NaN,
 since WRSPICE does not hand over a state, and the tangent, the adjoint
-and the noise need a solution of the package's own rules.
+and the noise need a solution of the package's own rules. Its `stats`
+count the steps of the grid, as the package's rules count theirs,
+whatever is saved; WRSPICE's own internal steps are not reported.
 
 # Examples
 ```julia
@@ -133,9 +135,9 @@ function wrspicetransient(p::TransientProblem, tspan, method::WRspice; dt,
 
     N = length(p)
     return TransientSolution(p, method, h, times, voltage, incident, outgoing,
-        phases, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+        phases, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing,
         zeros(N), zeros(N), fill(NaN, N), fill(NaN, N),
-        nothing, nothing, nothing, (; steps = length(times) - 1))
+        nothing, nothing, nothing, (; steps = nsteps))
 end
 
 # the input of a run: the netlist, the sources and the control block
@@ -143,10 +145,6 @@ function wrspiceinput(p::TransientProblem, method::WRspice, t0, h, nsteps,
         printstep, record::Symbol = :ports)
     n = exportnetlist(p.circuit, p.matrices.vvn; jj = true)
     names = p.circuit.nodenames
-    for jn in n.junctions
-        jn.phasenode in names && throw(ArgumentError(
-            lazy"the net $(jn.phasenode) collides with the phase node WRSPICE gives a junction; leave the integers from the node count upward free as net names."))
-    end
     lines = String[n.netlist]
     push!(lines, "* the drives and the constant sources")
     for (k, d) in enumerate(p.drives)

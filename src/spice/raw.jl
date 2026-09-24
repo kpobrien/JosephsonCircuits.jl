@@ -33,150 +33,125 @@ end
 """
     spice_raw_load(filename)
 
-Parse the binary raw output file from WRSPICE or Xyce. Tested for transient
-analysis and frequency domain analysis. The file format is documented in the
+Read the binary rawfile of a WRSPICE or Xyce analysis, transient or
+frequency domain. The file format is documented in the
 [WRSPICE manual](http://www.srware.com/xictools/docs/wrsmanual-4.3.13.pdf)
-in Appendix 1, File Formats, A.1 Rawfile Format.
-
-The Xyce rawfile format is very similar and described
+in Appendix 1, File Formats, A.1 Rawfile Format; the Xyce rawfile format
+is very similar and described
 [here](https://xyce.sandia.gov/files/xyce/Reference_Guide.pdf#section.8.2).
 
-The function outputs a header, the times/frequencies, the currents, and the
-voltages. The voltage and current arrays have dimensions nVoltages by nPoints
-and nCurrents by nPoints.
-
+Returns a [`SpiceRaw`](@ref): the header, and for each type of variable,
+`V` for the node voltages, `S` for the time of a transient or `Hz` for
+the frequency of an AC analysis, the names of the variables of that type
+in `variables` and their values in `values`, a matrix with one row per
+variable and one column per point, real or complex as the header's
+flags say. The variables of each type are sorted by
+[`calcspicesortperms`](@ref). A rawfile in the ASCII format is refused.
 """
 function spice_raw_load(filename)
+    header, variables, indices, sf = open(filename) do io
 
-    #open a file handle
-    io = open(filename)
+        # the contents of the header
+        title = ""
+        date = ""
+        plotname = ""
+        flags = ""
+        nvariables = 0
+        npoints = 0
+        command = ""
+        option = ""
 
-    # the contents of the header
-    title = ""
-    date = ""
-    plotname = ""
-    flags = ""
-    nvariables = 0
-    npoints = 0
-    command = ""
-    option = ""
+        #loop over the contents of the header
+        while !eof(io)
 
-    #other variables
-    headerlength = 0
-    filetype = ""
-    ncurrents = 0
-    nvoltages = 0
-    ntimes = 0
+            line = readline(io)
+            linesplit = split(line,":",limit=2)
 
-    #loop over the contents of the header
-    i=0
-    # while true
-    while !eof(io)
+            if length(linesplit) == 2
+                linename = linesplit[1]
+                linevalue = strip(linesplit[2])
+            else
+                throw(ArgumentError(lazy"Line doesn't have the correct format."))
+            end
 
-        i+=1
-        
-        line = readline(io)
-        linesplit = split(line,":",limit=2)
+            if linename == "Title"
+                title = linevalue
+            elseif linename == "Date"
+                date = linevalue
+            elseif linename == "Plotname"
+                plotname = linevalue
+            elseif linename == "Flags"
+                flags = linevalue
+            elseif linename == "No. Variables"
+                nvariables =  parse(Int,linevalue)
+            elseif linename == "No. Points"
+                npoints = parse(Int,linevalue)
+            elseif linename == "Command"
+                command = linevalue
+            elseif linename == "Option"
+                option = linevalue
+            elseif linename == "Variables"
+                break
+            end
+        end
 
-        if length(linesplit) == 2
-            linename = linesplit[1]
-            linevalue = strip(linesplit[2])
+        header = SpiceRawHeader(title, date, plotname, flags, nvariables,
+            npoints, command, option)
+
+        # the variable names and the rows they occupy, grouped by type
+        variables =  Dict{String,Vector{String}}()
+        indices = Dict{String,Vector{Int}}()
+
+        #loop over the variable names
+        filetype = ""
+        i = 0
+        while !eof(io)
+
+            i+=1
+            # read the line, remove leading and trailing whitespace
+            line = strip(readline(io))
+
+            # break if we reach the end of the variables section
+            if line == "Binary:" || line == "Values:"
+                filetype = line
+                break
+            end
+
+            # the index, the name and the type of the variable; the
+            # constants an aborted WRSPICE run writes have no type
+            splitline = split(line,r"\s+")
+
+            if length(splitline) > 3
+                @warn lazy"Variable line has additional parameters which we are ignoring."
+            end
+            type = length(splitline) >= 3 ? String(splitline[3]) : ""
+
+            # store the variable and the index at which it occurs
+            push!(get!(variables, type, String[]), splitline[2])
+            push!(get!(indices, type, Int[]), i)
+        end
+
+        # read the data
+        if filetype == "Binary:"
+            if flags == "real"
+                sf = Array{Float64}(undef,nvariables,npoints)
+            elseif flags =="complex"
+                sf = Array{Complex{Float64}}(undef,nvariables,npoints)
+            else
+                throw(ArgumentError(lazy"Unknown flag."))
+            end
+            read!(io,sf)
         else
-            throw(ArgumentError(lazy"Line doesn't have the correct format."))
+            throw(ArgumentError(lazy"This function only handles Binary files not ASCII."))
         end
-
-        if linename == "Title"
-            title = linevalue
-        elseif linename == "Date"
-            date = linevalue
-        elseif linename == "Plotname"
-            plotname = linevalue
-        elseif linename == "Flags"
-            flags = linevalue
-        elseif linename == "No. Variables"
-            nvariables =  parse(Int,linevalue)
-        elseif linename == "No. Points"
-            npoints = parse(Int,linevalue)
-        elseif linename == "Command"
-            command = linevalue
-        elseif linename == "Option"
-            option = linevalue
-        elseif linename == "Variables"
-            headerlength = i
-            break
-        end
+        return header, variables, indices, sf
     end
 
-    header = SpiceRawHeader(title, date, plotname, flags, nvariables, npoints,
-        command, option)
-
-    #array of strings to contain all of the variable names
-    variables =  Dict{String,Vector{String}}()
-    indices = Dict{String,Vector{Int}}()
-
-    #loop over the variable names
-    i = 0
-    # while true
-    while !eof(io)
-
-        i+=1
-        # read the line, remove leading and trailing whitespace
-        line = strip(readline(io))
-
-        # println(line)
-
-        # break if we reach the end of the variables section
-        if line == "Binary:" || line == "Values:"
-            filetype = line
-            break
-        end
-
-        # split the line and assign the variable to a dictionary
-        splitline = split(line,r"\s+")
-
-        if length(splitline) > 3
-            @warn lazy"Variable line has additional parameters which we are ignoring."
-        end 
-        # variables[i-headerlength] = splitline[3]
-        if !haskey(variables,splitline[3])
-            variables[splitline[3]] = Vector{String}(undef,0)
-            indices[splitline[3]] = Vector{Int}(undef,0)
-        end
-
-        # store the variable and the index at which it occurs
-        push!(variables[splitline[3]],splitline[2])
-        # push!(indices[splitline[3]],i)
-        push!(indices[splitline[3]],i)
-
-    end 
-
-    # read the data
-    if filetype == "Binary:"
-
-        # make an empty array for the binary data
-        if flags == "real"
-            sf = Array{Float64}(undef,nvariables,npoints)
-            values = Dict{String,Matrix{Float64}}()
-        elseif flags =="complex"
-            sf = Array{Complex{Float64}}(undef,nvariables,npoints)
-            values = Dict{String,Matrix{Complex{Float64}}}()
-        else
-            throw(ArgumentError(lazy"Unknown flag."))
-        end
-
-        # read the binary data
-        read!(io,sf)
-
-        #close the file
-        close(io)
-    else
-        throw(ArgumentError(lazy"This function only handles Binary files not ASCII."))
-    end
-    
     # sort the labels. voltages such as  "V(1)","V(10)","V(100)"."V(101)"
     sortperms = calcspicesortperms(variables)
 
     # use the sort permutation to sort the rest of the data
+    values = Dict{String,typeof(sf)}()
     for (label,sp) in sortperms
         values[label] = sf[indices[label][sp],:]
         variables[label] = variables[label][sp]
@@ -188,47 +163,44 @@ end
 """
     calcspicesortperms(variabledict::Dict{String,Vector{String}})
 
-Calculate the sortperms which will sort the variable and node names.
-Numbered names sort numerically before the names without a number, which
-keep their order, so a rawfile may mix nodes named with numbers and with
-words.
+The permutation which sorts the variables of each type of a rawfile, by
+the name and the node [`parsespicevariable`](@ref) reads from each: by
+name, and for a name by node, the numbered nodes in numerical order
+before the nodes named by words, which keep their order. So a rawfile
+may mix nodes named by numbers and by words, and `v(2)` comes before
+`v(10)`.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcspicesortperms(Dict("V" => ["v(10)", "v(out)", "v(2)", "v(1)"]))["V"]
+4-element Vector{Int64}:
+ 4
+ 3
+ 1
+ 2
+```
 """
 function calcspicesortperms(variabledict::Dict{String,Vector{String}})
-
-    sortperms = Dict{String,Vector{Int}}()
-
-    # numbers numerically first, then everything else by its text; the
-    # variables of one group may parse to either kind
+    # numbers numerically first, then everything else by its text
     sortkey(v) = v isa Integer ? (0, Int(v), "") : (1, 0, string(v))
-
-    for (label,variables) in variabledict
-        sortvariables = Dict{Any,Vector{Any}}()
-        for variable in variables
-            key, val = parsespicevariable(variable)
-            if !haskey(sortvariables,key)
-                sortvariables[key] = Any[]
-            end
-            push!(sortvariables[key],val)
-        end
-        #loop over the sorted outer arrays
-        sp = Int[]
-        for (key,val) in sort(collect(sortvariables), by = p -> string(first(p)))
-            #sort the dictionary
-            p = sortperm(val, by = sortkey)
-            sp = vcat(sp,p .+ length(sp))
-        end
-
-        sortperms[label] = sp
+    sortperms = Dict{String,Vector{Int}}()
+    for (label, variables) in variabledict
+        parsed = map(parsespicevariable, variables)
+        sortperms[label] = sortperm(parsed;
+            by = p -> (string(first(p)), sortkey(last(p))))
     end
-
     return sortperms
 end
 
 """
     parsespicevariable(variable::String)
 
-Parse a variable name string into the variable name and node number. Will this
-work with arbitrary node strings?
+The name and the node of a rawfile variable, which
+[`calcspicesortperms`](@ref) sorts by. A number after the leading word of
+the variable, `V1(5)` or `V-1`, is the node and the word the name; else a
+number within the leading word splits it, `V1` being the name `V` and the
+node `1`; and a variable without a number is its own name and node. A
+variable which does not start with a word character is refused.
 
 # Examples
 ```jldoctest

@@ -121,9 +121,13 @@ function junctionstructure(::Type{T}, Amatrixindices::Matrix,
     ami = tobackend(backend, Matrix{Int32}(Amatrixindices))
     amc = tobackend(backend, Matrix{Int32}(Amatrixconjindices))
     ns = [Tuple{Int,Float64}[(Int(n), Float64(s)) for (n, s) in b] for b in nodesandsigns]
-    return JunctionStructure{T,typeof(d(pairptr)),typeof(dt(lmolj)),typeof(ami),
-        typeof(backend)}(d(pairptr), d(pairrow), d(pairjunc), dt(paircoef),
-        dt(lmolj), ami, amc, Vector{Int32}(pairptr), Vector{Int32}(pairrow),
+    # each array is moved to the backend once, and the structure's type read
+    # from the moved arrays
+    ptrd = d(pairptr)
+    lmoljd = dt(lmolj)
+    return JunctionStructure{T,typeof(ptrd),typeof(lmoljd),typeof(ami),
+        typeof(backend)}(ptrd, d(pairrow), d(pairjunc), dt(paircoef),
+        lmoljd, ami, amc, Vector{Int32}(pairptr), Vector{Int32}(pairrow),
         ns, Int(Nmodes), Int(Nfreq), nnodes, backend)
 end
 
@@ -192,9 +196,9 @@ end
         phimatrix)
 
 The Josephson contribution to the stored entry of the real Jacobian at row
-`rri` and column `rci`, which is what every real assembly kernel computes,
-the two here and the block preconditioner's `blockassemblykernel!`, and the
-only thing they share.
+`rri` and column `rci`, which is what every real assembly computes, the two
+kernels and the host loop here and the block preconditioner's
+`blockassemblykernel!`, and the only thing they share.
 
 The entry is decoded to the (node, mode) pair of its row and of its column,
 the junctions incident on that node pair are looked up, and their
@@ -273,19 +277,8 @@ point addition is not associative, so that order is part of the result.
     T = eltype(nzval)
     @inbounds begin
         q = gid
-        # the stored column this entry is in, which is a row of the Jacobian;
-        # a binary search rather than a stored row index per entry, which
-        # would cost memory and save no time
-        lo = 1
-        hi = length(colptr) - 1
-        while lo < hi
-            mid = (lo + hi + 1) >>> 1
-            if colptr[mid] <= q
-                lo = mid
-            else
-                hi = mid - 1
-            end
-        end
+        # the stored column this entry is in, which is a row of the Jacobian
+        lo = storedcolumn(colptr, q)
         # the stored matrix is the transpose on a device, so its column is the
         # Jacobian's row; for a normally oriented one it is the other way
         rri = transposed ? lo : Int(rowval[q])
@@ -333,8 +326,7 @@ end
 
 """
     planstructurerealjacobian(Jt, T::Type{<:Real}, junctions::JunctionStructure,
-        Amatrixconjindices, Ljb, Lscale, nodesandsigns, invLnm, Gnm, Cnm,
-        wmodesm, wmodes2m, rl::ModeLayout, cl::ModeLayout, Nmodes, Nfreq,
+        invLnm, Gnm, Cnm, wmodesm, wmodes2m, rl::ModeLayout, cl::ModeLayout,
         backend; transposed = true)
 
 Build a [`StructureRealJacobianPlan`](@ref) with values of type `T` for
@@ -397,12 +389,8 @@ function assemblerealjacobian!(nzval::AbstractVector,
     length(nzval) == plan.n || throw(DimensionMismatch(
         lazy"`nzval` has length $(length(nzval)) but the plan assembles $(plan.n) entries."))
     js = plan.junctions
-    if plan.backend isa CPU && (Threads.nthreads() == 1 || plan.n <= hostassemblylimit)
-        # the same per row assembly as a plain loop: launching a kernel on
-        # the CPU backend costs tens of microseconds of task scheduling,
-        # which is nothing to a harmonic balance solve and everything to a
-        # time stepper assembling once per step; a large assembly with
-        # threads to use keeps the threaded kernel
+    if hostloop(plan.backend, plan.n)
+        # the same per row assembly as a plain loop
         hostassemblerealjacobian!(nzval, plan.colptr, plan.rowval, plan.lin,
             phimatrix, js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
             js.lmolj, js.ami, js.amc, plan.rlinv, plan.rlptr, plan.clinv,
@@ -419,9 +407,17 @@ function assemblerealjacobian!(nzval::AbstractVector,
     return nzval
 end
 
-# the entry count below which a CPU assembly runs as a plain loop even
-# with threads available: the launch costs more than the entries
-const hostassemblylimit = 1 << 16
+# Whether `n` work items on `backend` run as a plain loop rather than as a
+# kernel. Launching a kernel on the CPU backend costs tens of microseconds of
+# task scheduling, more than a small map or assembly costs, and these run once
+# per Krylov product or time step; a large launch with threads to use keeps the
+# threaded kernel.
+hostloop(backend, n) = backend isa CPU &&
+    (Threads.nthreads() == 1 || n <= hostlooplimit)
+
+# the item count below which a CPU launch runs as a plain loop even with
+# threads available: the launch costs more than the items
+const hostlooplimit = 1 << 16
 
 # the body of `structureassemblerowkernel!` over every stored row, on the
 # host, with no kernel launch
@@ -439,6 +435,22 @@ function hostassemblerealjacobian!(nzval, colptr, rowval, lin, phimatrix,
         end
     end
     return nzval
+end
+
+# the stored column of entry `q` of a compressed structure, the last `j`
+# with `colptr[j] <= q`, by binary search: a stored column index per entry
+# would cost memory and save no time
+@inline function storedcolumn(colptr, q)
+    lo = 1; hi = length(colptr) - 1
+    @inbounds while lo < hi
+        mid = (lo + hi + 1) >>> 1
+        if colptr[mid] <= q
+            lo = mid
+        else
+            hi = mid - 1
+        end
+    end
+    return lo
 end
 
 # the value of a sparse matrix at (i, j), or zero, by binary search in its
@@ -463,18 +475,26 @@ end
 # its refresh: the constant linear contribution of every stored entry
 function linearcontribution!(lin, colptr, rowval, rlinv, rlptr, clinv,
         clptr, invLnm, Gnm, Cnm, wmodesm, wmodes2m, transposed, backend)
-    d = x -> tobackend(backend, convert(Vector{eltype(colptr)}, x))
     linearcontributionkernel!(backend, 64)(lin, colptr, rowval,
         rlinv, rlptr, clinv, clptr,
-        d(SparseArrays.getcolptr(invLnm)), d(rowvals(invLnm)),
+        linearterminputs(eltype(colptr), invLnm, Gnm, Cnm, wmodesm,
+            wmodes2m, backend)..., transposed; ndrange = length(lin))
+    KernelAbstractions.synchronize(backend)
+    return lin
+end
+
+# the three linear term matrices, compressed by columns in the index type
+# `Ti`, with the mode frequency diagonals each multiplies, on `backend`, in
+# the order the linear contribution kernels take them
+function linearterminputs(::Type{Ti}, invLnm, Gnm, Cnm, wmodesm, wmodes2m,
+        backend) where {Ti}
+    d = x -> tobackend(backend, convert(Vector{Ti}, x))
+    return (d(SparseArrays.getcolptr(invLnm)), d(rowvals(invLnm)),
         tobackend(backend, nonzeros(invLnm)),
         d(SparseArrays.getcolptr(Gnm)), d(rowvals(Gnm)),
         tobackend(backend, nonzeros(Gnm)), tobackend(backend, wmodesm.diag),
         d(SparseArrays.getcolptr(Cnm)), d(rowvals(Cnm)),
-        tobackend(backend, nonzeros(Cnm)), tobackend(backend, wmodes2m.diag),
-        transposed; ndrange = length(lin))
-    KernelAbstractions.synchronize(backend)
-    return lin
+        tobackend(backend, nonzeros(Cnm)), tobackend(backend, wmodes2m.diag))
 end
 
 """
@@ -522,16 +542,7 @@ is part of the result.
     T = eltype(lin)
     @inbounds begin
         q = gid
-        lo = 1
-        hi = length(colptr) - 1
-        while lo < hi
-            mid = (lo + hi + 1) >>> 1
-            if colptr[mid] <= q
-                lo = mid
-            else
-                hi = mid - 1
-            end
-        end
+        lo = storedcolumn(colptr, q)
         rri = transposed ? lo : Int(rowval[q])
         rci = transposed ? Int(rowval[q]) : lo
         ci = Int(rlinv[rri]); dr = rri - Int(rlptr[ci])
@@ -554,7 +565,7 @@ end
 # real block expansion, so the same table serves it. It is in fact simpler: a
 # stored entry names one mode pair, so `Amatrixindices` at that pair is one
 # number, and every contribution to the entry is therefore either conjugated
-# or not. There is no equivalent of the real path's two segment lists.
+# or not.
 
 """
     StructureComplexJosephsonPlan{Ti,VI,VT,MI,K,B}
@@ -563,8 +574,8 @@ The Josephson contribution to the complex Jacobian, as a linear map from the
 Fourier coefficients of `cos(phi(t))` to the stored entries of a matrix with a
 given structure.
 
-This is what replaced the two segmented gathers of the earlier complex plan
-used to hold, one entry per contribution. It is used both to assemble the
+Each stored entry is computed from the circuit's structure rather than
+gathered from one entry per contribution. It is used both to assemble the
 Jacobian and on its own, as the map applied to other coefficient arrays by
 the linearized solve, which is why it is a plan for the Josephson term
 rather than for the whole Jacobian.
@@ -593,7 +604,7 @@ end
 @inline needsconj(ind::Int, conjugate::Bool) = (ind > 0) == conjugate
 
 # the Josephson contribution to the stored entry of the complex Jacobian at
-# column `ci` and row `cj`, the complex counterpart of `realstructureentry`:
+# row `ci` and column `cj`, the complex counterpart of `realstructureentry`:
 # one lookup of the coupling per incident junction, no conjugate partner
 @inline function josephsonentry(::Type{T}, ci, cj, Nmodes, Nfreq, ami,
         pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix,
@@ -626,15 +637,7 @@ end
     T = eltype(nzval)
     @inbounds begin
         q = gid
-        lo = 1; hi = length(colptr) - 1
-        while lo < hi
-            mid = (lo + hi + 1) >>> 1
-            if colptr[mid] <= q
-                lo = mid
-            else
-                hi = mid - 1
-            end
-        end
+        lo = storedcolumn(colptr, q)
         # a compressed column of the stored structure is a column of the
         # Jacobian, or a row of it when the transpose is what is stored
         ri = transposed ? lo : Int(rowval[q])
@@ -661,9 +664,8 @@ end
 end
 
 """
-    planstructurecomplexjosephson(Jx::SparseMatrixCSC, junctions::JunctionStructure,
-        Amatrixindices, Ljb, Lscale, nodesandsigns, Nmodes, Nfreq, backend;
-        transposed = false)
+    planstructurecomplexjosephson(Jx::SparseMatrixCSC,
+        junctions::JunctionStructure, backend; transposed = false)
 
 Build a [`StructureComplexJosephsonPlan`](@ref) for the structure of `Jx`.
 """
@@ -770,15 +772,7 @@ in the order `assemblecomplexjacobian!` adds them.
     gid = @index(Global)
     @inbounds begin
         q = gid
-        lo = 1; hi = length(colptr) - 1
-        while lo < hi
-            mid = (lo + hi + 1) >>> 1
-            if colptr[mid] <= q
-                lo = mid
-            else
-                hi = mid - 1
-            end
-        end
+        lo = storedcolumn(colptr, q)
         cj = transposed ? Int(rowval[q]) : lo
         ci = transposed ? lo : Int(rowval[q])
         acc = sparselookup(lcolptr, lrowval, lnzval, ci, cj)
@@ -833,18 +827,10 @@ end
 function complexlinearcontribution!(lin, josephson::StructureComplexJosephsonPlan,
     invLnm, Gnm, Cnm, wmodesm, wmodes2m)
     backend = josephson.backend
-    Ti = eltype(josephson.colptr)
-    d = x -> tobackend(backend, convert(Vector{Ti}, x))
     complexlinearcontributionkernel!(backend, 64)(lin, josephson.colptr,
         josephson.rowval,
-        d(SparseArrays.getcolptr(invLnm)), d(rowvals(invLnm)),
-        tobackend(backend, nonzeros(invLnm)),
-        d(SparseArrays.getcolptr(Gnm)), d(rowvals(Gnm)),
-        tobackend(backend, nonzeros(Gnm)),
-        tobackend(backend, wmodesm.diag),
-        d(SparseArrays.getcolptr(Cnm)), d(rowvals(Cnm)),
-        tobackend(backend, nonzeros(Cnm)),
-        tobackend(backend, wmodes2m.diag), josephson.transposed;
+        linearterminputs(eltype(josephson.colptr), invLnm, Gnm, Cnm, wmodesm,
+            wmodes2m, backend)..., josephson.transposed;
         ndrange = length(lin))
     KernelAbstractions.synchronize(backend)
     return lin

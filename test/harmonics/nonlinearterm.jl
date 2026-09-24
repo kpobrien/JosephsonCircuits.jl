@@ -115,7 +115,7 @@ using Test
 
             # both representations must agree with the assembled exact real
             # Jacobian, which is built by an independent code path
-            # (planrealjacobian). Since the two representations share the
+            # (planstructurerealjacobian). Since the two representations share the
             # plan, this and the central finite difference checks in
             # test/harmonics/system.jl are what makes them independently
             # verified rather than merely consistent with each other.
@@ -156,13 +156,6 @@ using Test
             @test isapprox(sys.Knm*z,
                 sys.invLnm*z + im*(sys.Gnm*(sys.wmodesm*z)) -
                 sys.Cnm*(sys.wmodes2m*z), rtol=1e-12)
-
-            # # the real representation entry points do not allocate
-            # JosephsonCircuits.setpoint!(sys, d.xr)
-            # JosephsonCircuits.jacobianvectorproduct!(Jr, sys, vr)
-            # @test (@allocated JosephsonCircuits.jacobianvectorproduct!(Jr, sys, vr)) == 0
-            # JosephsonCircuits.residual!(Fr, sys)
-            # @test (@allocated JosephsonCircuits.residual!(Fr, sys)) == 0
         end
     end
 

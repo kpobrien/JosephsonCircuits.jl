@@ -1,11 +1,12 @@
-# The deprecated input formats.
+# The deprecated input formats and entry points.
 #
 # The typed `Circuit` whose frequency dependent values are closures of the
 # frequency is the input format of the package. Two older ways of writing
 # a circuit are deprecated, and each is converted here, with a warning,
-# into one written the current way, which then follows the same path.
-# Everything specific to them lives in this file, so that they are removed
-# by deleting it and test/circuit/legacy.jl.
+# into one written the current way, which then follows the same path. The
+# deprecated entry points, at the end of the file, warn and forward to
+# their replacements. Everything specific to them lives in this file, so
+# that they are removed by deleting it and test/circuit/legacy.jl.
 #
 # A netlist of `(name, node1, node2, value)` tuples, the original input
 # format: the name prefix table with the two functions that read it, the
@@ -96,7 +97,7 @@ function parsecomponenttype(name::String,allowedcomponents::Vector{String})
             end
         end
     end
-    throw(ArgumentError(lazy"No matching component found in allowedcomponents."))
+    throw(ArgumentError(lazy"No component in allowedcomponents matches the name $(name)."))
 end
 
 """
@@ -246,11 +247,19 @@ const tuplenetlistmessage = "The netlist of (name, node1, node2, value) tuples i
 # net "0".
 function legacycircuit(netlist, circuitdefs; pins = nothing, ports = nothing,
         caller::Symbol = :Circuit)
+    # a list of typed components handed over without the Circuit around it,
+    # or components without their connections, is not a tuple netlist, and
+    # is said to be so before a warning about one
+    if any(e -> e isa Pair && last(e) isa AbstractComponent, netlist)
+        throw(ArgumentError("The list holds name => component pairs, which are the components of a circuit: give their connections as well, as Circuit(components, connections)."))
+    end
+    if any(e -> e isa Tuple && last(e) isa AbstractComponent, netlist)
+        throw(ArgumentError("The netlist holds typed components, which are passed as a circuit: write Circuit(netlist)."))
+    end
     Base.depwarn(tuplenetlistmessage, caller; force = true)
     if !isnothing(pins) || !isnothing(ports)
         throw(ArgumentError("A tuple netlist has no interface; give pins and ports to a netlist of typed components or to the connection-group form."))
     end
-    checkcomponenttypes(legacyallowedcomponents)
     components = Vector{Pair{String,Any}}(undef, length(netlist))
     nodeorder = String[]
     nodegroups = Dict{String,Vector{Any}}()
@@ -360,34 +369,39 @@ end
 #
 # Each converts the netlist, which warns, compiles it with the nodes
 # sorted by number as the tuple format always did, and forwards the
-# compiled circuit to the typed form.
+# compiled circuit to the typed form. The solvers and the matrix builders
+# of the tuple format took the order as their keyword `sorting`, which is
+# now `compile`'s, and still take it here.
 
 compile(netlist::AbstractVector; sorting::Symbol = :number) =
     compile(legacycircuit(netlist, nothing; caller = :compile); sorting = sorting)
 
 # the netlist compiled the way the tuple format ordered its nodes
-legacycompiled(netlist, caller::Symbol) =
-    compile(legacycircuit(netlist, nothing; caller = caller); sorting = :number)
+legacycompiled(netlist, caller::Symbol; sorting::Symbol = :number) =
+    compile(legacycircuit(netlist, nothing; caller = caller); sorting = sorting)
 
 function hbsolve(ws, wp::NTuple{N,Number}, sources,
         Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
         netlist::AbstractVector, circuitdefs::AbstractDict = Dict{Symbol,Any}();
-        kwargs...) where {N,M}
+        sorting::Symbol = :number, kwargs...) where {N,M}
     return hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
-        legacycompiled(netlist, :hbsolve), circuitdefs; kwargs...)
+        legacycompiled(netlist, :hbsolve; sorting = sorting), circuitdefs;
+        kwargs...)
 end
 
 function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         netlist::AbstractVector, circuitdefs::AbstractDict = Dict{Symbol,Any}();
-        kwargs...) where {N}
+        sorting::Symbol = :number, kwargs...) where {N}
     return hbnlsolve(w, Nharmonics, sources,
-        legacycompiled(netlist, :hbnlsolve), circuitdefs; kwargs...)
+        legacycompiled(netlist, :hbnlsolve; sorting = sorting), circuitdefs;
+        kwargs...)
 end
 
 function hblinsolve(w, netlist::AbstractVector,
-        circuitdefs::AbstractDict = Dict{Symbol,Any}(); kwargs...)
-    return hblinsolve(w, legacycompiled(netlist, :hblinsolve), circuitdefs;
-        kwargs...)
+        circuitdefs::AbstractDict = Dict{Symbol,Any}();
+        sorting::Symbol = :number, kwargs...)
+    return hblinsolve(w, legacycompiled(netlist, :hblinsolve; sorting = sorting),
+        circuitdefs; kwargs...)
 end
 
 function transientproblem(netlist::AbstractVector,
@@ -396,15 +410,16 @@ function transientproblem(netlist::AbstractVector,
         circuitdefs; sources = sources)
 end
 
-function numericmatrices(netlist::AbstractVector, circuitdefs::Dict;
-        Nmodes::Int = 1)
-    return numericmatrices(legacycompiled(netlist, :numericmatrices),
-        circuitdefs; Nmodes = Nmodes)
+function numericmatrices(netlist::AbstractVector, circuitdefs::AbstractDict;
+        Nmodes::Int = 1, sorting::Symbol = :number)
+    return numericmatrices(legacycompiled(netlist, :numericmatrices;
+        sorting = sorting), circuitdefs; Nmodes = Nmodes)
 end
 
-function symbolicmatrices(netlist::AbstractVector; Nmodes::Int = 1)
-    return symbolicmatrices(legacycompiled(netlist, :symbolicmatrices);
-        Nmodes = Nmodes)
+function symbolicmatrices(netlist::AbstractVector; Nmodes::Int = 1,
+        sorting::Symbol = :number)
+    return symbolicmatrices(legacycompiled(netlist, :symbolicmatrices;
+        sorting = sorting); Nmodes = Nmodes)
 end
 
 function exportnetlist(netlist::AbstractVector, circuitdefs::Dict;
@@ -507,13 +522,7 @@ function import_netlist!(io::IO, circuit::AbstractVector)
         if length(split_line) != 4
             error(lazy"each line should have component name, node1, node2, component value")
         end
-        value = try
-            parse(Float64,split_line[4])
-        catch
-            # https://docs.sciml.ai/Symbolics/stable/manual/parsing/
-            # Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),Main)
-            parsecomponentvalue(split_line[4])
-        end
+        value = parsecomponentvalue(split_line[4])
         push!(circuit,(split_line[1],split_line[2],split_line[3],value))
     end
     return nothing
@@ -521,19 +530,147 @@ end
 
 
 
-# export_netlist("test1.net", circuit,circuitdefs)
-
 # Reading a component value back out of a netlist line. Only
 # `import_netlist!` above uses it.
 """
     parsecomponentvalue(s::AbstractString)
 
 Parse a SPICE netlist component value into a number or a `CircuitValue`.
-Replaces `Symbolics.parse_expr_to_symbolic`; unlike it, this does not
-evaluate into a module, so a netlist cannot introduce arbitrary code.
+Nothing is evaluated into a module, so a netlist cannot introduce arbitrary
+code.
 """
 function parsecomponentvalue(s::AbstractString)
     v = tryparse(Float64, s)
     isnothing(v) || return v
     return CircuitValues.fromexpr(Meta.parse(s))
+end
+
+# === the deprecated entry points ===
+#
+# Each one warns once and forwards to its replacement.
+
+# `connectS(Sa, k, l)` and `connectS(Sa, Sb, k, l)` were split into
+# `intraconnectS` and `interconnectS` so that each can also take noise
+# covariance matrices: with one name, a second matrix argument would be
+# ambiguous between a second scattering matrix and a noise covariance.
+function connectS(Sa::AbstractArray{T,N}, k::Int, l::Int;
+    nbatches::Int = Base.Threads.nthreads()) where {T,N}
+    Base.depwarn(lazy"`connectS(Sa::AbstractArray, k::Int, l::Int)` is deprecated, use `intraconnectS(Sa, k, l)` instead.", :connectS; force=true)
+    return intraconnectS(Sa, k, l; nbatches = nbatches)
+end
+
+function connectS(Sa::AbstractArray{T,N}, Sb::AbstractArray{T,N}, k::Int, l::Int;
+    nbatches::Int = Base.Threads.nthreads()) where {T,N}
+    Base.depwarn(lazy"`connectS(Sa::AbstractArray, Sb::AbstractArray, k::Int, l::Int)` is deprecated, use `interconnectS(Sa, Sb, k, l)` instead.", :connectS; force=true)
+    return interconnectS(Sa, Sb, k, l; nbatches = nbatches)
+end
+
+function connectS!(Sout, Sa, k::Int, l::Int;
+    nbatches::Int = Base.Threads.nthreads())
+    Base.depwarn(lazy"`connectS!(Sout, Sa, k::Int, l::Int)` is deprecated, use `intraconnectS!(Sout, Sa, k, l)` instead.", :connectS!; force=true)
+    return intraconnectS!(Sout, Sa, k, l; nbatches = nbatches)
+end
+
+function connectS!(Sout, Sa, Sb, k::Int, l::Int;
+    nbatches::Int = Base.Threads.nthreads())
+    Base.depwarn(lazy"`connectS!(Sout, Sa, Sb, k::Int, l::Int)` is deprecated, use `interconnectS!(Sout, Sa, Sb, k, l)` instead.", :connectS!; force=true)
+    return interconnectS!(Sout, Sa, Sb, k, l; nbatches = nbatches)
+end
+
+
+#     hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
+#         circuitdefs; pumpports = [1], keyword arguments...)
+#
+# The original `hbsolve` signature: a single pump at the scalar frequency
+# `wp`, applied to `pumpports` with the currents `Ip`, four wave mixing
+# only, and mode counts given as integers rather than tuples. It is
+# translated into a call of the current solvers and warns that it is
+# deprecated. Note that the signal modes of the result are ordered as
+# `hblinsolve` orders them (the signal at index 1, the rest as listed in
+# `modes`), which need not match the order the original solver used.
+function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
+    circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
+    symfreqvar = nothing,
+    nbatches = Base.Threads.nthreads(), sorting = :number,
+    returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
+    returnCM::Bool = true, returnnodeflux::Bool = false,
+    returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
+    returnvoltageadjoint::Bool = false, keyedarrays::Bool = false,
+    sensitivitynames::AbstractVector = String[],
+    returnSsensitivity::Bool = false, returnZ = nothing,
+    returnZadjoint = nothing, returnZsensitivity = nothing,
+    returnZsensitivityadjoint = nothing,
+    factorization = nothing)
+
+    Base.depwarn("""
+    This form of hbsolve, with a single pump frequency and integer harmonic
+    counts, is deprecated: it calls the harmonic balance solvers hbnlsolve
+    and hblinsolve, which take any number of pump tones and ports, with the
+    syntax of the legacy solver, which supported four wave mixing of one
+    strong tone only. Please switch to hbsolve(ws, (wp,), sources,
+    (Nmodulationharmonics,), (Npumpharmonics,), circuit, circuitdefs).
+        """, :hbsolve; force=true)
+
+    # the single pump as a one element frequency tuple
+    w = (wp,)
+    Nharmonics = (2*Npumpmodes,)
+
+    # one source per pump port, all at the pump frequency
+    length(pumpports) == length(Ip) || throw(ArgumentError(
+        lazy"there are $(length(pumpports)) pump ports and $(length(Ip)) pump currents; give one current per port."))
+    sources = [(mode = (1,), port = pumpports[i], current = Ip[i])
+        for i in eachindex(pumpports)]
+
+    # the pump harmonics: odd harmonics only, which is four wave mixing
+    freq, indices = pumpmodeset((wp,), Nharmonics, Nharmonics;
+        dc = false, odd = true, even = false)
+
+    Nmodes = length(freq.modes)
+
+    psc = compile(circuit; sorting = sorting)
+    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
+        circuitdefs, symfreqvar, :hbsolve))
+    nm=numericmatrices(psc, circuitdefs, Nmodes = Nmodes)
+
+    # `factorization = nothing` leaves the preconditioner to `Automatic`; a
+    # factorization pins the block diagonal, the only preconditioner this
+    # form builds with one
+    nonlinear = hbnlsolve(w, sources, freq, indices, psc, nm;
+        iterations = iterations, atol = ftol,
+        keyedarrays = keyedarrays,
+        sensitivitynames = sensitivitynames,
+        method = NewtonKrylov(preconditioner = isnothing(factorization) ?
+            Automatic() : BlockDiagonal(factorization = factorization)))
+
+    # the signal modes: the signal and the even pump harmonics on either
+    # side of it
+    signalfreq =truncfreqs(
+        calcfreqsdft((Nsignalmodes,)),
+        dc=true,odd=false,even=true,maxintermodorder=Inf,
+    )
+
+    # the original solver kept one mode fewer when Nsignalmodes is even;
+    # drop the highest one to match
+    if mod(Nsignalmodes,2) == 0 && Nsignalmodes > 0
+        signalfreq = JosephsonCircuits.removefreqs(
+            signalfreq,
+            [(Nsignalmodes,)],
+        )
+    end
+
+    linearized = hblinsolve(ws, psc, circuitdefs, signalfreq;
+        nonlinear = nonlinear, nbatches = nbatches,
+        returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
+        returnCM = returnCM, returnnodeflux = returnnodeflux,
+        returnnodefluxadjoint = returnnodefluxadjoint,
+        returnvoltage = returnvoltage,
+        returnvoltageadjoint = returnvoltageadjoint,
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        returnSsensitivity = returnSsensitivity, returnZ = returnZ,
+        returnZadjoint = returnZadjoint, returnZsensitivity = returnZsensitivity,
+        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        factorization = factorization)
+
+    return HB(nonlinear, linearized)
 end

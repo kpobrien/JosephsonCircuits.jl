@@ -8,16 +8,15 @@ Reusable scratch for [`evaluatehybrid!`](@ref).
 Every call needs the same six small buffers: which frequencies are nonzero,
 those frequencies, the scattering parameters there, the two square roots of
 the reference impedances, and the unsigned frequencies the providers are
-evaluated at. A line whose every cell is its own block
-evaluates thousands of blocks at every signal frequency, so allocating those
-per call dominated the evaluation. They are reallocated only when a block
-needs a larger one, which for a circuit whose blocks are all the same size is
-once.
+evaluated at. A line whose every cell is its own block evaluates thousands
+of blocks at every signal frequency, so the buffers are kept and reused:
+they are reallocated only when a block needs a larger one, which for a
+circuit whose blocks are all the same size is once.
 
 A workspace is mutable and is written by every call, so it belongs to one
-task. [`scatteringvalues!`](@ref) makes one per call when it is not given a
-workspace, which is what keeps it safe to call from several threads at
-once; a caller which passes one gives each thread its own.
+task: [`scatteringvalues!`](@ref) takes one, which its callers make per
+call when they are not given one, and a caller which passes one gives each
+thread its own.
 """
 mutable struct HybridWorkspace
     nonzeroindices::Vector{Int}
@@ -140,7 +139,7 @@ row treats as an unknown, which is how a block becomes visible at direct
 current; see [`DCBlockRows`](@ref).
 """
 struct StampedScatteringBlock
-    block::Any            # the shared ScatteringParameters definition
+    block::Any            # the shared definition, a ScatteringParameters or a LinearizedScattering
     signalnodes::Vector{Int}
     refnodes::Vector{Int}
     auxbase::Int          # aux index of port p mode m: auxbase+(p-1)*Nmodes+m
@@ -164,10 +163,10 @@ described by the sparsity `pattern` plus, per scalar contribution, the
 block, port pair, sign, mode, destination index, and which coefficient
 (`B`, stamped with the `im*w_m*scale` factor of a voltage in the node flux
 basis, mirroring the constitutive equations of the promoted port resistors,
-or `C`, stamped as `-C`). The contribution is diagonal in mode space
-because a linear time invariant multiport cannot convert frequencies; all
-mode coupling in the system comes from the junction pump modulation term.
-This representation exists for every scattering matrix (see
+or `C`, stamped as `-C`). The contribution of a time invariant block is
+diagonal in mode space, since it cannot convert frequencies; a pumped block
+([`LinearizedScattering`](@ref)) couples the modes its pump connects. This
+representation exists for every scattering matrix (see
 [`evaluatehybrid!`](@ref)); no admittance conversion is performed.
 
 The values side is a pure gather-add over precomputable per (block, mode)
@@ -232,6 +231,10 @@ struct ScatteringStampSystem
     Nauxports::Int
     scale::Float64
     iscale::Float64
+    # the first block holding each block's definition object: elaboration
+    # shares one definition among its instances, whose hybrid coefficients
+    # and scattering parameters depend on it and the mode frequencies alone
+    firstof::Vector{Int}
 end
 
 """
@@ -308,7 +311,6 @@ function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
     # columns of input port q at mode nn, its auxiliary current and the
     # node fluxes of its two terminals
     function contribute!(bi, sb, p, m, q, nn, j)
-        n = sb.block.nports
         auxp = sb.auxbase + (p-1)*Nmodes + m
         auxq = sb.auxbase + (q-1)*Nmodes + nn
         # -C[p,q] on the auxiliary current columns
@@ -368,18 +370,14 @@ function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
         Ntotal, Ntotal)
 
     # map each contribution to its nonzero index in the pattern
-    patternindex = Vector{Int}(undef, length(rows))
-    for c in eachindex(rows)
-        col = cols[c]
-        r = pattern.colptr[col]:(pattern.colptr[col+1]-1)
-        k = searchsortedfirst(view(pattern.rowval, r), rows[c])
-        patternindex[c] = first(r) + k - 1
-    end
+    patternindex = [nzposition(pattern, rows[c], cols[c]) for c in eachindex(rows)]
 
+    seen = IdDict{Any,Int}()
+    firstof = [get!(seen, sb.block, bi) for (bi, sb) in enumerate(blocks)]
     return ScatteringStampSystem(blocks, kcl, pattern, patternindex,
         copy(patternindex), blockindex, pindex, qindex, coeff, sign,
         modeindex, inmodeindex, coupled, pumped, pumpedk, offsets,
-        Int(Nmodes), naux, Float64(scale), Float64(iscale))
+        Int(Nmodes), naux, Float64(scale), Float64(iscale), firstof)
 end
 
 """
@@ -512,7 +510,7 @@ function checkpumpconjugates(blocks::Vector{StampedScatteringBlock}, wmodes::Abs
             (iszero(wmodes[m]) || iszero(wmodes[nn])) && continue
             d = wmodes[m] + wmodes[nn]
             k = round(Int, d/block.wp)
-            (abs(d - k*block.wp) <= 1e-6*block.wp && abs(k) in block.harmonics) || continue
+            (isharmonic(d, k, block.wp) && abs(k) in block.harmonics) || continue
             j = findfirst(==(abs(k)), block.harmonics)
             worst = maximum(abs(conversionentry(Hin, Hnegin, k, j, p, q, nn)) for p in 1:n, q in 1:n)
             worst <= tol && continue
@@ -649,8 +647,9 @@ function scatteringvalues!(values::AbstractVector,
     Cs = work.Cs
     Bp = work.Bp
     Cp = work.Cp
+    # once per definition: the instances of one read its coefficients
     for (bi, sb) in enumerate(ssys.blocks)
-        sb.block isa LinearizedScattering && continue
+        (sb.block isa LinearizedScattering || ssys.firstof[bi] != bi) && continue
         evaluatehybrid!(Bs[bi], Cs[bi], sb.block, wmodes, work.hybrid)
     end
     for (j, bi) in enumerate(ssys.pumped)
@@ -660,7 +659,7 @@ function scatteringvalues!(values::AbstractVector,
 
     @inbounds for c in eachindex(ssys.Aindex)
         m = ssys.modeindex[c]
-        bi = ssys.blockindex[c]
+        bi = ssys.firstof[ssys.blockindex[c]]
         p = ssys.pindex[c]
         q = ssys.qindex[c]
         j = ssys.coupled[c]
@@ -685,32 +684,19 @@ function scatteringvalues!(values::AbstractVector,
 end
 
 """
-    scatteringlinearterm(psc::CompiledCircuit, wmodes::AbstractVector,
-        Nmodes::Integer; auxoffset::Integer, Ntotal::Integer,
-        scale::Real = 1.0, blocks = nothing)
+    scatteringlinearterm(ssys::ScatteringStampSystem, wmodes::AbstractVector)
 
-The constant sparse matrix of the scattering block contribution at the
-fixed mode frequencies `wmodes` (the constitutive entries plus the
-Kirchhoff current law couplings of the auxiliary port currents), or
-`nothing` when the circuit has no scattering blocks. Used by the nonlinear
-(pump) solver, where the mode frequencies do not change: the contribution
-is folded into the frequency independent linear term alongside the
-augmentation matrix of the promoted resistors, so the residual, Jacobian,
-and solver machinery operate on the augmented system unchanged. `blocks`
-stamps the given compiled blocks instead of `psc.scatteringblocks`.
+The constant sparse matrix of the scattering block contribution of the
+stamp system `ssys` at the fixed mode frequencies `wmodes` (the
+constitutive entries plus the Kirchhoff current law couplings of the
+auxiliary port currents). Used by the nonlinear (pump) solver, where the
+mode frequencies do not change: the contribution is folded into the
+frequency independent linear term alongside the augmentation matrix of the
+promoted resistors, so the residual, Jacobian, and solver machinery operate
+on the augmented system unchanged.
 """
-function scatteringlinearterm(psc::CompiledCircuit,
-    wmodes::AbstractVector, Nmodes::Integer; auxoffset::Integer,
-    Ntotal::Integer, scale::Real = 1.0, blocks = nothing)
-
-    # the caller's blocks when it has them, and the circuit's own otherwise
-    ssys = scatteringstampsystem(
-        isnothing(blocks) ? psc.scatteringblocks : blocks,
-        Nmodes; auxoffset = auxoffset, Ntotal = Ntotal, scale = scale,
-        modeoffsets = wmodes)
-    if isnothing(ssys)
-        return nothing
-    end
+function scatteringlinearterm(ssys::ScatteringStampSystem,
+    wmodes::AbstractVector)
     Snm = copy(ssys.pattern)
     fill!(Snm.nzval, zero(Complex{Float64}))
     # the pattern indices are the destination indices for the pattern itself
@@ -1088,16 +1074,22 @@ function scatteringnoisewaves!(noiseoutputwave::AbstractMatrix,
                 phiadj, rowoffset + plan.channelbase[e]*Nmodes, Nmodes,
                 ssys.pumpedk[j])
         else
+            # the scattering parameters of a definition the previous block
+            # holds too are the ones the workspace has
+            same = e > 1 && ssys.firstof[plan.blockindices[e-1]] == ssys.firstof[bi]
             blocknoisewaves!(noiseoutputwave, sb.block, sb, wmodes, phiadj,
-                rowoffset + plan.channelbase[e]*Nmodes, Nmodes, work)
+                rowoffset + plan.channelbase[e]*Nmodes, Nmodes, work;
+                evaluate = !same)
         end
     end
     return noiseoutputwave
 end
 
 """
-    pumpednoisematrices(block::LinearizedScattering, wmodes, K)
-    pumpednoisematrices(block::LinearizedScattering, rows, cols, K)
+    pumpednoisematrices(block::LinearizedScattering, wmodes, K;
+        complete = true)
+    pumpednoisematrices(block::LinearizedScattering, rows, cols, K;
+        complete = true)
 
 The multi-mode matrices of a pumped block at the signed mode frequencies
 `wmodes`, over the index `(p - 1)*Nmodes + m` of port `p` at mode `m`,
@@ -1149,8 +1141,8 @@ function pumpednoisematrices(block::LinearizedScattering, rows::AbstractVector, 
     Jr = Diagonal([iszero(rows[m]) ? 0.0 : sign(rows[m]) for p in 1:n for m in 1:nr])
     Jc = Diagonal([iszero(cols[nn]) ? 0.0 : sign(cols[nn]) for q in 1:n for nn in 1:nc])
     Kc = Matrix(Jr) - S*Jc*S'
-    V = statedcovariance(block, rows)
-    complete && !isnothing(V) && block.noise.completed && (V = completedcovariance(block, rows, cols))
+    V = complete && block.noise isa NoiseCovariance && block.noise.completed ?
+        completedcovariance(block, rows, cols) : statedcovariance(block, rows)
     return S, Kc, V
 end
 
@@ -1173,7 +1165,7 @@ function statedcovariance(block::LinearizedScattering, rows::AbstractVector)
         (iszero(rows[m]) || iszero(rows[nn])) && continue
         d = rows[m] - rows[nn]
         k = round(Int, d/block.wp)
-        (abs(d - k*block.wp) <= 1e-6*block.wp && abs(k) in block.harmonics) || continue
+        (isharmonic(d, k, block.wp) && abs(k) in block.harmonics) || continue
         j = findfirst(==(abs(k)), block.harmonics)
         for q in 1:n, p in 1:n
             V[(p-1)*nr + m, (q-1)*nr + nn] = k >= 0 ? Vp[p, q, j, nn] : conj(Vp[q, p, j, m])
@@ -1260,7 +1252,7 @@ function paddedladder(block::LinearizedScattering, rows::AbstractVector)
     pad = maximum(block.harmonics) == 0 ? 0 : block.noise.padding
     out = Float64[]
     for w in sort(Float64[r + j*wp for r in rows for j in -pad:pad])
-        (isempty(out) || abs(w - out[end]) > 1e-9*(abs(w) + wp)) && push!(out, w)
+        (isempty(out) || !samefrequency(w, out[end], wp)) && push!(out, w)
     end
     return out
 end
@@ -1270,7 +1262,7 @@ end
 function completedladder(block::LinearizedScattering, rows::Vector{Float64}, cols::AbstractVector)
     n = block.nports
     wp = block.wp
-    near(a, b) = abs(a - b) <= 1e-9*(abs(a) + wp)
+    near(a, b) = samefrequency(a, b, wp)
     nr = length(rows)
     prows, pcols, pK = pumpedfamily(block, paddedladder(block, rows); reach = false, keep = true)
     S, Kc, V = pumpednoisematrices(block, prows, pcols, pK; complete = false)
@@ -1393,42 +1385,6 @@ function checkcovarianceentries(block::LinearizedScattering, V::AbstractMatrix, 
     skew <= max(block.atol, block.noise.atol)*max(1.0, maximum(abs, V)) || throw(ArgumentError(lazy"the stated covariance of the pumped block at $(name) is not Hermitian at $(at): the largest entry of V - V' over those modes is $(skew); a covariance is Hermitian, V_{-k}(nu) = V_k(nu - k wp)'."))
     return nothing
 end
-
-# whether a table holds the frequency `nu`, to the roundoff its
-# evaluation admits at the edges
-function tablecovers(t::TabulatedMatrixProvider, nu::Real)
-    f = t.frequencies
-    edgetol = 8eps(Float64)*max(abs(f[1]), abs(f[end]))
-    return f[1] - edgetol <= nu <= f[end] + edgetol
-end
-
-# whether a provider holds data at the frequency `nu`: a table within
-# its knots, or everywhere when it declares how it extrapolates, a
-# piecewise table within one of its bands, the data being the samples
-# and what lies between them, with no declaration made beyond them, a
-# rotation wherever the provider it turns does, and a provider of any
-# other kind, a callable, a constant or a filter, everywhere
-providercovers(p::TabulatedMatrixProvider, nu::Real) = p.extrapolation != :error || holdsdata(p, nu)
-providercovers(p::PiecewiseTabulatedProvider, nu::Real) = holdsdata(p, nu)
-providercovers(p::RotatedMatrixProvider, nu::Real) = providercovers(p.provider, nu)
-providercovers(p, nu::Real) = true
-
-# whether a provider holds a sample of its own at `nu`, the knots of a
-# table reaching it before any extrapolation, which is where its data can
-# be checked against a relation it must obey, and the same samples
-# through a rotation; a provider which is not tabulated states its value
-# everywhere
-holdsdata(p::TabulatedMatrixProvider, nu::Real) = tablecovers(p, nu)
-holdsdata(p::PiecewiseTabulatedProvider, nu::Real) = any(t -> tablecovers(t, nu), p.tables)
-holdsdata(p::RotatedMatrixProvider, nu::Real) = holdsdata(p.provider, nu)
-holdsdata(p, nu::Real) = true
-
-# the knots of a tabulated provider, of a rotation the knots of what it
-# turns, and none for one of any other kind
-tableknots(p::TabulatedMatrixProvider) = p.frequencies
-tableknots(p::PiecewiseTabulatedProvider) = piecewisefrequencies(p)
-tableknots(p::RotatedMatrixProvider) = tableknots(p.provider)
-tableknots(p) = Float64[]
 
 # a provider at the signed frequencies its data covers, into
 # `dest[:, :, i]`, and zero where it does not
@@ -1612,7 +1568,7 @@ same, and its row of the commutator is the one it has there.
 function pumpedfamily(block::LinearizedScattering, nus; reach::Bool = true, keep::Bool = false)
     kmax = maximum(block.harmonics)
     wp = block.wp
-    near(a, b) = abs(a - b) <= 1e-9*(abs(a) + wp)
+    near(a, b) = samefrequency(a, b, wp)
     function dedupe(ws)
         out = Float64[]
         for w in sort(ws)
@@ -1683,11 +1639,12 @@ are laid out over those rows, a column per row, the first `nports`
 slots holding the first kind and the rest the second, so that every row
 is one channel; their sign kinds are fixed (see
 [`noisechannelsigns`](@ref)). Each row is the contraction of its column
-against the adjoint solution over all the block's rows, with the sign
-and the square root of each mode's frequency, and is multiplied by the
-sign of its own row's mode frequency, which the adjoint route's sign
-(see [`adjointnoisesigns!`](@ref)) then undoes, so that after it the
-entry is the wave of the channel in the signed frequency convention.
+against the adjoint solution over all the block's rows, with the square
+root of each mode's frequency, and is multiplied by the sign of its own
+row's mode frequency, which the adjoint route's sign (see
+[`adjointnoisesigns!`](@ref)) then undoes, so that after it the entry
+carries the sign of the output port mode's frequency, as the entry of a
+lumped channel does.
 """
 function pumpedblocknoisewaves!(noiseoutputwave::AbstractMatrix,
     block::LinearizedScattering, sb::StampedScatteringBlock,
@@ -1717,13 +1674,12 @@ function pumpedblocknoisewaves!(noiseoutputwave::AbstractMatrix,
                 acc = zero(Complex{Float64})
                 for p in 1:n, m in 1:Nmodes
                     iszero(wmodes[m]) && continue
-                    acc += sign(wmodes[m])*sqrt(abs(wmodes[m]))*F[(p-1)*Nmodes + m, c]*
+                    acc += sqrt(abs(wmodes[m]))*F[(p-1)*Nmodes + m, c]*
                         phiadj[sb.auxbase + (p-1)*Nmodes + m, k]
                 end
-                # the sign of the row's own mode and of the column's, which
-                # the adjoint route's signs undo, so that the entry carries
-                # the sign of each injection's mode alone
-                noiseoutputwave[row, k] = srow*sign(wmodes[(k-1) % Nmodes + 1])*acc
+                # the sign of the row's own mode, which the adjoint route's
+                # sign for the row undoes
+                noiseoutputwave[row, k] = srow*acc
             end
         end
     end
@@ -1735,7 +1691,7 @@ end
 function blocknoisewaves!(noiseoutputwave::AbstractMatrix,
     block::ScatteringParameters, sb::StampedScatteringBlock,
     wmodes::AbstractVector, phiadj::AbstractMatrix, rowoffset::Integer,
-    Nmodes::Integer, work::ScatteringNoiseWorkspace)
+    Nmodes::Integer, work::ScatteringNoiseWorkspace; evaluate::Bool = true)
 
     n = block.nports
     nrhs = size(phiadj, 2)
@@ -1748,7 +1704,7 @@ function blocknoisewaves!(noiseoutputwave::AbstractMatrix,
     S = work.S
     L = work.L
     M = work.M
-    evaluatescattering!(S, block, wmodes, work.absws)
+    evaluate && evaluatescattering!(S, block, wmodes, work.absws)
     if stated
         if size(work.V) != (n, n, Nmodes)
             work.V = Array{Complex{Float64},3}(undef, n, n, Nmodes)
@@ -1848,9 +1804,9 @@ Check the stated noise of the blocks of `ssys` at every frequency the
 sweep will solve at, every signal frequency at every pump mode, and
 throw if one is not met there: a block which states its noise with a
 [`NoiseCovariance`](@ref) must state at least what the commutation
-relations require (see [`quantumnoisemargin`](@ref)), to the `atol` of
-the model. A pumped block is checked by
-[`checkpumpedblockmodels`](@ref).
+relations require, to the `atol` of the model, as its construction holds
+its stored data (see [`checkblockcontract`](@ref)). A pumped block is
+checked by [`checkpumpedblockmodels`](@ref).
 
 Stored data is checked when a block is constructed, but a callable
 cannot be, and a fitted block differs from its data. These are exactly
@@ -1914,16 +1870,9 @@ function checkoneblockstated(block::ScatteringParameters, name, ws, work)
     V = Array{Complex{Float64},3}(undef, n, n, length(ws))
     evaluatescattering!(S, block, ws, work.absws)
     evaluatecovariance!(V, block, ws, work.absws)
-    atol = block.noise.atol
     for k in eachindex(ws)
-        Vk = view(V, :, :, k)
-        skew = maximum(abs, Vk .- Vk')
-        skew <= atol*max(1.0, maximum(abs, Vk)) || throw(ArgumentError(lazy"the noise covariance of the scattering block at $(name) is not Hermitian at $(ws[k]) rad/s: the largest entry of V - V' is $(skew)."))
-        block.noise.completed && continue
-        margin = quantumnoisemargin(Vk, view(S, :, :, k))
-        if margin < -atol
-            throw(ArgumentError(lazy"the noise covariance of the scattering block at $(name) is less than the commutation relations require at $(ws[k]) rad/s: the smallest eigenvalue of V - K or V + K, with K = I - S S', is $(margin). An amplifier of power gain G has to emit at least G - 1 at its output; see NoiseCovariance."))
-        end
+        checkblockcontract(block, view(S, :, :, k), view(V, :, :, k), ws[k];
+            name = name)
     end
     return nothing
 end
@@ -1950,21 +1899,30 @@ leaves it so.
 function noisechanneltemperatures(psc, noiseportimpedanceindices, noiseplan,
     ssys, temperature)
 
+    checktemperature(temperature, "the keyword `temperature`")
     stated = psc.componenttemperatures
-    ts = Float64[get(stated, i, Float64(temperature))
-        for i in noiseportimpedanceindices]
+    ts = Float64[haskey(stated, i) ?
+        checktemperature(stated[i], psc.componentnames[i]) :
+        Float64(temperature) for i in noiseportimpedanceindices]
     isnothing(noiseplan) && return ts
     # a block states its temperature on its own noise model
     for (e, bi) in enumerate(noiseplan.blockindices)
         sb = ssys.blocks[bi]
         t = sb.block.noise isa ThermalEquilibrium ?
-            Float64(sb.block.noise.temperature) :
+            checktemperature(sb.block.noise.temperature, sb.name) :
             statednoise(sb.block) ? 0.0 : Float64(temperature)
         for _ in 1:noiseplan.channelcounts[e]
             push!(ts, t)
         end
     end
     return ts
+end
+
+# a temperature in kelvin, which is finite and nonnegative
+function checktemperature(t, what)
+    (isfinite(t) && t >= 0) || throw(ArgumentError(
+        lazy"The temperature of $(what) is $(t) K; a temperature must be finite and nonnegative."))
+    return Float64(t)
 end
 
 """

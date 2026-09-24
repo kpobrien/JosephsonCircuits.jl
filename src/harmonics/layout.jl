@@ -2,37 +2,30 @@
 
 """
     ModeLayout(isreal::AbstractVector{Bool}, dim::Integer, ::Type{Ti}=Int)
-    ModeLayout(realindices, nmodes::Integer, dim::Integer, ::Type{Ti}=Int)
 
 Layout of one axis of length `dim` (a complex dimension), built from a length-
 `nmodes` mask of which modes are real. `dim` must be an integer multiple of
 `nmodes`. Complex index `i` owns real slots `ptr[i]:ptr[i+1]-1`; `inv` maps a
-real slot back to its complex index; `isfirst` marks the slots that start a
-mode; `rdim` is the resulting real dimension.
+real slot back to its complex index; `rdim` is the resulting real dimension.
 
 `w` is a bit per index recording whether that mode is real.
 
 # Fields
 - `nmodes`, `dim`, `rdim`: the mode count, the complex dimension and the real
     dimension.
-- `nreal`, `isreal`: the number of real modes and the mask over the modes.
-- `ptr`, `inv`, `isfirst`: the slot ranges, the inverse map and the mode
-    starts, as above.
+- `isreal`: the mask over the modes.
+- `ptr`, `inv`: the slot ranges and the inverse map, as above.
 - `w`: the bit per complex index, whether its mode is real.
 """
 struct ModeLayout{Ti<:Integer}
     nmodes::Int
     dim::Int
     rdim::Int
-    nreal::Int
     isreal::BitVector
     ptr::Vector{Ti}       # length dim+1
     inv::Vector{Ti}       # length rdim
-    isfirst::Vector{Bool} # length rdim
     w::BitVector          # length dim, true where the mode is real
 end
-
-@inline _rowwidth(w::BitVector, i::Integer) = @inbounds 2 - w[i]
 
 """
     realblockterm(v, dr, dc)
@@ -52,7 +45,6 @@ and the block factorization values.
         return dr == 0 ? -imag(v) : real(v)
     end
 end
-@inline _width(L::ModeLayout, i::Integer)   = @inbounds Int(L.ptr[i+1] - L.ptr[i])
 
 function ModeLayout(isreal::AbstractVector{Bool}, dim::Integer, ::Type{Ti} = Int) where {Ti<:Integer}
     nmodes = length(isreal)
@@ -65,39 +57,23 @@ function ModeLayout(isreal::AbstractVector{Bool}, dim::Integer, ::Type{Ti} = Int
 
     ptr     = Vector{Ti}(undef, dim + 1)
     inv     = Vector{Ti}(undef, rdim)
-    isfirst = Vector{Bool}(undef, rdim)
     w       = falses(dim)
     p = 1
     @inbounds for i in 1:dim
         r = isreal[(i - 1) % nmodes + 1]
         ptr[i] = p
-        isfirst[p] = true
         inv[p] = i
         w[i] = r
         if !r
-            inv[p+1] = i;  isfirst[p+1] = false
+            inv[p+1] = i
             p += 2
         else
             p += 1
         end
     end
     @inbounds ptr[dim+1] = p
-    return ModeLayout(nmodes, dim, rdim, nreal, BitVector(isreal), ptr, inv, isfirst, w)
+    return ModeLayout(nmodes, dim, rdim, BitVector(isreal), ptr, inv, w)
 end
-
-function ModeLayout(realindices, nmodes::Integer, dim::Integer, ::Type{Ti} = Int) where {Ti<:Integer}
-    mask = falses(nmodes)
-    for r in realindices
-        1 <= r <= nmodes || throw(ArgumentError("real index $r outside 1:$nmodes"))
-        mask[r] && throw(ArgumentError("duplicate real index $r"))
-        mask[r] = true
-    end
-    return ModeLayout(mask, dim, Ti)
-end
-
-# per-entry scale factor; `cf` is loop-invariant per column
-
-#  vectors and dense matrices
 
 """
     realdim(dim, isreal) -> Int
@@ -348,14 +324,6 @@ The length of the direct current window.
 nwindow(L::CompositeLayout) = L.ndc + L.nvdc
 
 """
-    isinternal(L::CompositeLayout)
-
-Whether the canonical state is the internal one, which it is exactly while
-there are no explicit direct current coordinates.
-"""
-isinternal(L::CompositeLayout) = iszero(L.nvdc)
-
-"""
     windowindex(L::CompositeLayout, k)
 
 The canonical position of window entry `k`: a zero frequency entry of the
@@ -489,7 +457,7 @@ _onhost(x) = KernelAbstractions.get_backend(x) isa CPU
 
 `dest[k] = src[index[k]]` for every `k`, as a KernelAbstractions kernel on the
 backend of `dest`, which `src` and `index` must share. The device side of
-the permuted copies of the canonical layout (`_gatherperm!`): `index` is an
+the windowed copies of the canonical layout (`_gatherwindow!`): `index` is an
 injection, so no element is written twice and no atomic is needed.
 """
 function gathervalues!(dest::AbstractArray, src::AbstractVector,
@@ -535,7 +503,7 @@ end
 end
 
 
-function _gatherperm!(dest, src, index)
+function _gatherwindow!(dest, src, index)
     if _onhost(src)
         @inbounds for k in eachindex(index)
             dest[k] = src[index[k]]
@@ -546,7 +514,7 @@ function _gatherperm!(dest, src, index)
     return dest
 end
 
-function _scatterperm!(dest, src, index)
+function _scatterwindow!(dest, src, index)
     if _onhost(dest)
         @inbounds for k in eachindex(index)
             dest[index[k]] = src[k]

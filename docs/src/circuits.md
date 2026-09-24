@@ -35,8 +35,9 @@ The components are typed: `Capacitor`, `Inductor`, `Resistor`,
 `MutualInductor`, `NonlinearInductor`, `ScatteringParameters` for a block
 described by its scattering matrix, and a `Circuit` with an interface as a
 subcircuit. A component value may be a number, a complex number (a
-capacitor with dielectric loss), or a `FrequencyDependent` function of the
-mode frequency.
+capacitor with dielectric loss), or a `FrequencyDependent` function of a
+positive frequency, whose complex conjugate a mode of negative frequency
+takes.
 
 An entry lists one node per terminal, so the form is not limited to two
 terminal elements. A subcircuit instance lists its pins in the order they
@@ -170,10 +171,11 @@ caller:
   builds a circuit from a point. The values which move are written as
   parameters, `Capacitor(:Cc)`, and the definitions give each a number.
 - A circuit's node order is chosen when it is compiled, so `sorting` is a
-  keyword of [`compile`](@ref) alone. A caller who wants an order other
-  than the default compiles with it and passes the compiled circuit, which
-  every entry point accepts: `hbsolve(ws, wp, sources, (2,), (8,),
-  compile(circuit; sorting = :number), circuitdefs)`.
+  keyword of [`compile`](@ref). A caller who wants an order other than the
+  default compiles with it and passes the compiled circuit, which every
+  entry point accepts: `hbsolve(ws, wp, sources, (2,), (8,),
+  compile(circuit; sorting = :number), circuitdefs)`. The entry points
+  take `sorting` themselves only with a tuple netlist, as they did.
 - A compiled circuit carries its own topology, so no entry point takes a
   separate graph. [`calccircuitgraph`](@ref) builds the graph with its
   diagnostics, which is what it is for.

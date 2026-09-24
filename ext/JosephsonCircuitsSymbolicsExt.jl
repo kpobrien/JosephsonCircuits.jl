@@ -21,13 +21,26 @@ const SymAny = Union{Num,SymbolicUtils.BasicSymbolic}
 # === methods of the core's value handling functions for symbolic values ===
 
 # Substitution keeps Symbolics' partial substitution semantics rather than
-# lowering to a `CircuitValue` first: a value may still contain a free
-# variable afterwards (the symbolic frequency variable, resolved per mode
-# by `freqsubst`), and a full evaluation would turn that into a KeyError.
-JC.valuetonumber(v::Num, circuitdefs) =
-    Symbolics.value(Symbolics.substitute(v, circuitdefs; fold=Val(true)))
+# lowering to a `CircuitValue` first: a variable the definitions do not
+# give stays in the value, for the check of the values to name. Each
+# variable is looked up under whichever key names it, its `Num`, its
+# symbol, its string or its parameter object, as a `CircuitValue` is.
+JC.valuetonumber(v::Num, circuitdefs) = Symbolics.value(Symbolics.substitute(v,
+    symbolicdefinitions(v, circuitdefs); fold=Val(true)))
 JC.valuetonumber(v::SymbolicUtils.BasicSymbolic, circuitdefs) =
-    Symbolics.value(Symbolics.substitute(v, circuitdefs; fold=Val(true)))
+    Symbolics.value(Symbolics.substitute(v, symbolicdefinitions(v, circuitdefs);
+        fold=Val(true)))
+
+# the definitions of the variables of `v`, keyed by the variables
+function symbolicdefinitions(v, circuitdefs)
+    byname = JC.definitionsbyname(circuitdefs)
+    d = Dict{Any,Any}()
+    for variable in Symbolics.get_variables(v)
+        name = Symbolics.tosymbol(variable; escape = false)
+        haskey(byname, name) && (d[variable] = byname[name])
+    end
+    return d
+end
 
 # the port number of a deprecated tuple netlist entry (circuit/legacy.jl)
 JC.unwrapvalue(v::Num) = Symbolics.value(v)

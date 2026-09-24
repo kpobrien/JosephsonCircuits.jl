@@ -1,19 +1,19 @@
 
 """
     cosphibandwidths(sys::HBSystem, Amatrixindices::Matrix,
-        Amatrixmodes::AbstractMatrix, Nfreq::Integer = 0,
-        Nbranches::Integer = 0; tol = 1e-2, budget = 0.25)
+        Amatrixmodes::AbstractMatrix; tol = 1e-2, budget = 0.25)
 
 The per-tone harmonic bandwidth of the Josephson coupling at the current point,
 as the tuple of the largest offset in each tone which carries a coefficient of
 `cos(phi(t))` above `tol` relative to the largest.
 
 This is the bandwidth [`modebandmask`](@ref) should be given, measured rather
-than guessed, and it costs nothing beyond the Fourier coefficients
-[`updatepreconditioner!`](@ref) already computes: the assembly reads
-`phimatrix[abs(ind) + Nfreq*(b-1)]` for `ind = Amatrixindices[m1,m2]`, and this
-reads the same entries and records how far from the diagonal they stay
-significant.
+than guessed, from the Fourier coefficients [`updatepreconditioner!`](@ref)
+computes anyway: the assembly reads `phimatrix[abs(ind) + Nfreq*(b-1)]` for
+`ind = Amatrixindices[m1,m2]`, and this takes the largest of those entries
+over the branches `b` once per Fourier index, then reads it for every mode
+pair and records how far from the diagonal the coupling stays significant,
+at a cost of one pass over the coefficients and one over the mode pairs.
 
 The measurement is per tone, and that anisotropy is the point. Jacobi-Anger
 gives the coefficient at a multi-tone offset `m` as a product over the tones,
@@ -22,10 +22,10 @@ contributes. Its support is therefore a *rectangle* whose sides are set by each
 `delta_k` separately, not a ball: a strongly pumped tone earns a wide bandwidth
 and a weak one collapses to zero, because `J_n(delta)` falls off super
 geometrically once `n` exceeds `delta`. Keeping a ball instead spends fill on
-offsets in the weak tones which carry nothing, and the difference is large. On a
-two tone chain with a 5 percent second drive and 74 modes, the measured
-rectangle `(2,0)` converges where the ball of any radius does not, at four
-percent of the full Jacobian's stored entries.
+offsets in the weak tones which carry nothing, and the difference is large: a
+weakly driven second tone collapses the rectangle to its strong tone's side,
+where a ball wide enough for the strong tone keeps every offset of the weak
+one.
 
 A tone whose grid is short enough that offsets alias will report a large
 bandwidth. That is not a failure: the aliased coupling is really there, and a
@@ -33,8 +33,7 @@ bandwidth which saturates that tone's grid costs nothing extra because the grid
 had no room to be truncated in the first place.
 """
 function cosphibandwidths(sys, Amatrixindices::Matrix,
-    Amatrixmodes::AbstractMatrix, Nfreq::Integer = 0, Nbranches::Integer = 0;
-    tol = 1e-2, budget = 0.25)
+    Amatrixmodes::AbstractMatrix; tol = 1e-2, budget = 0.25)
 
     cm = tohost(cosphimatrix(sys))
     Ntones = length(first(Amatrixmodes))
@@ -44,16 +43,13 @@ function cosphibandwidths(sys, Amatrixindices::Matrix,
     # assembly kernel uses, `phimatrix[abs(ind) + nfreq*(b-1)]`.
     nb = size(cm)[end]
     nfreq = length(cm) ÷ nb
-
-    mag(ind) = begin
-        a = abs(ind)
-        (1 <= a <= nfreq) || return 0.0
-        m = 0.0
-        for b in 1:nb
-            m = max(m, abs(cm[a + nfreq*(b - 1)]))
-        end
-        m
+    # the largest coefficient over the branches at each Fourier index, which
+    # is all a mode pair reads
+    mags = zeros(Float64, nfreq)
+    for b in 1:nb, a in 1:nfreq
+        mags[a] = max(mags[a], abs(cm[a + nfreq*(b - 1)]))
     end
+    mag(ind) = (a = abs(ind); 1 <= a <= nfreq ? mags[a] : 0.0)
 
     # marginal weight of each per-tone offset magnitude, and the total
     maxoff = zeros(Int, Ntones)
@@ -110,13 +106,31 @@ function cosphibandwidths(sys, Amatrixindices::Matrix,
     # Snap each bandwidth down to an offset the grid realizes. A tone whose
     # harmonics are all odd realizes only even offsets, so a bandwidth of one
     # keeps exactly what zero keeps; reporting one would claim a coupling the
-    # mask does not contain and make one escalation step a no-op.
-    realized = [sort!(unique(abs(o[k]) for o in Amatrixmodes)) for k in 1:Ntones]
+    # mask does not contain.
+    realized = realizedoffsets(Amatrixmodes)
     for k in 1:Ntones
         idx = searchsortedlast(realized[k], p[k])
         p[k] = idx >= 1 ? realized[k][idx] : 0
     end
     return NTuple{Ntones,Int}(p)
+end
+
+# the offsets each tone of the mode grid realizes between two of its modes,
+# sorted; a tone whose harmonics are all odd realizes even offsets only
+realizedoffsets(Amatrixmodes::AbstractMatrix) =
+    [sort!(unique(abs(o[k]) for o in Amatrixmodes))
+        for k in 1:length(first(Amatrixmodes))]
+
+# the band one step wider: the next shell for a shell count, and for a per
+# tone bound the next offset each tone realizes, so that every step adds
+# couplings
+nextband(p::Integer, Amatrixmodes) = p + 1
+function nextband(p::Tuple, Amatrixmodes)
+    realized = realizedoffsets(Amatrixmodes)
+    return ntuple(length(p)) do k
+        i = searchsortedfirst(realized[k], p[k] + 1)
+        i <= length(realized[k]) ? realized[k][i] : Int(p[k])
+    end
 end
 
 """
@@ -137,11 +151,8 @@ truncating by offset keeps the large blocks and drops the small ones.
 
 Truncating by *column*, as [`modecouplingmask`](@ref) does, cuts across the
 Toeplitz structure instead: a retained column keeps one large block and a whole
-column of small ones, and drops large blocks elsewhere. Measured at equal fill
-the difference is not marginal. On an eight mode, eight junction chain driven to
-`max|phi| = 1.9` rad, a bandwidth of one converges the linear solves of a Newton
-path in 118 GMRES iterations while a two column selection with the same number
-of stored nonzeros fails to converge in 1051.
+column of small ones, and drops large blocks elsewhere, so at equal fill a
+band preconditions far better than a column selection.
 
 `p` may be
 
@@ -161,9 +172,8 @@ coefficients of `cos(phi(t))` live on the harmonic lattice of `phi`, and the
 shells are the lattice distances that lattice actually has.
 
 `p = 0` is the mode block diagonal and a `p` large enough to cover the grid is
-the full Jacobian, so the bandwidth is a graded ladder between the two rather
-than the jump [`escalatepreconditioner!`](@ref) had to make when the only
-alternatives were a column set and the whole operator.
+the full Jacobian, so the bandwidth is a graded ladder between the two, which
+[`escalatepreconditioner!`](@ref) climbs one step at a time.
 
 # Examples
 ```jldoctest
@@ -361,8 +371,8 @@ diagonal solve of the product of the Jacobian with a random vector on mode
 `j`'s slots leaves on that mode, relative to the input. This is the
 coupling strength the cluster rule sorts by, and it includes the gain of
 the receiving mode's block, which a coefficient of `cos(phi(t))` alone
-does not: measured on a two tone line, a coefficient proxy ranked inert
-near-dc modes first and the probe the difference ladder.
+does not: a large coefficient into a stiff mode's block moves little, and
+a small one into a soft mode's block can move much.
 """
 function probecouplings!(pr::ClusterProbe, sys::HBSystem, Nmodes::Integer)
     refactorize!(pr.bd)
@@ -390,7 +400,8 @@ Cluster the modes by coupling strength: starting from every mode alone,
 merge the two clusters of the strongest coupling not yet inside a cluster,
 in decreasing strength `W[i,j] + W[j,i]`, until the couplings left between
 clusters have block Jacobi spectral radius below one. Returns the cluster
-index of every mode, the radius before and after, and the couplings taken.
+index of every mode, bounds from above on the radius before and after
+([`perronbound`](@ref)), and the couplings taken.
 
 The value one is not a threshold to tune: for a nonnegative comparison
 matrix of block norms, a spectral radius below one is the condition under
@@ -399,53 +410,99 @@ the rule keeps exactly enough coupling inside the clusters for what is
 left outside to be correctable. It finds collective chains that no pairwise
 threshold does: on a two tone line every single coupling of the difference
 ladder is weak but the ladder as a whole is not, and the rule closes it.
+
+The radius is bounded from above, so the clusters are only accepted when
+what is left between them contracts. A merge only removes couplings from
+between the clusters, and the spectral radius of a nonnegative matrix
+does not grow when its entries shrink, so the first point of the merge
+sequence at which the remainder contracts is found by bisection over the
+sorted couplings.
 """
 function spectralclusters(W::AbstractMatrix)
     N = size(W, 1)
     pairs = [(W[i, j] + W[j, i], i, j) for i in 1:N for j in i+1:N
         if W[i, j] > 0 || W[j, i] > 0]
     sort!(pairs; by = p -> -p[1])
-    parent = collect(1:N)
-    function find(i)
-        while parent[i] != i
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        end
-        return i
-    end
     nzs = [(i, j) for i in 1:N for j in 1:N if i != j && W[i, j] > 0]
-    # the spectral radius of the couplings between clusters, by power
-    # iteration on the nonnegative matrix
-    function radius()
-        v = ones(N)
-        nrm = 0.0
-        for _ in 1:80
-            u = zeros(N)
-            for (i, j) in nzs
-                find(i) == find(j) || (u[i] += W[i, j]*v[j])
+    # the cluster of every mode, named by a root, after the first `k` merges
+    function clustersafter(k)
+        parent = collect(1:N)
+        function find(i)
+            while parent[i] != i
+                parent[i] = parent[parent[i]]
+                i = parent[i]
             end
-            nrm = norm(u)
-            nrm == 0 && return 0.0
-            v = u ./ nrm
+            return i
         end
-        return nrm
-    end
-    k = 0
-    r0 = radius()
-    r = r0
-    chunk = max(1, length(pairs) ÷ 200)
-    while r >= 1 && k < length(pairs)
-        for _ in 1:chunk
-            k < length(pairs) || break
-            k += 1
-            a = find(pairs[k][2]); b = find(pairs[k][3])
+        for m in 1:k
+            a = find(pairs[m][2]); b = find(pairs[m][3])
             a != b && (parent[a] = b)
         end
-        r = radius()
+        return [find(i) for i in 1:N]
     end
-    roots = [find(i) for i in 1:N]
+    radius(k) = perronbound(W, nzs, clustersafter(k))
+    r0 = radius(0)
+    k, r = 0, r0
+    if r0 >= 1
+        # with every coupling taken nothing is left between the clusters
+        lo, hi = 0, length(pairs)
+        r = radius(hi)
+        while hi - lo > 1
+            mid = (lo + hi) ÷ 2
+            rmid = radius(mid)
+            rmid < 1 ? ((hi, r) = (mid, rmid)) : (lo = mid)
+        end
+        k = hi
+    end
+    roots = clustersafter(k)
     ids = Dict(x => m for (m, x) in enumerate(unique(roots)))
     return [ids[x] for x in roots], r0, r, [(p[2], p[3]) for p in pairs[1:k]]
+end
+
+"""
+    perronbound(W::AbstractMatrix, nzs, roots; rtol = 1e-6, maxiter = 1000)
+
+An upper bound on the spectral radius of the couplings of the nonnegative
+matrix `W` between clusters, `roots[i]` naming the cluster of mode `i`
+and `nzs` listing the positions `(i, j)` at which `W` is positive.
+
+For any positive vector `v` the Collatz-Wielandt ratios `(Wv)_i/v_i`
+bracket the spectral radius of a nonnegative matrix, their largest from
+above and their smallest from below, and along a power iteration the
+bracket narrows. The iteration is that of `W + I`, whose vectors stay
+positive and which converges where that of `W` alternates: on a pattern of
+period two, a coupling strong one way and weak the other, the norm of
+`W^k v` alternates between two values neither of which is the radius. It
+stops once the largest ratio is below one, when the bracket has closed to
+`rtol`, or when the largest ratio has stopped falling, and returns the
+smallest largest ratio seen.
+"""
+function perronbound(W::AbstractMatrix, nzs, roots; rtol = 1e-6,
+    maxiter::Integer = 1000)
+    N = size(W, 1)
+    out = [(i, j, Float64(W[i, j])) for (i, j) in nzs if roots[i] != roots[j]]
+    isempty(out) && return 0.0
+    v = ones(N)
+    u = zeros(N)
+    upper = Inf
+    for _ in 1:maxiter
+        fill!(u, 0.0)
+        for (i, j, w) in out
+            u[i] += w*v[j]
+        end
+        hi, lo = 0.0, Inf
+        for i in 1:N
+            q = u[i]/v[i]
+            hi = max(hi, q)
+            lo = min(lo, q)
+        end
+        fell = upper - hi
+        upper = min(upper, hi)
+        (upper < 1 || upper - lo <= rtol*upper || fell <= rtol*upper) && break
+        v .+= u
+        v ./= maximum(v)
+    end
+    return upper
 end
 
 """
@@ -458,11 +515,10 @@ take ([`couplingbytes`](@ref)): the Jacobian index matrices, the incidence
 matrix, the counts, the mode layout, the mode offsets and the requested
 precision. Everything with a value in it is read from the system at the
 time of the rebuild, so a system rebound to new values is what a rebuild
-sees. A plain struct rather than closures over the constructor's locals,
-so that a preconditioner's type depends on its system's type alone and not
-on the types of a dozen captured variables; the two parameters, the mode
-offsets (whose tuple length is the tone count) and the precision, are
-what a rebuild dispatches on.
+sees. A plain struct, so that a preconditioner's type depends on its
+system's type alone; the two parameters, the mode offsets (whose tuple
+length is the tone count) and the precision, are what a rebuild dispatches
+on.
 """
 struct PreconditionerPlan{A,P<:Union{Nothing,Type{<:AbstractFloat}}}
     Amatrixindices::Matrix{Int}
@@ -547,7 +603,7 @@ function buildcoupling(plan::PreconditionerPlan, S::AbstractModeCoupling,
     transposed = !(backend isa CPU)
 
     P, _ = realjacobianstructure(Ami, Amc, Ljb, Rbnm, Nmodes,
-        Nbranches, invLnm, Gnm, Cnm, layout, layout, Tv;
+        Nbranches, invLnm, Gnm, Cnm, layout, Tv;
         transposed = transposed, backend = backend)
 
     # the junction structure of the restricted coupling, in the
@@ -587,7 +643,7 @@ function couplingbytes(plan::PreconditionerPlan, S::AbstractModeCoupling,
         Ami = restrictmodecoupling(Amatrixindices, mask)
         Amc = restrictmodecoupling(Amatrixconjindices, mask)
         P, _ = realjacobianstructure(Ami, Amc, sys.Ljb, Rbnm, Nmodes,
-            Nbranches, sys.invLnm, sys.Gnm, sys.Cnm, layout, layout, Tv)
+            Nbranches, sys.invLnm, sys.Gnm, sys.Cnm, layout, Tv)
         return sparsefactorbytes(P, Tv)
     end
     f isa BlockFactorization || return sparsebytes(keep)
@@ -633,11 +689,7 @@ strongly pumped device the block diagonal alone stalls, and
 - `cache`: the [`FactorizationCache`](@ref) holding the factorization of `P`.
 - `factorization`: the [`AbstractFactorization`](@ref) of `P`. A block
     factorization which meets a singular supernode is replaced by the
-    backend's sparse factorization of the same coupling set (see
-    [`refactorize!`](@ref)).
-- `Amatrixmodes`: the harmonic offset `modes[m1] .- modes[m2]` of every mode
-    pair, or `nothing`. Needed by [`HarmonicBand`](@ref),
-    [`MeasuredBand`](@ref) and by their escalation.
+    backend's sparse factorization (see [`refactorize!`](@ref)).
 - `coupling`: the coupling set currently factorized, a
     [`BlockDiagonal`](@ref), [`FullJacobian`](@ref), [`HarmonicBand`](@ref),
     [`CoupledModes`](@ref) or [`CouplingMask`](@ref); a [`MeasuredBand`](@ref)
@@ -648,12 +700,12 @@ strongly pumped device the block diagonal alone stalls, and
 - `plan`: the [`PreconditionerPlan`](@ref), the structural ingredients
     from which [`buildcoupling`](@ref) rebuilds the pattern, the assembly
     plan and the values for a new coupling set, so the set can be grown
-    after construction; it carries the precision of the factors, and is
-    replaced when they are promoted to the iteration's.
-- `Nmodes`: the number of modes.
-- `autoindices`, `autotol`, `autobudget`:
-    the ingredients of a [`MeasuredBand`](@ref)'s bandwidth measurement,
-    `nothing` and zero when none was asked for.
+    after construction, among them the mode count and the harmonic offset
+    of every mode pair a [`HarmonicBand`](@ref) and a
+    [`MeasuredBand`](@ref) are built from; it carries the precision of the
+    factors, and is replaced when they are promoted to the iteration's.
+- `measuredband`: the [`MeasuredBand`](@ref) request whose bandwidth is
+    measured at every update, `nothing` when none was asked for.
 - `deviceplan`, `nzval`: the assembly plan and the values it writes, rebuilt
     on escalation; on a host `nzval` aliases the stored values of `P`.
 - `clusterprobe`: the state of a [`Clusters`](@ref) request, `nothing`
@@ -674,16 +726,9 @@ mutable struct ModeCouplingPreconditioner{TS} <: AbstractPreconditioner
     # construction; replaced when the factors are promoted to the
     # iteration's precision, since it carries theirs
     plan::PreconditionerPlan
-    const Nmodes::Int
-    # the harmonic offset of every mode pair, `modes[m1] .- modes[m2]`, kept so
-    # a bandwidth restriction can be rebuilt and stepped after construction.
-    # `nothing` when the caller did not supply it, which disables `:band`.
-    const Amatrixmodes
-    # ingredients of the `MeasuredBand` bandwidth measurement, `nothing`
-    # when the caller did not ask for it
-    const autoindices
-    const autotol
-    const autobudget
+    # the `MeasuredBand` request whose bandwidth is measured at every
+    # update, `nothing` when the caller did not ask for one
+    const measuredband::Union{Nothing,MeasuredBand}
     # the coupling set currently factorized: a `BlockDiagonal`,
     # `FullJacobian`, `HarmonicBand`, `CoupledModes` or `CouplingMask`
     coupling::AbstractModeCoupling
@@ -747,8 +792,7 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     # A measured band remeasures the per tone bandwidth at every point and
     # rebuilds when it grows, starting from the block diagonal so that the
     # first factorization is the cheap one.
-    autotol = spec isa MeasuredBand ? spec.tol : nothing
-    autobudget = spec isa MeasuredBand ? spec.budget : nothing
+    measuredband = spec isa MeasuredBand ? spec : nothing
     if spec isa MeasuredBand || spec isa HarmonicBand
         isnothing(Amatrixmodes) && throw(ArgumentError(
             "a `HarmonicBand` or `MeasuredBand` needs the mode offsets; pass `Amatrixmodes`."))
@@ -811,9 +855,8 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         Int(Nfreq), layout, Amatrixmodes, precision)
     P, dp, nzval = buildcoupling(plan, coupling, sys, factorization)
     return ModeCouplingPreconditioner(P, sys, FactorizationCache(),
-        factorization, plan, Int(Nmodes), Amatrixmodes,
-        isnothing(autotol) ? nothing : Amatrixindices, autotol, autobudget,
-        coupling, 0, 0, dp, nzval, clusterprobe, nothing, nothing, nothing)
+        factorization, plan, measuredband, coupling, 0, 0, dp, nzval,
+        clusterprobe, nothing, nothing, nothing)
 end
 
 couplingbytes(pc::ModeCouplingPreconditioner, S::AbstractModeCoupling,
@@ -875,8 +918,8 @@ couplingmask(S::CouplingMask, Nmodes::Integer, Amatrixmodes) = S.mask
 """
     escalatepreconditioner!(pc::ModeCouplingPreconditioner)
 
-Grow the coupling set, a band by one offset per tone and any other set to
-every mode, and rebuild, returning `true` if it grew. Returns `false` when
+Grow the coupling set, a band to the next offset each tone realizes and
+any other set to every mode, and rebuild, returning `true` if it grew. Returns `false` when
 the set is already full, and when the factors of the grown set are
 predicted ([`couplingbytes`](@ref)) to exceed `pc.budget`, half the backend's free
 memory unless set, in which case nothing is built: the driver records the
@@ -891,13 +934,12 @@ polynomial is pinned at `p(0) = 1` and so cannot be made small near the origin.
 For every set but a band, escalation goes straight to the full Jacobian
 rather than growing the set gradually, because there is no reliable way to
 know in advance *which* modes carry those directions (a band has a measured
-width to step, so it grows by one offset per tone first). Criteria based on the linear response of the circuit,
+width to step, so it grows one realized offset per tone at a time first). Criteria based on the linear response of the circuit,
 on the mode frequencies, and on the mode diagonal blocks were each measured and
 none generalized across devices: the deficiency is a specific direction inside
 a mode's subspace rather than a property of the mode, and any per mode score
 averages it away. The full set is exact, so the method is never less robust
-than a direct solve, only faster when the block diagonal suffices. In practice
-this fires once or twice on a strongly pumped line and not at all otherwise.
+than a direct solve, only faster when the block diagonal suffices.
 
 The full set held in less precision than the iteration, single precision
 block factors or a [`CUDSSFactorization`](@ref) with a `precision`, is
@@ -924,30 +966,24 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
         newplan = withprecision(pc.plan, T)
         S = setfactorization(pc.coupling, newf)
         bytes = couplingbytes(newplan, S, pc.sys, newf)
-        budget = something(pc.budget,
-            freememory(pc.sys.nonlineartermplan.backend) ÷ 2)
+        budget = escalationbudget(pc)
         if bytes > budget
             @debug "escalation refused: the factors in $(T) would take $(bytes) bytes of a budget of $(budget)"
             return false
         end
-        pc.factorization = newf
         pc.plan = newplan
-        pc.coupling = S
-        pc.P, pc.deviceplan, pc.nzval = buildcoupling(newplan, S, pc.sys,
-            newf)
+        setcoupling!(pc, S, newf)
         pc.escalations += 1
-        pc.cache.factorization = nothing
         return true
     end
-    # A band escalates by one offset per tone at a time, and becomes the
-    # full mode set once it covers the grid. Every other coupling set jumps
-    # straight to the full Jacobian, since nothing identifies which modes
-    # carried the deficiency.
+    # A band escalates by one realized offset per tone at a time, and
+    # becomes the full mode set once it covers the grid. Every other
+    # coupling set jumps straight to the full Jacobian, since nothing
+    # identifies which modes carried the deficiency.
     f = pc.factorization
     S = if pc.coupling isa HarmonicBand
-        p = pc.coupling.p
-        next = p isa Integer ? p + 1 : map(x -> x + 1, p)
-        all(modebandmask(pc.Amatrixmodes, next)) ? FullJacobian(f) :
+        next = nextband(pc.coupling.p, pc.plan.Amatrixmodes)
+        all(modebandmask(pc.plan.Amatrixmodes, next)) ? FullJacobian(f) :
             HarmonicBand(next, f)
     else
         FullJacobian(f)
@@ -955,30 +991,42 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     # the grown factors must fit: an escalation which would exhaust the
     # memory is refused, and the driver carries on with the coupling it has
     bytes = couplingbytes(pc, S)
-    budget = something(pc.budget,
-        freememory(pc.sys.nonlineartermplan.backend) ÷ 2)
+    budget = escalationbudget(pc)
     if bytes > budget
         @debug "escalation refused: the factors would take $(bytes) bytes of a budget of $(budget)"
         return false
     end
-    pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, S, pc.sys,
-        pc.factorization)
-    # any retained coupling couples modes, so whatever batch structure the
-    # block diagonal had is gone and the caller's own factorization applies
-    pc.coupling = S
+    setcoupling!(pc, S)
     pc.escalations += 1
-    # the cached symbolic factorization is of the previous structure
-    pc.cache.factorization = nothing
     return true
 end
 
+# the memory the factors a preconditioner grows into may take: its
+# `budget`, or half the backend's free memory at the time
+escalationbudget(pc::ModeCouplingPreconditioner) =
+    something(pc.budget, freememory(pc.sys.nonlineartermplan.backend) ÷ 2)
+
+# Rebuild the preconditioner for the coupling set `S` factorized by
+# `factorization`: the pattern, the assembly plan and the values it writes,
+# from the plan and the system; the cached factorization, of the previous
+# structure, is dropped.
+function setcoupling!(pc::ModeCouplingPreconditioner, S::AbstractModeCoupling,
+    factorization::AbstractFactorization = pc.factorization)
+    pc.factorization = factorization
+    pc.coupling = S
+    pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, S, pc.sys,
+        factorization)
+    pc.cache.factorization = nothing
+    return pc
+end
+
 # Whether the coupling set is the full one: every mode retained, or a mask
-# with no zero. A `:band` never reports full, because escalation replaces
-# a band which covers the grid by the full set.
+# with no zero. A band never reports full, because escalation replaces a
+# band which covers the grid by the full set.
 function isfullcoupling(pc::ModeCouplingPreconditioner)
     S = pc.coupling
     S isa FullJacobian && return true
-    S isa CoupledModes && length(S.indices) >= pc.Nmodes && return true
+    S isa CoupledModes && length(S.indices) >= pc.plan.Nmodes && return true
     S isa CouplingMask && all(S.mask) && return true
     return false
 end
@@ -1018,18 +1066,15 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
     # reduced: that would cost a symbolic refactorization to save fill
     # already paid for, and the drive generally widens the coupling as the
     # iteration proceeds.
-    if !isnothing(pc.autotol) && pc.coupling isa HarmonicBand
-        want = cosphibandwidths(pc.sys, pc.autoindices, pc.Amatrixmodes;
-            tol = pc.autotol, budget = pc.autobudget)
+    band = pc.measuredband
+    if !isnothing(band) && pc.coupling isa HarmonicBand
+        want = cosphibandwidths(pc.sys, pc.plan.Amatrixindices,
+            pc.plan.Amatrixmodes; tol = band.tol, budget = band.budget)
         have = pc.coupling.p isa NTuple ? pc.coupling.p :
             ntuple(_ -> 0, length(want))
         grown = map(max, want, have)
-        if grown != have
-            pc.coupling = HarmonicBand(grown, pc.coupling.factorization)
-            pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan,
-                pc.coupling, pc.sys, pc.factorization)
-            pc.cache.factorization = nothing
-        end
+        grown != have &&
+            setcoupling!(pc, HarmonicBand(grown, pc.coupling.factorization))
     end
     # `Clusters` probes at the first point and whenever the driver reports
     # a slow linear solve (`stalled!`), the sign that the coupling has
@@ -1039,13 +1084,13 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
     if !isnothing(pr) && pc.coupling isa CouplingMask
         if pr.probes == 0 || pr.reprobe
             pr.reprobe = false
-            probecouplings!(pr, pc.sys, pc.Nmodes)
+            probecouplings!(pr, pc.sys, pc.plan.Nmodes)
             _, _, pr.radius, taken = spectralclusters(pr.W)
             # the couplings taken accumulate across probes and the clusters
             # are their components: monotone, and two probes which agree on
             # the families keep them apart
             union!(pr.pairs, taken)
-            edges = Matrix{Bool}(I, pc.Nmodes, pc.Nmodes)
+            edges = Matrix{Bool}(I, pc.plan.Nmodes, pc.plan.Nmodes)
             for (i, j) in pr.pairs
                 edges[i, j] = edges[j, i] = true
             end
@@ -1055,10 +1100,7 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
             end
             if grown != pr.mask
                 pr.mask = grown
-                pc.coupling = CouplingMask(grown, pc.coupling.factorization)
-                pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan,
-                    pc.coupling, pc.sys, pc.factorization)
-                pc.cache.factorization = nothing
+                setcoupling!(pc, CouplingMask(grown, pc.coupling.factorization))
             end
         end
     end
@@ -1084,8 +1126,11 @@ not be singular: a node whose stiffness at some mode frequency lives in a
 promoted branch current (the current of a coupled inductor, the port
 current of a scattering block) has an exactly zero diagonal there when its
 own elements resonate. When that happens the preconditioner switches to
-the backend's sparse factorization of the same coupling set, which pivots
-over the whole matrix, and keeps it for the rest of the solve.
+the backend's sparse factorization, which pivots over the whole matrix,
+and keeps it for the rest of the solve: of the same coupling set when its
+factors fit the budget an escalation keeps to
+([`escalatepreconditioner!`](@ref)), and of the mode block diagonal, which
+an escalation may grow, when they do not.
 """
 function refactorize!(pc::ModeCouplingPreconditioner)
     # the Fourier coefficients are on the backend, the assembly runs there
@@ -1105,14 +1150,13 @@ function refactorize!(pc::ModeCouplingPreconditioner)
         tryfactorize!(pc.cache, pc.factorization, A)
     catch e
         (e isa SingularException && pc.P isa BlockStructure) || rethrow()
-        @warn "the block factorization of the preconditioner met a singular supernode; the coupling set is factorized by the backend's sparse factorization from here on, which pivots across the whole matrix" maxlog = 1
-        backend = pc.sys.nonlineartermplan.backend
-        pc.factorization = singletonfactorization(pc.factorization, backend)
+        f = singletonfactorization(pc.factorization,
+            pc.sys.nonlineartermplan.backend)
         # the coupling set carries the factorization of its factors
-        pc.coupling = setfactorization(pc.coupling, pc.factorization)
-        pc.cache.factorization = nothing
-        pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, pc.coupling,
-            pc.sys, pc.factorization)
+        S = setfactorization(pc.coupling, f)
+        couplingbytes(pc, S, f) <= escalationbudget(pc) || (S = BlockDiagonal(f))
+        @debug "the block factorization of the preconditioner met a singular supernode; $(S) from here on"
+        setcoupling!(pc, S, f)
         return refactorize!(pc)
     end
     pc.updates += 1
@@ -1121,21 +1165,33 @@ end
 
 function applypreconditioner!(z::AbstractVector,
     pc::ModeCouplingPreconditioner, r::AbstractVector)
-    Tf = factorprecision(pc.plan, pc.sys)
-    eltype(r) === Tf && return trysolve!(z, pc.cache.factorization, r)
-    # the factors are held in another precision than the iteration: convert
-    # the residual down and the correction back up through scratch in the
-    # factors' type; the Krylov solve keeps its own precision, so this
-    # costs the accuracy of the preconditioner and not of the answer
+    F = pc.cache.factorization
+    Tf = solveprecision(F, pc)
+    eltype(r) === Tf && return trysolve!(z, F, r)
+    # the factors solve in another precision than the iteration's: convert
+    # the residual and the correction through scratch in the factors' type;
+    # the Krylov solve keeps its own precision, so this costs the accuracy
+    # of the preconditioner and not of the answer
     if isnothing(pc.rT) || length(pc.rT) != length(r) || eltype(pc.rT) !== Tf
         pc.rT = similar(r, Tf)
         pc.xT = similar(z, Tf)
     end
     pc.rT .= r
-    trysolve!(pc.xT, pc.cache.factorization, pc.rT)
+    trysolve!(pc.xT, F, pc.rT)
     z .= pc.xT
     return z
 end
+
+# The floating point type the factors of a preconditioner solve in: that
+# of a host factorization's factors, which KLU and UMFPACK hold in double
+# precision whatever the matrix they were handed, so that a matrix
+# assembled in single precision is solved in double; and that of the
+# matrix the factors were built from otherwise, the block factorization
+# converting to its own blocks' precision itself.
+solveprecision(F::Factorization, pc::ModeCouplingPreconditioner) =
+    real(eltype(F))
+solveprecision(F, pc::ModeCouplingPreconditioner) =
+    factorprecision(pc.plan, pc.sys)
 
 """
     rebind!(pc::ModeCouplingPreconditioner, sys::HBSystem)

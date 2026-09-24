@@ -5,7 +5,17 @@
 # frequency, allocating and in place, come from the driver here. A port
 # impedance argument is a number, the same at every port and frequency, a
 # vector with one value per port, or a matrix with one row per port and one
-# column per frequency.
+# column per frequency. The allocating forms return the element type the
+# conversion needs, see [`conversiontype`](@ref), whatever that of the
+# input.
+#
+# The scattering parameters are those of the waves
+# `a_k = (V_k + Z_k I_k)/(2 sqrt(Z_k))` and `b_k = (V_k - Z_k I_k)/(2 sqrt(Z_k))`
+# at each port `k` of impedance `Z_k`, with the principal square root. For a
+# real `Z_k` these are the usual power waves; for a complex one they are
+# pseudo-waves, which a load of impedance `Z_k` (not its conjugate)
+# matches, and with which a lossless network need not have a unitary
+# scattering matrix.
 
 """
     PortDiagonal(values, rows = Colon())
@@ -54,11 +64,11 @@ Convert the matrix `x[:, :, i]` into `y[:, :, i]` at every frequency index
 `kernel!(y_i, x_i, tmp, args_i...)`, with `tmp` a scratch matrix and each
 port argument given at that frequency by [`atfrequency`](@ref). The
 allocating form converts into an array like `x`, and for a matrix `x`,
-one frequency, calls the kernel directly. One method per number of port arguments, none, one or two, rather
-than a variadic one: the argument map a variadic driver needs is compiled
-once per kernel and argument type, and that outweighed what it saved. The
-type parameter makes the method specialize on the kernel, which Julia does
-not do on its own for a function argument.
+one frequency, calls the kernel directly. There is one method per number
+of port arguments, none, one or two, so that no argument map is compiled
+per kernel and argument type. The type parameter makes the method
+specialize on the kernel, which Julia does not do on its own for a
+function argument.
 """
 function convertperfrequency!(kernel!::F, y::AbstractArray,
         x::AbstractArray) where {F}
@@ -89,27 +99,31 @@ function convertperfrequency!(kernel!::F, y::AbstractArray, x::AbstractArray,
 end
 
 convertperfrequency(kernel!::F, x::AbstractArray, args...) where {F} =
-    convertperfrequency!(kernel!, similar(x), x, args...)
+    convertperfrequency!(kernel!, similar(x, conversiontype(x, args...)), x,
+        args...)
 
 # a matrix is one frequency and is converted by the kernel directly: no
 # loop, no views and no scratch of its own to compile per kernel and
 # argument type, which for the single matrix calls of user code is nearly
 # all of what the loop form would compile
 function convertperfrequency(kernel!::F, x::AbstractMatrix) where {F}
-    y = similar(x)
-    kernel!(y, x, similar(x))
+    T = conversiontype(x)
+    y = similar(x, T)
+    kernel!(y, x, similar(x, T))
     return y
 end
 function convertperfrequency(kernel!::F, x::AbstractMatrix, a) where {F}
     checkconversion(x, x, a)
-    y = similar(x)
-    kernel!(y, x, similar(x), atmatrix(a))
+    T = conversiontype(x, a)
+    y = similar(x, T)
+    kernel!(y, x, similar(x, T), atmatrix(a))
     return y
 end
 function convertperfrequency(kernel!::F, x::AbstractMatrix, a, b) where {F}
     checkconversion(x, x, a, b)
-    y = similar(x)
-    kernel!(y, x, similar(x), atmatrix(a), atmatrix(b))
+    T = conversiontype(x, a, b)
+    y = similar(x, T)
+    kernel!(y, x, similar(x, T), atmatrix(a), atmatrix(b))
     return y
 end
 
@@ -130,7 +144,7 @@ copy, with the port argument given at that frequency by
 """
 function convertcopy(kernel!::F, x::AbstractArray, a) where {F}
     checkconversion(x, x, a)
-    y = copy(x)
+    y = copyto!(similar(x, conversiontype(x, a)), x)
     for i in CartesianIndices(axes(x)[3:end])
         kernel!(view(y, :, :, i), atfrequency(a, i))
     end
@@ -138,14 +152,28 @@ function convertcopy(kernel!::F, x::AbstractArray, a) where {F}
 end
 function convertcopy(kernel!::F, x::AbstractMatrix, a) where {F}
     checkconversion(x, x, a)
-    y = copy(x)
+    y = copyto!(similar(x, conversiontype(x, a)), x)
     kernel!(y, atmatrix(a))
     return y
 end
 
-# the checks of the driver, and its scratch matrix: the output like the
-# input, and every port argument with one column per frequency of the
-# input or none
+"""
+    conversiontype(x, args...)
+
+The element type of the conversion of the array `x` with the port
+arguments `args`: the kernels divide, so it is a floating point type (or
+whatever type the division of `x`'s element type gives), and it is
+complex when `x` or a port argument is.
+"""
+conversiontype(x::AbstractArray, args...) =
+    promote_type(typeof(one(eltype(x)) / one(eltype(x))), map(porttype, args)...)
+porttype(a::Number) = typeof(a)
+porttype(a::AbstractArray) = eltype(a)
+porttype(d::PortDiagonal) = eltype(d.values)
+
+# the checks of the driver, and its scratch matrix, of the element type of
+# the output: the output like the input, and every port argument with one
+# column per frequency of the input or none
 function checkconversion(y, x, args...)
     axes(y) == axes(x) || throw(DimensionMismatch(
         lazy"Sizes of output $(size(y)) and input $(size(x)) must be equal."))
@@ -155,7 +183,7 @@ function checkconversion(y, x, args...)
         (isnothing(fa) || fa == trailing) || throw(ArgumentError(
             lazy"A port argument of size $(size(a isa PortDiagonal ? a.values : a)) does not have one column per frequency of the input of size $(size(x))."))
     end
-    return similar(x, axes(x)[1:2])
+    return similar(x, eltype(y), axes(x)[1:2])
 end
 
 """
@@ -173,6 +201,31 @@ porthalves(a::Number) = (a, a)
 function porthalves(a::AbstractArray)
     n = size(a, 1)
     return PortDiagonal(a, 1:n÷2), PortDiagonal(a, n÷2+1:n)
+end
+
+# the factor of column `j` of a port argument of a kernel: a number is the
+# same for every port, a diagonal holds one per port
+portfactor(g::Number, j) = g
+portfactor(g::Diagonal, j) = g.diag[j]
+
+# the index ranges of the first and second halves of the ports of a matrix
+# whose conversion splits its ports in two: the input and output ports of
+# a chain or transmission matrix, which is square with an even number of
+# rows
+function porthalfranges(A::AbstractMatrix)
+    n = size(A, 1)
+    if size(A, 2) != n || isodd(n)
+        throw(DimensionMismatch(lazy"A matrix whose ports are split into inputs and outputs must be square with an even number of rows, not of size $(size(A))."))
+    end
+    return 1:n÷2, n÷2+1:n
+end
+
+# the chain matrix and the scattering matrix of a two port are 2 by 2
+function checktwoport(A::AbstractMatrix)
+    if size(A) != (2, 2)
+        throw(DimensionMismatch(lazy"The matrix of a two port is 2 by 2, not of size $(size(A))."))
+    end
+    return nothing
 end
 
 # the per frequency forms: allocating, and in place through a copy
@@ -264,8 +317,8 @@ Convert the scattering parameter matrix `S` to a transmission matrix
 ```jldoctest
 julia> S = Complex{Float64}[0.0 1.0;1.0 0.0];JosephsonCircuits.StoT(S)
 2×2 Matrix{ComplexF64}:
-  1.0+0.0im  -0.0+0.0im
- -0.0-0.0im   1.0-0.0im
+ 1.0+0.0im  -0.0+0.0im
+ 0.0-0.0im   1.0+0.0im
 ```
 
 # References
@@ -281,17 +334,16 @@ See [`StoT`](@ref) for description.
 
 """
 function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
-    
-    range1 = 1:size(T,1)÷2
-    range2 = size(T,1)÷2+1:size(T,1)
+
+    range1, range2 = porthalfranges(S)
 
     # tmp = [-I S11; 0 S21]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
         tmp[d,d] = -one(eltype(tmp))
     end
-    tmp[range1,range2] .= S[range1, range1]
-    tmp[range2,range2] .= S[range2, range1]
+    @views tmp[range1,range2] .= S[range1, range1]
+    @views tmp[range2,range2] .= S[range2, range1]
 
     # T = [-S12 0; -S22 I]
     fill!(T,zero(eltype(T)))
@@ -299,12 +351,12 @@ function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
         T[d,d] = one(eltype(T))
     end
 
-    T[range1,range1] .= -S[range1, range2]
-    T[range2,range1] .= -S[range2, range2]
+    @views T[range1,range1] .= .-S[range1, range2]
+    @views T[range2,range1] .= .-S[range2, range2]
 
     # perform the left division
     # T = inv(tmp)*T = [-I S11; 0 S21] \ [-S12 0; -S22 I]
-    T .= tmp \ T
+    ldiv!(lu!(tmp), T)
 
     return nothing
 end
@@ -315,7 +367,9 @@ end
 
 Convert the scattering parameter matrix `S` to an impedance parameter matrix
 `Z` and return the result. Assumes a port impedance of 50 Ohms unless
-specified with the `portimpedances` keyword argument.
+specified with the `portimpedances` keyword argument, a scalar, vector, or
+matrix of port impedances. A complex port impedance defines pseudo-waves,
+as described in [`ZtoS`](@ref).
 
 # Examples
 ```jldoctest
@@ -359,7 +413,7 @@ function StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
 
     # perform the left division
     # Z = inv(tmp)*Z = (I - S) \ ((I + S)*sqrt(portimpedances))
-    Z .= tmp \ Z
+    ldiv!(lu!(tmp), Z)
 
     # left multiply by sqrt(z)
     # compute sqrt(portimpedances)*((I - S) \ ((I + S)*sqrt(portimpedances)))
@@ -411,23 +465,25 @@ function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     end
     rmul!(Y,oneoversqrtportimpedances)
 
-
     # perform the left division
     # Y = inv(tmp)*Y = (I + S) \ ((I - S)*oneoversqrtportimpedances)
-    Y .= tmp \ Y
+    ldiv!(lu!(tmp), Y)
 
-    # left multiply by sqrt(z)
-    # compute oneoversqrtportimpedances*((I - S) \ ((I + S)*oneoversqrtportimpedances))
+    # left multiply by 1/sqrt(z)
+    # compute oneoversqrtportimpedances*((I + S) \ ((I - S)*oneoversqrtportimpedances))
     lmul!(oneoversqrtportimpedances,Y)
     return nothing
 end
 
 
 @doc """
-    StoA(S)
+    StoA(S; portimpedances = 50.0)
 
 Convert the scattering parameter matrix `S` to the chain (ABCD) matrix `A` and
-return the result.
+return the result. The first half of the ports are the inputs of the chain
+matrix and the second half its outputs, each with its own port impedances:
+`portimpedances` is a scalar, a vector with one value per port, or a matrix
+with one row per port and one column per frequency, 50 Ohms unless specified.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -444,56 +500,51 @@ See [`StoA`](@ref) for description.
 function StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
     sqrtportimpedances1, sqrtportimpedances2)
 
-    range1 = 1:size(A,1)÷2
-    range2 = size(A,1)÷2+1:size(A,1)
+    range1, range2 = porthalfranges(S)
+    h = length(range1)
 
-    # make views of the block matrices
-    S11 = view(S,range1,range1)
-    S12 = view(S,range1,range2)
-    S21 = view(S,range2,range1)
-    S22 = view(S,range2,range2)
-
-    A11 = view(A,range1,range1)
-    A12 = view(A,range1,range2)
-    A21 = view(A,range2,range1)
-    A22 = view(A,range2,range2)
-
-    tmp11 = view(tmp,range1,range1)
-    tmp12 = view(tmp,range1,range2)
-    tmp21 = view(tmp,range2,range1)
-    tmp22 = view(tmp,range2,range2)
-
-    # define the matrices
-
-    # tmp = -[(I-S11)/g1 -(I+S11)*g1; -S21*g1 -S21*g1]
-    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
-    tmp11 .= -(I - S11)/sqrtportimpedances1
-    tmp12 .= (I + S11)*sqrtportimpedances1
-    tmp21 .= S21/sqrtportimpedances1
-    tmp22 .= S21*sqrtportimpedances1
-
+    # tmp = [(S11-I)/g1 (I+S11)*g1; S21/g1 S21*g1]
     # A = [-S12/g2 S12*g2; (I-S22)/g2 (I+S22)*g2]
-    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
-    A11 .= -S12/sqrtportimpedances2
-    A12 .= S12*sqrtportimpedances2
-    A21 .= (I-S22)/sqrtportimpedances2
-    A22 .= (I+S22)*sqrtportimpedances2
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2, each
+    # scaling the columns of its block
+    for j in 1:h
+        g1 = portfactor(sqrtportimpedances1, j)
+        g2 = portfactor(sqrtportimpedances2, j)
+        for i in 1:h
+            δ = i == j
+            S11 = S[i, j]
+            S12 = S[i, h+j]
+            S21 = S[h+i, j]
+            S22 = S[h+i, h+j]
+            tmp[i, j] = (S11 - δ)/g1
+            tmp[i, h+j] = (S11 + δ)*g1
+            tmp[h+i, j] = S21/g1
+            tmp[h+i, h+j] = S21*g1
+            A[i, j] = -S12/g2
+            A[i, h+j] = S12*g2
+            A[h+i, j] = (δ - S22)/g2
+            A[h+i, h+j] = (S22 + δ)*g2
+        end
+    end
 
     # perform the left division
-
     # A = inv(tmp)*A
-    A .= tmp \ A
+    ldiv!(lu!(tmp), A)
 
     return nothing
 end
 
 
 @doc """
-    StoB(S)
+    StoB(S; portimpedances = 50.0)
 
 Convert the scattering parameter matrix `S` to the inverse chain (ABCD) matrix
-`B` and return the result. Note that despite the name, the inverse of the chain
-matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
+`B` and return the result. Note that despite the name, the inverse of the
+chain matrix is not equal to the inverse chain matrix, inv(A) ≠ B. The first
+half of the ports are the inputs of the chain matrix and the second half its
+outputs, each with its own port impedances: `portimpedances` is a scalar, a
+vector with one value per port, or a matrix with one row per port and one
+column per frequency, 50 Ohms unless specified.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -510,45 +561,36 @@ See [`StoB`](@ref) for description.
 function StoB!(B::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
     sqrtportimpedances1, sqrtportimpedances2)
 
-    range1 = 1:size(B,1)÷2
-    range2 = size(B,1)÷2+1:size(B,1)
+    range1, range2 = porthalfranges(S)
+    h = length(range1)
 
-    # make views of the block matrices
-    S11 = view(S,range1,range1)
-    S12 = view(S,range1,range2)
-    S21 = view(S,range2,range1)
-    S22 = view(S,range2,range2)
-
-    B11 = view(B,range1,range1)
-    B12 = view(B,range1,range2)
-    B21 = view(B,range2,range1)
-    B22 = view(B,range2,range2)
-
-    tmp11 = view(tmp,range1,range1)
-    tmp12 = view(tmp,range1,range2)
-    tmp21 = view(tmp,range2,range1)
-    tmp22 = view(tmp,range2,range2)
-
-    # define the matrices
-
-    # tmp = [S12/g2 S12*g2; -(I-S22)/g2 (I+S22)*g2]
-    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
-    tmp11 .= S12/sqrtportimpedances2
-    tmp12 .= S12*sqrtportimpedances2
-    tmp21 .= -(I-S22)/sqrtportimpedances2
-    tmp22 .= (I+S22)*sqrtportimpedances2
-
+    # tmp = [S12/g2 S12*g2; (S22-I)/g2 (I+S22)*g2]
     # B = [(I-S11)/g1 (I+S11)*g1; -S21/g1 S21*g1]
-    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
-    B11 .= (I-S11)/sqrtportimpedances1
-    B12 .= (I+S11)*sqrtportimpedances1
-    B21 .= -S21/sqrtportimpedances1
-    B22 .= S21*sqrtportimpedances1
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2, each
+    # scaling the columns of its block
+    for j in 1:h
+        g1 = portfactor(sqrtportimpedances1, j)
+        g2 = portfactor(sqrtportimpedances2, j)
+        for i in 1:h
+            δ = i == j
+            S11 = S[i, j]
+            S12 = S[i, h+j]
+            S21 = S[h+i, j]
+            S22 = S[h+i, h+j]
+            tmp[i, j] = S12/g2
+            tmp[i, h+j] = S12*g2
+            tmp[h+i, j] = (S22 - δ)/g2
+            tmp[h+i, h+j] = (S22 + δ)*g2
+            B[i, j] = (δ - S11)/g1
+            B[i, h+j] = (S11 + δ)*g1
+            B[h+i, j] = -S21/g1
+            B[h+i, h+j] = S21*g1
+        end
+    end
 
     # perform the left division
-
     # B = inv(tmp)*B
-    B .= tmp \ B
+    ldiv!(lu!(tmp), B)
 
     return nothing
 end
@@ -563,8 +605,8 @@ Convert the transmission matrix `T` to a scattering parameter matrix `S` and ret
 ```jldoctest
 julia> T = Complex{Float64}[1.0 0.0;0.0 1.0];JosephsonCircuits.TtoS(T)
 2×2 Matrix{ComplexF64}:
- -0.0-0.0im   1.0+0.0im
-  1.0-0.0im  -0.0-0.0im
+ 0.0-0.0im  1.0+0.0im
+ 1.0+0.0im  0.0-0.0im
 ```
 
 # References
@@ -580,46 +622,28 @@ See [`TtoS`](@ref) for description.
 
 """
 function TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
-    
-    range1 = 1:size(T,1)÷2
-    range2 = size(T,1)÷2+1:size(T,1)
 
-    # make views of the block matrices
-    # S11 = view(S,range1,range1)
-    S12 = view(S,range1,range2)
-    # S21 = view(S,range2,range1)
-    S22 = view(S,range2,range2)
-
-    T11 = view(T,range1,range1)
-    T12 = view(T,range1,range2)
-    T21 = view(T,range2,range1)
-    T22 = view(T,range2,range2)
-
-    # tmp11 = view(tmp,range1,range1)
-    tmp12 = view(tmp,range1,range2)
-    # tmp21 = view(tmp,range2,range1)
-    tmp22 = view(tmp,range2,range2)
+    range1, range2 = porthalfranges(T)
 
     # tmp = [-I T12; 0 T22]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
         tmp[d,d] = -1
     end
-    tmp12 .= T12
-    tmp22 .= T22
+    @views tmp[range1,range2] .= T[range1,range2]
+    @views tmp[range2,range2] .= T[range2,range2]
 
-    # S = [0 T11; I T21]
+    # S = [0 -T11; I -T21]
     fill!(S,zero(eltype(S)))
     for d in range1
-        S[d+size(T,1)÷2,d] = 1
+        S[d+length(range1),d] = 1
     end
-
-    S12 .= -T11
-    S22 .= -T21
+    @views S[range1,range2] .= .-T[range1,range1]
+    @views S[range2,range2] .= .-T[range2,range1]
 
     # perform the left division
     # S = inv(tmp)*S
-    S .= tmp \ S
+    ldiv!(lu!(tmp), S)
 
     return nothing
 end
@@ -631,14 +655,17 @@ end
 Convert the impedance parameter matrix `Z` to a scattering parameter matrix
 `S` and return the result. `portimpedances` is a scalar, vector, or matrix of
 port impedances. Assumes a port impedance of 50 Ohms unless specified with
-the `portimpedances` keyword argument.
+the `portimpedances` keyword argument. A complex port impedance `Z_k`
+defines the pseudo-waves `a_k = (V_k + Z_k I_k)/(2 sqrt(Z_k))` and
+`b_k = (V_k - Z_k I_k)/(2 sqrt(Z_k))`, which a load of impedance `Z_k`
+matches, rather than power waves.
 
 # Examples
 ```jldoctest
 julia> Z = Complex{Float64}[0.0 0.0;0.0 0.0];JosephsonCircuits.ZtoS(Z)
 2×2 Matrix{ComplexF64}:
- -1.0+0.0im   0.0-0.0im
-  0.0-0.0im  -1.0+0.0im
+ -1.0+0.0im   0.0+0.0im
+  0.0+0.0im  -1.0+0.0im
 ```
 
 # References
@@ -674,19 +701,25 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
 
     # perform the left division
     # S = inv(tmp)*S = (\tilde{Z} + I) \ (\tilde{Z} - I)
-    S .= tmp \ S
+    ldiv!(lu!(tmp), S)
 
     return nothing
 end
 
 function ZtoY!(Y, Z, tmp)
-    Y .= inv(Z)
+    # Y = inv(Z), as Z \ I through the factorization of a copy of Z
+    copy!(tmp, Z)
+    fill!(Y, zero(eltype(Y)))
+    for d in 1:size(Y, 1)
+        Y[d, d] = one(eltype(Y))
+    end
+    ldiv!(lu!(tmp), Y)
     return nothing
 end
 
 function YtoZ!(Z, Y, tmp)
-    Z .= inv(Y)
-    return nothing
+    # the same inversion as ZtoY!
+    return ZtoY!(Z, Y, tmp)
 end
 
 @doc """
@@ -714,6 +747,7 @@ See [`ZtoA`](@ref) for description.
 
 """
 function ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
+    # the conversion between Z and A is its own inverse
     return AtoZ!(A,Z,tmp)
 end
 
@@ -744,16 +778,15 @@ See [`ZtoB`](@ref) for description.
 """
 function ZtoB!(B::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(Z,1)÷2
-    range2 = size(Z,1)÷2+1:size(Z,1)
+    range1, range2 = porthalfranges(Z)
 
     # tmp = [0 Z12; -I Z22]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
-        tmp[d+size(Z,1)÷2,d] = -1
+        tmp[d+length(range1),d] = -1
     end
-    tmp[range1,range2] .= Z[range1, range2]
-    tmp[range2,range2] .= Z[range2, range2]
+    @views tmp[range1,range2] .= Z[range1, range2]
+    @views tmp[range2,range2] .= Z[range2, range2]
 
     # B = [I Z11; 0 Z21]
     fill!(B,zero(eltype(B)))
@@ -761,14 +794,12 @@ function ZtoB!(B::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
         B[d,d] = 1
     end
 
-    B[range1,range2] .= Z[range1, range1]
-    B[range2,range2] .= Z[range2, range1]
+    @views B[range1,range2] .= Z[range1, range1]
+    @views B[range2,range2] .= Z[range2, range1]
 
-    # println(tmp)
-    # println(B)
     # perform the left division
     # B = inv(tmp)*B = [0 Z12; -I Z22] \ [I Z11; 0 Z21]
-    B .= tmp \ B
+    ldiv!(lu!(tmp), B)
 
     return nothing
 end
@@ -778,14 +809,15 @@ end
 
 Convert the admittance parameter matrix `Y` to a scattering parameter matrix
 `S` and return the result. `portimpedances` is a scalar, vector, or matrix of
-port impedances.
+port impedances. Assumes a port impedance of 50 Ohms unless specified with
+the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
 julia> Y = Complex{Float64}[1/50.0 0.0;0.0 1/50.0];JosephsonCircuits.YtoS(Y)
 2×2 Matrix{ComplexF64}:
-  0.0-0.0im  -0.0-0.0im
- -0.0-0.0im   0.0-0.0im
+ 0.0+0.0im  0.0-0.0im
+ 0.0-0.0im  0.0+0.0im
 ```
 
 # References
@@ -820,7 +852,7 @@ function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
 
     # perform the left division
     # S = inv(tmp)*S = (I + \tilde{Y}) \ (I - \tilde{Y})
-    S .= tmp \ S
+    ldiv!(lu!(tmp), S)
 
     return nothing
 end
@@ -853,16 +885,15 @@ See [`YtoA`](@ref) for description.
 """
 function YtoA!(A::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(A,1)÷2
-    range2 = size(A,1)÷2+1:size(A,1)
+    range1, range2 = porthalfranges(Y)
 
     # tmp = [-Y11 I; Y21 0]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
-        tmp[d,d+size(A,1)÷2] = 1
+        tmp[d,d+length(range1)] = 1
     end
-    tmp[range1,range1] .= -Y[range1, range1]
-    tmp[range2,range1] .= Y[range2, range1]
+    @views tmp[range1,range1] .= .-Y[range1, range1]
+    @views tmp[range2,range1] .= Y[range2, range1]
 
     # A = [Y12 0; -Y22 -I]
     fill!(A,zero(eltype(A)))
@@ -870,12 +901,12 @@ function YtoA!(A::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
         A[d,d] = -1
     end
 
-    A[range1,range1] .= Y[range1, range2]
-    A[range2,range1] .= -Y[range2, range2]
+    @views A[range1,range1] .= Y[range1, range2]
+    @views A[range2,range1] .= .-Y[range2, range2]
 
     # perform the left division
     # A = inv(tmp)*A = [-Y11 I; Y21 0] \ [Y12 0; -Y22 -I]
-    A .= tmp \ A
+    ldiv!(lu!(tmp), A)
 
     return nothing
 end
@@ -907,39 +938,41 @@ See [`YtoB`](@ref) for description.
 """
 function YtoB!(B::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(Y,1)÷2
-    range2 = size(Y,1)÷2+1:size(Y,1)
+    range1, range2 = porthalfranges(Y)
 
     # tmp = [-Y12 0; -Y22 I]
     fill!(tmp,zero(eltype(tmp)))
     for d in range2
         tmp[d,d] = 1
     end
-    tmp[range1,range1] .= -Y[range1, range2]
-    tmp[range2,range1] .= -Y[range2, range2]
+    @views tmp[range1,range1] .= .-Y[range1, range2]
+    @views tmp[range2,range1] .= .-Y[range2, range2]
 
     # B = [Y11 I; Y21 0]
     fill!(B,zero(eltype(B)))
     for d in range1
-        B[d,d+size(B,1)÷2] = 1
+        B[d,d+length(range1)] = 1
     end
 
-    B[range1,range1] .= Y[range1, range1]
-    B[range2,range1] .= Y[range2, range1]
+    @views B[range1,range1] .= Y[range1, range1]
+    @views B[range2,range1] .= Y[range2, range1]
 
     # perform the left division
     # B = inv(tmp)*B = [-Y12 0; -Y22 I] \ [Y11 I; Y21 0]
-    B .= tmp \ B
+    ldiv!(lu!(tmp), B)
 
     return nothing
 end
 
 
 @doc """
-    AtoS(A)
+    AtoS(A; portimpedances = 50.0)
 
 Convert the chain (ABCD) matrix `A` to the scattering parameter matrix `S` and
-return the result.
+return the result. The first half of the ports are the inputs of the chain
+matrix and the second half its outputs, each with its own port impedances:
+`portimpedances` is a scalar, a vector with one value per port, or a matrix
+with one row per port and one column per frequency, 50 Ohms unless specified.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -956,62 +989,36 @@ See [`AtoS`](@ref) for description.
 function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
     sqrtportimpedances1, sqrtportimpedances2)
 
-    range1 = 1:size(A,1)÷2
-    range2 = size(A,1)÷2+1:size(A,1)
+    range1, range2 = porthalfranges(A)
+    h = length(range1)
 
-    # make views of the block matrices
-    S11 = view(S,range1,range1)
-    S12 = view(S,range1,range2)
-    S21 = view(S,range2,range1)
-    S22 = view(S,range2,range2)
-
-    A11 = view(A,range1,range1)
-    A12 = view(A,range1,range2)
-    A21 = view(A,range2,range1)
-    A22 = view(A,range2,range2)
-
-    tmp11 = view(tmp,range1,range1)
-    tmp12 = view(tmp,range1,range2)
-    tmp21 = view(tmp,range2,range1)
-    tmp22 = view(tmp,range2,range2)
-
-    # tmp = [-g1 A11*g2+A12/g2; 1/g1 A21*g2+A22/g2]
-    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
-    fill!(tmp,zero(eltype(tmp)))
-
-    for d in range1
-        tmp[d,d] = 1
+    # tmp = [-I*g1 A11*g2+A12/g2; I/g1 A21*g2+A22/g2]
+    # S = [I*g1 -A11*g2+A12/g2; I/g1 -A21*g2+A22/g2]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2, each
+    # scaling the columns of its block
+    for j in 1:h
+        g1 = portfactor(sqrtportimpedances1, j)
+        g2 = portfactor(sqrtportimpedances2, j)
+        for i in 1:h
+            δ = i == j
+            A11 = A[i, j]
+            A12 = A[i, h+j]
+            A21 = A[h+i, j]
+            A22 = A[h+i, h+j]
+            tmp[i, j] = -δ*g1
+            tmp[i, h+j] = A11*g2 + A12/g2
+            tmp[h+i, j] = δ/g1
+            tmp[h+i, h+j] = A21*g2 + A22/g2
+            S[i, j] = δ*g1
+            S[i, h+j] = -A11*g2 + A12/g2
+            S[h+i, j] = δ/g1
+            S[h+i, h+j] = -A21*g2 + A22/g2
+        end
     end
-
-    for d in range1
-        tmp[d+size(A,1)÷2,d] = 1
-    end
-
-    tmp11 .= -tmp11*sqrtportimpedances1
-    tmp12 .= A11*sqrtportimpedances2+A12/sqrtportimpedances2
-    tmp21 .= tmp21/sqrtportimpedances1
-    tmp22 .= A21*sqrtportimpedances2+A22/sqrtportimpedances2
-
-    # S = [g1 -A11*g2+A12/g2; 1/g1 -A21*g2+A22/g2]
-    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
-    fill!(S,zero(eltype(S)))
-
-    for d in range1
-        S[d,d] = 1
-    end
-
-    for d in range1
-        S[d+size(A,1)÷2,d] = 1
-    end
-
-    S11 .= S11*sqrtportimpedances1
-    S12 .= -A11*sqrtportimpedances2+A12/sqrtportimpedances2
-    S21 .=  S21/sqrtportimpedances1
-    S22 .= -A21*sqrtportimpedances2+A22/sqrtportimpedances2
 
     # perform the left division
     # S = inv(tmp)*S
-    S .= tmp \ S
+    ldiv!(lu!(tmp), S)
 
     return nothing
 end
@@ -1042,29 +1049,28 @@ See [`AtoZ`](@ref) for description.
 """
 function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(A,1)÷2
-    range2 = size(A,1)÷2+1:size(A,1)
+    range1, range2 = porthalfranges(A)
 
     # tmp = [-I A11; 0 A21]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
         tmp[d,d] = -1
     end
-    tmp[range1,range2] .= A[range1, range1]
-    tmp[range2,range2] .= A[range2, range1]
+    @views tmp[range1,range2] .= A[range1, range1]
+    @views tmp[range2,range2] .= A[range2, range1]
 
     # Z = [0 A12; I A22]
-    fill!(Z,zero(eltype(A)))
+    fill!(Z,zero(eltype(Z)))
     for d in range1
-        Z[d+size(A,1)÷2,d] = 1
+        Z[d+length(range1),d] = 1
     end
 
-    Z[range1,range2] .= A[range1, range2]
-    Z[range2,range2] .= A[range2, range2]
+    @views Z[range1,range2] .= A[range1, range2]
+    @views Z[range2,range2] .= A[range2, range2]
 
     # perform the left division
     # Z = inv(tmp)*Z = [-I A11; 0 A21] \ [0 A12; I A22]
-    Z .= tmp \ Z
+    ldiv!(lu!(tmp), Z)
 
     return nothing
 
@@ -1097,29 +1103,28 @@ See [`AtoY`](@ref) for description.
 """
 function AtoY!(Y::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(A,1)÷2
-    range2 = size(A,1)÷2+1:size(A,1)
+    range1, range2 = porthalfranges(A)
 
     # tmp = [0 A12; I A22]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
-        tmp[d+size(A,1)÷2,d] = 1
+        tmp[d+length(range1),d] = 1
     end
-    tmp[range1,range2] .= A[range1, range2]
-    tmp[range2,range2] .= A[range2, range2]
+    @views tmp[range1,range2] .= A[range1, range2]
+    @views tmp[range2,range2] .= A[range2, range2]
 
     # Y = [-I A11; 0 A21]
-    fill!(Y,zero(eltype(A)))
+    fill!(Y,zero(eltype(Y)))
     for d in range1
         Y[d,d] = -1
     end
 
-    Y[range1,range2] .= A[range1, range1]
-    Y[range2,range2] .= A[range2, range1]
+    @views Y[range1,range2] .= A[range1, range1]
+    @views Y[range2,range2] .= A[range2, range1]
 
     # perform the left division
-    # Y = inv(tmp)*Z = [0 A12; I A22] \ [-I A11; 0 A21]
-    Y .= tmp \ Y
+    # Y = inv(tmp)*Y = [0 A12; I A22] \ [-I A11; 0 A21]
+    ldiv!(lu!(tmp), Y)
 
     return nothing
 
@@ -1137,7 +1142,7 @@ matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
 julia> A = Complex{Float64}[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoB(A)
 2×2 Matrix{ComplexF64}:
   1.0+0.0im  0.0+0.0im
- 0.02-0.0im  1.0-0.0im
+ 0.02+0.0im  1.0+0.0im
 ```
 
 # References
@@ -1153,16 +1158,15 @@ See [`AtoB`](@ref) for description.
 """
 function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(A,1)÷2
-    range2 = size(A,1)÷2+1:size(A,1)
+    range1, range2 = porthalfranges(A)
 
     # tmp = [A11 -A12; A21 -A22]
     copy!(tmp,A)
-    tmp[range1,range2] .*= -1
-    tmp[range2,range2] .*= -1
+    @views tmp[range1,range2] .*= -1
+    @views tmp[range2,range2] .*= -1
 
-    # B = [I 0; 0 I]
-    fill!(B,zero(eltype(A)))
+    # B = [I 0; 0 -I]
+    fill!(B,zero(eltype(B)))
     for d in range1
         B[d,d] = 1
     end
@@ -1171,18 +1175,22 @@ function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
     end
 
     # perform the left division
-    # B = inv(tmp)*B = [A11 -A12; A21 -A22] \ [I 0; 0 I]
-    B .= tmp \ B
+    # B = inv(tmp)*B = [A11 -A12; A21 -A22] \ [I 0; 0 -I]
+    ldiv!(lu!(tmp), B)
 
     return nothing
 
 end
 
 @doc """
-    BtoS(B)
+    BtoS(B; portimpedances = 50.0)
 
 Convert the inverse chain (ABCD) matrix `B` to the scattering parameter matrix
-`S` and return the result.
+`S` and return the result. The first half of the ports are the inputs of the
+chain matrix and the second half its outputs, each with its own port
+impedances: `portimpedances` is a scalar, a vector with one value per port, or
+a matrix with one row per port and one column per frequency, 50 Ohms unless
+specified.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -1200,66 +1208,42 @@ See [`BtoS`](@ref) for description.
 function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
     sqrtportimpedances1, sqrtportimpedances2)
 
-    range1 = 1:size(B,1)÷2
-    range2 = size(B,1)÷2+1:size(B,1)
+    range1, range2 = porthalfranges(B)
+    h = length(range1)
 
-    # make views of the block matrices
-    S11 = view(S,range1,range1)
-    S12 = view(S,range1,range2)
-    S21 = view(S,range2,range1)
-    S22 = view(S,range2,range2)
-
-    B11 = view(B,range1,range1)
-    B12 = view(B,range1,range2)
-    B21 = view(B,range2,range1)
-    B22 = view(B,range2,range2)
-
-    tmp11 = view(tmp,range1,range1)
-    tmp12 = view(tmp,range1,range2)
-    tmp21 = view(tmp,range2,range1)
-    tmp22 = view(tmp,range2,range2)
-
-    # tmp = [B11*g1+B12/g1 -g2; B21*g1+B22/g1 1/g2]
-    fill!(tmp,zero(eltype(tmp)))
-
-    for d in range1
-        tmp[d,d+size(B,1)÷2] = 1
+    # tmp = [B11*g1+B12/g1 -I*g2; B21*g1+B22/g1 I/g2]
+    # S = [-B11*g1+B12/g1 I*g2; -B21*g1+B22/g1 I/g2]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2, each
+    # scaling the columns of its block
+    for j in 1:h
+        g1 = portfactor(sqrtportimpedances1, j)
+        g2 = portfactor(sqrtportimpedances2, j)
+        for i in 1:h
+            δ = i == j
+            B11 = B[i, j]
+            B12 = B[i, h+j]
+            B21 = B[h+i, j]
+            B22 = B[h+i, h+j]
+            tmp[i, j] = B11*g1 + B12/g1
+            tmp[i, h+j] = -δ*g2
+            tmp[h+i, j] = B21*g1 + B22/g1
+            tmp[h+i, h+j] = δ/g2
+            S[i, j] = -B11*g1 + B12/g1
+            S[i, h+j] = δ*g2
+            S[h+i, j] = -B21*g1 + B22/g1
+            S[h+i, h+j] = δ/g2
+        end
     end
-
-    for d in range2
-        tmp[d,d] = 1
-    end
-
-    tmp11 .= B11*sqrtportimpedances1+B12/sqrtportimpedances1
-    tmp12 .= -tmp12*sqrtportimpedances2
-    tmp21 .= B21*sqrtportimpedances1+B22/sqrtportimpedances1
-    tmp22 .= tmp22/sqrtportimpedances2
-
-    # S = [-B11*g1+B12/g1 g2; -B21*g1+B22/g1 1/g2]
-    fill!(S,zero(eltype(S)))
-
-    for d in range1
-        S[d,d+size(B,1)÷2] = 1
-    end
-
-    for d in range2
-        S[d,d] = 1
-    end
-
-    S11 .= -B11*sqrtportimpedances1+B12/sqrtportimpedances1
-    S12 .= S12*sqrtportimpedances2
-    S21 .= -B21*sqrtportimpedances1+B22/sqrtportimpedances1
-    S22 .= S22/sqrtportimpedances2
 
     # perform the left division
     # S = inv(tmp)*S
-    S .= tmp \ S
+    ldiv!(lu!(tmp), S)
 
     return nothing
 end
 
 @doc """
-    BtoZ(A)
+    BtoZ(B)
 
 Convert the inverse chain matrix `B` to the impedance matrix `Z` and return
 the result.
@@ -1286,36 +1270,34 @@ See [`BtoZ`](@ref) for description.
 """
 function BtoZ!(Z::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(B,1)÷2
-    range2 = size(B,1)÷2+1:size(B,1)
+    range1, range2 = porthalfranges(B)
 
-    # tmp = [B11 -I; B21 0]
+    # tmp = [B11 -I; -B21 0]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
-        tmp[d,d+size(B,1)÷2] = -1
+        tmp[d,d+length(range1)] = -1
     end
-    tmp[range1,range1] .= B[range1, range1]
-    tmp[range2,range1] .= -B[range2, range1]
+    @views tmp[range1,range1] .= B[range1, range1]
+    @views tmp[range2,range1] .= .-B[range2, range1]
 
-    # Z = [B12 0; B22 -I]
-    fill!(Z,zero(eltype(B)))
+    # Z = [B12 0; -B22 -I]
+    fill!(Z,zero(eltype(Z)))
     for d in range2
         Z[d,d] = -1
     end
 
-    Z[range1,range1] .= B[range1, range2]
-    Z[range2,range1] .= -B[range2, range2]
+    @views Z[range1,range1] .= B[range1, range2]
+    @views Z[range2,range1] .= .-B[range2, range2]
 
     # perform the left division
-    # Y = inv(tmp)*Y = [B12 0; B22 I] \ [B11 -I; B21 0]
-    # Z = inv(tmp)*Z = [B11 -I; B21 0] \ [B12 0; B22 -I]
-    Z .= tmp \ Z
+    # Z = inv(tmp)*Z = [B11 -I; -B21 0] \ [B12 0; -B22 -I]
+    ldiv!(lu!(tmp), Z)
 
     return nothing
 end
 
 @doc """
-    BtoY(A)
+    BtoY(B)
 
 Convert the inverse chain matrix `B` to the admittance matrix `Y` and return
 the result.
@@ -1341,29 +1323,28 @@ See [`BtoY`](@ref) for description.
 """
 function BtoY!(Y::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
     
-    range1 = 1:size(B,1)÷2
-    range2 = size(B,1)÷2+1:size(B,1)
+    range1, range2 = porthalfranges(B)
 
     # tmp = [B12 0; B22 I]
     fill!(tmp,zero(eltype(tmp)))
     for d in range2
         tmp[d,d] = 1
     end
-    tmp[range1,range1] .= B[range1, range2]
-    tmp[range2,range1] .= B[range2, range2]
+    @views tmp[range1,range1] .= B[range1, range2]
+    @views tmp[range2,range1] .= B[range2, range2]
 
     # Y = [B11 -I; B21 0]
-    fill!(Y,zero(eltype(B)))
+    fill!(Y,zero(eltype(Y)))
     for d in range1
-        Y[d,d+size(B,1)÷2] = -1
+        Y[d,d+length(range1)] = -1
     end
 
-    Y[range1,range1] .= B[range1, range1]
-    Y[range2,range1] .= B[range2, range1]
+    @views Y[range1,range1] .= B[range1, range1]
+    @views Y[range2,range1] .= B[range2, range1]
 
     # perform the left division
     # Y = inv(tmp)*Y = [B12 0; B22 I] \ [B11 -I; B21 0]
-    Y .= tmp \ Y
+    ldiv!(lu!(tmp), Y)
 
     return nothing
 end
@@ -1380,7 +1361,7 @@ matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
 julia> B = Complex{Float64}[1.0 0.0;1/50 1.0];JosephsonCircuits.BtoA(B)
 2×2 Matrix{ComplexF64}:
   1.0+0.0im  0.0+0.0im
- 0.02-0.0im  1.0-0.0im
+ 0.02+0.0im  1.0+0.0im
 ```
 
 # References
@@ -1396,6 +1377,7 @@ See [`BtoA`](@ref) for description.
 
 """
 function BtoA!(A::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+    # the conversion between A and B is its own inverse
     return AtoB!(A,B,tmp)
 end
 
@@ -1416,6 +1398,7 @@ function ABCDtoS!(ABCD::AbstractMatrix,portimpedances)
 end
 
 function ABCDtoS!(A::AbstractMatrix,RS,RL)
+    checktwoport(A)
     A11 = A[1,1]
     A12 = A[1,2]
     A21 = A[2,1]
@@ -1430,7 +1413,7 @@ end
 
 
 @doc """
-    StoABCD(S;portimpedances=50.0))
+    StoABCD(S;portimpedances=50.0)
 
 Convert the scattering parameter matrix `S` to the 2 port chain (ABCD) matrix and
 return the result. Assumes a port impedance of 50 Ohms unless specified with the
@@ -1446,6 +1429,7 @@ function StoABCD!(S::AbstractMatrix,portimpedances)
 end
 
 function StoABCD!(S::AbstractMatrix,RS,RL)
+    checktwoport(S)
     S11 = S[1,1]
     S12 = S[1,2]
     S21 = S[2,1]

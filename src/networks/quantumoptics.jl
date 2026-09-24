@@ -40,6 +40,8 @@ end
 """
     direct_sum(A; n::Integer=1)
 
+Return the direct sum of `n` copies of the matrix `A`, the block diagonal
+matrix `kron(I(n), A)`.
 """
 function direct_sum(A; n::Integer=1)
     return kron(I(n), A)
@@ -274,8 +276,8 @@ end
 """
     is_conjugate_symplectic_pair(M) -> Bool
 
-Return `true` if the matrix `M` is conjugate symplectic,
-, with pair operator order and `false`
+Return `true` if the matrix `M` is conjugate symplectic, `M*Ω*M' == Ω`
+with `Ω` the symplectic form of pair operator order, and `false`
 otherwise.
 
 """
@@ -287,8 +289,8 @@ end
 """
     is_conjugate_symplectic_block(M) -> Bool
 
-Return `true` if the matrix `M` is conjugate symplectic,
-, with block operator order and `false`
+Return `true` if the matrix `M` is conjugate symplectic, `M*Ω*M' == Ω`
+with `Ω` the symplectic form of block operator order, and `false`
 otherwise.
 
 """
@@ -403,7 +405,7 @@ end
     is_orthogonal_bogoliubov_block(M) -> Bool
 
 Return `true` if the matrix `M` is orthogonal Bogoliubov,
-`M ∈ Sp(2n, ℂ) ∩ U(n, n) ∩ U(2n) ≅ U(n)`, with pair operator order and
+`M ∈ Sp(2n, ℂ) ∩ U(n, n) ∩ U(2n) ≅ U(n)`, with block operator order and
 `false` otherwise.
 
 """
@@ -425,9 +427,16 @@ end
 
 
 """
+    is_cptp(Omega, X, Y) -> Bool
 
-Eq. 5.37 from Serafini
+Return `true` if the Gaussian map with the transformation `X` and the noise
+`Y` is completely positive and trace preserving for the symplectic form
+`Omega`, that is if `Y + im*(Omega - X*Omega*X')` is Hermitian and positive
+semi-definite (Eq. 5.37 of Serafini), and `false` otherwise.
 
+# References
+A. Serafini, "Quantum Continuous Variables: A Primer of Theoretical
+Methods," CRC Press (2017).
 """
 function is_cptp(Omega, X, Y)
     # Omega, X, and Y should be the same size. all should be square matrices
@@ -456,16 +465,17 @@ end
 
 function is_cptp_ladder_pair(X, Y)
     n = size(X, 1) ÷ 2
-    # note we need to multiply this by im to get
-    # the Robertson-Schrödinger inequality
+    # the ladder image of the quadrature symplectic form is -im*Σ, with Σ
+    # the indefinite Hermitian form; +im*Σ, used here, gives the complex
+    # conjugate of the condition in the quadrature basis, which has the same
+    # eigenvalues, so the verdict is the same
     Omega = im * indefinite_hermitian_form_pair(n)
     return is_cptp(Omega, X, Y)
 end
 
 function is_cptp_ladder_block(X, Y)
     n = size(X, 1) ÷ 2
-    # note we need to multiply this by im to get
-    # the Robertson-Schrödinger inequality
+    # as in is_cptp_ladder_pair
     Omega = im * indefinite_hermitian_form_block(n)
     return is_cptp(Omega, X, Y)
 end
@@ -648,8 +658,7 @@ operator order.
 
 """
 function rand_positive_definite_symplectic_pair(T, n::Integer)
-    A = rand_symplectic_pair(T, n)
-    return A * A'
+    return block_to_pair(rand_positive_definite_symplectic_block(T, n))
 end
 
 """
@@ -665,14 +674,12 @@ end
 
 
 """
+    rand_conjugate_symplectic_block(T, n::Integer)
 
-
+Return a random `2n x 2n` conjugate symplectic matrix `S`, `S*Ω*S' == Ω`,
+of element type `T`, with block operator order.
 """
 function rand_conjugate_symplectic_block(T, n::Integer)
-
-
-
-
     A = randn(T, 2 * n, 2 * n)
     Omega = symplectic_form_block(n)
     # generate a random Hermitian matrix
@@ -718,10 +725,9 @@ function rand_bogoliubov_block(T, n::Integer)
     # assemble M
     M = [P Q; transpose(Q) -conj(P)]
 
-    # compute the symplectic matrix using the Cayley transform
-    Omega = symplectic_form_block(n)
     # the matrix exponential is numerically more accurate than the Cayley
     # transform here
+    Omega = symplectic_form_block(n)
     return exp(Omega * M)
 
 end
@@ -826,8 +832,21 @@ function cayley_transform(Omega, M)
     return S
 end
 
+"""
+    rand_cptp_quadrature_block(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
+    rand_cptp_quadrature_block(nsys; nenv = nsys)
+
+Return a random completely positive trace preserving (CPTP) map `(X, Y)`
+of `nsys` modes in the quadrature basis with block operator order: the
+system block `X` of a random symplectic matrix of `nsys + nenv` modes and
+the noise `Y = B*sigma_env*transpose(B)` its system-environment block `B`
+adds from an environment of `nenv` modes with covariance `sigma_env`, by
+default `2*I`, a thermal state (the vacuum is `I` with the uncertainty
+relation of [`is_cptp`](@ref)). `T` is the element type, `Float64` by
+default.
+"""
 function rand_cptp_quadrature_block(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nsys))
+    sigma_env=2 * I(2 * nenv))
     # start from a pair ordered matrix
     S = rand_symplectic_pair(T, nsys + nenv)
     # and convert each block to the block ordering
@@ -840,11 +859,19 @@ function rand_cptp_quadrature_block(T, nsys::Integer; nenv::Integer=nsys,
 end
 
 function rand_cptp_quadrature_block(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_quadrature_block(Float64, nsys; nenv=nsys)
+    return rand_cptp_quadrature_block(Float64, nsys; nenv=nenv)
 end
 
+"""
+    rand_cptp_quadrature_pair(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
+    rand_cptp_quadrature_pair(nsys; nenv = nsys)
+
+Return a random CPTP map `(X, Y)` of `nsys` modes in the quadrature basis
+with pair operator order, with an environment of `nenv` modes; see
+[`rand_cptp_quadrature_block`](@ref).
+"""
 function rand_cptp_quadrature_pair(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nsys))
+    sigma_env=2 * I(2 * nenv))
     S = rand_symplectic_pair(T, nsys + nenv)
     A = S[1:2*nsys, 1:2*nsys]
     B = S[1:2*nsys, 2*nsys+1:end]
@@ -855,12 +882,21 @@ function rand_cptp_quadrature_pair(T, nsys::Integer; nenv::Integer=nsys,
 end
 
 function rand_cptp_quadrature_pair(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_quadrature_pair(Float64, nsys; nenv=nsys)
+    return rand_cptp_quadrature_pair(Float64, nsys; nenv=nenv)
 end
 
+"""
+    rand_cptp_ladder_pair(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
+    rand_cptp_ladder_pair(nsys; nenv = nsys)
 
+Return a random CPTP map `(X, Y)` of `nsys` modes in the ladder basis with
+pair operator order: the system block `X` of a random Bogoliubov matrix of
+`nsys + nenv` modes and the noise `Y = B*sigma_env*B'` its
+system-environment block `B` adds from an environment of `nenv` modes.
+`T` is the element type, `Complex{Float64}` by default.
+"""
 function rand_cptp_ladder_pair(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nsys))
+    sigma_env=2 * I(2 * nenv))
     S = rand_bogoliubov_pair(T, nsys + nenv)
     A = S[1:2*nsys, 1:2*nsys]
     B = S[1:2*nsys, 2*nsys+1:end]
@@ -871,11 +907,19 @@ function rand_cptp_ladder_pair(T, nsys::Integer; nenv::Integer=nsys,
 end
 
 function rand_cptp_ladder_pair(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_ladder_pair(Complex{Float64}, nsys; nenv=nsys)
+    return rand_cptp_ladder_pair(Complex{Float64}, nsys; nenv=nenv)
 end
 
+"""
+    rand_cptp_ladder_block(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
+    rand_cptp_ladder_block(nsys; nenv = nsys)
+
+Return a random CPTP map `(X, Y)` of `nsys` modes in the ladder basis with
+block operator order, with an environment of `nenv` modes; see
+[`rand_cptp_ladder_pair`](@ref).
+"""
 function rand_cptp_ladder_block(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nsys))
+    sigma_env=2 * I(2 * nenv))
     # start from a pair ordered matrix
     S = rand_bogoliubov_pair(T, nsys + nenv)
     # and convert each block to the block ordering
@@ -888,7 +932,7 @@ function rand_cptp_ladder_block(T, nsys::Integer; nenv::Integer=nsys,
 end
 
 function rand_cptp_ladder_block(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_ladder_block(Complex{Float64}, nsys; nenv=nsys)
+    return rand_cptp_ladder_block(Complex{Float64}, nsys; nenv=nenv)
 end
 
 
@@ -973,6 +1017,9 @@ end
 """
     R_block_to_pair(n::Integer)
 
+Return the `2n x 2n` permutation matrix which takes a vector of `n` modes
+in block order to pair order.
+
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.R_block_to_pair(2)
@@ -1026,6 +1073,9 @@ end
 """
     block_to_pair2(r::AbstractVector)
 
+Return the vector `r` in block order reordered to pair order, as
+[`block_to_pair`](@ref), by a product with the permutation matrix
+[`R_block_to_pair`](@ref).
 """
 function block_to_pair2(r::AbstractVector)
     R = R_block_to_pair(length(r) ÷ 2)
@@ -1035,6 +1085,8 @@ end
 """
     block_to_pair(S::AbstractMatrix)
 
+Return the matrix `S` with its rows and columns in block order reordered
+to pair order.
 """
 function block_to_pair(S::AbstractMatrix)
     p1 = block_to_pair_perm(size(S, 1) ÷ 2)
@@ -1045,14 +1097,21 @@ end
 """
     block_to_pair2(S::AbstractMatrix)
 
+Return the matrix `S` with its rows and columns in block order reordered
+to pair order, as [`block_to_pair`](@ref), by products with the
+permutation matrices [`R_block_to_pair`](@ref).
 """
 function block_to_pair2(S::AbstractMatrix)
-    R = R_block_to_pair(size(S, 2) ÷ 2)
-    return R * S * R'
+    R1 = R_block_to_pair(size(S, 1) ÷ 2)
+    R2 = R_block_to_pair(size(S, 2) ÷ 2)
+    return R1 * S * R2'
 end
 
 """
     R_pair_to_block(n::Integer)
+
+Return the `2n x 2n` permutation matrix which takes a vector of `n` modes
+in pair order to block order.
 
 # Examples
 ```jldoctest
@@ -1109,6 +1168,9 @@ end
 """
     pair_to_block2(r::AbstractVector)
 
+Return the vector `r` in pair order reordered to block order, as
+[`pair_to_block`](@ref), by a product with the permutation matrix
+[`R_pair_to_block`](@ref).
 """
 function pair_to_block2(r::AbstractVector)
     R = R_pair_to_block(length(r) ÷ 2)
@@ -1118,6 +1180,8 @@ end
 """
     pair_to_block(S::AbstractMatrix)
 
+Return the matrix `S` with its rows and columns in pair order reordered
+to block order.
 """
 function pair_to_block(S::AbstractMatrix)
     p1 = pair_to_block_perm(size(S, 1) ÷ 2)
@@ -1128,14 +1192,22 @@ end
 """
     pair_to_block2(S::AbstractMatrix)
 
+Return the matrix `S` with its rows and columns in pair order reordered
+to block order, as [`pair_to_block`](@ref), by products with the
+permutation matrices [`R_pair_to_block`](@ref).
 """
 function pair_to_block2(S::AbstractMatrix)
-    R = R_pair_to_block(size(S, 2) ÷ 2)
-    return R * S * R'
+    R1 = R_pair_to_block(size(S, 1) ÷ 2)
+    R2 = R_pair_to_block(size(S, 2) ÷ 2)
+    return R1 * S * R2'
 end
 
 """
     R_ladder_to_quadrature_pair(n::Integer)
+
+Return the `2n x 2n` unitary matrix which takes the ladder operators of `n`
+modes in pair order to their quadratures, `x = (a + adag)/sqrt(2)` and
+`p = -im*(a - adag)/sqrt(2)`, in pair order.
 
 # Examples
 ```
@@ -1152,6 +1224,9 @@ end
 """
     ladder_to_quadrature_pair(r::AbstractVector)
 
+Return the vector `r` of ladder operators in pair order `[a_1, adag_1, ...]`
+in the basis of the quadratures in pair order `[x_1, p_1, ...]`, `R*r` with
+`R` the matrix of [`R_ladder_to_quadrature_pair`](@ref).
 """
 function ladder_to_quadrature_pair(r::AbstractVector)
     R = R_ladder_to_quadrature_pair(length(r) ÷ 2)
@@ -1161,14 +1236,24 @@ end
 """
     ladder_to_quadrature_pair(S::AbstractMatrix)
 
+Return the matrix `S`, which maps ladder operators in pair order
+`[a_1, adag_1, ...]` to others, as the map between the quadratures in pair
+order `[x_1, p_1, ...]`: `R1*S*R2'` with `R1` and `R2` the matrices of
+[`R_ladder_to_quadrature_pair`](@ref) for the rows and the columns of `S`.
 """
 function ladder_to_quadrature_pair(S::AbstractMatrix)
-    R = R_ladder_to_quadrature_pair(size(S, 2) ÷ 2)
-    return R * S * R'
+    R1 = R_ladder_to_quadrature_pair(size(S, 1) ÷ 2)
+    R2 = R_ladder_to_quadrature_pair(size(S, 2) ÷ 2)
+    return R1 * S * R2'
 end
 
 """
     R_quadrature_to_ladder_pair(n::Integer)
+
+Return the `2n x 2n` unitary matrix which takes the quadratures of `n`
+modes in pair order to their ladder operators, `a = (x + im*p)/sqrt(2)` and
+`adag = (x - im*p)/sqrt(2)`, in pair order; the inverse of
+[`R_ladder_to_quadrature_pair`](@ref).
 
 # Examples
 ```jldoctest
@@ -1188,6 +1273,9 @@ end
 """
     quadrature_to_ladder_pair(r::AbstractVector)
 
+Return the vector `r` of quadratures in pair order `[x_1, p_1, ...]` in the
+basis of the ladder operators in pair order `[a_1, adag_1, ...]`, `R*r` with
+`R` the matrix of [`R_quadrature_to_ladder_pair`](@ref).
 """
 function quadrature_to_ladder_pair(r::AbstractVector)
     R = R_quadrature_to_ladder_pair(length(r) ÷ 2)
@@ -1197,14 +1285,21 @@ end
 """
     quadrature_to_ladder_pair(S::AbstractMatrix)
 
+Return the matrix `S`, which maps quadratures in pair order
+`[x_1, p_1, ...]` to others, as the map between the ladder operators in pair
+order `[a_1, adag_1, ...]`: `R1*S*R2'` with `R1` and `R2` the matrices of
+[`R_quadrature_to_ladder_pair`](@ref) for the rows and the columns of `S`.
 """
 function quadrature_to_ladder_pair(S::AbstractMatrix)
-    R = R_quadrature_to_ladder_pair(size(S, 2) ÷ 2)
-    return R * S * R'
+    R1 = R_quadrature_to_ladder_pair(size(S, 1) ÷ 2)
+    R2 = R_quadrature_to_ladder_pair(size(S, 2) ÷ 2)
+    return R1 * S * R2'
 end
 
 """
     R_ladder_to_quadrature_block(n::Integer)
+
+The block ordered form of [`R_ladder_to_quadrature_pair`](@ref).
 
 # Examples
 ```jldoctest
@@ -1221,6 +1316,10 @@ end
 """
     ladder_to_quadrature_block(r::AbstractVector)
 
+Return the vector `r` of ladder operators in block order
+`[a_1, ..., adag_1, ...]` in the basis of the quadratures in block order
+`[x_1, ..., p_1, ...]`, `R*r` with `R` the matrix of
+[`R_ladder_to_quadrature_block`](@ref).
 """
 function ladder_to_quadrature_block(r::AbstractVector)
     R = R_ladder_to_quadrature_block(length(r) ÷ 2)
@@ -1230,14 +1329,22 @@ end
 """
     ladder_to_quadrature_block(S::AbstractMatrix)
 
+Return the matrix `S`, which maps ladder operators in block order
+`[a_1, ..., adag_1, ...]` to others, as the map between the quadratures in
+block order `[x_1, ..., p_1, ...]`: `R1*S*R2'` with `R1` and `R2` the
+matrices of [`R_ladder_to_quadrature_block`](@ref) for the rows and the
+columns of `S`.
 """
 function ladder_to_quadrature_block(S::AbstractMatrix)
-    R = R_ladder_to_quadrature_block(size(S, 2) ÷ 2)
-    return R * S * R'
+    R1 = R_ladder_to_quadrature_block(size(S, 1) ÷ 2)
+    R2 = R_ladder_to_quadrature_block(size(S, 2) ÷ 2)
+    return R1 * S * R2'
 end
 
 """
     R_quadrature_to_ladder_block(n::Integer)
+
+The block ordered form of [`R_quadrature_to_ladder_pair`](@ref).
 
 # Examples
 ```jldoctest
@@ -1256,6 +1363,10 @@ end
 """
     quadrature_to_ladder_block(r::AbstractVector)
 
+Return the vector `r` of quadratures in block order `[x_1, ..., p_1, ...]`
+in the basis of the ladder operators in block order
+`[a_1, ..., adag_1, ...]`, `R*r` with `R` the matrix of
+[`R_quadrature_to_ladder_block`](@ref).
 """
 function quadrature_to_ladder_block(r::AbstractVector)
     R = R_quadrature_to_ladder_block(length(r) ÷ 2)
@@ -1265,861 +1376,506 @@ end
 """
     quadrature_to_ladder_block(S::AbstractMatrix)
 
+Return the matrix `S`, which maps quadratures in block order
+`[x_1, ..., p_1, ...]` to others, as the map between the ladder operators in
+block order `[a_1, ..., adag_1, ...]`: `R1*S*R2'` with `R1` and `R2` the
+matrices of [`R_quadrature_to_ladder_block`](@ref) for the rows and the
+columns of `S`.
 """
 function quadrature_to_ladder_block(S::AbstractMatrix)
-    R = R_quadrature_to_ladder_block(size(S, 2) ÷ 2)
-    return R * S * R'
+    R1 = R_quadrature_to_ladder_block(size(S, 1) ÷ 2)
+    R2 = R_quadrature_to_ladder_block(size(S, 2) ÷ 2)
+    return R1 * S * R2'
 end
 
 
 
-"""
-    scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}
+# The ladder and quadrature forms of a scattering matrix. A scattering
+# matrix relates the amplitudes of modes of signed frequencies `w`: a mode
+# of positive frequency is an annihilation operator `a` and any other a
+# creation operator `a'`, the mode of scattering index `i` having the
+# frequency `w[mod(i-1, length(w))+1]`, so that `w` may hold the frequency
+# of each mode of a port. The ladder (Bogoliubov) form relates the pairs of
+# operators `(a, a')` of the scattering indices, and the quadrature
+# (symplectic) form the pairs `(x, p)` with `a = (x + im*p)/sqrt(2)`. The two
+# operators of scattering index `i` of an axis of `n` indices are at `2i-1`
+# and `2i` in pair order and at `i` and `i+n` in block order; `pairops` and
+# `blockops` give their positions, and one kernel per conversion serves
+# both orders. The kernels step the index into `w` along each axis,
+# `nextmode`, rather than divide for it at every entry.
 
-"""
-function scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}
-    # the symplectic matrix is real even when `S_scattering` is complex
-    n = length(S_scattering)
-    S_symplectic = zeros(T, 2 * n)
-    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
-end
+# the positions of the two operators of scattering index `i` of an axis of
+# `n` scattering indices, in pair and in block order
+pairops(i, n) = (2 * i - 1, 2 * i)
+blockops(i, n) = (i, i + n)
 
-function scattering_to_quadrature_pair(S_scattering::AbstractVector{T}, w) where {T}
-    n = length(S_scattering)
-    S_symplectic = zeros(T, 2 * n)
-    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
-end
+# true when a mode of frequency `wi` is an annihilation operator
+isannihilation(wi) = wi > zero(wi)
 
-function scattering_to_quadrature_pair!(S_symplectic::AbstractVector,
-    S_scattering::AbstractVector, w::AbstractVector)
+# the index into `w` of the scattering index after one at index `k`
+nextmode(k, Nmodes) = k == Nmodes ? 1 : k + 1
 
-    # check the relative sizes
-    if length(S_symplectic) != 2 * length(S_scattering)
-        throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+# the positions of the operator an amplitude belongs to and of the one its
+# conjugate belongs to: the first and the second of the pair for an
+# annihilation operator, the second and the first for a creation operator
+operatorpair((i1, i2), annihilation) = annihilation ? (i1, i2) : (i2, i1)
+
+# the sign an imaginary part takes in the quadrature form: that of an
+# annihilation operator, and its opposite for a creation operator, whose
+# amplitude is a conjugate
+operatorsign(annihilation) = annihilation ? 1 : -1
+
+# the element types of the forms of a scattering matrix of element type
+# `T`, and of a scattering matrix read back from a form of element type `T`
+quadraturetype(T) = real(T)
+scatteringtype(T) = Complex{real(typeof(zero(T) / 2))}
+
+# the default relative tolerance of the conversions back from a form: the
+# smaller dimension of `S` times the machine epsilon of its element type,
+# and zero when an absolute tolerance is given
+defaultrtol(S, atol) =
+    (min(size(S, 1), size(S, 2)) * eps(real(float(oneunit(eltype(S)))))) * iszero(atol)
+
+# the checks of the kernels: a vector form holds two operators per
+# amplitude and whole ports of modes, and a matrix form is twice the size
+# of its scattering matrix
+function checkvectorform(S_form, S_scattering, w, form)
+    checkmodes(w)
+    if length(S_form) != 2 * length(S_scattering)
+        throw(DimensionMismatch(lazy"The length of the $(form) vector must be double that of the scattering parameter vector."))
     end
-
-    # the length of the scattering vector must be a multiple of the number
-    # of modes
-    Nmodes = length(w)
-    n = length(S_scattering)
-    if mod(n, Nmodes) != 0
+    if mod(length(S_scattering), length(w)) != 0
         throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
     end
-
-    # loop through the scattering vector to place each of the elements
-    for i in eachindex(S_scattering)
-        if w[mod(i - 1, Nmodes)+1] > 0
-            # a positive frequency mode: an annihilation operator
-            S_symplectic[2*i-1] = sqrt(2) * real(S_scattering[i])
-            S_symplectic[2*i] = sqrt(2) * imag(S_scattering[i])
-        else
-            # a negative frequency mode: a creation operator
-            S_symplectic[2*i-1] = sqrt(2) * real(S_scattering[i])
-            S_symplectic[2*i] = -sqrt(2) * imag(S_scattering[i])
-        end
+    return nothing
+end
+function checkmatrixform(S_form, S_scattering, w)
+    checkmodes(w)
+    if size(S_form) != 2 .* size(S_scattering)
+        throw(DimensionMismatch(lazy"The size $(size(S_form)) of the ladder or quadrature form must be twice the size $(size(S_scattering)) of the scattering matrix."))
     end
+    return nothing
+end
 
+function checkmodes(w)
+    if isempty(w)
+        throw(ArgumentError("The vector of mode frequencies `w` must not be empty."))
+    end
+    return nothing
+end
+
+# refuse a departure `err` of an entry of a form from the structure of the
+# form beyond the tolerances; an exact zero is not compared, so that
+# symbolic input converts
+function checkformerror(err, atol, rtol, normS, form)
+    if !iszero(err) && abs(err) > max(atol, rtol * normS)
+        error(lazy"Error in $(form) to scattering parameter conversion larger than `atol` and `rtol`.")
+    end
+    return nothing
+end
+
+# --- the kernels, one per conversion, in either order ---------------------
+
+function scattering_to_quadrature!(S_symplectic::AbstractVector,
+        S_scattering::AbstractVector, w::AbstractVector, ops)
+    checkvectorform(S_symplectic, S_scattering, w, "symplectic")
+    n = length(S_scattering)
+    k = 1
+    @inbounds for i in 1:n
+        i1, i2 = ops(i, n)
+        s = operatorsign(isannihilation(w[k]))
+        k = nextmode(k, length(w))
+        S_symplectic[i1] = sqrt(2) * real(S_scattering[i])
+        S_symplectic[i2] = s * sqrt(2) * imag(S_scattering[i])
+    end
     return S_symplectic
 end
 
-"""
-    scattering_to_quadrature_block(S_scattering::AbstractVector{Complex{T}}, w) where {T}
-
-"""
-function scattering_to_quadrature_block(S_scattering::AbstractVector{Complex{T}}, w) where {T}
-    # the symplectic matrix is real even when `S_scattering` is complex
+function scattering_to_ladder!(S_bogoliubov::AbstractVector,
+        S_scattering::AbstractVector, w::AbstractVector, ops)
+    checkvectorform(S_bogoliubov, S_scattering, w, "bogoliubov")
     n = length(S_scattering)
-    S_symplectic = zeros(T, 2 * n)
-    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
+    k = 1
+    @inbounds for i in 1:n
+        p, q = operatorpair(ops(i, n), isannihilation(w[k]))
+        k = nextmode(k, length(w))
+        S_bogoliubov[p] = S_scattering[i]
+        S_bogoliubov[q] = conj(S_scattering[i])
+    end
+    return S_bogoliubov
 end
 
-function scattering_to_quadrature_block(S_scattering::AbstractVector{T}, w) where {T}
-    n = length(S_scattering)
-    S_symplectic = zeros(T, 2 * n)
-    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
-end
-
-function scattering_to_quadrature_block!(S_symplectic::AbstractVector,
-    S_scattering::AbstractVector, w::AbstractVector)
-
-    # check the relative sizes
-    if length(S_symplectic) != 2 * length(S_scattering)
-        throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
-    end
-
-    # the length of the scattering vector must be a multiple of the number
-    # of modes
-    Nmodes = length(w)
-    n = length(S_scattering)
-    if mod(n, Nmodes) != 0
-        throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
-    end
-
-    # loop through the scattering vector to place each of the elements
-    for i in eachindex(S_scattering)
-        if w[mod(i - 1, Nmodes)+1] > 0
-            # a positive frequency mode: an annihilation operator
-            S_symplectic[i] = sqrt(2) * real(S_scattering[i])
-            S_symplectic[i+n] = sqrt(2) * imag(S_scattering[i])
-        else
-            # a negative frequency mode: a creation operator
-            S_symplectic[i] = sqrt(2) * real(S_scattering[i])
-            S_symplectic[i+n] = -sqrt(2) * imag(S_scattering[i])
+function scattering_to_ladder!(S_bogoliubov::AbstractMatrix,
+        S_scattering::AbstractMatrix, w::AbstractVector, ops)
+    checkmatrixform(S_bogoliubov, S_scattering, w)
+    n, m = size(S_scattering)
+    z = zero(eltype(S_bogoliubov))
+    # an entry from the column mode to the row mode takes the positions of
+    # the operators of their amplitudes, and its conjugate those of their
+    # conjugates; the other two entries of the block are zero
+    kj = 1
+    @inbounds for j in 1:m
+        r, t = operatorpair(ops(j, m), isannihilation(w[kj]))
+        kj = nextmode(kj, length(w))
+        ki = 1
+        for i in 1:n
+            p, q = operatorpair(ops(i, n), isannihilation(w[ki]))
+            ki = nextmode(ki, length(w))
+            Sij = S_scattering[i, j]
+            S_bogoliubov[p, r] = Sij
+            S_bogoliubov[q, t] = conj(Sij)
+            S_bogoliubov[p, t] = z
+            S_bogoliubov[q, r] = z
         end
     end
+    return S_bogoliubov
+end
 
+function ladder_to_scattering!(S_scattering::AbstractMatrix,
+        S_bogoliubov::AbstractMatrix, w::AbstractVector, ops; atol::Real = 0,
+        rtol::Real = defaultrtol(S_bogoliubov, atol))
+    checkmatrixform(S_bogoliubov, S_scattering, w)
+    n, m = size(S_scattering)
+    normS = norm(S_bogoliubov)
+    kj = 1
+    @inbounds for j in 1:m
+        r, t = operatorpair(ops(j, m), isannihilation(w[kj]))
+        kj = nextmode(kj, length(w))
+        ki = 1
+        for i in 1:n
+            p, q = operatorpair(ops(i, n), isannihilation(w[ki]))
+            ki = nextmode(ki, length(w))
+            # the entry is the average of the amplitude and the conjugate of
+            # the conjugate's entry; their difference and the two entries
+            # which should be zero are the departure from a ladder form
+            direct = S_bogoliubov[p, r]
+            conjugate = conj(S_bogoliubov[q, t])
+            checkformerror((direct - conjugate) / 2, atol, rtol, normS, "Bogoliubov")
+            checkformerror(S_bogoliubov[p, t], atol, rtol, normS, "Bogoliubov")
+            checkformerror(S_bogoliubov[q, r], atol, rtol, normS, "Bogoliubov")
+            S_scattering[i, j] = (direct + conjugate) / 2
+        end
+    end
+    return S_scattering
+end
+
+function scattering_to_quadrature!(S_symplectic::AbstractMatrix,
+        S_scattering::AbstractMatrix, w::AbstractVector, ops)
+    checkmatrixform(S_symplectic, S_scattering, w)
+    n, m = size(S_scattering)
+    # an entry takes the real two by two block of multiplication by it, with
+    # the imaginary part, and the second row or column, turned for a
+    # creation operator
+    kj = 1
+    @inbounds for j in 1:m
+        j1, j2 = ops(j, m)
+        sj = operatorsign(isannihilation(w[kj]))
+        kj = nextmode(kj, length(w))
+        ki = 1
+        for i in 1:n
+            i1, i2 = ops(i, n)
+            si = operatorsign(isannihilation(w[ki]))
+            ki = nextmode(ki, length(w))
+            Sij = S_scattering[i, j]
+            S_symplectic[i1, j1] = real(Sij)
+            S_symplectic[i1, j2] = -sj * imag(Sij)
+            S_symplectic[i2, j1] = si * imag(Sij)
+            S_symplectic[i2, j2] = si * sj * real(Sij)
+        end
+    end
     return S_symplectic
 end
+
+function quadrature_to_scattering!(S_scattering::AbstractMatrix,
+        S_symplectic::AbstractMatrix, w::AbstractVector, ops; atol::Real = 0,
+        rtol::Real = defaultrtol(S_symplectic, atol))
+    checkmatrixform(S_symplectic, S_scattering, w)
+    n, m = size(S_scattering)
+    normS = norm(S_symplectic)
+    kj = 1
+    @inbounds for j in 1:m
+        j1, j2 = ops(j, m)
+        sj = operatorsign(isannihilation(w[kj]))
+        kj = nextmode(kj, length(w))
+        ki = 1
+        for i in 1:n
+            i1, i2 = ops(i, n)
+            si = operatorsign(isannihilation(w[ki]))
+            ki = nextmode(ki, length(w))
+            q11 = S_symplectic[i1, j1]
+            q12 = S_symplectic[i1, j2]
+            q21 = S_symplectic[i2, j1]
+            q22 = S_symplectic[i2, j2]
+            # the real and the imaginary part each held twice in the block,
+            # averaged; the differences are the departure from the block of
+            # an entry
+            checkformerror((q11 - si * sj * q22 + im * (si * q21 + sj * q12)) / 2,
+                atol, rtol, normS, "symplectic")
+            S_scattering[i, j] = (q11 + si * sj * q22 + im * (si * q21 - sj * q12)) / 2
+        end
+    end
+    return S_scattering
+end
+
+# --- the conversions ---------------------------------------------------
+
+"""
+    scattering_to_quadrature_pair(S_scattering::AbstractVector, w)
+
+Return the quadrature vector `[x_1, p_1, ..., x_n, p_n]` of the vector of
+amplitudes `S_scattering` of modes of signed frequencies `w`, with
+`x = sqrt(2)*real(a)` and `p = sqrt(2)*imag(a)` for the amplitude `a` of an
+annihilation operator (a mode of positive frequency) and `p` of the
+opposite sign for that of a creation operator. The length of
+`S_scattering` must be a multiple of that of `w`.
+"""
+scattering_to_quadrature_pair(S_scattering::AbstractVector, w) =
+    scattering_to_quadrature_pair!(
+        zeros(quadraturetype(eltype(S_scattering)), 2 * length(S_scattering)),
+        S_scattering, w)
+
+"""
+    scattering_to_quadrature_block(S_scattering::AbstractVector, w)
+
+Return the quadrature vector `[x_1, ..., x_n, p_1, ..., p_n]` of the vector
+of amplitudes `S_scattering` of modes of signed frequencies `w`; see
+[`scattering_to_quadrature_pair`](@ref).
+"""
+scattering_to_quadrature_block(S_scattering::AbstractVector, w) =
+    scattering_to_quadrature_block!(
+        zeros(quadraturetype(eltype(S_scattering)), 2 * length(S_scattering)),
+        S_scattering, w)
 
 """
     scattering_to_ladder_pair(S_scattering::AbstractVector, w)
 
+Return the ladder vector `[a_1, a_1', ..., a_n, a_n']` of the vector of
+amplitudes `S_scattering` of modes of signed frequencies `w`: each
+amplitude and its conjugate, in the order of an annihilation operator
+(a mode of positive frequency) and its conjugate, or of a creation
+operator's conjugate and itself. The length of `S_scattering` must be a
+multiple of that of `w`.
 """
-function scattering_to_ladder_pair(S_scattering::AbstractVector, w)
-    n = length(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2 * n)
-    return scattering_to_ladder_pair!(S_bogoliubov, S_scattering, w)
-end
-
-function scattering_to_ladder_pair!(S_bogoliubov::AbstractVector,
-    S_scattering::AbstractVector, w::AbstractVector)
-
-    # check the relative sizes
-    if length(S_bogoliubov) != 2 * length(S_scattering)
-        throw(DimensionMismatch(lazy"The length of the bogoliubov vector must be double that of the scattering parameter vector."))
-    end
-
-    # the length of the scattering vector must be a multiple of the number
-    # of modes
-    Nmodes = length(w)
-    n = length(S_scattering)
-    if mod(n, Nmodes) != 0
-        throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
-    end
-
-    # loop through the scattering vector to place each of the elements
-    for i in eachindex(S_scattering)
-        if w[mod(i - 1, Nmodes)+1] > 0
-            # a positive frequency mode: an annihilation operator
-            S_bogoliubov[2*i-1] = S_scattering[i]
-            S_bogoliubov[2*i] = conj(S_scattering[i])
-        else
-            # a negative frequency mode: a creation operator
-            S_bogoliubov[2*i-1] = conj(S_scattering[i])
-            S_bogoliubov[2*i] = S_scattering[i]
-        end
-    end
-
-    return S_bogoliubov
-end
+scattering_to_ladder_pair(S_scattering::AbstractVector, w) =
+    scattering_to_ladder_pair!(
+        zeros(eltype(S_scattering), 2 * length(S_scattering)), S_scattering, w)
 
 """
-
     scattering_to_ladder_block(S_scattering::AbstractVector, w)
 
+Return the ladder vector `[a_1, ..., a_n, a_1', ..., a_n']` of the vector of
+amplitudes `S_scattering` of modes of signed frequencies `w`; see
+[`scattering_to_ladder_pair`](@ref).
 """
-function scattering_to_ladder_block(S_scattering::AbstractVector, w)
-    n = length(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2 * n)
-    return scattering_to_ladder_block!(S_bogoliubov, S_scattering, w)
-end
-
-function scattering_to_ladder_block!(S_bogoliubov::AbstractVector,
-    S_scattering::AbstractVector, w::AbstractVector)
-
-    # check the relative sizes
-    if length(S_bogoliubov) != 2 * length(S_scattering)
-        throw(DimensionMismatch(lazy"The length of the bogoliubov vector must be double that of the scattering parameter vector."))
-    end
-
-    # the length of the scattering vector must be a multiple of the number
-    # of modes
-    Nmodes = length(w)
-    n = length(S_scattering)
-    if mod(n, Nmodes) != 0
-        throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
-    end
-
-    # loop through the scattering vector to place each of the elements
-    for i in eachindex(S_scattering)
-        if w[mod(i - 1, Nmodes)+1] > 0
-            # a positive frequency mode: an annihilation operator
-            S_bogoliubov[i] = S_scattering[i]
-            S_bogoliubov[i+n] = conj(S_scattering[i])
-        else
-            # a negative frequency mode: a creation operator
-            S_bogoliubov[i] = conj(S_scattering[i])
-            S_bogoliubov[i+n] = S_scattering[i]
-        end
-    end
-
-    return S_bogoliubov
-end
+scattering_to_ladder_block(S_scattering::AbstractVector, w) =
+    scattering_to_ladder_block!(
+        zeros(eltype(S_scattering), 2 * length(S_scattering)), S_scattering, w)
 
 """
     scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)
 
+Return the ladder (Bogoliubov) form, in pair operator order
+`ξ = [a_1, a_1', ..., a_n, a_n']`, of the scattering matrix `S_scattering`
+between modes of signed frequencies `w`. A mode of positive frequency is
+an annihilation operator `a` and any other a creation operator `a'`, the
+mode of scattering index `i` having the frequency
+`w[mod(i-1, length(w))+1]`. Each entry and its conjugate take two of the
+four entries of the two by two block of its row and column, according to
+the operators of the two modes, and the other two are zero.
+`S_scattering` may be rectangular.
+
+See also [`ladder_to_scattering_pair`](@ref),
+[`scattering_to_ladder_block`](@ref) and
+[`scattering_to_quadrature_pair`](@ref).
 """
 function scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)
     n, m = size(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2 * n, 2 * m)
-    return scattering_to_ladder_pair!(S_bogoliubov, S_scattering, w)
+    return scattering_to_ladder_pair!(zeros(eltype(S_scattering), 2 * n, 2 * m),
+        S_scattering, w)
 end
-
-function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
-    S_scattering::AbstractMatrix, w::AbstractVector)
-
-    Nmodes = length(w)
-
-    # each entry lands in one of four positions of its 2x2 block according
-    # to the signs of its row and column mode frequencies
-
-    for i in 1:size(S_scattering, 1)
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:size(S_scattering, 2)
-            wj = w[mod(j - 1, Nmodes)+1]
-            Sij = S_scattering[i, j]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    S_bogoliubov[2*i-1, 2*j-1] = Sij
-                    S_bogoliubov[2*i-1, 2*j] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i, 2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i, 2*j] = conj(Sij)
-                else
-                    # row positive, col negative
-                    S_bogoliubov[2*i-1, 2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i-1, 2*j] = Sij
-                    S_bogoliubov[2*i, 2*j-1] = conj(Sij)
-                    S_bogoliubov[2*i, 2*j] = zero(eltype(S_bogoliubov))
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    S_bogoliubov[2*i-1, 2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i-1, 2*j] = conj(Sij)
-                    S_bogoliubov[2*i, 2*j-1] = Sij
-                    S_bogoliubov[2*i, 2*j] = zero(eltype(S_bogoliubov))
-                else
-                    # both negative
-                    S_bogoliubov[2*i-1, 2*j-1] = conj(Sij)
-                    S_bogoliubov[2*i-1, 2*j] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i, 2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i, 2*j] = Sij
-                end
-            end
-        end
-    end
-    return S_bogoliubov
-end
-
-# the functions below are for any type
-function _ladder_to_scattering_pair(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
-
-    n, m = size(S_bogoliubov)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
-end
-
-function _ladder_to_scattering_pair(S_bogoliubov::AbstractMatrix{Complex{T}}, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
-
-    n, m = size(S_bogoliubov)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
-end
-
-# the functions below are for floating point inputs
-function ladder_to_scattering_pair(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
-
-    return _ladder_to_scattering_pair(S_bogoliubov, w; atol = atol, rtol = rtol)
-end
-
-# the function below is for symbolic inputs
-function ladder_to_scattering_pair(S_bogoliubov::AbstractArray, w)
-    return _ladder_to_scattering_pair(S_bogoliubov, w; atol = 0, rtol = 0)
-end
-
-function ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol))
-
-    Nmodes = length(w)
-    normS = norm(S_bogoliubov)
-
-    for i in 1:size(S_scattering, 1)
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:size(S_scattering, 2)
-            wj = w[mod(j - 1, Nmodes)+1]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    Sij = (S_bogoliubov[2*i-1, 2*j-1]+conj(S_bogoliubov[2*i, 2*j]))/2
-                    Sij_error1 = (S_bogoliubov[2*i-1, 2*j-1]-conj(S_bogoliubov[2*i, 2*j]))/2
-                    Sij_error2 = S_bogoliubov[2*i-1, 2*j]
-                    Sij_error3 = S_bogoliubov[2*i, 2*j-1]
-                else
-                    # row positive, col negative
-                    Sij = (S_bogoliubov[2*i-1, 2*j]+conj(S_bogoliubov[2*i, 2*j-1]))/2
-                    Sij_error1 = (S_bogoliubov[2*i-1, 2*j]-conj(S_bogoliubov[2*i, 2*j-1]))/2
-                    Sij_error2 = S_bogoliubov[2*i-1, 2*j-1]
-                    Sij_error3 = S_bogoliubov[2*i, 2*j]
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    Sij = (S_bogoliubov[2*i, 2*j-1]+conj(S_bogoliubov[2*i-1, 2*j]))/2
-                    Sij_error1 = (S_bogoliubov[2*i, 2*j-1]-conj(S_bogoliubov[2*i-1, 2*j]))/2
-                    Sij_error2 = S_bogoliubov[2*i-1, 2*j-1]
-                    Sij_error3 = S_bogoliubov[2*i, 2*j]
-                else
-                    # both negative
-                    Sij = (S_bogoliubov[2*i, 2*j]+conj(S_bogoliubov[2*i-1, 2*j-1]))/2
-                    Sij_error1 = (S_bogoliubov[2*i, 2*j]-conj(S_bogoliubov[2*i-1, 2*j-1]))/2
-                    Sij_error2 = S_bogoliubov[2*i-1, 2*j]
-                    Sij_error3 = S_bogoliubov[2*i, 2*j-1]
-                end
-            end
-            # these nested checks are to avoid errors for symbolic inputs
-            if !iszero(Sij_error1)
-                if abs(Sij_error1) > max(atol, rtol*normS)
-                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            if !iszero(Sij_error2)
-                if abs(Sij_error2) > max(atol, rtol*normS)
-                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            if !iszero(Sij_error3)
-                if abs(Sij_error3) > max(atol, rtol*normS)
-                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            S_scattering[i, j] = Sij
-        end
-    end
-
-    return S_scattering
-end
-
 
 """
     scattering_to_ladder_block(S_scattering::AbstractMatrix, w)
 
+Return the ladder (Bogoliubov) form, in block operator order
+`ξ = [a_1, ..., a_n, a_1', ..., a_n']`, of the scattering matrix
+`S_scattering` between modes of signed frequencies `w`; see
+[`scattering_to_ladder_pair`](@ref).
 """
 function scattering_to_ladder_block(S_scattering::AbstractMatrix, w)
     n, m = size(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2 * n, 2 * m)
-    return scattering_to_ladder_block!(S_bogoliubov, S_scattering, w)
+    return scattering_to_ladder_block!(zeros(eltype(S_scattering), 2 * n, 2 * m),
+        S_scattering, w)
 end
 
-function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
-    S_scattering::AbstractMatrix, w::AbstractVector)
+"""
+    scattering_to_quadrature_pair(S_scattering::AbstractMatrix, w)
 
-    Nmodes = length(w)
-
-    # each entry lands in one of the four blocks of S = [A B; C D]
-    # according to the signs of its row and column mode frequencies
-
-    n = size(S_scattering, 1)
-    m = size(S_scattering, 2)
-
-    for i in 1:n
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:m
-            wj = w[mod(j - 1, Nmodes)+1]
-            Sij = S_scattering[i, j]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    # A
-                    S_bogoliubov[i, j] = Sij
-                    # B
-                    S_bogoliubov[i, j+m] = zero(eltype(S_bogoliubov))
-                    # C
-                    S_bogoliubov[i+m, j] = zero(eltype(S_bogoliubov))
-                    # D
-                    S_bogoliubov[i+n, j+m] = conj(Sij)
-                else
-                    # row positive, col negative
-                    # A
-                    S_bogoliubov[i, j] = zero(eltype(S_bogoliubov))
-                    # B
-                    S_bogoliubov[i, j+m] = Sij
-                    # C
-                    S_bogoliubov[i+m, j] = conj(Sij)
-                    # D
-                    S_bogoliubov[i+n, j+m] = zero(eltype(S_bogoliubov))
-
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    # A
-                    S_bogoliubov[i, j] = zero(eltype(S_bogoliubov))
-                    # B
-                    S_bogoliubov[i, j+m] = conj(Sij)
-                    # C
-                    S_bogoliubov[i+m, j] = Sij
-                    # D
-                    S_bogoliubov[i+n, j+m] = zero(eltype(S_bogoliubov))
-
-                else
-                    # both negative
-                    # A
-                    S_bogoliubov[i, j] = conj(Sij)
-                    # B
-                    S_bogoliubov[i, j+m] = zero(eltype(S_bogoliubov))
-                    # C
-                    S_bogoliubov[i+m, j] = zero(eltype(S_bogoliubov))
-                    # D
-                    S_bogoliubov[i+n, j+m] = Sij
-                end
-            end
-        end
-    end
-
-    return S_bogoliubov
+Return the quadrature (symplectic) form, in pair operator order
+`r = [x_1, p_1, ..., x_n, p_n]`, of the scattering matrix `S_scattering`
+between modes of signed frequencies `w`, with `a = (x + im*p)/sqrt(2)` for
+an annihilation operator `a`; see [`scattering_to_ladder_pair`](@ref) for
+the modes. Each entry takes the real two by two block of multiplication by
+it, turned for creation operators. The form is real even when
+`S_scattering` is complex.
+"""
+function scattering_to_quadrature_pair(S_scattering::AbstractMatrix, w)
+    n, m = size(S_scattering)
+    return scattering_to_quadrature_pair!(
+        zeros(quadraturetype(eltype(S_scattering)), 2 * n, 2 * m), S_scattering, w)
 end
 
-# the functions below are for any type
-function _ladder_to_scattering_block(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
+"""
+    scattering_to_quadrature_block(S_scattering::AbstractMatrix, w)
 
-    n, m = size(S_bogoliubov)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
+Return the quadrature (symplectic) form, in block operator order
+`r = [x_1, ..., x_n, p_1, ..., p_n]`, of the scattering matrix
+`S_scattering` between modes of signed frequencies `w`; see
+[`scattering_to_quadrature_pair`](@ref).
+"""
+function scattering_to_quadrature_block(S_scattering::AbstractMatrix, w)
+    n, m = size(S_scattering)
+    return scattering_to_quadrature_block!(
+        zeros(quadraturetype(eltype(S_scattering)), 2 * n, 2 * m), S_scattering, w)
 end
 
-function _ladder_to_scattering_block(S_bogoliubov::AbstractMatrix{Complex{T}}, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
+scattering_to_quadrature_pair!(S_symplectic::AbstractArray,
+    S_scattering::AbstractArray, w::AbstractVector) =
+    scattering_to_quadrature!(S_symplectic, S_scattering, w, pairops)
+scattering_to_quadrature_block!(S_symplectic::AbstractArray,
+    S_scattering::AbstractArray, w::AbstractVector) =
+    scattering_to_quadrature!(S_symplectic, S_scattering, w, blockops)
+scattering_to_ladder_pair!(S_bogoliubov::AbstractArray,
+    S_scattering::AbstractArray, w::AbstractVector) =
+    scattering_to_ladder!(S_bogoliubov, S_scattering, w, pairops)
+scattering_to_ladder_block!(S_bogoliubov::AbstractArray,
+    S_scattering::AbstractArray, w::AbstractVector) =
+    scattering_to_ladder!(S_bogoliubov, S_scattering, w, blockops)
 
-    n, m = size(S_bogoliubov)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
+# the scattering matrix read back from the form `S`
+scatteringfromform(S::AbstractMatrix) =
+    zeros(scatteringtype(eltype(S)), size(S, 1) ÷ 2, size(S, 2) ÷ 2)
+
+"""
+    ladder_to_scattering_pair(S_bogoliubov, w; atol = 0, rtol = ...)
+
+Return the scattering matrix whose ladder (Bogoliubov) form in pair
+operator order is `S_bogoliubov`, between modes of signed frequencies `w`;
+the inverse of [`scattering_to_ladder_pair`](@ref). Each entry is the
+average of the two entries of the form holding it and its conjugate; if
+their difference, or an entry of the form which should be zero, exceeds
+`max(atol, rtol*norm(S_bogoliubov))`, it is an error. The default `rtol`
+is the smaller dimension of `S_bogoliubov` times the machine epsilon of
+its element type, and zero when `atol` is given. Input which is not of
+floating point type, such as symbolic input, is converted with both
+tolerances zero.
+"""
+function ladder_to_scattering_pair(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=defaultrtol(S_bogoliubov, atol)) where T<:Union{AbstractFloat,Complex{<:AbstractFloat}}
+    return ladder_to_scattering_pair!(scatteringfromform(S_bogoliubov),
+        S_bogoliubov, w; atol = atol, rtol = rtol)
 end
 
-# the functions below are for floating point inputs
+function ladder_to_scattering_pair(S_bogoliubov::AbstractArray, w)
+    return ladder_to_scattering_pair!(scatteringfromform(S_bogoliubov),
+        S_bogoliubov, w; atol = 0, rtol = 0)
+end
+
+"""
+    ladder_to_scattering_block(S_bogoliubov, w; atol = 0, rtol = ...)
+
+Return the scattering matrix whose ladder (Bogoliubov) form in block
+operator order is `S_bogoliubov`, between modes of signed frequencies `w`;
+the inverse of [`scattering_to_ladder_block`](@ref). See
+[`ladder_to_scattering_pair`](@ref) for the tolerances.
+"""
 function ladder_to_scattering_block(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
-
-    return _ladder_to_scattering_block(S_bogoliubov, w; atol = atol, rtol = rtol)
+    rtol::Real=defaultrtol(S_bogoliubov, atol)) where T<:Union{AbstractFloat,Complex{<:AbstractFloat}}
+    return ladder_to_scattering_block!(scatteringfromform(S_bogoliubov),
+        S_bogoliubov, w; atol = atol, rtol = rtol)
 end
 
-# the function below is for symbolic inputs
 function ladder_to_scattering_block(S_bogoliubov::AbstractArray, w)
-    return _ladder_to_scattering_block(S_bogoliubov, w; atol = 0, rtol = 0)
+    return ladder_to_scattering_block!(scatteringfromform(S_bogoliubov),
+        S_bogoliubov, w; atol = 0, rtol = 0)
 end
-
-function ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol::Real=0,
-    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol))
-
-    Nmodes = length(w)
-    normS = norm(S_bogoliubov)
-
-    # each entry lands in one of the four blocks of S = [A B; C D]
-    # according to the signs of its row and column mode frequencies
-
-    n = size(S_scattering, 1)
-    m = size(S_scattering, 2)
-
-    for i in 1:n
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:m
-            wj = w[mod(j - 1, Nmodes)+1]
-            Sij = S_scattering[i, j]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    Sij = (S_bogoliubov[i, j]+conj(S_bogoliubov[i+n, j+m]))/2
-                    Sij_error1 = (S_bogoliubov[i, j]-conj(S_bogoliubov[i+n, j+m]))/2
-                    Sij_error2 = S_bogoliubov[i, j+m]
-                    Sij_error3 = S_bogoliubov[i+m, j]
-                else
-                    # row positive, col negative
-                    Sij = (S_bogoliubov[i, j+m]+conj(S_bogoliubov[i+m, j]))/2
-                    Sij_error1 = (S_bogoliubov[i, j+m]-conj(S_bogoliubov[i+m, j]))/2
-                    Sij_error2 = S_bogoliubov[i, j]
-                    Sij_error3 = S_bogoliubov[i+n, j+m]
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    Sij = (S_bogoliubov[i+m, j]+conj(S_bogoliubov[i, j+m]))/2
-                    Sij_error1 = (S_bogoliubov[i+m, j]-conj(S_bogoliubov[i, j+m]))/2
-                    Sij_error2 = S_bogoliubov[i, j]
-                    Sij_error3 = S_bogoliubov[i+n, j+m]
-                else
-                    # both negative
-                    Sij = (S_bogoliubov[i+n, j+m]+conj(S_bogoliubov[i, j]))/2
-                    Sij_error1 = (S_bogoliubov[i+n, j+m]-conj(S_bogoliubov[i, j]))/2
-                    Sij_error2 = S_bogoliubov[i, j+m]
-                    Sij_error3 = S_bogoliubov[i+m, j]
-                end
-            end
-            # these nested checks are to avoid errors for symbolic inputs
-            if !iszero(Sij_error1)
-                if abs(Sij_error1) > max(atol, rtol*normS)
-                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            if !iszero(Sij_error2)
-                if abs(Sij_error2) > max(atol, rtol*normS)
-                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            if !iszero(Sij_error3)
-                if abs(Sij_error3) > max(atol, rtol*normS)
-                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            S_scattering[i, j] = Sij
-        end
-    end
-    return S_scattering
-end
-
 
 """
-    scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
+    quadrature_to_scattering_pair(S_symplectic, w; atol = 0, rtol = ...)
 
+Return the scattering matrix whose quadrature (symplectic) form in pair
+operator order is `S_symplectic`, between modes of signed frequencies `w`;
+the inverse of [`scattering_to_quadrature_pair`](@ref). The real and the
+imaginary part of each entry are the averages of the two entries of its
+block holding each; if the differences exceed
+`max(atol, rtol*norm(S_symplectic))`, it is an error. See
+[`ladder_to_scattering_pair`](@ref) for the default tolerances.
 """
-function scattering_to_quadrature_pair(S_scattering::AbstractMatrix{T}, w) where {T}
-    n, m = size(S_scattering)
-    S_symplectic = zeros(T, 2 * n, 2 * m)
-    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
-end
-
-function scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
-    # the symplectic matrix is real even when `S_scattering` is complex
-    n, m = size(S_scattering)
-    S_symplectic = zeros(T, 2 * n, 2 * m)
-    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
-end
-
-function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
-    S_scattering::AbstractMatrix, w::AbstractVector)
-
-    Nmodes = length(w)
-
-    # each entry lands in one of four positions of its 2x2 block according
-    # to the signs of its row and column mode frequencies
-
-    for i in 1:size(S_scattering, 1)
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:size(S_scattering, 2)
-            wj = w[mod(j - 1, Nmodes)+1]
-            Sij = S_scattering[i, j]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    S_symplectic[2*i-1, 2*j-1] = real(Sij)
-                    S_symplectic[2*i-1, 2*j] = -imag(Sij)
-                    S_symplectic[2*i, 2*j-1] = imag(Sij)
-                    S_symplectic[2*i, 2*j] = real(Sij)
-                else
-                    # row positive, col negative
-                    S_symplectic[2*i-1, 2*j-1] = real(Sij)
-                    S_symplectic[2*i-1, 2*j] = imag(Sij)
-                    S_symplectic[2*i, 2*j-1] = imag(Sij)
-                    S_symplectic[2*i, 2*j] = -real(Sij)
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    S_symplectic[2*i-1, 2*j-1] = real(Sij)
-                    S_symplectic[2*i-1, 2*j] = -imag(Sij)
-                    S_symplectic[2*i, 2*j-1] = -imag(Sij)
-                    S_symplectic[2*i, 2*j] = -real(Sij)
-                else
-                    # both negative
-                    S_symplectic[2*i-1, 2*j-1] = real(Sij)
-                    S_symplectic[2*i-1, 2*j] = imag(Sij)
-                    S_symplectic[2*i, 2*j-1] = -imag(Sij)
-                    S_symplectic[2*i, 2*j] = real(Sij)
-                end
-            end
-        end
-    end
-
-    return S_symplectic
-end
-
-
-# the functions below are for any type
-function _quadrature_to_scattering_pair(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
-
-    n, m = size(S_symplectic)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
-end
-
-function _quadrature_to_scattering_pair(S_symplectic::AbstractMatrix{Complex{T}}, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
-
-    n, m = size(S_symplectic)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
-end
-
-# the functions below are for floating point inputs
 function quadrature_to_scattering_pair(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
-
-    return _quadrature_to_scattering_pair(S_symplectic, w; atol = atol, rtol = rtol)
+    rtol::Real=defaultrtol(S_symplectic, atol)) where T<:Union{AbstractFloat,Complex{<:AbstractFloat}}
+    return quadrature_to_scattering_pair!(scatteringfromform(S_symplectic),
+        S_symplectic, w; atol = atol, rtol = rtol)
 end
 
-# the function below is for symbolic inputs
 function quadrature_to_scattering_pair(S_symplectic::AbstractArray, w)
-    return _quadrature_to_scattering_pair(S_symplectic, w; atol = 0, rtol = 0)
+    return quadrature_to_scattering_pair!(scatteringfromform(S_symplectic),
+        S_symplectic, w; atol = 0, rtol = 0)
 end
-
-function quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol))
-
-    Nmodes = length(w)
-    normS = norm(S_symplectic)
-
-    for i in 1:size(S_scattering, 1)
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:size(S_scattering, 2)
-            wj = w[mod(j - 1, Nmodes)+1]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    Sij = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
-                    im*(-S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
-                    Sij_error = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
-                    im*(-S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
-                else
-                    # row positive, col negative
-                    Sij = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
-                    im*(S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
-                    Sij_error = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
-                    im*(S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    Sij = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
-                    -im*(S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
-                    Sij_error = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
-                    im*(S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
-                else
-                    # both negative
-                    Sij = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
-                    im*(S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
-                    Sij_error = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
-                    im*(S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
-                end
-            end
-            # these nested checks are to avoid errors for symbolic inputs
-            if !iszero(Sij_error)
-                if abs(Sij_error) > max(atol, rtol*normS)
-                    error(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            S_scattering[i, j] = Sij
-        end
-    end
-
-    return S_scattering
-end
-
 
 """
-    scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
+    quadrature_to_scattering_block(S_symplectic, w; atol = 0, rtol = ...)
 
+Return the scattering matrix whose quadrature (symplectic) form in block
+operator order is `S_symplectic`, between modes of signed frequencies `w`;
+the inverse of [`scattering_to_quadrature_block`](@ref). See
+[`quadrature_to_scattering_pair`](@ref) for the tolerances.
 """
-function scattering_to_quadrature_block(S_scattering::AbstractMatrix{T}, w) where {T}
-    n, m = size(S_scattering)
-    S_symplectic = zeros(T, 2 * n, 2 * m)
-    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
-end
-
-function scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
-    # the symplectic matrix is real even when `S_scattering` is complex
-    n, m = size(S_scattering)
-    S_symplectic = zeros(T, 2 * n, 2 * m)
-    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
-end
-
-function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
-    S_scattering::AbstractMatrix, w::AbstractVector)
-
-    Nmodes = length(w)
-
-    # each entry is read from the four blocks of S = [A B; C D] according
-    # to the signs of its row and column mode frequencies
-
-    n = size(S_scattering, 1)
-    m = size(S_scattering, 2)
-
-    for i in 1:n
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:m
-            wj = w[mod(j - 1, Nmodes)+1]
-            Sij = S_scattering[i, j]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    # A
-                    S_symplectic[i, j] = real(Sij)
-                    # B
-                    S_symplectic[i, j+m] = -imag(Sij)
-                    # C
-                    S_symplectic[i+m, j] = imag(Sij)
-                    # D
-                    S_symplectic[i+n, j+m] = real(Sij)
-                else
-                    # row positive, col negative
-                    # A
-                    S_symplectic[i, j] = real(Sij)
-                    # B
-                    S_symplectic[i, j+m] = imag(Sij)
-                    # C
-                    S_symplectic[i+m, j] = imag(Sij)
-                    # D
-                    S_symplectic[i+n, j+m] = -real(Sij)
-
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    # A
-                    S_symplectic[i, j] = real(Sij)
-                    # B
-                    S_symplectic[i, j+m] = -imag(Sij)
-                    # C
-                    S_symplectic[i+m, j] = -imag(Sij)
-                    # D
-                    S_symplectic[i+n, j+m] = -real(Sij)
-
-                else
-                    # both negative
-                    # A
-                    S_symplectic[i, j] = real(Sij)
-                    # B
-                    S_symplectic[i, j+m] = imag(Sij)
-                    # C
-                    S_symplectic[i+m, j] = -imag(Sij)
-                    # D
-                    S_symplectic[i+n, j+m] = real(Sij)
-                end
-            end
-        end
-    end
-
-    return S_symplectic
-end
-
-
-# the functions below are for any type
-function _quadrature_to_scattering_block(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
-
-    n, m = size(S_symplectic)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
-end
-
-function _quadrature_to_scattering_block(S_symplectic::AbstractMatrix{Complex{T}}, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
-
-    n, m = size(S_symplectic)
-    S_scattering = zeros(Complex{T}, n÷2, m÷2)
-    return quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
-end
-
-# the functions below are for floating point inputs
 function quadrature_to_scattering_block(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
-
-    return _quadrature_to_scattering_block(S_symplectic, w; atol = atol, rtol = rtol)
+    rtol::Real=defaultrtol(S_symplectic, atol)) where T<:Union{AbstractFloat,Complex{<:AbstractFloat}}
+    return quadrature_to_scattering_block!(scatteringfromform(S_symplectic),
+        S_symplectic, w; atol = atol, rtol = rtol)
 end
 
-# the function below is for symbolic inputs
 function quadrature_to_scattering_block(S_symplectic::AbstractArray, w)
-    return _quadrature_to_scattering_block(S_symplectic, w; atol = 0, rtol = 0)
+    return quadrature_to_scattering_block!(scatteringfromform(S_symplectic),
+        S_symplectic, w; atol = 0, rtol = 0)
 end
 
-function quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol::Real=0,
-    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol))
-
-    Nmodes = length(w)
-
-    normS = norm(S_symplectic)
-
-    # each entry is read from the four blocks of S = [A B; C D] according
-    # to the signs of its row and column mode frequencies
-
-    n = size(S_scattering, 1)
-    m = size(S_scattering, 2)
-
-    for i in 1:n
-        wi = w[mod(i - 1, Nmodes)+1]
-        for j in 1:m
-            wj = w[mod(j - 1, Nmodes)+1]
-            if wi > zero(wi)
-                if wj > zero(wj)
-                    # both positive
-                    Sij = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
-                    im*(-S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
-                    Sij_error = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
-                    im*(-S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
-                else
-                    # row positive, col negative
-                    Sij = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
-                    im*(S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
-                    Sij_error = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
-                    im*(S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
-                end
-            else
-                if wj > zero(wj)
-                    # row negative, col positive
-                    Sij = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
-                    -im*(S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
-                    Sij_error = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
-                    im*(S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
-                else
-                    # both negative
-                    Sij = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
-                    im*(S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
-                    Sij_error = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
-                    im*(S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
-                end
-            end
-            # these nested checks are to avoid errors for symbolic inputs
-            if !iszero(Sij_error)
-                if abs(Sij_error) > max(atol, rtol*normS)
-                    error(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`.")
-                end
-            end
-            S_scattering[i, j] = Sij
-
-        end
-    end
-
-    return S_scattering
-end
+ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol::Real=0,
+    rtol::Real=defaultrtol(S_bogoliubov, atol)) =
+    ladder_to_scattering!(S_scattering, S_bogoliubov, w, pairops;
+        atol = atol, rtol = rtol)
+ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol::Real=0,
+    rtol::Real=defaultrtol(S_bogoliubov, atol)) =
+    ladder_to_scattering!(S_scattering, S_bogoliubov, w, blockops;
+        atol = atol, rtol = rtol)
+quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol::Real=0,
+    rtol::Real=defaultrtol(S_symplectic, atol)) =
+    quadrature_to_scattering!(S_scattering, S_symplectic, w, pairops;
+        atol = atol, rtol = rtol)
+quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol::Real=0,
+    rtol::Real=defaultrtol(S_symplectic, atol)) =
+    quadrature_to_scattering!(S_scattering, S_symplectic, w, blockops;
+        atol = atol, rtol = rtol)
 
 
 """
     ports_modes_to_modes_ports_perm(Nports,Nmodes)
 
 Return a permutation vector that converts one axis of a scattering matrix with
-`Nports` ports and `Nmodes` modes from (port,mode) ordering to a (mode,port)
-ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
-1,2,3,4 then (port,mode) order is:
-[(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2)]
-and (mode,port) order is:
-[(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4)]
-The permutation to change the first into the second is in the example below:
+`Nports` ports and `Nmodes` modes from (ports, modes) ordering to
+(modes, ports) ordering. In (ports, modes) ordering the port index runs
+fastest, as in an array of size `(Nports, Nmodes)`: port `p` of mode `m` is
+at `p + (m-1)*Nports`. In (modes, ports) ordering the mode index runs
+fastest, which is the order of the solvers' scattering matrices: mode `m`
+of port `p` is at `m + (p-1)*Nmodes`. Entry `k` of the permutation is the
+index in (ports, modes) ordering of the entry that goes to index `k`.
 
 # Examples
+For 2 ports and 4 modes the (ports, modes) ordering is
+`[(p1,m1), (p2,m1), (p1,m2), (p2,m2), (p1,m3), (p2,m3), (p1,m4), (p2,m4)]`
+and the (modes, ports) ordering is
+`[(p1,m1), (p1,m2), (p1,m3), (p1,m4), (p2,m1), (p2,m2), (p2,m3), (p2,m4)]`:
 ```jldoctest
 julia> p = JosephsonCircuits.ports_modes_to_modes_ports_perm(2,4)
 8-element Vector{Int64}:
@@ -2134,29 +1890,25 @@ julia> p = JosephsonCircuits.ports_modes_to_modes_ports_perm(2,4)
 ```
 """
 function ports_modes_to_modes_ports_perm(Nports, Nmodes)
-
-    # for (ports,modes) to (modes,ports)
-    p = Vector{Int}(undef, Nports * Nmodes)
-    for i in eachindex(p)
-        p[i] = mod(1 + (i - 1) * Nports, length(p)) + div(i - 1, Nmodes)
-    end
-
-    return p
+    # the index in (ports, modes) ordering of each port and mode, read in
+    # (modes, ports) ordering
+    return vec(permutedims(reshape(1:Nports*Nmodes, Nports, Nmodes)))
 end
 
 """
     modes_ports_to_ports_modes_perm(Nports,Nmodes)
 
 Return a permutation vector that converts one axis of a scattering matrix with
-`Nports` ports and `Nmodes` modes from (mode,port) ordering to a (port,mode)
-ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
-1,2,3,4 then (mode,port) order is:
-[(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4)]
-and (port,mode) order is:
-[(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2)]
-The permutation to change the first into the second is in the example below:
+`Nports` ports and `Nmodes` modes from (modes, ports) ordering to
+(ports, modes) ordering, the inverse of
+[`ports_modes_to_modes_ports_perm`](@ref), where the orderings are
+described.
 
 # Examples
+For 2 ports and 4 modes the (modes, ports) ordering is
+`[(p1,m1), (p1,m2), (p1,m3), (p1,m4), (p2,m1), (p2,m2), (p2,m3), (p2,m4)]`
+and the (ports, modes) ordering is
+`[(p1,m1), (p2,m1), (p1,m2), (p2,m2), (p1,m3), (p2,m3), (p1,m4), (p2,m4)]`:
 ```jldoctest
 julia> p = JosephsonCircuits.modes_ports_to_ports_modes_perm(2,4)
 8-element Vector{Int64}:
@@ -2171,27 +1923,20 @@ julia> p = JosephsonCircuits.modes_ports_to_ports_modes_perm(2,4)
 ```
 """
 function modes_ports_to_ports_modes_perm(Nports, Nmodes)
-
-    # for (modes,ports) to (ports,modes)
-    p = Vector{Int}(undef, Nports * Nmodes)
-    for i in eachindex(p)
-        p[i] = mod(1 + (i - 1) * Nmodes, length(p)) + div(i - 1, Nports)
-    end
-
-    return p
+    # the index in (modes, ports) ordering of each port and mode, read in
+    # (ports, modes) ordering
+    return vec(permutedims(reshape(1:Nports*Nmodes, Nmodes, Nports)))
 end
 
 """
     scattering_to_pair_perm(p0::Vector{Int})
 
-Return a permutation vector that converts one axis of a scattering matrix with
-`Nports` ports and `Nmodes` modes from (port,mode) ordering to a (mode,port)
-ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
-1,2,3,4 then (port,mode) order is:
-[(1,1),(1,1),(1,2),(1,2),(2,1),(2,1),(2,2),(2,2),(3,1),(3,1),(3,2),(3,2),(4,1),(4,1),(4,2),(4,2)]
-and (mode,port) order is:
-[(1,1),(1,1),(1,2),(1,2),(1,3),(1,3),(1,4),(1,4),(2,1),(2,1),(2,2),(2,2),(2,3),(2,3),(2,4),(2,4)]
-The permutation to change the first into the second is in the example below:
+Return the permutation of an axis of the pair ordered form of a scattering
+matrix, in which scattering index `i` has its two operators at `2i-1` and
+`2i`, that moves the scattering indices as the permutation `p0` of the
+scattering matrix does, each pair together. For example the permutation
+from (ports, modes) to (modes, ports) ordering of 2 ports and 4 modes,
+[`ports_modes_to_modes_ports_perm`](@ref), becomes:
 
 # Examples
 ```jldoctest
@@ -2217,7 +1962,7 @@ julia> JosephsonCircuits.scattering_to_pair_perm(JosephsonCircuits.ports_modes_t
 """
 function scattering_to_pair_perm(p0::Vector{Int})
 
-    # for (ports,modes) to (modes,ports)
+    # the two operators of scattering index p0[i] go to 2i-1 and 2i
     p = Vector{Int}(undef, 2 * length(p0))
     for i in eachindex(p0)
         p[2*i-1] = 2 * p0[i] - 1
@@ -2230,14 +1975,12 @@ end
 """
     scattering_to_block_perm(p0::Vector{Int})
 
-Return a permutation vector that converts one axis of a scattering matrix with
-`Nports` ports and `Nmodes` modes from (port,mode) ordering to a (mode,port)
-ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
-1,2,3,4 then (port,mode) order is:
-[(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2),(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2)]
-and (mode,port) order is:
-[(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4),(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4)]
-The permutation to change the first into the second is in the example below:
+Return the permutation of an axis of the block ordered form of a scattering
+matrix, in which scattering index `i` has its two operators at `i` and
+`i+n` for `n` scattering indices, that moves the scattering indices as the
+permutation `p0` of the scattering matrix does, in each block alike. For
+example the permutation from (ports, modes) to (modes, ports) ordering of 2
+ports and 4 modes, [`ports_modes_to_modes_ports_perm`](@ref), becomes:
 
 # Examples
 ```jldoctest
@@ -2263,7 +2006,7 @@ julia> JosephsonCircuits.scattering_to_block_perm(JosephsonCircuits.ports_modes_
 """
 function scattering_to_block_perm(p0::Vector{Int})
 
-    # for (ports,modes) to (modes,ports)
+    # the two operators of scattering index p0[i] go to i and i+n
     p = Vector{Int}(undef, 2 * length(p0))
     for i in eachindex(p0)
         p[i] = p0[i]
@@ -2279,9 +2022,39 @@ end
 # The pair and block forms permute within the symplectic structure: the
 # scattering permutation is built first and then adapted to each.
 
+# the number of ports of an axis of `n` scattering indices with `Nmodes`
+# modes each
+function axisports(n::Integer, Nmodes::Integer)
+    if Nmodes < 1 || mod(n, Nmodes) != 0
+        throw(DimensionMismatch(lazy"The number of scattering indices $(n) of an axis must be a multiple of the number of modes $(Nmodes)."))
+    end
+    return n ÷ Nmodes
+end
+
+# the number of scattering indices of an axis of length `n` of a pair or
+# block form, two operators per scattering index
+function axisindices(n::Integer)
+    if isodd(n)
+        throw(DimensionMismatch(lazy"The length $(n) of an axis of a pair or block form must be even."))
+    end
+    return n ÷ 2
+end
+
+# the permutation `perm(Nports, Nmodes)` of an axis of length `n` of a
+# scattering matrix, of its pair form, and of its block form
+scatteringaxisperm(perm, n, Nmodes) = perm(axisports(n, Nmodes), Nmodes)
+pairaxisperm(perm, n, Nmodes) =
+    scattering_to_pair_perm(perm(axisports(axisindices(n), Nmodes), Nmodes))
+blockaxisperm(perm, n, Nmodes) =
+    scattering_to_block_perm(perm(axisports(axisindices(n), Nmodes), Nmodes))
 
 """
     modes_ports_to_ports_modes_scattering(S::AbstractMatrix,Nmodes::Int)
+
+Reorder both axes of the scattering matrix `S` of `Nmodes` modes per port
+from (modes, ports) to (ports, modes) ordering; see
+[`modes_ports_to_ports_modes_perm`](@ref). The length of each axis must be
+a multiple of `Nmodes`.
 
 # Examples
 ```jldoctest
@@ -2301,18 +2074,17 @@ JosephsonCircuits.modes_ports_to_ports_modes_scattering(S,2)
 ```
 """
 function modes_ports_to_ports_modes_scattering(S::AbstractMatrix, Nmodes::Int)
-
-    if size(S, 1) == size(S, 2)
-        p1 = p2 = modes_ports_to_ports_modes_perm(size(S, 1) ÷ Nmodes, Nmodes)
-    else
-        p1 = modes_ports_to_ports_modes_perm(size(S, 1) ÷ Nmodes, Nmodes)
-        p2 = modes_ports_to_ports_modes_perm(size(S, 2) ÷ Nmodes, Nmodes)
-    end
-    return S[p1, p2]
+    return S[scatteringaxisperm(modes_ports_to_ports_modes_perm, size(S, 1), Nmodes),
+        scatteringaxisperm(modes_ports_to_ports_modes_perm, size(S, 2), Nmodes)]
 end
 
 """
     ports_modes_to_modes_ports_scattering(S::AbstractMatrix,Nmodes::Int)
+
+Reorder both axes of the scattering matrix `S` of `Nmodes` modes per port
+from (ports, modes) to (modes, ports) ordering; see
+[`ports_modes_to_modes_ports_perm`](@ref). The length of each axis must be
+a multiple of `Nmodes`.
 
 # Examples
 ```jldoctest
@@ -2332,18 +2104,18 @@ JosephsonCircuits.ports_modes_to_modes_ports_scattering(S,2)
 ```
 """
 function ports_modes_to_modes_ports_scattering(S::AbstractMatrix, Nmodes::Int)
-
-    if size(S, 1) == size(S, 2)
-        p1 = p2 = ports_modes_to_modes_ports_perm(size(S, 1) ÷ Nmodes, Nmodes)
-    else
-        p1 = ports_modes_to_modes_ports_perm(size(S, 1) ÷ Nmodes, Nmodes)
-        p2 = ports_modes_to_modes_ports_perm(size(S, 2) ÷ Nmodes, Nmodes)
-    end
-    return S[p1, p2]
+    return S[scatteringaxisperm(ports_modes_to_modes_ports_perm, size(S, 1), Nmodes),
+        scatteringaxisperm(ports_modes_to_modes_ports_perm, size(S, 2), Nmodes)]
 end
 
 """
     ports_modes_to_modes_ports_pair(S::AbstractMatrix,Nmodes::Int)
+
+Reorder both axes of the pair ordered ladder or quadrature form `S` of a
+scattering matrix of `Nmodes` modes per port from (ports, modes) to
+(modes, ports) ordering, moving the two operators of each scattering index
+together; see [`ports_modes_to_modes_ports_perm`](@ref). Half the length
+of each axis must be a multiple of `Nmodes`.
 
 # Examples
 ```jldoctest
@@ -2363,18 +2135,18 @@ JosephsonCircuits.ports_modes_to_modes_ports_pair(S,2)
 ```
 """
 function ports_modes_to_modes_ports_pair(S::AbstractMatrix, Nmodes::Int)
-
-    if size(S, 1) == size(S, 2)
-        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-    else
-        p1 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-        p2 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
-    end
-    return S[p1, p2]
+    return S[pairaxisperm(ports_modes_to_modes_ports_perm, size(S, 1), Nmodes),
+        pairaxisperm(ports_modes_to_modes_ports_perm, size(S, 2), Nmodes)]
 end
 
 """
     modes_ports_to_ports_modes_pair(S::AbstractMatrix,Nmodes::Int)
+
+Reorder both axes of the pair ordered ladder or quadrature form `S` of a
+scattering matrix of `Nmodes` modes per port from (modes, ports) to
+(ports, modes) ordering, moving the two operators of each scattering index
+together; see [`modes_ports_to_ports_modes_perm`](@ref). Half the length
+of each axis must be a multiple of `Nmodes`.
 
 # Examples
 ```jldoctest
@@ -2394,18 +2166,18 @@ JosephsonCircuits.modes_ports_to_ports_modes_pair(S,2)
 ```
 """
 function modes_ports_to_ports_modes_pair(S::AbstractMatrix, Nmodes::Int)
-
-    if size(S, 1) == size(S, 2)
-        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-    else
-        p1 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-        p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
-    end
-    return S[p1, p2]
+    return S[pairaxisperm(modes_ports_to_ports_modes_perm, size(S, 1), Nmodes),
+        pairaxisperm(modes_ports_to_ports_modes_perm, size(S, 2), Nmodes)]
 end
 
 """
     ports_modes_to_modes_ports_block(S::AbstractMatrix,Nmodes::Int)
+
+Reorder both axes of the block ordered ladder or quadrature form `S` of a
+scattering matrix of `Nmodes` modes per port from (ports, modes) to
+(modes, ports) ordering, each of the two blocks of an axis alike; see
+[`ports_modes_to_modes_ports_perm`](@ref). Half the length of each axis
+must be a multiple of `Nmodes`.
 
 # Examples
 ```jldoctest
@@ -2425,18 +2197,18 @@ JosephsonCircuits.ports_modes_to_modes_ports_block(S,2)
 ```
 """
 function ports_modes_to_modes_ports_block(S::AbstractMatrix, Nmodes::Int)
-
-    if size(S, 1) == size(S, 2)
-        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-    else
-        p1 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-        p2 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
-    end
-    return S[p1, p2]
+    return S[blockaxisperm(ports_modes_to_modes_ports_perm, size(S, 1), Nmodes),
+        blockaxisperm(ports_modes_to_modes_ports_perm, size(S, 2), Nmodes)]
 end
 
 """
     modes_ports_to_ports_modes_block(S::AbstractMatrix,Nmodes::Int)
+
+Reorder both axes of the block ordered ladder or quadrature form `S` of a
+scattering matrix of `Nmodes` modes per port from (modes, ports) to
+(ports, modes) ordering, each of the two blocks of an axis alike; see
+[`modes_ports_to_ports_modes_perm`](@ref). Half the length of each axis
+must be a multiple of `Nmodes`.
 
 # Examples
 ```jldoctest
@@ -2456,62 +2228,50 @@ JosephsonCircuits.modes_ports_to_ports_modes_block(S,2)
 ```
 """
 function modes_ports_to_ports_modes_block(S::AbstractMatrix, Nmodes::Int)
-
-    if size(S, 1) == size(S, 2)
-        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-    else
-        p1 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
-        p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
-    end
-    return S[p1, p2]
+    return S[blockaxisperm(modes_ports_to_ports_modes_perm, size(S, 1), Nmodes),
+        blockaxisperm(modes_ports_to_ports_modes_perm, size(S, 2), Nmodes)]
 end
 
 """
     optimum_eigenvalue_angle(values; target_angle = pi)
 
-For unimodular eigenvalues `values`, the angle of the midpoint of the
-widest empty arc between them on the unit circle, and the angle of the
-rotation which moves that midpoint to `target_angle` (by default `pi`,
-so that no eigenvalue lies near the branch cut of the logarithm). After
-https://github.com/XanaduAI/thewalrus/pull/403.
+For eigenvalues `values` on or near the unit circle, the angle of the
+midpoint of the widest empty arc between them, and the angle of the
+rotation which moves that midpoint to `target_angle` (by default `pi`, so
+that the rotated eigenvalues lie as far as they can from the branch cut
+of the logarithm and the square root). The arcs are the counterclockwise
+gaps between the sorted angles of the eigenvalues, the last one running
+from the largest angle around to the smallest, so that eigenvalues
+clustered on a short arc leave the rest of the circle as the widest gap.
+After https://github.com/XanaduAI/thewalrus/pull/403.
 
 # Examples
-```
-using Plots
-t = range(0, 4π, length = 100)
-values = randn(Complex{Float64},10)
-values ./= abs.(values)
-optimum_angle, optimum_rotation = optimum_eigenvalue_angle(values)
-shift = exp(im*optimum_rotation)
-plot(cos.(t), sin.(t))
-plot!(real.(values),imag.(values);seriestype=:scatter)
-plot!([cos(optimum_angle)],[sin(optimum_angle)];seriestype=:scatter)
-plot!(real.(shift*values),imag.(shift*values);seriestype=:scatter)
+Eigenvalues clustered about `1.5` leave the widest gap about `1.5 - pi`,
+and the rotation by `-1.5` moves it to `pi`:
+```jldoctest
+julia> optimum_angle, optimum_rotation = JosephsonCircuits.optimum_eigenvalue_angle(cis.([1.4, 1.5, 1.6]));
+
+julia> round(optimum_angle, digits = 4), round(optimum_rotation, digits = 4)
+(-1.6416, -1.5)
 ```
 """
 function optimum_eigenvalue_angle(values; target_angle=pi)
-    # normalize the eigenvalues so we can view them as vectors on the unit
-    # circle
-    normalized_values = values ./ abs.(values)
+    # the angles of the eigenvalues in increasing order
+    angles = sort!(angle.(values))
+    n = length(angles)
 
-    # sort them by angle
-    sorted_values = sort(normalized_values, by=angle)
-
-    # the optimum rotation is to the middle of the widest arc between
-    # consecutive eigenvalues; the arc width comes from the dot product
-    max_arc_width = acos(real(conj(sorted_values[1]) * sorted_values[end]))
-    # start with the arc between the last and the first value
-    arc_midpoint = sorted_values[1] * exp(im * max_arc_width / 2)
-
-    # then the arcs between consecutive values
-    for i in 1:length(sorted_values)-1
-        arc_width = acos(real(conj(sorted_values[i]) * sorted_values[i+1]))
+    # the widest counterclockwise gap between consecutive angles, starting
+    # with the one from the largest angle around to the smallest
+    max_arc_width = angles[1] + 2 * pi - angles[n]
+    arc_midpoint = angles[n] + max_arc_width / 2
+    for i in 1:n-1
+        arc_width = angles[i+1] - angles[i]
         if arc_width > max_arc_width
             max_arc_width = arc_width
-            arc_midpoint = sorted_values[i] * exp(im * max_arc_width / 2)
+            arc_midpoint = angles[i] + arc_width / 2
         end
     end
-    return angle(arc_midpoint), angle(exp(im * target_angle) / arc_midpoint)
+    return angle(cis(arc_midpoint)), angle(cis(target_angle - arc_midpoint))
 end
 
 """
@@ -2550,12 +2310,9 @@ For a symmetric positive semi-definite matrix `M`, return a vector of values `d`
 and a real symplectic matrix `S` such that `M = S Diagonal(d) S^T`. `S` is
 symplectic with respect to the pair ordered symplectic form `Ω`.
 
-The values `d` are unique but the matrix `S` is not.
-
-At some point evaluate whether the method in this reference
-http://arxiv.org/abs/2108.05364v2 is better than the one we are using. I
-switch to the Schur decomposition based method from [2] because anything based
-on eigedecomposition may have problems with degenerate eigenvalues.
+The values `d` are unique but the matrix `S` is not. `S` is computed from
+a Schur decomposition [2] rather than an eigendecomposition, which is
+robust to degenerate values.
 
 # References
 [1] M. Idel, S. Soto Gaona, and M. M. Wolf, “Perturbation bounds for
@@ -2675,8 +2432,8 @@ function symplectic_complement(Omega, S1)
     r = size(S1, 2) ÷ 2
 
     # the symplectic complement of range(S1) = range(M) is ker(S1' Ω),
-    # 2n by (2n-r) with orthonormal columns. This uses the pair symplectic
-    # form, so it is correct for pair ordered input only.
+    # 2n by (2n-r) with orthonormal columns, for the symplectic form Ω of
+    # the order of the input
     S2 = nullspace(Matrix(transpose(S1) * Omega))
     # (2n-r) × (2n-r), skew, full-rank
     K2 = transpose(S2) * Omega * S2
@@ -2702,27 +2459,6 @@ end
 For a real skew-symmetric matrix `A` return `Q` such that `A = Q Ω Q^T` where
 `Q` is an invertible matrix and `Ω` is the pair symplectic form. If `A`
 is singular, the decomposition works, but `Q` is no longer invertible.
-
-I should test this function thoroughly to see if the eigenvalues always come
-in pairs, especially for singular matrices.
-
-## alternatively, we can implement this using skewchol from
-## SkewLinearAgebra.jl
-## that method is faster 5x faster for 40x40 matrices, but
-## from the paper not sure how stable
-## https://etna.ricam.oeaw.ac.at/vol.11.2000/pp85-93.dir/pp85-93.pdf
-# using Test, LinearAlgebra
-# import SkewLinearAlgebra as sk
-# A = randn(Float64,40,40);
-# Aa = (A-A')/2
-# C = sk.skewchol(Aa)
-# Omega = jc.symplectic_form_pair(size(A,1)÷2)
-# # undo the pivot and transpose to account for definition differences
-# # skewchol is defined such that transpose(C.R) * C.J * C.R ≈ A[C.p,C.p]
-# # I want C.R*C.J*transpose(C.R) = A
-# R = transpose(C.R[:, invperm(C.p)])
-# @test isapprox(Aa,R*Omega*R')
-
 """
 function symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
 
@@ -2838,6 +2574,12 @@ Return a vector `Λ` and a unitary matrix `W` for a symmetric complex input
 matrix `M` such that `M == W*Diagonal(Λ)*transpose(W)` where `M` satisfies
 `M = transpose(M)`. Note that if `M` complex this means `M` is not Hermitian.
 
+They are returned as the tuple `(Λ, W)`, with `Λ` the singular values of
+`M` in decreasing order. `W` is `U*sqrt(Z)` for the singular value
+decomposition `M = U*Diagonal(Λ)*V'` and the unitary `Z = U'*conj(V)`,
+whose square root is taken with its eigenvalues rotated away from the
+branch cut by [`optimum_eigenvalue_angle`](@ref).
+
 # References
 [1] A. M. Chebotarev and A. E. Teretenkov, “Singular value decomposition for
 the Takagi factorization of symmetric matrices,” Applied Mathematics and
@@ -2876,6 +2618,11 @@ Return a vector `Λ` and a unitary matrix `W` for input matrix `M` such that
 `M == W*Diagonal(Λ)*transpose(W)` where `M` is a symmetric real matrix
 `M = transpose(M)`.
 
+They are returned as the named tuple `(Λ = Λ, M = W)`, with `Λ` the
+magnitudes of the eigenvalues of `M` in increasing order and each column of
+`W` the eigenvector times `1` or `im`, the square root of the sign of its
+eigenvalue (`1` for a zero eigenvalue).
+
 """
 function autonne_takagi(M::AbstractMatrix{<:Real})
 
@@ -2885,11 +2632,14 @@ function autonne_takagi(M::AbstractMatrix{<:Real})
     end
     F = eigen(Symmetric(M); sortby=abs)
 
-
-    optimum_angle, optimum_rotation = optimum_eigenvalue_angle(F.values)
-    shift = exp(im * optimum_rotation)
-    invshifto2 = exp(-im * optimum_rotation / 2)
-    return (Λ=abs.(F.values), M=invshifto2 * F.vectors * Diagonal(sqrt.(sign.(shift * F.values))))
+    # M = V*Diagonal(λ)*transpose(V) with V real orthogonal, so each column
+    # of V times the square root of the sign of its eigenvalue, 1 or im,
+    # gives W*Diagonal(abs.(λ))*transpose(W) = M; a zero eigenvalue takes 1
+    # like a positive one
+    T = eltype(F.values)
+    phases = [λ < zero(λ) ? Complex(zero(T), one(T)) : Complex(one(T), zero(T))
+        for λ in F.values]
+    return (Λ=abs.(F.values), M=F.vectors * Diagonal(phases))
 
 end
 
@@ -3185,8 +2935,11 @@ end
 """
     X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
-Return the symplectic matrix `S` from the completely positive trace preserving
-(CPTP) map `X`, `Y` assumming a vacuum environment.
+Return a symplectic matrix `S` of `3n` modes, in pair operator order, whose
+restriction to the first `n` modes with an environment of `2n` modes in
+the vacuum is the completely positive trace preserving (CPTP) map of the
+quadrature transformation `X` and noise `Y` of `n` modes: `X` is the upper
+left `2n x 2n` block of `S`.
 
 """
 function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
@@ -3201,8 +2954,9 @@ end
 """
     X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
-Return the symplectic matrix `S` from the completely positive trace preserving
-(CPTP) map `X`, `Y` assumming a vacuum environment.
+The block ordered form of [`X_Y_to_sympletic_pair`](@ref) for `X` and `Y`
+in block order: `S` is in the block order of all `3n` modes, so `X` is the
+submatrix of the rows and columns `[1:n; 3n+1:4n]` of `S`.
 
 """
 function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
@@ -3214,10 +2968,12 @@ function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:R
 end
 
 """
-    X_Y_to_bogoliubov_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix)
 
-Return the symplectic matrix `S` from the completely positive trace preserving
-(CPTP) map `X`, `Y` assumming a vacuum environment.
+The ladder form of [`X_Y_to_sympletic_pair`](@ref): return a Bogoliubov
+matrix of `3n` modes, in pair operator order, which realizes the CPTP map
+of the ladder transformation `X` and noise `Y` of `n` modes with an
+environment in the vacuum.
 
 """
 function X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix)
@@ -3233,10 +2989,10 @@ end
 
 
 """
-    X_Y_to_bogoliubov_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix)
 
-Return the symplectic matrix `S` from the completely positive trace preserving
-(CPTP) map `X`, `Y` assumming a vacuum environment.
+The ladder form of [`X_Y_to_sympletic_block`](@ref), with `X`, `Y` and
+the Bogoliubov matrix returned in block operator order.
 
 """
 function X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix)
@@ -3252,11 +3008,19 @@ function X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix)
 end
 
 """
-    halmos_dilation(S)
+    halmos_dilation(S; atol = 0, rtol = ...)
 
 Return the Halmos dilation of the passive lossy scattering parameter matrix
 `S`. This converts a passive lossy scattering parameter matrix into a lossless
-(unitary) scattering parameter matrix with twice the number of ports.
+(unitary) scattering parameter matrix with twice the number of ports,
+`[S sqrt(I - S*S'); sqrt(I - S'*S) -S']`, whose second half of ports carry
+the loss of `S`.
+
+`S` is passive when none of its singular values exceeds one. A singular
+value above one by no more than `max(atol, rtol)`, as rounding leaves those
+of a lossless `S`, is taken as one; beyond that `S` is refused. The default
+`rtol` is the smaller dimension of `S` times the machine epsilon of its
+element type, and zero when `atol` is given.
 
 # Examples
 ```jldoctest
@@ -3278,17 +3042,22 @@ true
 [5] B. Szőkefalvi-Nagy, “Sur les contractions de l’espace de Hilbert,”
     ACTA SCIENTIARUM MATHEMATICARUM, vol. 15, pp. 87–92, 1954.
 """
-function halmos_dilation(S)
+function halmos_dilation(S; atol::Real = 0, rtol::Real = defaultrtol(S, atol))
     n = size(S, 1)
 
     # the dilation U = [W 0; 0 V]*[σ sqrt(I-σ²); sqrt(I-σ²) -σ]*[V' 0; 0 W']
     # from the singular value decomposition S = W σ V', which equals
-    # [S sqrt(I - S S'); sqrt(I - S S') -S']
+    # [S sqrt(I - S S'); sqrt(I - S' S) -S']
     F = svd(S)
 
-    # a singular value above one, which would mean the system is not
-    # passive, is not checked for
-    U = [F.U 0*I(n); 0*I(n) F.V] * [Diagonal(F.S) Diagonal(sqrt.(1.0 .- F.S .^ 2)); Diagonal(sqrt.(1.0 .- F.S .^ 2)) -Diagonal(F.S)] * [F.Vt 0*I(n); 0*I(n) F.U']
+    σmax = isempty(F.S) ? zero(eltype(F.S)) : maximum(F.S)
+    if σmax > 1 + max(atol, rtol)
+        throw(ArgumentError(lazy"The largest singular value $(σmax) of `S` exceeds one by more than the tolerances, so `S` is not passive."))
+    end
+    # sqrt(1 - σ^2), zero for a singular value within the tolerances above one
+    c = sqrt.(max.(1 .- F.S .^ 2, 0))
+
+    U = [F.U 0*I(n); 0*I(n) F.V] * [Diagonal(F.S) Diagonal(c); Diagonal(c) -Diagonal(F.S)] * [F.Vt 0*I(n); 0*I(n) F.U']
     return U
 end
 
@@ -3330,17 +3099,6 @@ function Ymin_from_X_quadrature_block(X; method=1)
 end
 
 
-# block diagonal of two matrices
-function blockdiag(A::AbstractMatrix, B::AbstractMatrix)
-    T = promote_type(eltype(A), eltype(B))
-    m, n = size(A)
-    p, q = size(B)
-    C = zeros(T, m + p, n + q)
-    C[1:m, 1:n] .= A
-    C[m+1:end, n+1:end] .= B
-    return C
-end
-
 """
     A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix; atol = 0,
         rtol = ...)
@@ -3354,15 +3112,15 @@ tolerances of the rank decisions that construction makes.
 
 """
 function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
-    atol::Real=0,
-    rtol::Real=(min(size(A, 1), size(A, 2)) * eps(real(float(oneunit(eltype(A)))))) * iszero(atol))
+    atol::Real=0, rtol::Real=defaultrtol(A, atol))
 
     type_out = promote_type(eltype(A), eltype(B))
 
     # the number of system modes
     n = size(A, 1) ÷ 2
 
-    # twice as many environment modes as system modes
+    # twice as many environment modes as system modes; the symplectic forms
+    # are sparse, and so is their direct sum
     Ω = symplectic_form_pair(n)
     ΩE = symplectic_form_pair(2n)
 
@@ -3374,7 +3132,7 @@ function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
     K = nullspace(W * Ωtot; atol=atol, rtol=rtol)  # 6n × k
 
     if size(K, 2) != 4n
-        @warn lazy"Expected nullspace dimension 4n=$(4n), got $(size(K,2)). Try adjusting rtol/atol."
+        throw(ArgumentError(lazy"The rows of `[A B]` have rank $(6n - size(K,2)) rather than 2n = $(2n) to the tolerances `atol` and `rtol`, so they are not the first 2n rows of a symplectic matrix."))
     end
     N = K'
     # k by 6n, whose rows span the complement
@@ -3437,15 +3195,24 @@ function wmatrix(ws::AbstractRange{T}, wp::NTuple{N,T},
     return w
 end
 
+"""
+    wmatrix!(w, ws::AbstractRange{T}, wp::NTuple{N,T},
+        modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+
+In place version of [`wmatrix`](@ref), writing into `w`, of size
+`(length(modes), length(ws))`, and returning it.
+"""
 function wmatrix!(w::AbstractArray{T}, ws::AbstractRange{T}, wp::NTuple{N,T},
     modes::AbstractVector{NTuple{N,Int}}) where {T,N}
-    # check that the size of w is Nmodes by Nfreqs
-
+    if size(w) != (length(modes), length(ws))
+        throw(DimensionMismatch(lazy"The size $(size(w)) of `w` must be the number of modes by the number of frequencies, $((length(modes), length(ws)))."))
+    end
     for j in eachindex(ws)
         for i in eachindex(modes)
             w[i, j] = ws[j] + dot(wp, modes[i])
         end
     end
+    return w
 end
 
 """
@@ -3455,10 +3222,13 @@ end
 Interpolate the scattering parameters `S`, an array of size
 `(nports, nports, length(w0))` tabulated at the frequencies `w0`, onto the
 frequencies `w`, interpolating the magnitude and the unwrapped phase of
-each entry separately. `w` may be a matrix such as the one returned by
-[`wmatrix`](@ref), in which case the result has one matrix per entry of it.
-With `extrap = true` frequencies outside `w0` take the value
-`extrap_value`; otherwise they are an error.
+each entry separately, so that a phase which winds between the samples,
+as that of a delay does, is followed rather than cut across. `w` may be a
+matrix such as the one returned by [`wmatrix`](@ref), in which case the
+result has one matrix per entry of it. A negative frequency takes the
+complex conjugate of the value at its magnitude. With `extrap = true` a
+frequency whose magnitude is outside `w0` takes the value `extrap_value`
+(conjugated at a negative frequency); otherwise it is an error.
 
 # Examples
 ```jldoctest
@@ -3490,38 +3260,29 @@ function interpolate_scattering(w0::AbstractVector, S::AbstractArray,
 
     Sout = zeros(eltype(S), sizeout)
 
+    # the band the samples cover; outside it the interpolants are an error
+    # unless `extrap` gives the value there
+    wmin, wmax = extrema(w0)
+
     # interpolate each entry over frequency, conjugating at negative
     # frequencies
     for i in 1: size(S, 1)
         for j in 1:size(S, 2)
 
-            # interpolate the unwrapped phase and the magnitude separately
-            phase = angle.(unwrap(S[i, j, :]))
-            mag = abs.(S[i, j, :])
-            phase_interp = if extrap
-                FastInterpolations.quadratic_interp(w0, phase;
-                    extrap = FastInterpolations.Extrap(
-                        :fill;
-                        fill_value = extrap_value,
-                    ),
-                )
-            else
-                FastInterpolations.quadratic_interp(w0, phase)
-            end
-            mag_interp = if extrap
-                FastInterpolations.quadratic_interp(w0, mag;
-                    extrap = FastInterpolations.Extrap(
-                        :fill;
-                        fill_value = extrap_value,
-                    ),
-                )
-            else
-                FastInterpolations.quadratic_interp(w0, mag)
-            end
+            # interpolate the magnitude and the phase, unwrapped along the
+            # samples, separately
+            phase = unwrap(angle.(view(S, i, j, :)))
+            mag = abs.(view(S, i, j, :))
+            phase_interp = FastInterpolations.quadratic_interp(w0, phase)
+            mag_interp = FastInterpolations.quadratic_interp(w0, mag)
 
             for c in CartesianIndices(axes(w))
                 wi = abs(w[c])
-                Sinterp = mag_interp(wi) * exp(im * phase_interp(wi))
+                Sinterp = if extrap && !(wmin <= wi <= wmax)
+                    extrap_value
+                else
+                    mag_interp(wi) * cis(phase_interp(wi))
+                end
                 # conjugate at a negative frequency
                 if w[c] < 0
                     Sout[i, j, c] = conj(Sinterp)

@@ -57,9 +57,9 @@ struct CanonicalPreconditioner{P,W<:CanonicalWork,F,D} <: AbstractWrappedPrecond
 end
 
 function CanonicalPreconditioner(inner, work::CanonicalWork, F)
-    idx = isnothing(F) ? Int[] : dcsubsystemindices(work)
-    dev = (isnothing(F) || _onhost(work.xint) ||
-           length(idx) > DCDEVICESOLVEMAX) ? nothing :
+    # the positions of the subsystem, found when the work was built
+    idx = isnothing(F) ? Int[] : work.dcindex
+    dev = (isnothing(F) || _onhost(work.xint)) ? nothing :
         DCFactorization(F, idx, KernelAbstractions.get_backend(work.xint))
     return CanonicalPreconditioner(inner, work, F, idx,
         zeros(Float64, length(idx)), dev)
@@ -111,8 +111,8 @@ end
 function _solvedcblock!(z::AbstractVector, pc::CanonicalPreconditioner,
         r::AbstractVector)
     isnothing(pc.Yfact) && return z
-    # where the state is not on the host, the same factors and the same
-    # substitutions run there, so the subsystem never crosses the bus
+    # where the state is not on the host, the same factors solve the
+    # subsystem there (see `applydcsolve!`)
     if !isnothing(pc.device)
         applydcsolve!(z, r, pc.device)
         return z
@@ -155,15 +155,9 @@ isexactpreconditioner(pc::CanonicalPreconditioner) =
 # rows, the coupling `G0 P`, the block pencils `B0` and `C0`, the boundary
 # currents and the reference rows do not depend on the periodic state. What
 # moves between Newton iterations is the internal Jacobian, and only its
-# values, since its pattern and the permutation which reorders it are
-# fixed. So the whole assembly is a fixed pattern, a fixed scatter of the
+# values, since its pattern is fixed. So the whole assembly is a fixed pattern, a fixed scatter of the
 # internal values into it, and a fixed list of constant additions, found
 # once.
-#
-# Without the plan the rebuild costs several times the evaluation of the
-# internal Jacobian and the factorization of the result together, most of
-# the linear algebra of a Newton step spent rediscovering a pattern which
-# has not moved.
 
 """
     CanonicalJacobianPlan
@@ -184,16 +178,6 @@ struct CanonicalJacobianPlan
     source::Vector{Int}
     fixedindex::Vector{Int}
     fixedvalue::Vector{Float64}
-end
-
-# the position of (i, j) in the value array of `S`, whose row indices are
-# sorted within a column
-function nzposition(S::SparseMatrixCSC, i::Integer, j::Integer)
-    r = nzrange(S, j)
-    k = searchsortedfirst(view(S.rowval, r), i)
-    (k <= length(r) && S.rowval[r[k]] == i) ||
-        error("the canonical Jacobian's pattern is missing an entry it was built to hold, which is a bug in `canonicaljacobianplan`.")
-    return r[k]
 end
 
 # The direct current block's constant entries, in the canonical numbering of
@@ -341,18 +325,6 @@ function canonicaljacobian!(plan::CanonicalJacobianPlan,
 end
 
 """
-    canonicaljacobian(Jint::SparseMatrixCSC, work::CanonicalWork)
-
-The Jacobian in canonical coordinates, assembled from the internal one.
-
-This builds a plan and applies it, which is what a caller wanting one matrix
-at one point should do. A solve builds the plan once instead; see
-[`canonicaljacobianplan`](@ref).
-"""
-canonicaljacobian(Jint::SparseMatrixCSC, work::CanonicalWork) =
-    canonicaljacobian!(canonicaljacobianplan(Jint, work), Jint)
-
-"""
     canonicalfj(fjreal!, work::CanonicalWork, Jint, plan)
 
 Wrap an internal coordinate residual and Jacobian closure for a direct solve
@@ -360,9 +332,9 @@ method: the residual in canonical coordinates, and the canonical Jacobian
 filled through `plan`.
 
 The matrix is filled rather than replaced, because the solver factorizes the
-one it was handed. Its pattern is fixed -- the internal pattern under a
-permutation plus the direct current block, none of which moves between
-iterations -- and the plan is built from it once.
+one it was handed. Its pattern is fixed -- the internal pattern plus the
+direct current block, neither of which moves between iterations -- and the
+plan is built from it once.
 """
 function canonicalfj(fjreal!, work::CanonicalWork, Jint,
         plan::CanonicalJacobianPlan)

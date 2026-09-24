@@ -21,8 +21,7 @@ Use [`assemblesystemmatrix!`](@ref) to assemble
 dependent values resolved, as the linearized solver does) into a matrix
 sharing the sparsity
 structure of the `Asparse` field, at the signal frequency `ws`, for either
-the pump modulation `AoLjnm` or its complex conjugate (the adjoint system of
-the noise and quantum efficiency calculations). Operator products and
+the pump modulation `AoLjnm` or its complex conjugate. Operator products and
 adjoint products are then sparse matrix-vector products with the assembled
 matrix, `mul!(y, A, v)` and `mul!(y, A', v)`, suitable for iterative solves
 and sensitivity adjoints.
@@ -37,7 +36,7 @@ exactly; since the pump modulation contribution is precomputed, assembling
 at a frequency costs about the same as one matrix-vector product would, and
 every product thereafter is a plain sparse matrix-vector product.
 """
-struct HBLinearizedSystem{TinvL,TG,TC}
+struct HBLinearizedSystem{TinvL,TG,TC,TF}
     # sparsity structure of the system matrix, with the pump modulation
     # contribution in its values. per-frequency assembly operates on copies
     # sharing this structure, so this object can be shared across threads.
@@ -45,21 +44,23 @@ struct HBLinearizedSystem{TinvL,TG,TC}
     # the Josephson map over Asparse ([`StructureComplexJosephsonPlan`](@ref)),
     # which writes the pump modulation contribution and its conjugate
     complexjacobianplan
-    # the pump modulation contribution AoLjnm = Rbnm'*AoLjbm*Rbnm and its
-    # complex conjugate, assembled once as nonzero value vectors aligned
-    # with the sparsity structure of Asparse
+    # the pump modulation contribution AoLjnm = Rbnm'*AoLjbm*Rbnm, assembled
+    # once as a nonzero value vector aligned with the sparsity structure of
+    # Asparse
     AoLjnmnzval::Vector{Complex{Float64}}
-    AoLjnmconjnzval::Vector{Complex{Float64}}
-    # the linear term matrices (whose entries may be frequency
-    # dependent), their index maps into Asparse, and whether any of their
-    # entries is, in which case the stored values themselves change with
-    # the frequency
+    # the linear term matrices and their index maps into Asparse; the
+    # entries which depend on the frequency are held apart, with their own
+    # index maps, in `frequencydependent`, so that the rest are added as
+    # the numbers they are. `frequencydependent` is `nothing` when no entry
+    # depends on the frequency, and `symbolicvalues` says whether one does,
+    # in which case the stored values change with the frequency
     invLnm::TinvL
     Gnm::TG
     Cnm::TC
     invLnmindexmap::Vector{Int}
     Gnmindexmap::Vector{Int}
     Cnmindexmap::Vector{Int}
+    frequencydependent::TF
     symbolicvalues::Bool
     # the frequency independent augmentation: the constitutive equations
     # and Kirchhoff current law couplings of the coupled inductor currents
@@ -120,30 +121,58 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
         1, Rbnm, Nmodes, Nbranches, prod(size(phimatrix)[1:end-1]),
         invLnmpattern, Gnmcopy, Cnmcopy)
 
-    # the index maps of the matrices substituted per frequency
-    invLnmindexmap = sparseaddmap(Asparse, invLnmcopy)
-    Gnmindexmap = sparseaddmap(Asparse, Gnmcopy)
-    Cnmindexmap = sparseaddmap(Asparse, Cnmcopy)
+    # the index maps of the matrices added per frequency. A matrix holding
+    # a frequency dependent entry holds every entry as an expression, which
+    # resolving at each frequency would do entry by entry through dynamic
+    # dispatch, so its constant entries are split off as numbers and only
+    # the rest are resolved per mode frequency.
+    frequencydependent = nothing
+    if symbolicvalues
+        invLnm, invLnmfd = splitfrequencydependent(invLnm)
+        Gnm, Gnmfd = splitfrequencydependent(Gnm)
+        Cnm, Cnmfd = splitfrequencydependent(Cnm)
+        frequencydependent = (invLnm = invLnmfd,
+            invLnmindexmap = sparseaddmap(Asparse, invLnmfd), Gnm = Gnmfd,
+            Gnmindexmap = sparseaddmap(Asparse, Gnmfd), Cnm = Cnmfd,
+            Cnmindexmap = sparseaddmap(Asparse, Cnmfd))
+    end
+    invLnmindexmap = sparseaddmap(Asparse, invLnm)
+    Gnmindexmap = sparseaddmap(Asparse, Gnm)
+    Cnmindexmap = sparseaddmap(Asparse, Cnm)
     Amna0indexmap = sparseaddmap(Asparse, Amna0)
     if !isnothing(scattering)
         setscatteringindexmap!(scattering, Asparse)
     end
 
-    # assemble the pump modulation contribution and its complex conjugate
-    # (for the adjoint system) once, so resetting the system matrix at each
-    # frequency is a single copy.
+    # assemble the pump modulation contribution once, so resetting the
+    # system matrix at each frequency is a single copy.
     AoLjnmnzval = zeros(Complex{Float64}, nnz(Asparse))
     addjosephsonterm!(AoLjnmnzval, complexjacobianplan, phimatrix)
-    AoLjnmconjnzval = conj.(AoLjnmnzval)
 
     # also place the pump modulation contribution in Asparse so it holds
     # something reasonable to factorize.
     copyto!(Asparse.nzval, AoLjnmnzval)
 
     return HBLinearizedSystem(Asparse, complexjacobianplan, AoLjnmnzval,
-        AoLjnmconjnzval, invLnm, Gnm, Cnm, invLnmindexmap, Gnmindexmap,
-        Cnmindexmap, symbolicvalues, Amna0, Amna0indexmap,
-        wpumpmodes, Nmodes, Nnodes, scattering)
+        invLnm, Gnm, Cnm, invLnmindexmap, Gnmindexmap,
+        Cnmindexmap, frequencydependent, symbolicvalues, Amna0,
+        Amna0indexmap, wpumpmodes, Nmodes, Nnodes, scattering)
+end
+
+"""
+    splitfrequencydependent(M::SparseMatrixCSC)
+
+The entries of `M` which do not depend on the frequency, as a matrix of
+complex numbers, and those which do, as a matrix of the expressions, each
+with the stored entries of `M` it holds and no others.
+"""
+function splitfrequencydependent(M::SparseMatrixCSC)
+    I, J, V = findnz(M)
+    fd = [CircuitValues.hasprovider(v) for v in V]
+    constant = [v isa CircuitValues.Constant ? v.val : Complex{Float64}(v)
+        for v in V[.!fd]]
+    return sparse(I[.!fd], J[.!fd], constant, size(M)...),
+        sparse(I[fd], J[fd], Vector{CircuitValue}(V[fd]), size(M)...)
 end
 
 """
@@ -173,10 +202,7 @@ transposed forward system,
 
     A(conjugate pump) = D*transpose(A(pump))*inv(D),
 
-with `D` diagonal, equal to one on every node flux row. (Historically `D`
-also carried the constitutive-equation conductance of promoted port
-resistors on their auxiliary rows; resistors are node conductances now,
-so no such rows exist.)
+with `D` diagonal, equal to one on every node flux row.
 Nothing else contributes, so long as the circuit has no scattering blocks: the
 auxiliary rows of the promoted coupled inductors are already symmetric (see
 [`calcAmnaind`](@ref)); the linear term matrices are symmetric and mode
@@ -206,9 +232,10 @@ function assemblesystemmatrix!(A::SparseMatrixCSC,
     conjugatepump::Bool = false,
     scatteringwork::ScatteringWorkspace = ScatteringWorkspace())
 
-    # the pump modulation contribution, precomputed
+    # the pump modulation contribution, precomputed, or its complex
+    # conjugate
     if conjugatepump
-        copyto!(A.nzval, lsys.AoLjnmconjnzval)
+        A.nzval .= conj.(lsys.AoLjnmnzval)
     else
         copyto!(A.nzval, lsys.AoLjnmnzval)
     end
@@ -221,6 +248,12 @@ function assemblesystemmatrix!(A::SparseMatrixCSC,
     sparseaddconjsubst!(A, -1, lsys.Cnm, lsys.Cnmindexmap, wmodes, 2)
     sparseaddconjsubst!(A, im, lsys.Gnm, lsys.Gnmindexmap, wmodes, 1)
     sparseaddconjsubst!(A, 1, lsys.invLnm, lsys.invLnmindexmap, wmodes, 0)
+    fd = lsys.frequencydependent
+    if !isnothing(fd)
+        sparseaddconjsubst!(A, -1, fd.Cnm, fd.Cnmindexmap, wmodes, 2)
+        sparseaddconjsubst!(A, im, fd.Gnm, fd.Gnmindexmap, wmodes, 1)
+        sparseaddconjsubst!(A, 1, fd.invLnm, fd.invLnmindexmap, wmodes, 0)
+    end
 
     # the frequency independent augmentation: the coupled inductor and
     # scattering block port current rows

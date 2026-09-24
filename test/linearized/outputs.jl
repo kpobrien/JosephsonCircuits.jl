@@ -3,7 +3,7 @@ using Test
 
 @testset verbose=true "the linearized outputs" begin
 
-    @testset "calcimpedance errors" begin
+    @testset "calcscatteringmatrix! errors" begin
 
         begin
             inputwave=[1.0, 0.0]
@@ -183,6 +183,44 @@ using Test
             @test isapprox(QE1,QE3; rtol = 1e-12)
         end
 
+    end
+
+    @testset "ports which share a node" begin
+        # P1 from n1 to ground and P2 from n1 to n2, with R1 from n1 to
+        # ground and R2 in parallel with C from n2 to ground. A current I2
+        # into P2 enters n1 and leaves n2, so V1 = R1*(I1 + I2) and
+        # V2 = R1*(I1 + I2) + Z2*I2; with P2 written from n2 to n1 both its
+        # voltage and its current change sign.
+        R1, R2, C, Z0 = 30.0, 70.0, 0.1e-12, 50.0
+        ws = 2*pi*[3e9, 5e9]
+        for (p2, sgn) in (((1, 2), 1), ((2, 1), -1))
+            c = Circuit([(:P1, 1, 0, Port(1; Z0)), (:P2, p2..., Port(2; Z0)),
+                (:R1, 1, 0, Resistor(R1)), (:R2, 2, 0, Resistor(R2)),
+                (:C, 2, 0, Capacitor(C))])
+            sol = hblinsolve(ws, c; keyedarrays = false)
+            for (m, w) in enumerate(ws)
+                Z2 = 1/(1/R2 + im*w*C)
+                Z = ComplexF64[R1 sgn*R1; sgn*R1 R1+Z2]
+                @test isapprox(sol.S[:,:,m], (Z - Z0*I)/(Z + Z0*I);
+                    atol = 1e-12)
+            end
+            # the commutation relations of a passive network, which read
+            # the noise of the two resistors through the same input waves
+            @test isapprox(sol.CM, ones(2, length(ws)); atol = 1e-12)
+            # the pump solve driven at either port gives that port's
+            # column, and credits nothing to the port which shares its node
+            w = ws[2]
+            Z2 = 1/(1/R2 + im*w*C)
+            Sref = (ComplexF64[R1 sgn*R1; sgn*R1 R1+Z2] - Z0*I)/
+                (ComplexF64[R1 sgn*R1; sgn*R1 R1+Z2] + Z0*I)
+            for port in (1, 2)
+                Sp = hbnlsolve((w,), (1,),
+                    [(mode = (1,), port = port, current = 1e-6)], c;
+                    keyedarrays = false).S
+                @test isapprox(Sp[:, port], Sref[:, port]; atol = 1e-12)
+                @test iszero(Sp[:, 3 - port])
+            end
+        end
     end
 
 end

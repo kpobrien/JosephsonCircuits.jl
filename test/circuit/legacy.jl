@@ -3,10 +3,10 @@ using LinearAlgebra
 using Test
 
 # Tests of the deprecated input formats, the tuple netlist and the symbolic
-# frequency variable, kept together so the compatibility surface is one
-# file on the test side as it is on the source side: this file goes with
-# `src/circuit/legacy.jl` when they are removed. Every use of them warns,
-# and each is captured here.
+# frequency variable, and of the deprecated entry points, kept together so
+# the compatibility surface is one file on the test side as it is on the
+# source side: this file goes with `src/circuit/legacy.jl` when they are
+# removed. Every use of them warns, and each is captured here.
 
 # the value of a call which warns of the deprecation
 macro deprecated(ex)
@@ -43,6 +43,43 @@ end
         back = Tuple{String,String,String,Any}[]
         @test_logs (:warn, r"deprecated") JosephsonCircuits.import_netlist!(io, back)
         @test length(back) == length(netlist)
+    end
+
+    @testset "a list of typed components is not a tuple netlist" begin
+        # written without the Circuit around it, it is refused as what it
+        # is, before any warning about the tuple netlist
+        typedlist = [(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 0, Capacitor(1e-12))]
+        @test_logs min_level = Base.CoreLogging.Warn @test_throws(
+            ArgumentError, hblinsolve(2*pi*[5e9], typedlist))
+    end
+
+    @testset "the node order a tuple entry point is given" begin
+        # nodes named rather than numbered compile in the order of their
+        # names, which the entry points of the tuple format took as
+        # `sorting`; the same netlist numbered is the reference
+        named = [("P1","in","0",1), ("R1","in","0",50.0),
+            ("C1","in","jj",100e-15), ("Lj1","jj","0",1000e-12),
+            ("C2","jj","0",1000e-15)]
+        numbered = [("P1","1","0",1), ("R1","1","0",50.0),
+            ("C1","1","2",100e-15), ("Lj1","2","0",1000e-12),
+            ("C2","2","0",1000e-15)]
+        wp = (2*pi*4.75001e9,); ws = 2*pi*[4.5e9, 5.0e9]
+        sources = [(mode=(1,), port=1, current=0.00565e-6)]
+        solve(n; kw...) = @deprecated hbsolve(ws, wp, sources, (2,), (4,), n;
+            keyedarrays = false, kw...)
+        @test isapprox(solve(named; sorting = :name).linearized.S,
+            solve(numbered).linearized.S; rtol = 1e-10)
+        @test isapprox((@deprecated hbnlsolve(wp, (4,), sources, named;
+            sorting = :name, keyedarrays = false)).S,
+            (@deprecated hbnlsolve(wp, (4,), sources, numbered;
+            keyedarrays = false)).S; rtol = 1e-10)
+        @test isapprox((@deprecated hblinsolve(ws, named; sorting = :name,
+            keyedarrays = false)).S, (@deprecated hblinsolve(ws, numbered;
+            keyedarrays = false)).S; rtol = 1e-10)
+        @test (@deprecated numericmatrices(named, Dict(); sorting = :name)).Lmean ==
+            (@deprecated numericmatrices(numbered, Dict())).Lmean
+        @test (@deprecated symbolicmatrices(named; sorting = :none)).Lmean ==
+            (@deprecated symbolicmatrices(numbered)).Lmean
     end
 
     @testset "resistor lookup retains values and branch orientation" begin
@@ -120,7 +157,7 @@ end
         )
 
         @test_throws(
-            ArgumentError("No matching component found in allowedcomponents."),
+            ArgumentError("No component in allowedcomponents matches the name B1."),
             JosephsonCircuits.parsecomponenttype("B1",["Lj","L","C","K","I","R","P"])
         )
     end
@@ -130,6 +167,9 @@ end
             ArgumentError("Allowed components parsing check has failed for Lj. This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents."),
             JosephsonCircuits.checkcomponenttypes(["L","Lj","C","K","I","R","P"])
         )
+        # the order the tuple netlist reads its prefixes in
+        @test JosephsonCircuits.checkcomponenttypes(
+            JosephsonCircuits.legacyallowedcomponents)
     end
 
     @testset "tuple round trip" begin
@@ -370,4 +410,109 @@ end
         @test_throws ArgumentError hblinsolve(ws, psc, vvn, sf;
             symfreqvar = wsym)
     end
+end
+
+# The deprecated forms warn and give the same numbers as the forms which
+# replace them; the wording of the warnings is not pinned.
+@testset verbose=true "deprecated" begin
+
+    @testset "connectS is intraconnectS and interconnectS" begin
+        Sa = rand(Complex{Float64},3,3)
+        Sb = rand(Complex{Float64},3,3)
+        Sout1 = zeros(Complex{Float64},1,1)
+        Sout2 = zeros(Complex{Float64},4,4)
+        a = @test_logs (:warn,) JosephsonCircuits.connectS(Sa,1,2)
+        @test a == JosephsonCircuits.intraconnectS(Sa,1,2)
+        b = @test_logs (:warn,) JosephsonCircuits.connectS(Sa,Sb,1,2)
+        @test b == JosephsonCircuits.interconnectS(Sa,Sb,1,2)
+        @test_logs (:warn,) JosephsonCircuits.connectS!(Sout1,Sa,1,2)
+        @test Sout1 == JosephsonCircuits.intraconnectS(Sa,1,2)
+        @test_logs (:warn,) JosephsonCircuits.connectS!(Sout2,Sa,Sb,1,2)
+        @test Sout2 == JosephsonCircuits.interconnectS(Sa,Sb,1,2)
+    end
+
+    @testset "the noise keyword of connectS_initialize" begin
+        networks = [("A", rand(Complex{Float64}, 2, 2)),
+            ("B", rand(Complex{Float64}, 2, 2))]
+        connections = [[("A", 2), ("B", 1)]]
+        init = @test_logs (:warn,) JosephsonCircuits.connectS_initialize(
+            networks, connections; noise = true)
+        @test init == JosephsonCircuits.connectS_initialize(networks,
+            connections)
+    end
+
+    @testset "the deprecated solver forms and keywords" begin
+        circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = :Rleft)),
+            (:C1, 1, 2, Capacitor(:Cc)), (:Lj1, 2, 0, JosephsonJunction(:Lj)),
+            (:C2, 2, 0, Capacitor(:Cj))])
+        circuitdefs = Dict{Symbol,Complex{Float64}}(
+            :Lj =>1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15,
+            :Rleft => 50.0)
+        ws = 2*pi*[4.5e9]
+        wp = (2*pi*4.75001*1e9,)
+        Ip = 0.00565e-6
+        sources = [(mode=(1,),port=1,current=Ip)]
+        ref = hbsolve(ws, wp, sources, (2,), (2,), circuit, circuitdefs;
+            keyedarrays = false)
+        same(sol) = isapprox(Array(sol.linearized.S), ref.linearized.S;
+            rtol = 1e-10) && isapprox(Array(sol.nonlinear.nodeflux),
+            ref.nonlinear.nodeflux; rtol = 1e-10)
+
+        # the single pump frequency, integer harmonic count form of hbsolve:
+        # its pump count Npumpmodes is the tuple form's (2*Npumpmodes,), so
+        # the operating points agree; its signal mode set is the legacy
+        # solver's own, so of the linearized outputs the signal to signal
+        # entry is compared, with one signal mode either way
+        old = @test_logs (:warn,) match_mode = :any hbsolve(ws, wp[1], Ip, 1, 2,
+            circuit, circuitdefs, pumpports = [1], keyedarrays = true)
+        oldref = hbsolve(ws, wp, sources, (1,), (4,), circuit, circuitdefs)
+        @test isapprox(Array(old.nonlinear.nodeflux(outputmode = (1,))),
+            Array(oldref.nonlinear.nodeflux(outputmode = (1,))); rtol = 1e-10)
+        @test isapprox(old.linearized.S((0,), 1, (0,), 1, 1),
+            oldref.linearized.S((0,), 1, (0,), 1, 1); rtol = 1e-6)
+
+        nlref = hbnlsolve(wp, (2,), sources, circuit, circuitdefs;
+            keyedarrays = false)
+        for kw in ((switchofflinesearchtol = 1,), (alphamin = 0.1,),
+                (maxharmonics = (2,),))
+            sol = @test_logs (:warn,) match_mode = :any hbnlsolve(wp, (2,),
+                sources, circuit, circuitdefs; keyedarrays = false, kw...)
+            @test isapprox(sol.nodeflux, nlref.nodeflux; rtol = 1e-10)
+        end
+        sol = @test_logs (:warn,) match_mode = :any hbsolve(ws, wp, sources,
+            (2,), (2,), circuit, circuitdefs; keyedarrays = false,
+            maxpumpharmonics = (2,))
+        @test same(sol)
+        # the line search keywords warn whichever method solves the pump
+        for method in (NewtonKrylov(), Staged()), kw in
+                ((switchofflinesearchtol = 1,), (alphamin = 0.1,))
+            sol = @test_logs (:warn,) match_mode = :any hbsolve(ws, wp,
+                sources, (2,), (2,), circuit, circuitdefs; keyedarrays = false,
+                method = method, kw...)
+            @test sol.nonlinear.solverinfo.converged
+        end
+
+        linref = hblinsolve(ws, circuit, circuitdefs; keyedarrays = false)
+        for kw in ((returnZ = true,), (returnZadjoint = true,),
+                (returnZsensitivity = true,), (returnZsensitivityadjoint = true,))
+            lin = @test_logs (:warn,) match_mode = :any hblinsolve(ws, circuit,
+                circuitdefs; keyedarrays = false, kw...)
+            @test lin.S == linref.S
+        end
+    end
+
+    @testset "ftol is atol" begin
+        circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 0, Capacitor(1e-12)), (:Lj1, 1, 0, JosephsonJunction(1e-9))])
+        wp = (2pi*5e9,)
+        src = [(mode = (1,), port = 1, current = 1e-8)]
+        old = @test_logs (:warn,) hbnlsolve(wp, (2,), src, circuit; ftol = 1e-10, keyedarrays = false)
+        new = hbnlsolve(wp, (2,), src, circuit; atol = 1e-10, keyedarrays = false)
+        @test old.nodeflux == new.nodeflux
+        ws = 2pi*[4e9]
+        olds = @test_logs (:warn,) hbsolve(ws, wp, src, (1,), (2,), circuit; ftol = 1e-10, keyedarrays = false)
+        news = hbsolve(ws, wp, src, (1,), (2,), circuit; atol = 1e-10, keyedarrays = false)
+        @test olds.linearized.S == news.linearized.S
+    end
+
 end

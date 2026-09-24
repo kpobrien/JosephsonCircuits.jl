@@ -2,6 +2,7 @@ using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
 using Test
+isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 
 # The Newton solver: what it refuses, how it reports a factorization that
 # fails under it, and the Anderson correction it accelerates with.
@@ -121,6 +122,29 @@ using Test
                 end
                 @test isapprox(s.correction, ref; rtol = 1e-8)
             end
+        end
+    end
+
+    @testset "the retry spends the budget of the first attempt" begin
+        # a drive the quasi-Newton iteration cannot reach stalls after
+        # accelerated steps and is retried from the initial point: the two
+        # attempts share one budget of steps, no Jacobian is evaluated
+        # after the budget's last step, and the record reports the steps
+        # of both attempts, all but the one an attempt may end at, a
+        # direction which is not a descent direction, taken with a
+        # Jacobian of its own
+        circuit, defs = testchaincircuit()
+        d = hbnlsolve((2*pi*4.75e9,), (8,), [(mode = (1,), port = 1,
+            current = 2e-5)], circuit, defs; debugJacobian = true)
+        njac = Ref(0)
+        counted!(F, J, x) = (isnothing(J) || (njac[] += 1); d.fj(F, J, x))
+        for budget in (20, 1000)
+            x = copy(d.x); F = similar(x); njac[] = 0
+            info = JosephsonCircuits.nlsolve!(counted!, F, copy(d.Jx), x;
+                iterations = budget, andersondepth = 5)
+            @test !info.converged
+            @test njac[] <= budget
+            @test njac[] <= info.iterations + 2
         end
     end
 

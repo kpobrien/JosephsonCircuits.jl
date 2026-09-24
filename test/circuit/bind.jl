@@ -86,9 +86,9 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
         # a fraction, and the matrices are those of the same values written
         # as floats
         ints = JC.compile(Circuit([(:p1, 1, 0, Port(1; Z0 = 50)), (:c1, 1, 0, Capacitor(1)),
-            (:r1, 1, 0, Resistor(50)), (:l1, 1, 0, Inductor(2))]))
+            (:r1, 1, 0, Resistor(40)), (:l1, 1, 0, Inductor(2))]))
         floats = JC.compile(Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(1.0)),
-            (:r1, 1, 0, Resistor(50.0)), (:l1, 1, 0, Inductor(2.0))]))
+            (:r1, 1, 0, Resistor(40.0)), (:l1, 1, 0, Inductor(2.0))]))
         nmi = numericmatrices(ints, Dict{Any,Any}())
         nmf = numericmatrices(floats, Dict{Any,Any}())
         @test eltype(nmi.Cnm) == eltype(nmi.Gnm) == eltype(nmi.invLnm) == Float64
@@ -122,7 +122,7 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
             nets = Any[]
             for k in 1:n
                 push!(comps, Symbol(:c, k) => Capacitor(1e-13*k),
-                    Symbol(:l, k) => Inductor(1e-9), Symbol(:r, k) => Resistor(50.0*k))
+                    Symbol(:l, k) => Inductor(1e-9), Symbol(:r, k) => Resistor(100.0*k))
             end
             push!(nets, Any[(:p1,1), (:c1,1), (:l1,1), (:r1,1)])
             for k in 1:n-1
@@ -139,18 +139,6 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
             refillallocs(nzn, snn, pn, bn.capacitors, 1)
             @test refillallocs(nzn, snn, pn, bn.capacitors, 100) == 0
         end
-
-        # a structural key distinguishes a value change from a topology
-        # change: the same circuit at new numbers keeps its key, an infinite
-        # inductance does not
-        @test JC.structuralkey(b) == JC.structuralkey(b2)
-        bopen = bound(JC.compile(Circuit(
-            [:p1 => Port(1), :l1 => Inductor(Inf), :c1 => Capacitor(1e-12)],
-            [[(:p1,1),(:l1,1),(:c1,1)], [(:p1,2),(:l1,2),(:c1,2),Ground]])))
-        bfinite = bound(JC.compile(Circuit(
-            [:p1 => Port(1), :l1 => Inductor(1e-9), :c1 => Capacitor(1e-12)],
-            [[(:p1,1),(:l1,1),(:c1,1)], [(:p1,2),(:l1,2),(:c1,2),Ground]])))
-        @test JC.structuralkey(bopen) != JC.structuralkey(bfinite)
     end
 
     @testset "planned circuit matrices" begin

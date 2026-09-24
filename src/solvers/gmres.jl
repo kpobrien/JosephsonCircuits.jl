@@ -136,8 +136,9 @@ GMRES call. The default does nothing, which is correct for any preconditioner
 that does not recycle.
 
 Only the *last* restart cycle is still present in the workspace, so
-implementations must derive the usable Arnoldi dimension from
-`out.iterations` and `out.cycles` rather than from `out.iterations` alone.
+implementations take the usable Arnoldi dimension from the length of that
+cycle, `out.lastcycle` ([`harvestdimension`](@ref)), rather than from
+`out.iterations`, which counts every cycle.
 """
 harvest!(pc::AbstractPreconditioner, ::GMRESWorkspace, ::NamedTuple) = pc
 harvest!(pc::AbstractWrappedPreconditioner, ws::GMRESWorkspace, out::NamedTuple) =
@@ -209,17 +210,8 @@ function gmres_orthogonalize!(w::AbstractVector{T}, V::AbstractMatrix{T},
         # device they stay there; only the finished column crosses to `H`
         hj = view(hd, 1:j)
         cj = view(c, 1:j)
-        # Block classical Gram-Schmidt, two unconditional passes. CGS2 is as
-        # accurate as modified Gram-Schmidt with a DGKS test, to machine
-        # precision, and it is a much better shape for a GPU: each pass is two
-        # level 2 BLAS calls over the whole basis rather than `j` dependent
-        # pairs of a dot product and an axpy. In the modified form every dot
-        # has to finish before the axpy that follows it, which on a device
-        # means `j` synchronizations per Arnoldi step; here the coefficient
-        # vector never has to reach the host. Making the second pass
-        # unconditional also removes a branch on a device-resident scalar,
-        # which would force a synchronization of its own. On the CPU the two
-        # passes cost what the DGKS path costs when it does reorthogonalize.
+        # block classical Gram-Schmidt, two unconditional passes (see the
+        # docstring for why)
         mul!(hj, transpose(Vj), w)
         mul!(w, Vj, hj, -one(T), one(T))
         mul!(cj, transpose(Vj), w)
@@ -298,13 +290,15 @@ function gmres_correction!(x::AbstractVector{T}, ws::GMRESWorkspace{T},
     # the damaging case is a pivot which is small but nonzero.) Instead the
     # numerically well determined leading part of the triangle is solved and
     # the remaining coefficients are set to zero, which is the minimizer over
-    # the subspace the cycle actually resolved.
+    # the subspace the cycle actually resolved. The test is relative to the
+    # largest pivot, so that a solve does not depend on the scale of the
+    # operator.
     rank = j
     dmax = zero(T)
     for i in 1:j
         dmax = max(dmax, abs(H[i, i]))
     end
-    pivottol = eps(T)*max(dmax, one(T))*j
+    pivottol = eps(T)*dmax*j
     for i in 1:j
         if abs(H[i, i]) <= pivottol
             rank = i - 1
@@ -346,16 +340,9 @@ One right preconditioned Arnoldi step: overwrite `z` with `inv(M)*v` and `w`
 with `A*z`, and return the seconds spent inside the preconditioner. The timing
 excludes the Jacobian product so that `precondtime` in
 [`KrylovSolveInfo`](@ref) means the same thing whatever the preconditioner.
-(A fused form which folded the deflation's correction into this product
-existed and was retired: it measured more Arnoldi steps than the image
-pair form of [`FloquetPreconditioner`](@ref) on every case tried.)
 """
 function preconditionedproduct!(w::AbstractVector, z::AbstractVector, Aop,
     M, v::AbstractVector)
-    return _unfusedproduct!(w, z, Aop, M, v)
-end
-
-function _unfusedproduct!(w, z, Aop, M, v)
     tpc = time()
     _applyprecond!(z, M, v)
     tpc = time() - tpc
@@ -367,57 +354,42 @@ end
     harvestdimension(ws::GMRESWorkspace, out::NamedTuple)
 
 The number of Arnoldi vectors of the *last* restart cycle still present in
-the workspace, which is the usable dimension for a harvest; the workspace
-holds only that cycle, so this is derived from `out.iterations` and
-`out.cycles` rather than from the iteration count alone. Zero when the
-cycle is empty or overran.
+the workspace, which is the usable dimension for a harvest: `out.lastcycle`,
+the length of that cycle as [`gmres!`](@ref) returns it, which a cycle
+ending early on the recurrence estimate or a breakdown makes shorter than
+the restart length, whether it is the last or not. Zero when there is no
+cycle to read.
 """
 function harvestdimension(ws::GMRESWorkspace, out::NamedTuple)
-    m = size(ws.H, 2)
-    j = Int(out.iterations) - (Int(out.cycles) - 1)*m
-    return 1 <= j <= m ? j : 0
+    j = Int(get(out, :lastcycle, 0))
+    return 1 <= j <= size(ws.H, 2) ? j : 0
 end
 
 """
     norm2(v::AbstractVector)
 
-The Euclidean norm of `v`, formed through the inner product.
+The Euclidean norm of `v`: for a `Float64` vector formed through the inner
+product, `sqrt(dot(v, v))`, and otherwise `LinearAlgebra.norm`.
 
 `LinearAlgebra.norm` scales its argument before squaring so that an entry
-cannot overflow or underflow on its way to the sum. That guard is not free
-on a device: cuBLAS routes a Float64 vector to a scaled `nrm2` kernel which
-runs at a small fraction of memory bandwidth, measured at 22.9 us against
-2.7 us for a `dot` product of the same 51,200 element vector on an RTX 4090,
-and it is the largest single device kernel of a double precision solve. In
-single precision cuBLAS selects a different kernel and the gap is gone.
+cannot overflow or underflow on its way to the sum. On a device that guard
+is not free in double precision: cuBLAS routes a `Float64` vector to a
+scaled `nrm2` kernel running at a small fraction of memory bandwidth, where
+the inner product runs at the bandwidth, and that kernel would be the
+largest single device kernel of a double precision solve. In single
+precision cuBLAS selects another kernel with no such gap, and the narrower
+exponent range of a shorter float is where the guard is worth the most, so
+the inner product is used for `Float64` alone.
 
-The substitution is made only where it pays and only where it is safe, which
-is the same place: `Float64`.
-
-- In double precision cuBLAS routes `norm` to a scaled `nrm2` kernel that runs
-  at well under a tenth of memory bandwidth, measured at 55.6 us against
-  14.5 us for `sqrt(dot(v, v))` on a 51,200 element device vector, and it was
-  the largest single device kernel of a double precision solve.
-- In single precision cuBLAS selects a different kernel and the two are within
-  20% of each other, so there is nothing to win. Single precision is also
-  where the exponent range is narrowest and the guard is worth the most.
-
-So `Float32` keeps `norm` and everything else goes through the inner product,
-and the change is confined to the precision where the trade is favorable in
-both directions. Anything not covered by the `AbstractFloat` method -- complex
-vectors, other element types -- falls back to `norm` as well.
-
-The vectors this is applied to are carried at the scale of the harmonic
-balance residual of a nondimensionalized system, which runs from a few units
-down to the solver tolerance. Squaring that stays far inside the double
-precision exponent: overflow would need an entry above 1e154 and underflow to
-zero an entry below 1e-162.
-
-This is deliberately not exported and not used outside the Krylov solver.
-Anything whose scale is not controlled should keep using `norm`.
+It is safe there. The vectors this is applied to are carried at the scale
+of the harmonic balance residual of a nondimensionalized system, which runs
+from a few units down to the solver tolerance, and squaring that stays far
+inside the double precision exponent: overflow would need an entry above
+1e154, and underflow to zero an entry below 1e-162. This is deliberately
+not exported and not used outside the Krylov solver; anything whose scale
+is not controlled should keep using `norm`.
 """
-norm2(v::AbstractVector{<:AbstractFloat}) = sqrt(dot(v, v))
-norm2(v::AbstractVector{Float32}) = norm(v)
+norm2(v::AbstractVector{Float64}) = sqrt(dot(v, v))
 norm2(v::AbstractVector) = norm(v)
 
 """
@@ -427,8 +399,7 @@ norm2(v::AbstractVector) = norm(v)
 Solve `A*x = b` with restarted GMRES, where `mul!(w, Aop, v)` computes `w = A*v` and
 the optional `Mop!` applies a preconditioner `z = M \\ v`, either as a bare
 in-place closure `Mop!(z, v)` or as an [`AbstractPreconditioner`](@ref), which
-is applied through [`applypreconditioner!`](@ref) and may fuse its application
-with the operator product ([`preconditionedproduct!`](@ref)). The matrix `A`
+is applied through [`applypreconditioner!`](@ref). The matrix `A`
 is never formed; only its action is required, which is what makes this usable
 with the matrix-free [`jacobianvectorproduct!`](@ref).
 
@@ -439,18 +410,21 @@ equal to the true residual of the original system, so the stopping test is on
 fixed across a solve, the preconditioner is applied once per Arnoldi step and
 once more per restart, rather than being stored for every basis vector.
 
-The Arnoldi basis is built by modified Gram-Schmidt with a conditional second
-pass ([`gmres_orthogonalize!`](@ref)). A subdiagonal which collapses relative
-to the vector it came from is a (lucky) breakdown: the Krylov space is
-invariant, the reduced least squares solution is exact, and the cycle ends
-there rather than continuing with a spurious basis vector. The residual is
+The Arnoldi basis is built by block classical Gram-Schmidt with an
+unconditional second pass, CGS2 ([`gmres_orthogonalize!`](@ref)). A
+subdiagonal which collapses relative to the vector it came from is a
+(lucky) breakdown: the Krylov space is invariant, the reduced least squares
+solution is exact, and the cycle ends there rather than continuing with a
+spurious basis vector. The residual is
 recomputed explicitly at every restart so restarts cannot drift from the
 recurrence estimate.
 
 Converges when `norm(b - A*x) <= max(rtol*norm(b), atol)`. Returns the named
 tuple `(iterations, residual, converged, cycles, reason, precondtime,
-residualvector, products)`, where `iterations` counts Arnoldi steps across
-all cycles, `cycles` the number of restart cycles begun, `reason` is one of
+residualvector, products, lastcycle)`, where `iterations` counts Arnoldi
+steps across all cycles, `cycles` the number of restart cycles begun,
+`lastcycle` the Arnoldi steps of the last of them, whose factorization the
+workspace still holds, `reason` is one of
 `:converged`, `:breakdown` (an unhappy breakdown: the Krylov space went
 invariant without the residual coming down), `:stagnation` (a cycle failed
 to reduce the explicit residual, or produced a non-finite one), or
@@ -469,8 +443,9 @@ workspace still holding that cycle's `j` Arnoldi vectors, for a caller
 which harvests from each cycle ([`harvestcycle!`](@ref)); it must only read
 the workspace.
 
-Allocation free after the workspace is built, apart from whatever `Aop!` and
-`Mop!` themselves allocate.
+Allocation free once the basis has grown to the columns the iteration uses
+([`ensurecolumns!`](@ref)), apart from whatever `Aop!` and `Mop!` themselves
+allocate.
 """
 function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     ws::GMRESWorkspace{T}; Mop! = nothing, rtol = 1e-6, atol = 0.0,
@@ -509,7 +484,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
             fill!(x, zero(T))
             return (iterations = 0, residual = zero(T), converged = true,
                 cycles = 0, reason = :converged, precondtime = 0.0,
-                residualvector = nothing, products = 0)
+                residualvector = nothing, products = 0, lastcycle = 0)
         end
         mul!(w, Aop, x)
         products += 1
@@ -517,7 +492,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         if resnorm <= atol
             return (iterations = 0, residual = resnorm, converged = true,
                 cycles = 0, reason = :converged, precondtime = 0.0,
-                residualvector = nothing, products = products)
+                residualvector = nothing, products = products, lastcycle = 0)
         end
     end
 
@@ -534,6 +509,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
 
     totaliterations = 0
     cycles = 0
+    lastcycle = 0
     unhappy = false
     stagnated = false
     for _ in 1:maxrestarts
@@ -586,6 +562,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
             @views V[:, j+1] .= w ./ hsub
         end
 
+        lastcycle = j
         gmres_correction!(x, ws, j, Mop!)
 
         # The Arnoldi factorization of this cycle is about to be overwritten
@@ -636,7 +613,8 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     # needs `A x` has it without another product
     return (iterations = totaliterations, residual = resnorm,
         converged = converged, cycles = cycles, reason = reason,
-        precondtime = precondtime, residualvector = w, products = products)
+        precondtime = precondtime, residualvector = w, products = products,
+        lastcycle = lastcycle)
 end
 
 # `AbstractHBLinearSolver` is declared in solvers/options.jl, before the
@@ -665,11 +643,12 @@ function GMRES(; restart::Integer = 400, maxrestarts::Integer = 4)
         lazy"`maxrestarts` = $(maxrestarts) must be at least 1."))
     return GMRES(Int(restart), Int(maxrestarts))
 end
-# the Krylov workspace of an external solver is sized like the default
+# the Krylov workspace and the budget of an external solver are those of
+# the default `GMRES()`
 restartlength(ls::GMRES) = ls.restart
-restartlength(::AbstractHBLinearSolver) = 400
+restartlength(::AbstractHBLinearSolver) = restartlength(GMRES())
 maxrestarts(ls::GMRES) = ls.maxrestarts
-maxrestarts(::AbstractHBLinearSolver) = 4
+maxrestarts(::AbstractHBLinearSolver) = maxrestarts(GMRES())
 
 """
     KrylovJL(method::Symbol = :gmres; kwargs...)

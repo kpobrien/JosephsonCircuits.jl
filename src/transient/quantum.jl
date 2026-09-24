@@ -11,8 +11,8 @@ output are `(X1,P1,X2,P2,...)`, with `[X,P]=im` and vacuum variance `1/2`.
 `coefficients[:,j]` specifies mode j in the positive-frequency Fourier basis;
 `gram` accounts for overlapping modes on the same port. `vacuum` and
 `commutator` are the corresponding real covariance and commutator matrices.
-`ports` are the port numbers of the modes and `rows` the compiled port
-index of each, the row of its trace. Numeric measurement weights live on
+`ports` are the port numbers of the modes and `rows` the row of each
+port's trace, the ports in the order of their numbers. Numeric measurement weights live on
 `backend`; metadata remain on the host. Storage is O(samples*modes).
 Batch selected windows for long sliding records.
 """
@@ -31,16 +31,7 @@ struct TransientQuantumPlan{B,W}
 end
 
 function transientquantumgrid(times)
-    ts = Float64.(collect(times))
-    length(ts) >= 4 && all(isfinite, ts) ||
-        throw(ArgumentError("At least four finite RF sample times are required."))
-    # the spacing is estimated over the whole record rather than from its
-    # first two times, whose difference loses precision late in a record
-    dt = (last(ts)-first(ts))/(length(ts)-1)
-    spacingatol = 64eps(maximum(abs, ts))
-    dt > 0 &&
-    all(x -> x>0 && isapprox(x, dt; rtol = 1e-10, atol = spacingatol), diff(ts)) ||
-        throw(ArgumentError("Quantum mode samples must be uniformly increasing."))
+    ts, dt = uniformtimes(times)
     return ts, dt, collect(1:fld(length(ts)-1, 2)) ./ (length(ts)*dt)
 end
 

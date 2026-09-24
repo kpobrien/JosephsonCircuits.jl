@@ -119,6 +119,20 @@ using Test
         @test pc0.escalations == 1
         @test !JosephsonCircuits.escalatepreconditioner!(pc0)
 
+        # a band grows at every escalation until it is the full Jacobian,
+        # also on this grid of odd harmonics, whose offsets are all even
+        pb = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
+            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            d.modelayout; spec = HarmonicBand((0,)),
+            Amatrixmodes = d.Amatrixmodes)
+        stored = [nnz(pb.P)]
+        while JosephsonCircuits.escalatepreconditioner!(pb)
+            push!(stored, nnz(pb.P))
+        end
+        @test all(>(0), diff(stored))
+        @test pb.coupling isa JosephsonCircuits.FullJacobian
+
         # and the escalated preconditioner is the exact Jacobian
         x = 0.3*randn(length(d.xr))
         JosephsonCircuits.updatepreconditioner!(pc0, x)
@@ -587,6 +601,31 @@ using Test
         cids0, _, _, taken0 = JosephsonCircuits.spectralclusters(0.01*ones(4, 4))
         @test length(unique(cids0)) == 4
         @test isempty(taken0)
+        # a coupling strong one way and weak the other, whose power
+        # iteration alternates: the radius is the one the eigenvalues give,
+        # and the rule takes the coupling
+        _, r0p, _, takenp = JosephsonCircuits.spectralclusters([0.0 4.0; 0.5 0.0])
+        @test r0p ≈ sqrt(2) rtol = 1e-4
+        @test takenp == [(1, 2)]
+        # twenty strong pairs in a weak background: the rule stops at the
+        # first merge whose remainder contracts, as the eigenvalues of the
+        # remainder with those twenty merges and with one fewer show
+        Nq = 200
+        Wq = (0.2/Nq) .* rand(MersenneTwister(11), Nq, Nq)
+        for p in 1:20
+            Wq[2p-1, 2p] = Wq[2p, 2p-1] = 1.2
+        end
+        for i in 1:Nq; Wq[i, i] = 0; end
+        cq, _, r1q, takenq = JosephsonCircuits.spectralclusters(Wq)
+        between(ids) = [ids[i] == ids[j] ? 0.0 : Wq[i, j] for i in 1:Nq, j in 1:Nq]
+        @test length(takenq) == 20
+        @test r1q < 1
+        @test maximum(abs, eigvals(between(cq))) < 1
+        ids19 = collect(1:Nq)
+        for (i, j) in takenq[1:19]
+            ids19[j] = ids19[i]
+        end
+        @test maximum(abs, eigvals(between(ids19))) >= 1
 
         # the probe on a system: strengths are nonnegative with a zero
         # diagonal, and `stalled!` makes the next update remeasure
@@ -794,6 +833,21 @@ using Test
         pk = mk(FullJacobian(); precision = Float32)
         @test eltype(pk.P) === Float32
         @test !JosephsonCircuits.isexactpreconditioner(pk)
+        # KLU factorizes the single precision matrix in double precision,
+        # and solves a double precision residual in it without converting
+        xk = 0.3*randn(length(d.xr))
+        JosephsonCircuits.updatepreconditioner!(pk, xk)
+        rk = randn(length(d.xr)); zk = similar(rk)
+        JosephsonCircuits.applypreconditioner!(zk, pk, rk)
+        @test norm(Matrix{Float64}(pk.P)*zk - rk) <= 1e-9*norm(rk)
+        # the application allocates nothing beyond the solve of its
+        # factorization: no conversion and no scratch vector. The solve is
+        # the reference rather than zero because KLU.jl's allocates the
+        # reference it passes its settings in on some Julia releases.
+        fk = pk.cache.factorization
+        JosephsonCircuits.trysolve!(zk, fk, rk)
+        @test (@allocated JosephsonCircuits.applypreconditioner!(zk, pk, rk)) ==
+            (@allocated JosephsonCircuits.trysolve!(zk, fk, rk))
         @test JosephsonCircuits.escalatepreconditioner!(pk)
         @test pk.factorization isa KLUfactorization
         @test eltype(pk.P) === Float64
@@ -854,8 +908,7 @@ using Test
         push!(srcs, (mode = (0, 1), port = case.signalport, current = case.Is))
         # (at six harmonics; the singular supernode is a property of the
         # mode grid, and the table's own count is not pinned to it)
-        sol = @test_logs (:warn, r"singular supernode") match_mode = :any hbnlsolve(
-            (case.wp..., ws), (6, 6), srcs,
+        sol = hbnlsolve((case.wp..., ws), (6, 6), srcs,
             case.circuit, case.defs; nonlinearkw(case.kw)..., atol = 1e-12,
             method = NewtonKrylov(preconditioner =
                 FullJacobian(BlockFactorization(precision = Float32))))
@@ -864,6 +917,21 @@ using Test
             case.circuit, case.defs; nonlinearkw(case.kw)..., atol = 1e-12,
             method = Newton())
         @test maximum(abs, Array(sol.S) .- Array(ref.S)) < 1e-9
+        # the fallback keeps to the budget an escalation keeps to: with no
+        # room for the sparse factors of the full set, it takes the mode
+        # block diagonal
+        d = hbnlsolve((case.wp..., ws), (6, 6), srcs, case.circuit,
+            case.defs; nonlinearkw(case.kw)..., method = Newton(),
+            iterations = 0, debugJacobian = true)
+        pb = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
+            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            d.modelayout; Amatrixmodes = d.Amatrixmodes,
+            spec = FullJacobian(BlockFactorization(precision = Float32)))
+        pb.budget = 0
+        JosephsonCircuits.updatepreconditioner!(pb, d.xr)
+        @test pb.factorization isa KLUfactorization
+        @test pb.coupling isa BlockDiagonal
 
         # at four harmonics the same single precision factors are not
         # singular but poor: the Krylov solves stagnate, and the escalation

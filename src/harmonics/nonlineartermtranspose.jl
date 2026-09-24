@@ -31,7 +31,7 @@
 # by s folded into the first kernel and one multiplication by s folded
 # into the coefficients of the second. It does not need the host only
 # `applyffttranspose!` of harmonics/system.jl, which the reverse sensitivity
-# contraction still uses.
+# contraction uses.
 
 """
     NonlinearTermTransposePlan
@@ -194,8 +194,11 @@ function plannonlineartermtranspose(plan::NonlinearTermPlan, modelayout,
     ktrow = Ti[krows[e] for e in kperm]
     ktcoef = Float64[kcoefs[e] for e in kperm]
 
-    bk = backwardjosephsontransposekernel!(backend, 64, max(nslots, 1))
-    fk = forwardtransposekernel!(backend, 64, max(rdim, 1))
+    # the launch sizes are given at each launch rather than baked into the
+    # kernels, whose types would otherwise carry them and make every size of
+    # circuit a new type of problem, compiled anew
+    bk = backwardjosephsontransposekernel!(backend, 64)
+    fk = forwardtransposekernel!(backend, 64)
 
     return NonlinearTermTransposePlan(
         tobackend(backend, tbptr), tobackend(backend, tbnode),
@@ -230,7 +233,14 @@ exactly the right component, so the correct action here is none.
 @kernel function backwardjosephsontransposekernel!(P, @Const(tbptr),
         @Const(tbnode), @Const(tbcoef), @Const(w), @Const(lptr),
         @Const(lwide), @Const(gtscale))
-    q = @index(Global)
+    backwardjosephsontransposeitem!(P, tbptr, tbnode, tbcoef, w, lptr, lwide,
+        gtscale, @index(Global))
+end
+
+# the work item `q` of `backwardjosephsontransposekernel!`, which the host
+# runs as a loop
+@inline function backwardjosephsontransposeitem!(P, tbptr, tbnode, tbcoef, w,
+        lptr, lwide, gtscale, q)
     T = eltype(w)
     @inbounds begin
         accre = zero(T); accim = zero(T)
@@ -246,6 +256,7 @@ exactly the right component, so the correct action here is none.
         s = gtscale[q]
         P[q] = Complex(accre/s, accim/s)
     end
+    return nothing
 end
 
 """
@@ -260,7 +271,13 @@ it, and writes the single slot it owns.
 @kernel function forwardtransposekernel!(out, @Const(tfptr), @Const(tfslot),
         @Const(tfcoef), @Const(tfimag), @Const(Q), @Const(ktptr),
         @Const(ktrow), @Const(ktcoef), @Const(w))
-    p = @index(Global)
+    forwardtransposeitem!(out, tfptr, tfslot, tfcoef, tfimag, Q, ktptr, ktrow,
+        ktcoef, w, @index(Global))
+end
+
+# the work item `p` of `forwardtransposekernel!`
+@inline function forwardtransposeitem!(out, tfptr, tfslot, tfcoef, tfimag, Q,
+        ktptr, ktrow, ktcoef, w, p)
     T = eltype(out)
     @inbounds begin
         acc = zero(T)
@@ -273,6 +290,7 @@ it, and writes the single slot it owns.
         end
         out[p] = acc
     end
+    return nothing
 end
 
 """
@@ -284,12 +302,22 @@ conjugate multiplicity.
 function applybackwardjosephsontranspose!(P::AbstractArray,
         tplan::NonlinearTermTransposePlan, plan::NonlinearTermPlan,
         w::AbstractVector)
-    # a circuit without junctions has no slots and an empty `P`; the kernel
-    # is baked with one work item, which would read past the pointer array
+    # a circuit without junctions has no slots and an empty `P`, and
+    # nothing to launch
     isempty(P) && return P
-    tplan.backwardtranspose!(P, tplan.tbptr, tplan.tbnode, tplan.tbcoef, w,
-        plan.lptr, plan.lwide, tplan.gtscale)
-    KernelAbstractions.synchronize(tplan.backend)
+    tbptr, tbnode, tbcoef, lptr, lwide, gtscale, n = tplan.tbptr,
+        tplan.tbnode, tplan.tbcoef, plan.lptr, plan.lwide, tplan.gtscale,
+        tplan.nslots
+    if hostloop(tplan.backend, n)
+        for q in 1:n
+            backwardjosephsontransposeitem!(P, tbptr, tbnode, tbcoef, w, lptr,
+                lwide, gtscale, q)
+        end
+    else
+        tplan.backwardtranspose!(P, tbptr, tbnode, tbcoef, w, lptr, lwide,
+            gtscale; ndrange = n)
+        KernelAbstractions.synchronize(tplan.backend)
+    end
     return P
 end
 
@@ -302,8 +330,18 @@ Overwrites `out`.
 function applyforwardtranspose!(out::AbstractVector,
         tplan::NonlinearTermTransposePlan, Q::AbstractArray,
         w::AbstractVector)
-    tplan.forwardtranspose!(out, tplan.tfptr, tplan.tfslot, tplan.tfcoef,
-        tplan.tfimag, Q, tplan.ktptr, tplan.ktrow, tplan.ktcoef, w)
-    KernelAbstractions.synchronize(tplan.backend)
+    tfptr, tfslot, tfcoef, tfimag, ktptr, ktrow, ktcoef, n = tplan.tfptr,
+        tplan.tfslot, tplan.tfcoef, tplan.tfimag, tplan.ktptr, tplan.ktrow,
+        tplan.ktcoef, tplan.rdim
+    if hostloop(tplan.backend, n)
+        for p in 1:n
+            forwardtransposeitem!(out, tfptr, tfslot, tfcoef, tfimag, Q, ktptr,
+                ktrow, ktcoef, w, p)
+        end
+    else
+        tplan.forwardtranspose!(out, tfptr, tfslot, tfcoef, tfimag, Q, ktptr,
+            ktrow, ktcoef, w; ndrange = n)
+        KernelAbstractions.synchronize(tplan.backend)
+    end
     return out
 end

@@ -188,6 +188,13 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         @test long <= 1024
     end
 
+    @testset "the norm is formed through the inner product in double alone" begin
+        # a shorter float keeps the scaled norm, whose squares cannot
+        # overflow: 400^2 exceeds the largest Float16
+        @test JosephsonCircuits.norm2(Float16[300, 400]) == Float16(500)
+        @test JosephsonCircuits.norm2([3.0, 4.0]) == 5.0
+    end
+
 end
 
 @testset "gmres! singular, breakdown and validation" begin
@@ -221,6 +228,35 @@ end
     @test norm(x2) < 10                # not the 1e16 a raw divide produces
     # and it is at least as good as the zero step
     @test norm(b2 - A2*x2) <= norm(b2)
+
+    # the solve does not depend on the scale of the operator: an operator
+    # scaled by 1e-18 gives the solution of the unscaled one scaled by 1e18
+    Ar = Matrix(Diagonal(1.0 .+ (1:20) ./ 20)) .+ 0.05 .* sin.((1:20) .* (1:20)')
+    br = ones(20)
+    xr1 = zeros(20); xrs = zeros(20)
+    wsr = JosephsonCircuits.GMRESWorkspace(20, 20, Float64)
+    outr1 = JosephsonCircuits.gmres!(xr1, (w, v) -> mul!(w, Ar, v), br, wsr;
+        rtol = 1e-10, maxrestarts = 3)
+    outrs = JosephsonCircuits.gmres!(xrs, (w, v) -> mul!(w, 1e-18*Ar, v), br,
+        wsr; rtol = 1e-10, maxrestarts = 3)
+    @test outr1.converged && outrs.converged
+    @test isapprox(1e-18*xrs, xr1; rtol = 1e-9)
+
+    # a preconditioner which is not fixed makes the recurrence estimate run
+    # ahead of the explicit residual, so a cycle ends early and another
+    # follows; a harvest reads the last cycle, whose length the per cycle
+    # callback sees
+    calls = Ref(0)
+    Mv!(z, v) = (calls[] += 1; z .= v .* (1 + 0.3*sin(calls[])); z)
+    Av = Matrix(Diagonal(1.0 .+ (1:40) ./ 40)) .+ 0.05 .* sin.((1:40) .* (1:40)')
+    wsv = JosephsonCircuits.GMRESWorkspace(40, 30, Float64)
+    lengths = Int[]
+    outv = JosephsonCircuits.gmres!(zeros(40), (w, v) -> mul!(w, Av, v),
+        ones(40), wsv; Mop! = Mv!, rtol = 1e-10, maxrestarts = 6,
+        oncycle = (ws, j) -> push!(lengths, j))
+    @test outv.cycles == length(lengths) >= 2
+    @test first(lengths) < 30
+    @test JosephsonCircuits.harvestdimension(wsv, outv) == last(lengths)
 
     # non-finite tolerances must be rejected rather than reporting a
     # convergence which did not happen

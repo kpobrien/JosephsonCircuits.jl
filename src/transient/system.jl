@@ -184,15 +184,22 @@ integrated in time by [`transientsolve`](@ref). Built by
 - `drives`: the bound drives, in the order of `injection`'s columns.
 - `constantcurrent`: the unscaled constant node current of the netlist's
     current sources not replaced by a drive.
+- `ports`: the compiled ports in the order of their numbers, the order
+    of every port axis of the transient, as of harmonic balance's.
 - `portpositive`, `portnegative`, `portimpedances`, `portconductances`:
     the node of each port terminal (zero for ground), the reference
     impedance and the conductance of the termination the port owns, in
-    compiled port order, for the port waves.
+    the order of `ports`, for the port waves.
 - `blocks`: the scattering parameter blocks with a realization in time,
     see [`TransientBlock`](@ref), whose port currents are auxiliary
     unknowns after the coupled inductor currents.
 - `lines`: the ideal transmission lines, see [`TransientLine`](@ref),
     whose wave histories the solve keeps.
+- `C`, `G`, `L`, `lineE`: the scaled capacitance, conductance and
+    augmented inverse inductance the transient steps, with the stamps of
+    the blocks and the lines, and the lines' incidence, on the host.
+- `RJ`, `lmolj`: the junction rows of the incidence and the
+    coefficients `Lscale/Lj`, in the order of `relations`.
 """
 struct TransientProblem
     circuit::CompiledCircuit
@@ -205,11 +212,12 @@ struct TransientProblem
     gaugeindices::Vector{Int}
     inertialess::Vector{Vector{Int}}
     algebraic::Vector{Vector{Int}}
-    directions::Matrix{Float64}
-    constraints::Matrix{Float64}
+    directions::SparseMatrixCSC{Float64,Int}
+    constraints::SparseMatrixCSC{Float64,Int}
     injection::SparseMatrixCSC{Float64,Int}
     drives::Vector{TransientDrive}
     constantcurrent::Vector{Float64}
+    ports::Vector{CompiledPort}
     portpositive::Vector{Int}
     portnegative::Vector{Int}
     portimpedances::Vector{Float64}
@@ -221,6 +229,14 @@ struct TransientProblem
     # rows of `RJ` and of `lmolj`. `nothing` when every one of them is the
     # sinusoidal Josephson relation.
     relations::Union{Nothing,JunctionRelations{Matrix{Float64},Vector{Bool}}}
+    # the scaled matrices and the junction incidence, built once for the
+    # classification and for every system of the problem
+    C::SparseMatrixCSC{Float64,Int}
+    G::SparseMatrixCSC{Float64,Int}
+    L::SparseMatrixCSC{Float64,Int}
+    lineE::SparseMatrixCSC{Float64,Int}
+    RJ::SparseMatrixCSC{Float64,Int}
+    lmolj::Vector{Float64}
 end
 
 Base.length(p::TransientProblem) = p.Nnodal + p.Naux
@@ -277,8 +293,13 @@ function transientproblem(circuit::CompilableCircuit,
         all(isfinite, nonzeros(A)) || throw(ArgumentError(
             lazy"the $(name) matrix has a nonfinite entry."))
     end
-    all(>(0), nm.Cnm.nzval[[k for j in axes(nm.Cnm, 2) for k in nzrange(nm.Cnm, j) if rowvals(nm.Cnm)[k] == j]]) ||
-        throw(ArgumentError("every node needs a nonnegative capacitance to ground; a negative capacitance has no meaning in time."))
+    # every capacitance nonnegative, so that the capacitance matrix, a
+    # weighted Laplacian with the capacitances to ground on its diagonal,
+    # is positive semidefinite, as the time stepping needs it
+    for k in eachindex(vvn)
+        psc.componenttypes[k] == :C && vvn[k] < 0 && throw(ArgumentError(
+            lazy"the capacitor $(psc.componentnames[k]) has the negative value $(vvn[k]); a negative capacitance has no meaning in time."))
+    end
 
     Nnodal = psc.Nnodes - 1
     coupledbranches = mnacoupledbranches(nm.Mb)
@@ -294,59 +315,84 @@ function transientproblem(circuit::CompilableCircuit,
     # inductance the impedance scale times the impedance and mean
     # capacitance, or a picosecond
     Lscale = transientscale(psc, vvn, nm)
-    _, Gs, Ls, _ = transientlinearmatrices(nm, coupledbranches, psc.topology.Rbn, gaugeindices, blocks, lines, Lscale, Nnodal, Naux)
+    C, G, L, lineE = transientlinearmatrices(nm, coupledbranches, psc.topology.Rbn, gaugeindices, blocks, lines, Lscale, Nnodal, Naux)
     inertialess, algebraic, directions, constraints =
-        transientclassification(psc, vvn, Gs, Ls, Nnodal, length(coupledbranches), blocks)
+        transientclassification(psc, vvn, G, L, Nnodal, length(coupledbranches), blocks)
+    RJ, lmolj = junctionincidence(nm, Naux, Lscale)
 
-    # the port terminals and terminations, for the port waves
-    np = length(psc.ports)
-    portpositive = [p.positivenode - 1 for p in psc.ports]
-    portnegative = [p.negativenode - 1 for p in psc.ports]
-    # the matrices list the impedances by port number, the problem by
-    # compiled port, as it lists the terminals and the terminations
-    portimpedances = [transientreal(nm.portimpedances[findfirst(==(psc.ports[k].number), nm.portnumbers)],
-        "the impedance of port $(psc.ports[k].number)") for k in 1:np]
+    # the port terminals and terminations, for the port waves, in the
+    # order of the ports' numbers
+    ports = orderedports(psc)
+    np = length(ports)
+    portpositive = [p.positivenode - 1 for p in ports]
+    portnegative = [p.negativenode - 1 for p in ports]
+    portimpedances = [transientreal(nm.portimpedances[findfirst(==(ports[k].number), nm.portnumbers)],
+        "the impedance of port $(ports[k].number)") for k in 1:np]
     all(>(0), portimpedances) || throw(ArgumentError("port reference impedances must be positive."))
-    portconductances = [p.environment == 0 ? 0.0 : 1/vvn[p.environment] for p in psc.ports]
+    portconductances = [p.environment == 0 ? 0.0 : 1/vvn[p.environment] for p in ports]
 
-    # the drives: a unit current of each source as a node injection, one
-    # column per source, and the constant current of the netlist sources
-    # no source replaced
+    drives, injection, constantcurrent = bindsources(psc, vvn, ports, portpositive, portnegative, Nnodal + Naux, sources)
+    return TransientProblem(psc, nm, Nnodal, Naux, Lscale, coupledbranches,
+        floatingcomponents, gaugeindices, inertialess, algebraic, directions, constraints,
+        injection, drives, constantcurrent, ports, portpositive, portnegative, portimpedances, portconductances, blocks, lines,
+        calcjunctionrelations(psc.componenttypes, psc.nodeindices,
+            psc.junctioncprs, psc.topology.edge2indexdict, nm.Ljb), C, G, L, lineE, RJ, lmolj)
+end
+
+# the junction rows of the incidence, over the state with its `Naux`
+# auxiliary unknowns, and the coefficients `Lscale/Lj`, in the order of
+# the junctions of the matrices
+function junctionincidence(nm::CircuitMatrices, Naux::Int, Lscale::Float64)
+    Rbnm = hcat(nm.Rbnm, spzeros(eltype(nm.Rbnm), size(nm.Rbnm, 1), Naux))
+    Ljb = nm.Ljb
+    return SparseMatrixCSC{Float64,Int}(Rbnm[Ljb.nzind, :]), Float64[Lscale/Ljb.nzval[i] for i in eachindex(Ljb.nzval)]
+end
+
+# The drives of `sources` bound to a compiled circuit with `n` unknowns
+# and the ports `ports` with their terminals: a unit current of each
+# source as a node injection, one column per source, a port's into its
+# positive terminal and a named current source's out of its first
+# terminal and into its second, and the constant current of the
+# netlist's current sources no source replaced, from the values `vvn`.
+function bindsources(psc::CompiledCircuit, vvn::Vector, ports::Vector{CompiledPort}, portpositive, portnegative, n::Int, sources)
     drives = TransientDrive[]
     rows, cols, vals = Int[], Int[], Float64[]
     replaced = Set{Int}()
     for (k, source) in enumerate(sources)
         source isa TransientSource || throw(ArgumentError("sources must contain TransientSource objects."))
         if source.target isa Int
-            p = findfirst(port -> port.number == source.target, psc.ports)
-            isnothing(p) && throw(ArgumentError(lazy"there is no port $(source.target)."))
-            n1, n2 = portpositive[p], portnegative[p]
-            push!(drives, TransientDrive(p, source.current))
+            q = portindex(ports, source.target)
+            n1, n2 = portpositive[q], portnegative[q]
+            push!(drives, TransientDrive(q, source.current))
         else
             c = get(psc.componentnamedict, source.target, 0)
             (c > 0 && psc.componenttypes[c] == :I) || throw(ArgumentError(
                 lazy"$(source.target) does not name a CurrentSource of the circuit."))
             push!(replaced, c)
-            # out of the first terminal, into the second
             n1, n2 = psc.nodeindices[2, c] - 1, psc.nodeindices[1, c] - 1
             push!(drives, TransientDrive(0, source.current))
         end
         n1 > 0 && (push!(rows, n1); push!(cols, k); push!(vals, 1.0))
         n2 > 0 && (push!(rows, n2); push!(cols, k); push!(vals, -1.0))
     end
-    injection = sparse(rows, cols, vals, Nnodal + Naux, length(drives))
-    constantcurrent = zeros(Nnodal + Naux)
+    injection = sparse(rows, cols, vals, n, length(drives))
+    constantcurrent = zeros(n)
     for c in psc.currentsources
         c in replaced && continue
         n1, n2 = psc.nodeindices[2, c] - 1, psc.nodeindices[1, c] - 1
         n1 > 0 && (constantcurrent[n1] += vvn[c])
         n2 > 0 && (constantcurrent[n2] -= vvn[c])
     end
-    return TransientProblem(psc, nm, Nnodal, Naux, Lscale, coupledbranches,
-        floatingcomponents, gaugeindices, inertialess, algebraic, directions, constraints,
-        injection, drives, constantcurrent, portpositive, portnegative, portimpedances, portconductances, blocks, lines,
-        calcjunctionrelations(psc.componenttypes, psc.nodeindices,
-            psc.junctioncprs, psc.topology.edge2indexdict, nm.Ljb))
+    return drives, injection, constantcurrent
+end
+
+# the index of the port numbered `number` among `ports`, the row of its
+# trace
+function portindex(ports::Vector{CompiledPort}, number)
+    number isa Integer || throw(ArgumentError(lazy"a port is named by its number, not $(number)."))
+    q = findfirst(port -> port.number == number, ports)
+    isnothing(q) && throw(ArgumentError(lazy"there is no port $(number)."))
+    return q
 end
 
 # the ideal lines of a compiled circuit, in compiled order
@@ -501,8 +547,8 @@ end
 # the equations say rather than as a graph of the ports would guess. A
 # coupled inductor current is an algebraic direction of its own, its row
 # constraining the flux. Returns the inertialess subnetworks, the
-# supports of the algebraic directions, the directions as columns, and
-# the constraints as rows over every equation.
+# supports of the algebraic directions, the directions as the columns of
+# a sparse matrix, and the constraints as its rows over every equation.
 function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMatrixCSC, L::SparseMatrixCSC,
         Nnodal::Int, Naux::Int, blocks = TransientBlock[])
     n = size(G, 1)
@@ -534,7 +580,7 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
     d = size(Valpha, 2)
     rank(Nalpha; atol = 1e-8) == d || throw(ArgumentError(
         "a flux direction without capacitance is tied to a scattering block's port current that no equation determines; the circuit is singular in time."))
-    directions = Matrix(Z0*Valpha)
+    directions = sparse(Z0*Valpha)
     # the constraints are the combinations of the equations without any
     # rate: the block currents cancel in every left null vector and the
     # rates along the islands too, and the combinations without the rate
@@ -542,17 +588,15 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
     rows = Matrix(transpose(Z0*rs.leftnull[1:k0, :] .+ Ea*rs.leftnull[k0 + 1:k0 + na, :]))
     leak = rows*G
     cl = size(rows, 1) == 0 ? zeros(0, 0) : nullspace(Matrix(transpose(leak)); atol = 1e-8*max(norm(G, Inf), floatmin(Float64)))
-    constraints = size(rows, 1) == 0 ? zeros(0, n) : Matrix(transpose(cl)*rows)
+    constraints = size(rows, 1) == 0 ? spzeros(0, n) : sparse(transpose(cl)*rows)
     size(constraints, 1) == d || throw(ArgumentError(
         "a scattering block ties the rate of a node with capacitance to a constraint on a node without one; that coupling is not supported in time."))
     algebraic = [sort!([node for (c, z) in enumerate(islands) if abs(Valpha[c, j]) > 1e-8 for node in z]) for j in 1:d]
     # the coupled inductor currents, each its own direction
-    for k in 1:Naux
-        e = zeros(n); e[Nnodal + k] = 1.0
-        directions = hcat(directions, e)
-        constraints = vcat(constraints, transpose(e))
-        push!(algebraic, [Nnodal + k])
-    end
+    coupled = sparse(Nnodal .+ (1:Naux), 1:Naux, ones(Naux), n, Naux)
+    directions = hcat(directions, coupled)
+    constraints = vcat(constraints, sparse(transpose(coupled)))
+    append!(algebraic, [[Nnodal + k] for k in 1:Naux])
     order = sortperm(algebraic; by = z -> (first(z), length(z)))
     return inertialess, algebraic[order], directions[:, order], constraints[order, :]
 end
@@ -681,13 +725,12 @@ the waves leaving the ports of each line come from the port voltages and
 zero by default; before the start the lines carry those waves unchanged.
 
 From a solution, the state at its end, to start another solve from: its
-final fluxes and rates, the recorded waves leaving each line port over
-the delay window before the end, which is what the lines read after the
-start, so a continuation is the uninterrupted solve to the solver's
-tolerance at the same step and to the interpolation of the history at
-another, and the final states of the rational blocks, which need
-`record = :states`. A record without the line waves, checkpoints with
-the history kept at each of them, cannot be continued from.
+final fluxes and rates, the waves leaving each line port over the delay
+window before the end, which is what the lines read after the start, so
+a continuation is the uninterrupted solve to the solver's tolerance at
+the same step and to the interpolation of the history at another, and
+the final states of the rational blocks, which every solve of the
+package's rules keeps whatever it records.
 """
 function transientstate(p::TransientProblem; flux = zeros(p.Nnodal), voltage = zeros(p.Nnodal),
         linecurrents = zeros(length(p.lines)))

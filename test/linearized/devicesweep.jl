@@ -258,17 +258,13 @@ end
         masked = zeros(ComplexF64, n, nrhs)
         masked[rows,:] .= phin[rows,:]
         wmodes = ws[1] .+ d.wpumpmodes
-        iw = zeros(ComplexF64, nrhs, nrhs); ow = similar(iw)
-        iw2 = similar(iw); ow2 = similar(iw)
-        JosephsonCircuits.calcinputoutput!(iw, ow, phin, d.bnm,
-            d.portindices, d.portindices,
-            d.portimpedances, d.portimpedances,
-            d.nodeindices, d.componenttypes, wmodes)
-        JosephsonCircuits.calcinputoutput!(iw2, ow2, masked, d.bnm,
-            d.portindices, d.portindices,
-            d.portimpedances, d.portimpedances,
-            d.nodeindices, d.componenttypes, wmodes)
-        @test iw == iw2
+        drives = Diagonal(JosephsonCircuits.portsourcecurrents(d.bnm,
+            d.portindices, d.nodeindices, Nmodes))
+        ow = zeros(ComplexF64, nrhs, nrhs); ow2 = similar(ow)
+        for (o, p) in ((ow, phin), (ow2, masked))
+            JosephsonCircuits.calcoutputwaves!(o, p, drives, d.portindices,
+                d.portimpedances, d.nodeindices, d.componenttypes, wmodes)
+        end
         @test ow == ow2
 
         # and the gather picks exactly those rows out of a batch

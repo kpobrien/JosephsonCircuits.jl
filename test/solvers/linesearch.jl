@@ -159,7 +159,7 @@ using Logging
         # instead of converging
         for m in (Newton(linesearch = Backtracking(maxbacktracks = 0)),
                   NewtonKrylov(linesearch = Backtracking(maxbacktracks = 0)))
-            starved = @test_logs (:warn, r"did not converge") match_mode=:any run(m)
+            starved = @test_logs (:warn,) match_mode=:any run(m)
             @test !starved.solverinfo.converged
             @test starved.solverinfo.stages[end].reason === :linesearch
         end

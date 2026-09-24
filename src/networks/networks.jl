@@ -442,7 +442,7 @@ end
 """
     Z_TZ(Z1,Z2,Z3)
 
-Return the ABCD matrix for a T network of impedances `Z1`, `Z2`, and `Z3`.
+Return the impedance matrix for a T network of impedances `Z1`, `Z2`, and `Z3`.
 ```
 o--Z1-----Z2--o
        |       
@@ -490,8 +490,8 @@ end
 """
     Z_L(L,w)
 
-The impedance matrix `Z` for a network of inductors and mutual inductors is
-the inductance matrix `Z_L` times im*w.
+Return the impedance matrix `Z` of a network of inductors and mutual
+inductors, `im*w` times its inductance matrix `L`.
 """
 function Z_L(L::AbstractMatrix,w::Number)
     return im*w*L
@@ -810,7 +810,7 @@ V_m, I_m -->  ======== <-- I_n, V_n
 
 where n=2*m.
 
-[V_1, ...V_m, I_1, ...I_m] = A_coupled_tline * [V_{m+1}, ...V_n, I_{m+1}, ...I_n]
+[V_1, ...V_m, I_1, ...I_m] = A_coupled_tlines * [V_{m+1}, ...V_n, -I_{m+1}, ...-I_n]
 ```
 
 # Examples
@@ -917,9 +917,9 @@ end
 """
     ZC_basis_coupled_tlines(L, Cmaxwell)
 
-    Returns the characteristic impedance matrix `ZC` and eigenbasis for
-    current `TI` and voltage `TV` from the inductance per unit length matrix
-    `L` and Maxwell capacitance per unit length matrix `Cmaxwell`.
+Return the characteristic impedance matrix `ZC` and eigenbasis for current
+`TI` and voltage `TV` from the inductance per unit length matrix `L` and
+Maxwell capacitance per unit length matrix `Cmaxwell`.
 
 # Arguments
 - `L`: inductance per unit length matrix.
@@ -931,10 +931,10 @@ end
         from TI = U*theta*S.
 - `TV`: matrix which transforms mode voltages to voltages, V = TV*Vm. Computed
         from TV = U*inv(theta)*S.
-- `theta`: Diagonal matrix with the square of the eigenvalues of Cmaxwell
-        along the diagonals.
+- `theta`: Diagonal matrix with the square roots of the eigenvalues of
+        Cmaxwell along the diagonals.
 - `U`: eigenvectors of Cmaxwell.
-- `lambda`: Diagonal matrix with the square of the eigenvalues of
+- `lambda`: Diagonal matrix with the square roots of the eigenvalues of
         theta*Ut*L*U*theta along the diagonals. `lambda` is related
         to the propagation constant, gamma, as gamma^2 = -omega^2*lambda^2.
 - `S`: eigenvectors of theta*Ut*L*U*theta.
@@ -1130,7 +1130,7 @@ nodd = 0.009852185508991206
 ```
 """
 function mutual_to_even_odd(L, Cmutual)
-    return maxwell_to_even_odd(L, maxwell_to_mutual(Cmutual))
+    return maxwell_to_even_odd(L, mutual_to_maxwell(Cmutual))
 end
 
 
@@ -1335,6 +1335,17 @@ function Z_canonical_coupled_line_circuits(i::Int, Z0e, Z0o, thetae, thetao)
     return [Z11 Z12; Z21 Z22]
 end
 
+"""
+    canonical_coupled_line_circuits(i::Int, Z0e, Z0o, ne, no)
+
+Return the lumped element model of the canonical coupled line circuit `i`
+of [`Z_canonical_coupled_line_circuits`](@ref), for lines much shorter
+than a wavelength, from the even and odd mode impedances `Z0e`, `Z0o` and
+mode indices `ne`, `no`: a named tuple of the element values the model
+has, among the inductances `L1`, `L2`, the mutual inductance `M` and the
+capacitances `C1`, `C2`, `Cm`, each per unit length of the lines. The
+circuits 3, 8, 9 and 10 have a model.
+"""
 function canonical_coupled_line_circuits(i::Int, Z0e, Z0o, ne, no)
     c = JosephsonCircuits.speed_of_light
 
@@ -1361,7 +1372,7 @@ function canonical_coupled_line_circuits(i::Int, Z0e, Z0o, ne, no)
         Cm = (no*Z0e-ne*Z0o)/(2*c*Z0e*Z0o)
         return (L1 = L1, L2 = L2, M = M, C1 = C1, C2 = C2, Cm = Cm)
     else
-        throw(ArgumentError(lazy"Canonical coupled line circuit number must be 1-10."))
+        throw(ArgumentError(lazy"The canonical coupled line circuits with a lumped element model are 3, 8, 9 and 10, not $(i)."))
     end
 end
 
@@ -1371,7 +1382,9 @@ end
 Return the Maxwell capacitance matrix for an `n` terminal system from the
 Maxwell capacitance matrices for sets of terminals stored in the dictionary
 `d`. The dictionary keys are tuples of the terminal numbers for the
-capacitance matrices and the values are the capacitance matrices.
+capacitance matrices and the values are the capacitance matrices. An entry
+given by several matrices is the mean of their values, and an entry given
+by none is zero.
 
 # Examples
 ```jldoctest
@@ -1390,17 +1403,20 @@ julia> JosephsonCircuits.maxwell_combine(3, Dict((1,2,3)=>[1.0 2.0 3.0;4.0 5.0 6
 """
 function maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T<:AbstractMatrix}
 
-    C = zeros(eltype(T), n, n)
+    # sum the values given for each entry and count them
+    C = zeros(typeof(zero(eltype(T))/1), n, n)
+    counts = zeros(Int, n, n)
     for (key,val) in d
-        for i in 1:N
-            for j in 1:N
-                if iszero(C[key[i],key[j]])
-                    C[key[i],key[j]] = val[i,j]
-                else
-                    C[key[i],key[j]] += val[i,j]
-                    C[key[i],key[j]] /= 2
-                end
+        for j in 1:N
+            for i in 1:N
+                C[key[i],key[j]] += val[i,j]
+                counts[key[i],key[j]] += 1
             end
+        end
+    end
+    for k in eachindex(C, counts)
+        if counts[k] > 1
+            C[k] /= counts[k]
         end
     end
     return C
@@ -1487,7 +1503,7 @@ function S_short!(S::AbstractArray)
     # fill with zeros
     fill!(S,zero(eltype(S)))
   
-    # loop over the dimensions of the array greater than 2 and set the diagonals equal to 1
+    # loop over the dimensions of the array greater than 2 and set the diagonals equal to -1
     for k in CartesianIndices(axes(S)[3:end])
         for i in 1:size(S,1)
             S[i,i,k] = -one(eltype(S))
@@ -1581,47 +1597,10 @@ end
 
 
 """
-    S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number, 
-        θ::Number, ϕ::Number)
+    S_directional_coupler!(S, α::Number, β::Number, θ::Number, ϕ::Number)
 
-Overwrite `S` with the scattering parameter matrix for an ideal directional
-coupler with the convention that if a wave is input at port 1, then port 2 is
-the through, port 3 is the coupled port, and port 4 is the isolated port:
-
-```
-                           _______
-port 1 (input)    -->  ====|     |==== --> port 2 (through)
-                           |     |
-port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
-                           -------
-
-[0            α            exp(im\\*θ)β 0;
- α            0            0            exp(im\\*ϕ)β;
- exp(im\\*θ)β 0            0            α;
- 0            exp(im\\*ϕ)β α            0]
-```
-
-The directional coupler is specified by the real coefficients α, β such that
-α²+β² = 1 and the real phases θ, ϕ which satisfy the condition
-θ + ϕ = π ± 2*n*π.
-
-The scattering parameter matrix is unitary. Arbitrary phases can be applied to
-any of the ports (eg. by connecting a lossless transmission line).
-
-The voltage coupling coefficient c is a real number where α = √(1-c^2) and
-β = c. The coupling in dB is defined as C = -20*log10(c).
-
-* A symmetric directional coupler has θ = ϕ = π/2.
-
-* An anti-symmetric directional coupler has θ = 0 and ϕ = π.
-
-* A quadature hybrid has c = 1/√2 and θ = ϕ = π/2.
-
-* A magic-T hybrid or a rat-race hybrid has c = 1/√2 and θ = 0, ϕ = π.
-
-# References
-Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
-ISBN 9780470631553.
+In-place version of [`S_directional_coupler`](@ref), writing into `S`, a
+`4 x 4` matrix or an array of them.
 """
 function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
     θ::Number, ϕ::Number)
@@ -1652,7 +1631,7 @@ end
 """
     S_directional_coupler(α::Number, β::Number, θ::Number, ϕ::Number)
 
-Overwrite `S` with the scattering parameter matrix for an ideal directional
+Return the scattering parameter matrix for an ideal directional
 coupler with the convention that if a wave is input at port 1, then port 2 is
 the through, port 3 is the coupled port, and port 4 is the isolated port:
 
@@ -1737,30 +1716,7 @@ end
 """
     S_directional_coupler_symmetric!(S, couplingdB::Number)
 
-Overwrite `S` with the scattering parameter matrix for an ideal symmetric
-directional coupler with the convention that if a wave is input at port 1,
-then port 2 is the through, port 3 is the coupled port, and port 4 is the
-isolated port:
-
-```
-                           _______
-port 1 (input)    -->  ====|     |==== --> port 2 (through)
-                           |     |
-port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
-                           -------
-
-[0            α            exp(im\\*θ)β 0;
- α            0            0            exp(im\\*ϕ)β;
- exp(im\\*θ)β 0            0            α;
- 0            exp(im\\*ϕ)β α            0]
-```
-where α = √(1-c^2) and β = c and c is the voltage coupling coefficient which
-is related to the coupling in dB as c = 10^(-couplingdB/20). The symmetric
-directional coupler has θ = ϕ = π/2.
-
-# References
-Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
-ISBN 9780470631553.
+In-place version of [`S_directional_coupler_symmetric`](@ref), writing into `S`.
 """
 function S_directional_coupler_symmetric!(S, couplingdB::Number)
     c = 10^(-couplingdB/20)
@@ -1806,30 +1762,7 @@ end
 """
     S_directional_coupler_antisymmetric!(S, couplingdB::Number)
 
-Overwrite `S` with the scattering parameter matrix for an ideal anti-symmetric
-directional coupler with the convention that if a wave is input at port 1,
-then port 2 is the through, port 3 is the coupled port, and port 4 is the
-isolated port:
-
-```
-                           _______
-port 1 (input)    -->  ====|     |==== --> port 2 (through)
-                           |     |
-port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
-                           -------
-
-[0            α            exp(im\\*θ)β 0;
- α            0            0            exp(im\\*ϕ)β;
- exp(im\\*θ)β 0            0            α;
- 0            exp(im\\*ϕ)β α            0]
-```
-where α = √(1-c^2) and β = c and c is the voltage coupling coefficient which
-is related to the coupling in dB as c = 10^(-couplingdB/20). The
-anti-symmetric directional coupler has θ = 0 and ϕ = π.
-
-# References
-Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
-ISBN 9780470631553.
+In-place version of [`S_directional_coupler_antisymmetric`](@ref), writing into `S`.
 """
 function S_directional_coupler_antisymmetric!(S, couplingdB::Number)
     c = 10^(-couplingdB/20)
@@ -1865,37 +1798,16 @@ Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
 ISBN 9780470631553.
 """
 function S_hybrid_coupler_symmetric()
-    return S_directional_coupler_symmetric(3)
+    return S_directional_coupler(1/sqrt(2), 1/sqrt(2), pi/2, pi/2)
 end
 
 """
     S_hybrid_coupler_symmetric!(S)
 
-Overwrite `S` with the scattering parameter matrix for an ideal symmetric
-hybrid (3 dB) coupler (a 90 degree or quadature hybrid) with the convention
-that if a wave is input at port 1, then port 2 is the through, port 3 is the
-coupled port, and port 4 is the isolated port:
-
-```
-                           _______
-port 1 (input)    -->  ====|     |==== --> port 2 (through)
-                           |     |
-port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
-                           -------
-
-[0            α            exp(im\\*θ)β 0;
- α            0            0            exp(im\\*ϕ)β;
- exp(im\\*θ)β 0            0            α;
- 0            exp(im\\*ϕ)β α            0]
-```
-where α = β = 1/√2 and θ = ϕ = π/2 for a symmetric hybrid (3 dB) coupler.
-
-# References
-Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
-ISBN 9780470631553.
+In-place version of [`S_hybrid_coupler_symmetric`](@ref), writing into `S`.
 """
 function S_hybrid_coupler_symmetric!(S)
-    return S_directional_coupler_symmetric!(S, 3)
+    return S_directional_coupler!(S, 1/sqrt(2), 1/sqrt(2), pi/2, pi/2)
 end
 
 """
@@ -1926,42 +1838,20 @@ Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
 ISBN 9780470631553.
 """
 function S_hybrid_coupler_antisymmetric()
-    return S_directional_coupler_antisymmetric(3)
+    return S_directional_coupler(1/sqrt(2), 1/sqrt(2), 0.0, pi)
 end
 
 """
     S_hybrid_coupler_antisymmetric!(S)
 
-Overwrite `S` with the scattering parameter matrix for an ideal anti-symmetric
-hybrid (3 dB) coupler (a magic-T hybrid or a rat-race hybrid or a 180 degree
-hybrid) with the convention that if a wave is input at port 1, then port 2 is
-the through, port 3 is the coupled port, and port 4 is the isolated port:
-
-```
-                           _______
-port 1 (input)    -->  ====|     |==== --> port 2 (through)
-                           |     |
-port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
-                           -------
-
-[0            α            exp(im\\*θ)β 0;
- α            0            0            exp(im\\*ϕ)β;
- exp(im\\*θ)β 0            0            α;
- 0            exp(im\\*ϕ)β α            0]
-```
-where α = β = 1/√2 and θ = 0 and ϕ = π for an anti-symmetric hybrid (3 dB)
-coupler.
-
-# References
-Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
-ISBN 9780470631553.
+In-place version of [`S_hybrid_coupler_antisymmetric`](@ref), writing into `S`.
 """
 function S_hybrid_coupler_antisymmetric!(S)
-    return S_directional_coupler_antisymmetric!(S, 3)
+    return S_directional_coupler!(S, 1/sqrt(2), 1/sqrt(2), 0.0, pi)
 end
 
 """
-    ABCD_attenuator_T(Z0,attenuationdB)
+    ABCD_attenuator_T(Z0, attenuationdB)
 
 Return the ABCD matrix for an attenuator with input and output impedance `Z0`
 and attenuation `attenuationdB` made with a T network of impedances `Ra`,
@@ -1973,6 +1863,12 @@ o--Ra-----Rb--o
        |       
 o-------------o
 ```
+A T and a Pi attenuator between the same impedances are the same two-port,
+so this is also the matrix of [`ABCD_attenuator_Pi`](@ref). With `A` the
+voltage attenuation `10^(-attenuationdB/20)`, it is
+`[c Z0*s; s/Z0 c]` with `c = (1+A^2)/(2A)` and `s = (1-A^2)/(2A)`, the
+identity at zero attenuation.
+
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_attenuator_T(50.0,10.0)
@@ -1982,25 +1878,14 @@ julia> JosephsonCircuits.ABCD_attenuator_T(50.0,10.0)
 ```
 """
 function ABCD_attenuator_T(Z0::Number,attenuationdB::Number)
-    A = 10^(-attenuationdB/20)
-    Ra = Rb = Z0*(1-A)/(1+A)
-    Rc = 2*Z0*A/(1-A^2)
-    return JosephsonCircuits.ABCD_TZ(Ra,Rb,Rc)
+    return ABCD_attenuator(Z0, Z0, attenuationdB)
 end
 
 """
     ABCD_attenuator_T!(ABCD, Z0, attenuationdB)
 
-Overwrite `ABCD` with the ABCD matrix for an attenuator with input and output
-impedance `Z0` and attenuation `attenuationdB` made with a T network of
-impedances `Ra`, `Rb`, and `Rc`.
-```
-o--Ra-----Rb--o
-       |       
-       Rc       
-       |       
-o-------------o
-```
+In-place version of [`ABCD_attenuator_T`](@ref).
+
 # Examples
 ```jldoctest
 julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_T!(ABCD, 50.0, 10.0)
@@ -2010,17 +1895,14 @@ julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_T!(ABCD, 50.0
 ```
 """
 function ABCD_attenuator_T!(ABCD, Z0::Number,attenuationdB::Number)
-    A = 10^(-attenuationdB/20)
-    Ra = Rb = Z0*(1-A)/(1+A)
-    Rc = 2*Z0*A/(1-A^2)
-    return JosephsonCircuits.ABCD_TZ!(ABCD, Ra,Rb,Rc)
+    return ABCD_attenuator!(ABCD, Z0, Z0, attenuationdB)
 end
 
 """
-    ABCD_attenuator_Pi(Z0,attenuationdB)
+    ABCD_attenuator_Pi(Z0, attenuationdB)
 
 Return the ABCD matrix for an attenuator with input and output impedance `Z0`
-and attenuation `attenuationdB` made with a T network of impedances `Rx`,
+and attenuation `attenuationdB` made with a Pi network of impedances `Rx`,
 `Ry`, and `Rz`.
 ```
 o----Rz-----o
@@ -2029,6 +1911,9 @@ o----Rz-----o
    |     |   
 o-----------o
 ```
+A T and a Pi attenuator between the same impedances are the same two-port,
+so this is also the matrix of [`ABCD_attenuator_T`](@ref), which gives it.
+
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_attenuator_Pi(50.0,10.0)
@@ -2038,25 +1923,14 @@ julia> JosephsonCircuits.ABCD_attenuator_Pi(50.0,10.0)
 ```
 """
 function ABCD_attenuator_Pi(Z0::Number,attenuationdB::Number)
-    A = 10^(-attenuationdB/20)
-    Rx = Z0*(1+A)/(1-A)
-    Rz = 2*Rx/((Rx/Z0)^2-1)
-    return JosephsonCircuits.ABCD_PiY(1/Rx,1/Rx,1/Rz)
+    return ABCD_attenuator(Z0, Z0, attenuationdB)
 end
 
 """
     ABCD_attenuator_Pi!(ABCD, Z0, attenuationdB)
 
-Overwrite `ABCD` with the ABCD matrix for an attenuator with input and output
-impedance `Z0` and attenuation `attenuationdB` made with a T network of
-impedances `Rx`, `Ry`, and `Rz`.
-```
-o----Rz-----o
-   |     |   
-   Rx    Ry  
-   |     |   
-o-----------o
-```
+In-place version of [`ABCD_attenuator_Pi`](@ref).
+
 # Examples
 ```jldoctest
 julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_Pi!(ABCD,50.0,10.0)
@@ -2066,31 +1940,8 @@ julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_Pi!(ABCD,50.0
 ```
 """
 function ABCD_attenuator_Pi!(ABCD,Z0::Number,attenuationdB::Number)
-    A = 10^(-attenuationdB/20)
-    Rx = Z0*(1+A)/(1-A)
-    Rz = 2*Rx/((Rx/Z0)^2-1)
-    return JosephsonCircuits.ABCD_PiY!(ABCD,1/Rx,1/Rx,1/Rz)
+    return ABCD_attenuator!(ABCD, Z0, Z0, attenuationdB)
 end
-
-function Z_attenuator_inner(Zsource::Number,Zload::Number,attenuationdB::Number)
-    # https://en.wikipedia.org/wiki/Attenuator_(electronics)
-    rho = max(Zsource,Zload)/min(Zsource,Zload)
-
-    attenuationdBmin = 20*log10(sqrt(rho-1)+sqrt(rho))
-
-    if attenuationdB < attenuationdBmin
-        throw(ArgumentError(lazy"Attenuation of $(attenuationdB) dB is below the minimum attenuation of $(attenuationdBmin) dB for a passive circuit given the source and load impedances of $(Zsource) and $(Zload) Ohms."))
-    end
-    
-    A = 10^-(attenuationdB/20)
-    num = 1+A^2
-    denom = 1-A^2
-    Z11 = Zsource*num/denom
-    Z22 = Zload*num/denom
-    Z21 = 2*A*sqrt(Zsource*Zload)/denom
-    return Z11,Z22,Z21
-end
-
 
 """
     ABCD_attenuator_T(Zsource, Zload, attenuationdB)
@@ -2105,6 +1956,15 @@ o--Ra-----Rb--o
        |       
 o-------------o
 ```
+An attenuator between unequal impedances has a minimum attenuation,
+`20*log10(sqrt(rho-1)+sqrt(rho))` dB with `rho` the ratio of the larger
+impedance to the smaller, below which it would need negative resistances; a
+smaller `attenuationdB` throws an `ArgumentError`. A T and a Pi attenuator
+between the same impedances are the same two-port, so this is also the
+matrix of [`ABCD_attenuator_Pi`](@ref). With `A` the voltage attenuation
+`10^(-attenuationdB/20)`, `c = (1+A^2)/(2A)` and `s = (1-A^2)/(2A)`, it is
+`[sqrt(Zsource/Zload)*c sqrt(Zsource*Zload)*s; s/sqrt(Zsource*Zload) sqrt(Zload/Zsource)*c]`.
+
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_attenuator_T(50.0,50.0,10.0)
@@ -2114,25 +1974,15 @@ julia> JosephsonCircuits.ABCD_attenuator_T(50.0,50.0,10.0)
 ```
 """
 function ABCD_attenuator_T(Zsource::Number,Zload::Number,attenuationdB::Number)
-
-    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
-    
-    return JosephsonCircuits.ABCD_TZ(Z11 - Z21, Z22 - Z21, Z21)
+    checkattenuation(Zsource, Zload, attenuationdB)
+    return ABCD_attenuator(Zsource, Zload, attenuationdB)
 end
 
 """
     ABCD_attenuator_T!(ABCD, Zsource, Zload, attenuationdB)
 
-Overwrite `ABCD` with the ABCD matrix for an attenuator with input impedance 
-`Zsource`, output impedance `Zload`, and attenuation `attenuationdB` made with
-a T network of impedances `Ra`, `Rb`, and `Rc`.
-```
-o--Ra-----Rb--o
-       |       
-       Rc       
-       |       
-o-------------o
-```
+In-place version of [`ABCD_attenuator_T`](@ref).
+
 # Examples
 ```jldoctest
 julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_T!(ABCD, 50.0, 50.0, 10.0)
@@ -2142,17 +1992,15 @@ julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_T!(ABCD, 50.0
 ```
 """
 function ABCD_attenuator_T!(ABCD, Zsource::Number,Zload::Number,attenuationdB::Number)
-
-    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
-    
-    return JosephsonCircuits.ABCD_TZ!(ABCD, Z11 - Z21, Z22 - Z21, Z21)
+    checkattenuation(Zsource, Zload, attenuationdB)
+    return ABCD_attenuator!(ABCD, Zsource, Zload, attenuationdB)
 end
 
 """
     ABCD_attenuator_Pi(Zsource, Zload, attenuationdB)
 
 Return the ABCD matrix for an attenuator with input impedance `Zsource`,
-output impedance `Zload`, and attenuation `attenuationdB` made with a T
+output impedance `Zload`, and attenuation `attenuationdB` made with a Pi
 network of impedances `Rx`, `Ry`, and `Rz`.
 ```
 o----Rz-----o
@@ -2161,6 +2009,10 @@ o----Rz-----o
    |     |   
 o-----------o
 ```
+A T and a Pi attenuator between the same impedances are the same two-port,
+so this is also the matrix of [`ABCD_attenuator_T`](@ref), which gives it
+and its minimum attenuation.
+
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_attenuator_Pi(50.0,50.0,10.0)
@@ -2170,31 +2022,15 @@ julia> JosephsonCircuits.ABCD_attenuator_Pi(50.0,50.0,10.0)
 ```
 """
 function ABCD_attenuator_Pi(Zsource::Number,Zload::Number,attenuationdB::Number)
-
-    # Derived from the T network impedances; a matched attenuator of zero
-    # attenuation makes these infinite, which this does not handle.
-    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
-    denom = (Z11*Z22-Z21^2)
-    Y11 = Z22/denom
-    Y22 = Z11/denom
-    Y21 = Z21/denom
-    
-    return JosephsonCircuits.ABCD_PiY(Y11 - Y21, Y22 - Y21, Y21)
+    checkattenuation(Zsource, Zload, attenuationdB)
+    return ABCD_attenuator(Zsource, Zload, attenuationdB)
 end
 
 """
     ABCD_attenuator_Pi!(ABCD, Zsource, Zload, attenuationdB)
 
-Overwrite `ABCD` with the ABCD matrix for an attenuator with input impedance 
-`Zsource`, output impedance `Zload`, and attenuation `attenuationdB` made with
-a T network of impedances `Rx`, `Ry`, and `Rz`.
-```
-o----Rz-----o
-   |     |   
-   Rx    Ry  
-   |     |   
-o-----------o
-```
+In-place version of [`ABCD_attenuator_Pi`](@ref).
+
 # Examples
 ```jldoctest
 julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_Pi!(ABCD,50.0,50.0,10.0)
@@ -2204,24 +2040,70 @@ julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_Pi!(ABCD,50.0
 ```
 """
 function ABCD_attenuator_Pi!(ABCD, Zsource::Number,Zload::Number,attenuationdB::Number)
+    checkattenuation(Zsource, Zload, attenuationdB)
+    return ABCD_attenuator!(ABCD, Zsource, Zload, attenuationdB)
+end
 
-    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
-    denom = (Z11*Z22-Z21^2)
-    Y11 = Z22/denom
-    Y22 = Z11/denom
-    Y21 = Z21/denom
-    
-    return JosephsonCircuits.ABCD_PiY!(ABCD, Y11 - Y21, Y22 - Y21, Y21)
+# refuse an attenuation below the minimum of a resistive attenuator between
+# the impedances Zsource and Zload
+function checkattenuation(Zsource::Number,Zload::Number,attenuationdB::Number)
+    rho = max(Zsource,Zload)/min(Zsource,Zload)
+    attenuationdBmin = 20*log10(sqrt(rho-1)+sqrt(rho))
+    if attenuationdB < attenuationdBmin
+        throw(ArgumentError(lazy"Attenuation of $(attenuationdB) dB is below the minimum attenuation of $(attenuationdBmin) dB for a passive circuit given the source and load impedances of $(Zsource) and $(Zload) Ohms."))
+    end
+    return nothing
+end
+
+# the ABCD matrix of an attenuator of voltage attenuation
+# A = 10^(-attenuationdB/20) between the impedances Zsource and Zload, the
+# same for its T and Pi forms, written in A so that it stays finite down to
+# zero attenuation
+function ABCD_attenuator(Zsource::Number,Zload::Number,attenuationdB::Number)
+    a11, a12, a21, a22 = ABCD_attenuator_entries(Zsource, Zload, attenuationdB)
+    return [a11 a12; a21 a22]
+end
+
+function ABCD_attenuator!(ABCD::AbstractMatrix,Zsource::Number,Zload::Number,
+    attenuationdB::Number)
+    if size(ABCD,1) != 2 || size(ABCD,2) != 2
+        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
+    end
+    ABCD[1,1], ABCD[1,2], ABCD[2,1], ABCD[2,2] =
+        ABCD_attenuator_entries(Zsource, Zload, attenuationdB)
+    return ABCD
+end
+
+function ABCD_attenuator_entries(Zsource::Number,Zload::Number,
+    attenuationdB::Number)
+    A = 10^(-attenuationdB/20)
+    c = (1+A^2)/(2*A)
+    s = (1-A^2)/(2*A)
+    r = sqrt(Zsource/Zload)
+    Zm = sqrt(Zsource*Zload)
+    return r*c, Zm*s, s/Zm, c/r
 end
 
 
 
+"""
+    S_circulator_clockwise()
+
+Return the scattering parameter matrix of an ideal three port circulator
+which passes a wave from port 1 to port 2, from 2 to 3 and from 3 to 1.
+"""
 function S_circulator_clockwise()
     return Complex{Float64}[0 0 1;
         1 0 0;
         0 1 0]
 end
 
+"""
+    S_circulator_clockwise!(S)
+
+In-place version of [`S_circulator_clockwise`](@ref), writing into `S`, a
+`3 x 3` matrix or an array of them.
+"""
 function S_circulator_clockwise!(S::AbstractMatrix)
     # check if S is 3x3
     if size(S,1) != 3 || size(S,2) != 3
@@ -2244,12 +2126,24 @@ function S_circulator_clockwise!(S::AbstractArray)
     return S
 end
 
+"""
+    S_circulator_counterclockwise()
+
+Return the scattering parameter matrix of an ideal three port circulator
+which passes a wave from port 1 to port 3, from 3 to 2 and from 2 to 1.
+"""
 function S_circulator_counterclockwise()
     return Complex{Float64}[0 1 0;
         0 0 1;
         1 0 0]
 end
 
+"""
+    S_circulator_counterclockwise!(S)
+
+In-place version of [`S_circulator_counterclockwise`](@ref), writing into
+`S`, a `3 x 3` matrix or an array of them.
+"""
 function S_circulator_counterclockwise!(S::AbstractMatrix)
     # check if S is 3x3
     if size(S,1) != 3 || size(S,2) != 3

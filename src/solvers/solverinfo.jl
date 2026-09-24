@@ -17,16 +17,44 @@ the record type itself.
 abstract type AbstractStageInfo end
 
 """
-    IterationInfo(label, parameter, regularization, converged, iterations,
-        normresidual, alpha, backtracks, andersonaccepted)
+    SolverInfo(stages, initialresidual, finalresidual, converged,
+        sourcefold)
 
-Diagnostics recorded for a call of [`nlsolve!`](@ref).
+Diagnostics describing the nonlinear solution process of
+[`hbnlsolve`](@ref).
+
+# Fields
+- `stages`: the per-stage records (subtypes of `AbstractStageInfo`), one
+    for each invocation of the nonlinear solver, in the order they ran.
+    The direct and Krylov solvers record one [`IterationInfo`](@ref);
+    `method = Staged()` records one [`StagedStageInfo`](@ref) per
+    attempted continuation stage, each carrying its inner solver records.
+    Every record has `label`, `converged` and `iterations` fields; the
+    rest is method specific.
+- `initialresidual`: the norm of the residual at the initial value.
+- `finalresidual`: the norm of the residual at the returned solution.
+- `converged`: whether the solver reported convergence.
+- `sourcefold`: `NaN`, except for a [`Staged`](@ref) solve which found the
+    solution branch ending below the requested drive, where it is the last
+    drive fraction the continuation converged at.
+"""
+struct SolverInfo
+    stages::Vector{AbstractStageInfo}
+    initialresidual::Float64
+    finalresidual::Float64
+    converged::Bool
+    sourcefold::Float64
+end
+
+"""
+    IterationInfo(label, converged, iterations, normresidual, alpha,
+        backtracks, andersonaccepted, krylov, reason)
+
+Diagnostics recorded for a call of [`nlsolve!`](@ref) or
+[`nlsolvekrylov!`](@ref).
 
 # Fields
 - `label`: the solver stage this invocation belongs to.
-- `parameter`: the continuation parameter of the stage (the source scale
-    or the damping coefficient, depending on the stage), or NaN.
-- `regularization`: the diagonal regularization of the Jacobian, if any.
 - `converged`: whether the iterations converged.
 - `iterations`: the number of Newton iterations performed.
 - `normresidual`: the norm of the residual at the start of each iteration.
@@ -48,18 +76,17 @@ Diagnostics recorded for a call of [`nlsolve!`](@ref).
     rebuilt preconditioner, and which also reports a direction that is not
     a descent direction after its exact rescue here) or twice in a row with
     a decrease short of the Armijo condition, which is a stall; `:progress`
-    when the residual stopped coming down and its rate is not improving,
-    or in `nlsolvekrylov!` comes down too slowly to reach the tolerance
-    within the remaining budget ([`residualstalled`](@ref); that loop
-    first takes one recovery, a rebuilt preconditioner and exact Newton
-    steps, and reports the stall only if it persists); `:external` for a
-    failed [`ExternalSolver`](@ref). [`stallmessage`](@ref) spells each
-    out.
+    when the residual stopped coming down, or comes down too slowly to
+    reach the tolerance within the remaining budget, and its rate is not
+    improving ([`residualstalled`](@ref); a first stall is given a fresh
+    history, with a recovery in `nlsolvekrylov!`, a rebuilt preconditioner
+    and exact Newton steps, and the stall is reported only if it
+    persists); `:external` for an [`ExternalSolver`](@ref) which reported
+    failure or whose root misses the tolerance.
+    [`stallmessage`](@ref) spells each out.
 """
 struct IterationInfo <: AbstractStageInfo
     label::String
-    parameter::Float64
-    regularization::Float64
     converged::Bool
     iterations::Int
     normresidual::Vector{Float64}
@@ -117,10 +144,10 @@ end
 """
     tracestart!(tr::NewtonTrace, F, atol, rtol)
 
-Begin (or, on a restart, begin again) the record at a point whose residual
-`F` holds: the history is emptied, the tolerance fixed at `atol` or
-`rtol*norm(F)`, whichever is larger, and convergence decided on the
-residual before any Jacobian work. Returns whether it has converged.
+Begin the record at a point whose residual `F` holds: the history is
+emptied, the tolerance fixed at `atol` or `rtol*norm(F)`, whichever is
+larger, and convergence decided on the residual before any Jacobian work.
+Returns whether it has converged.
 """
 function tracestart!(tr::NewtonTrace{T}, F, atol, rtol) where {T}
     empty!(tr.normresidual); empty!(tr.alpha)
@@ -130,6 +157,22 @@ function tracestart!(tr::NewtonTrace{T}, F, atol, rtol) where {T}
     tr.reason = :iterations
     push!(tr.normresidual, norm(F))
     tr.atol = max(T(atol), T(rtol)*tr.normresidual[1])
+    return traceconverged!(tr)
+end
+
+"""
+    tracerestart!(tr::NewtonTrace, F)
+
+Begin a second attempt at a point whose residual `F` holds, keeping the
+record of the first: the norm is appended to the history, the tolerance
+is the first attempt's, and convergence is decided on the residual.
+Returns whether it has converged.
+"""
+function tracerestart!(tr::NewtonTrace, F)
+    tr.backtrackfailures = 0
+    tr.converged = false
+    tr.reason = :iterations
+    push!(tr.normresidual, norm(F))
     return traceconverged!(tr)
 end
 
@@ -201,7 +244,7 @@ The record of a solve from its trace, with the Krylov records of
 [`nlsolvekrylov!`](@ref) when there are any.
 """
 function IterationInfo(tr::NewtonTrace, label, krylov = [])
-    return IterationInfo(label, NaN, 0.0, tr.converged, length(tr.alpha),
+    return IterationInfo(label, tr.converged, length(tr.alpha),
         tr.normresidual, tr.alpha, tr.backtracks, tr.andersonaccepted,
         krylov, tr.reason)
 end
@@ -218,7 +261,7 @@ function stallmessage(reason::Symbol)
     reason === :work && return "the Krylov work budget (`iterations` restart lengths of Arnoldi steps) was spent"
     reason === :linesearch && return "the line search found no sufficient decrease along the Newton direction (a stall)"
     reason === :progress && return "the residual stopped coming down, or comes down too slowly for the remaining budget, and its rate is not improving (a stall; the recovery did not help)"
-    reason === :external && return "the external solver reported failure"
+    reason === :external && return "the external solver reported failure, or returned a point whose residual misses the tolerance"
     return "reason $(reason)"
 end
 
@@ -246,12 +289,12 @@ loop does after its recovery.
 
 The projection is what ends a solve whose line search keeps finding a
 decrease: along a descent direction a short enough step always meets the
-Armijo condition, and with an inexact direction the residual can creep
-for the whole iteration budget without its rate reaching one. Near a
-plateau the projection diverges, so only a loop which gives a first
-stall a recovery over a fresh history takes it, as the Krylov loop does.
-The direct loop judges the rate alone: a direct solve whose residual
-keeps coming down, however slowly, runs to its iteration budget.
+Armijo condition, and the residual can creep for the whole iteration
+budget without its rate reaching one. Near a plateau the projection
+diverges, so a loop takes it only after giving a first stall a fresh
+history: the Krylov loop with a recovery (a rebuilt preconditioner and
+exact steps), the direct loop, whose steps are exact already, with the
+fresh history alone.
 """
 function residualstalled(normF::AbstractVector, start::Integer,
     history::Integer = STALLHISTORY; atol = nothing, remaining = nothing)

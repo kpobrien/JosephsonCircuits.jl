@@ -49,6 +49,22 @@ HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lscale, wmodes, Amna,
         Amna, coupledbranches, Nmodes, Nnodes, nothing)
 
 """
+    pointsystem(op::HBOperatingPoint)
+
+A system at the operating point with a point and workspaces of its own,
+sharing the rest of `op.sys` ([`workspacetwin`](@ref)). What differentiates
+an operating point evaluates on one of these rather than on `op.sys`, since
+an evaluation writes the point and the workspaces of its system: the
+operating point is left as it was built, and one operating point serves
+concurrent calls.
+"""
+function pointsystem(op::HBOperatingPoint)
+    sys = workspacetwin(op.sys)
+    setpoint!(sys, op.x)
+    return sys
+end
+
+"""
     DCOperatingPoint
 
 The explicit direct current block at a converged point.
@@ -60,12 +76,15 @@ The explicit direct current block at a converged point.
 - `jacobian`: the canonical Jacobian there, which is the one the implicit
   function theorem applies to when the block is active.
 - `plan`: the [`CanonicalJacobianPlan`](@ref) that filled it.
+- `keep`: the rows the block adds to rather than replaces
+  ([`dckeep`](@ref)), which mask the harmonic part of a residual derivative.
 """
 struct DCOperatingPoint{W,P}
     work::W
     u::Vector{Float64}
     jacobian::SparseMatrixCSC{Float64,Int}
     plan::P
+    keep::Vector{Float64}
 end
 
 """
@@ -242,6 +261,13 @@ function componentstamp(idx::Integer, psc::CompiledCircuit,
     end
 end
 
+# the offset of each complex entry of the operating point in its real
+# representation, one real row for a self conjugate mode and a real and an
+# imaginary row otherwise: the first slot of each entry in the state's
+# layout, which spans the whole augmented state
+realoffsets(op::HBOperatingPoint) =
+    Vector{Int}(op.modelayout.ptr[1:length(op.x)])
+
 """
     calcresidualsensitivity(op::HBOperatingPoint, psc, nm,
         sensitivityindices, alphas = ones(Complex{Float64}, length(sensitivityindices)))
@@ -287,13 +313,9 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     alphas::AbstractVector = ones(Complex{Float64},
         length(sensitivityindices)))
 
-    if isnothing(op.jacobian)
-        throw(ArgumentError("The operating point does not contain a Jacobian."))
-    end
-    # evaluate at the operating point regardless of what the shared
-    # evaluation object was last used for: the Josephson term below reads
-    # the cached time domain branch fluxes.
-    setpoint!(op.sys, op.x)
+    # a system of its own at the operating point: the Josephson term below
+    # reads its cached time domain branch fluxes
+    sys = pointsystem(op)
     Ntot = length(op.x)
     Nmodes = op.Nmodes
     Nnodes = op.Nnodes
@@ -322,15 +344,7 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     # is right because the real representation is linear.
     isrealmode = op.modelayout.isreal
     nmd = length(isrealmode)
-    # the offset of complex entry r in the real representation (one real
-    # row for the self conjugate modes, a real and an imaginary row
-    # otherwise), matching complex_to_real! with the default scale.
-    realindexmap = zeros(Int, Ntot)
-    k = 1
-    for j in eachindex(realindexmap)
-        realindexmap[j] = k
-        k += isrealmode[(j-1) % nmd + 1] ? 1 : 2
-    end
+    realindexmap = realoffsets(op)
     Nreal = realdim(Ntot, isrealmode)
     Ir = Int[]; Jc = Int[]; Vr = Float64[]
     function pushentry!(r, comp, v)
@@ -342,18 +356,15 @@ function calcresidualsensitivity(op::HBOperatingPoint,
         return nothing
     end
 
-    # work vector and branch support for the Josephson terms, which are
-    # evaluated through the full residual machinery and then read off on
-    # the Kirchhoff rows of that junction's branch only.
-    cwork = Complex{Float64}[]
-    branchsupport = Vector{Tuple{Int,Int}}[]
-
     x = op.x
     Nm = length(wmodes)
-    lookups = componentlookups(op.coupledbranches, op.sys.Ljb)
-    for (comp, idx) in enumerate(sensitivityindices)
-        kind, info = componentstamp(idx, psc, nm, lookups,
-            Nmodes, Nnodes)
+    lookups = componentlookups(op.coupledbranches, sys.Ljb)
+    stamps = [componentstamp(idx, psc, nm, lookups, Nmodes, Nnodes)
+        for idx in sensitivityindices]
+    # the Josephson terms of the junctions asked for, on their own rows
+    ljterms = josephsonterms(sys,
+        [info for (kind, info) in stamps if kind == :Lj], Nmodes)
+    for (comp, (kind, info)) in enumerate(stamps)
         if kind == :C || kind == :G || kind == :invL
             # dF_comp = c * Ms * Diagonal(w.^power) * x, accumulated per
             # stored entry of the component's own (tiny) matrix.
@@ -372,18 +383,8 @@ function calcresidualsensitivity(op::HBOperatingPoint,
                 end
             end
         else # :Lj
-            if isempty(cwork)
-                cwork = zeros(Complex{Float64}, Ntot)
-                branchsupport = branchnodesandsigns(op.sys.Rbnm, Nmodes,
-                    size(op.sys.Rbnm, 1) ÷ Nmodes)
-            end
-            residualjosephsonterm!(cwork, op.sys, info)
-            branch = op.sys.Ljb.nzind[info]
-            for (node, _) in branchsupport[branch]
-                for m in 1:Nmodes
-                    r = (node-1)*Nmodes + m
-                    pushentry!(r, comp, -cwork[r]*alphas[comp])
-                end
+            for (r, v) in ljterms[info]
+                pushentry!(r, comp, -v*alphas[comp])
             end
         end
     end
@@ -400,7 +401,7 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     dccols = dcresidualsensitivity(op.dc, psc, nm, op.Lscale,
         sensitivityindices, alphas)
     Ic, Jc2, Vc = Int[], Int[], Float64[]
-    keep = dckeep(op.dc.work)
+    keep = op.dc.keep
     col = zeros(Float64, Nreal)
     gathered = zeros(Float64, N)
     for k in axes(harmonic, 2)
@@ -520,33 +521,80 @@ function calcnodefluxsensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
     return dx
 end
 
-# the Josephson contribution of the residual, restricted to junction j: the
-# node vector of the Fourier coefficients of sin(phi_b(t))/Lj of that
-# junction alone, which is the derivative of the residual with respect to
-# minus the logarithm of that junction inductance.
-function residualjosephsonterm!(out, sys, j::Integer)
-    _ensuresin!(sys)
-    applyfft!(sys.phimatrix, sys.sintd, sys.rfftplan)
-    for i in axes(sys.phimatrix, ndims(sys.phimatrix))
-        if i != j
-            selectdim(sys.phimatrix, ndims(sys.phimatrix), i) .= 0
+# The junctions of `js` in groups of which no two share a node, `nodes(j)`
+# giving the nodes of junction `j`, greedily: a junction joins the first
+# group none of whose junctions meets it. A junction's contribution to the
+# residual, or to the linearized system matrix, reaches only the rows and
+# columns of its own nodes, so the junctions of a group are evaluated
+# together and each reads its own part; the number of groups is set by how
+# many junctions meet at a node, not by how many there are.
+function nodedisjointgroups(js, nodes)
+    groups = Vector{Int}[]
+    nodegroups = Dict{Int,BitSet}()
+    for j in unique(js)
+        taken = BitSet()
+        for n in nodes(j)
+            union!(taken, get(nodegroups, n, BitSet()))
+        end
+        g = 1
+        while g in taken
+            g += 1
+        end
+        g > length(groups) && push!(groups, Int[])
+        push!(groups[g], j)
+        for n in nodes(j)
+            push!(get!(BitSet, nodegroups, n), g)
         end
     end
-    # the Josephson contribution alone, without the linear term
-    applybackwardterm!(out, sys.nonlineartermplan, sys.phimatrix, sys.x;
-        addlinearterm = false)
-    return out
+    return groups
+end
+
+# The Josephson contribution of the residual of each junction of `js`
+# alone: the node vector of the Fourier coefficients of sin(phi_b(t))/Lj of
+# that junction, which is the derivative of the residual with respect to
+# minus the logarithm of its inductance, as the pairs of row and value on
+# the Kirchhoff rows of its branch, the only rows it reaches. The transform
+# is taken once and one backward map of each group of junctions which
+# share no node (`nodedisjointgroups`) gives the terms of all of them.
+function josephsonterms(sys, js, Nmodes)
+    terms = Dict{Int,Vector{Tuple{Int,Complex{Float64}}}}()
+    isempty(js) && return terms
+    support = branchnodesandsigns(sys.Rbnm, Nmodes, size(sys.Rbnm, 1) ÷ Nmodes)
+    nodes(j) = (node for (node, _) in support[sys.Ljb.nzind[j]])
+    groups = nodedisjointgroups(js, nodes)
+    _ensuresin!(sys)
+    applyfft!(sys.phimatrix, sys.sintd, sys.rfftplan)
+    sinfd = copy(sys.phimatrix)
+    jdim = ndims(sinfd)
+    out = zeros(Complex{Float64}, length(sys.x))
+    for group in groups
+        fill!(sys.phimatrix, 0)
+        for j in group
+            selectdim(sys.phimatrix, jdim, j) .= selectdim(sinfd, jdim, j)
+        end
+        # the Josephson contribution alone, without the linear term
+        applybackwardterm!(out, sys.nonlineartermplan, sys.phimatrix, sys.x;
+            addlinearterm = false)
+        for j in group
+            terms[j] = [(r, out[r]) for n in nodes(j)
+                for r in (n-1)*Nmodes+1:n*Nmodes]
+        end
+    end
+    return terms
 end
 
 """
-    ReverseSensitivity(op, dFr, T, fftplan, nzrow, nzcol, realindexmap,
-        branchnodes, slots)
+    ReverseSensitivity(op, sys, dFr, T, fftplan, nzrow, nzcol,
+        realindexmap, branchnodes, slots)
 
 Everything the reverse mode contraction of [`calcSsensitivityreverse!`](@ref)
 needs, precomputed once and shared read only across the signal frequencies.
 """
 struct ReverseSensitivity
     op::HBOperatingPoint
+    # a system of its own at the operating point, whose cached second
+    # derivative of the relation the contraction reads at every frequency
+    sys
     # the residual derivatives, sparse: each component touches only its own
     # nodes, so the inner product per component is over a handful of entries
     # rather than over the whole state.
@@ -594,6 +642,8 @@ struct ReverseSensitivityBuffers
     # columns of `G` are canonical and this is gathered into one of them;
     # without, it is copied straight across.
     gint::Vector{Complex{Float64}}
+    # the covector of one output pair per stored entry of the Josephson plan
+    wcov::Vector{Complex{Float64}}
 end
 
 # The byte budget of the two `nr` by `chunk` complex right hand side and
@@ -613,7 +663,7 @@ which sets the column count [`calcSsensitivityreverse!`](@ref) works in.
 const REVERSESENSITIVITYCHUNKBYTES = 32*2^20
 
 function ReverseSensitivityBuffers(rev::ReverseSensitivity, NPM::Integer)
-    sys = rev.op.sys
+    sys = rev.sys
     NLj = size(sys.phimatrix)[end]
     NF = length(sys.phimatrix)
     nr = sensitivitydim(rev.op)
@@ -626,7 +676,8 @@ function ReverseSensitivityBuffers(rev::ReverseSensitivity, NPM::Integer)
         zeros(Complex{Float64}, size(rev.T, 2), NLj),
         zeros(Complex{Float64}, size(sys.phitd)),
         zeros(Complex{Float64}, size(sys.phitd)),
-        zeros(Complex{Float64}, size(rev.op.jacobian, 1)))
+        zeros(Complex{Float64}, size(rev.op.jacobian, 1)),
+        zeros(Complex{Float64}, length(rev.nzrow)))
 end
 
 """
@@ -681,13 +732,12 @@ function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
     # the operating point, and therefore the branch flux map and the
     # incidence lists, live on the pump mode grid, not the signal mode grid
     Nmodes = op.Nmodes
-    sys = op.sys
     # the per frequency contraction reads the cached negative of the
     # second derivative of the relation at the branch fluxes, `sin` for the
     # Josephson one, so it is pinned to the operating point here, in this
-    # serial constructor: the threads of hblinsolve only read the shared
-    # evaluation object, and updating it from them would be a race
-    setpoint!(sys, op.x)
+    # serial constructor, on a system of its own: the threads of hblinsolve
+    # only read it, and updating it from them would be a race
+    sys = pointsystem(op)
     _negsecond!(sys)
     NLj = size(sys.phimatrix)[end]
     A = lsys.Asparse
@@ -700,20 +750,11 @@ function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
             nzcol[p] = j
         end
     end
-    # the offset of complex entry j in the real representation. note that
-    # isreal is indexed by mode, not by entry of the augmented state.
-    isrealmode = op.modelayout.isreal
-    nmd = length(isrealmode)
-    realindexmap = zeros(Int, length(op.x))
-    k = 1
-    for j in eachindex(realindexmap)
-        realindexmap[j] = k
-        k += isrealmode[(j-1) % nmd + 1] ? 1 : 2
-    end
+    realindexmap = realoffsets(op)
     Nbranches = size(sys.Rbnm, 1) ÷ Nmodes
-    return ReverseSensitivity(op, SparseMatrixCSC{Float64,Int}(dFr),
+    return ReverseSensitivity(op, sys, SparseMatrixCSC{Float64,Int}(dFr),
         calcbranchtimedomainmap(sys, Nmodes, NLj),
-        plan_applyffttranspose(sys.phimatrix, sys.phitd), nzrow, nzcol,
+        plan_applyffttranspose(sys.phitd), nzrow, nzcol,
         realindexmap, branchnodesandsigns(sys.Rbnm, Nmodes, Nbranches),
         slots)
 end
@@ -744,9 +785,7 @@ shift, and with
     alpha = T(P),  gam = conj(T(Q)),  eta = -sin(phi_b(t)).*(alpha + gam)
 
 with `T` the transposed transform ([`applyffttranspose!`](@ref) through
-`rev.fftplan`), and
-
-its covector is the transpose of the branch flux map applied to `eta`.
+`rev.fftplan`), and its covector is the transpose of the branch flux map applied to `eta`.
 Finally the implicit function theorem gives `dx_k = -inv(J)*dF_k`, so pushing
 that covector through the transposed Jacobian once per output pair leaves a
 sparse inner product with `dF_k` for each component. The cost per signal
@@ -764,22 +803,36 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
     lsys, phin, phinadjoint, gamma, beta, cache,
     bufs::ReverseSensitivityBuffers)
 
+    # The operating point holds its system, its layout and its direct current
+    # block untyped, and so does the plan of the transform, so what the loops
+    # read of them is read here once and the loops run behind a function
+    # barrier, compiled for the concrete types.
     op = rev.op
-    # the pump mode count: the operating point shift lives on the pump grid
-    Nmodes = op.Nmodes
-    sys = op.sys
-    plan = lsys.complexjacobianplan
-    NPM = size(phin, 2)
+    sys = rev.sys
     NLj = size(sys.phimatrix)[end]
-    Ncomponents = size(rev.dFr, 2)
-    isrealmode = op.modelayout.isreal
-    nmd = length(isrealmode)
-
     # the cached negative of the second derivative of the relation at the
     # pump branch fluxes, `sin` for the Josephson one, pinned to the
     # operating point by the ReverseSensitivity constructor and read only
     # here.
     sintd = reshape(_negsecond!(sys), :, NLj)
+    return reversecontraction!(Ssensitivity, rev.dFr, rev.T, rev.fftplan,
+        rev.nzrow, rev.nzcol, rev.realindexmap, rev.branchnodes, rev.slots,
+        lsys.complexjacobianplan, op.Nmodes, op.modelayout.isreal,
+        isnothing(op.dc) ? nothing : op.dc.work.layout, sintd,
+        size(sys.phimatrix), sys.Ljb.nzind, phin, phinadjoint, gamma, beta,
+        cache, bufs)
+end
+
+# the loops of `calcSsensitivityreverse!`, with every argument concrete
+function reversecontraction!(Ssensitivity, dFr, T, fftplan, nzrow, nzcol,
+    realindexmap, branchnodes, slots, plan, Nmodes, isrealmode, dclayout,
+    sintd, wsize, junctionbranches, phin, phinadjoint, gamma, beta, cache,
+    bufs::ReverseSensitivityBuffers)
+
+    NPM = size(phin, 2)
+    NLj = wsize[end]
+    Ncomponents = size(dFr, 2)
+    nmd = length(isrealmode)
     P = bufs.P
     Q = bufs.Q
     G = bufs.G
@@ -788,16 +841,15 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
     c = bufs.c
     padded = bufs.padded
     tgrid = bufs.tgrid
-    wsize = size(sys.phimatrix)
-    dFrows = rowvals(rev.dFr)
-    dFvals = nonzeros(rev.dFr)
+    dFrows = rowvals(dFr)
+    dFvals = nonzeros(dFr)
 
     # The output pairs are independent, so their solves through the
     # transposed pump Jacobian are batched: the covectors of a chunk of
     # pairs are accumulated as the columns of G and pushed through the
     # factorization in one multi right hand side call, which amortizes the
     # per-call overhead of the sparse triangular solves over the chunk.
-    wcov = zeros(eltype(P), plan.n)
+    wcov = bufs.wcov
     pairs = vec(CartesianIndices((NPM, NPM)))
     for chunk in Iterators.partition(eachindex(pairs), size(G, 2))
         for (col, pi) in enumerate(chunk)
@@ -809,7 +861,7 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             # Josephson map applied to it. The plain and conjugated halves
             # separate by the sign of the mode coupling index.
             @inbounds for p in eachindex(wcov)
-                wcov[p] = phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
+                wcov[p] = phinadjoint[nzrow[p],a]*phin[nzcol[p],b]
             end
             josephsonadjoint!(P, Q, plan, wcov)
 
@@ -819,7 +871,7 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             # and the antiholomorphic half by conjugating around the same
             # transform. the two halves are folded into eta one after the
             # other through the same output grid.
-            applyffttranspose!(tgrid, reshape(P, wsize), padded, rev.fftplan)
+            applyffttranspose!(tgrid, reshape(P, wsize), padded, fftplan)
             tf = reshape(tgrid, :, NLj)
             @inbounds for i in eachindex(eta)
                 eta[i] = -sintd[i]*tf[i]
@@ -827,11 +879,11 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             @inbounds for i in eachindex(Q)
                 Q[i] = conj(Q[i])
             end
-            applyffttranspose!(tgrid, reshape(Q, wsize), padded, rev.fftplan)
+            applyffttranspose!(tgrid, reshape(Q, wsize), padded, fftplan)
             @inbounds for i in eachindex(eta)
                 eta[i] -= sintd[i]*conj(tf[i])
             end
-            mul!(c, transpose(rev.T), eta)
+            mul!(c, transpose(T), eta)
 
             # the transpose of the branch flux map, into the real
             # representation of the augmented state. The outputs depend on
@@ -842,15 +894,15 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             # applies going the other way.
             g = bufs.gint
             fill!(g, 0)
-            @inbounds for (jj, branch) in enumerate(sys.Ljb.nzind)
+            @inbounds for (jj, branch) in enumerate(junctionbranches)
                 for m in 1:Nmodes
                     cre = c[2*(m-1)+1, jj]
                     cim = c[2*(m-1)+2, jj]
                     holo = (cre - im*cim)/2
                     anti = (cre + im*cim)/2
-                    for (node, sgn) in rev.branchnodes[branch]
+                    for (node, sgn) in branchnodes[branch]
                         j = (node-1)*Nmodes + m
-                        k = rev.realindexmap[j]
+                        k = realindexmap[j]
                         g[k] += sgn*(holo + anti)
                         if !isrealmode[(j-1) % nmd + 1]
                             g[k+1] += sgn*im*(holo - anti)
@@ -859,14 +911,14 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
                 end
             end
             gcol = view(G, :, col)
-            if isnothing(op.dc)
+            if isnothing(dclayout)
                 copyto!(gcol, g)
             else
                 # the gather leaves the voltage rows alone, and they are
                 # zero: no output reads an average voltage directly, only
                 # through the state the block moves
                 fill!(gcol, 0)
-                gathercanonical!(gcol, g, op.dc.work.layout)
+                gathercanonical!(gcol, g, dclayout)
             end
         end
 
@@ -881,10 +933,10 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             a, b = Tuple(pairs[pi])
             @inbounds for k in 1:Ncomponents
                 acc = zero(Complex{Float64})
-                for r in nzrange(rev.dFr, k)
+                for r in nzrange(dFr, k)
                     acc += Psi[dFrows[r], col]*dFvals[r]
                 end
-                Ssensitivity[a,b,rev.slots[k]] += gamma[a]*beta[b]*acc
+                Ssensitivity[a,b,slots[k]] += gamma[a]*beta[b]*acc
             end
         end
     end

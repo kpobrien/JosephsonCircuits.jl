@@ -5,7 +5,7 @@
 """
     nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner,
         method::NewtonKrylov = NewtonKrylov(); iterations = 1000,
-        atol = 1e-8, rtol = 0.0, workspace = nothing, label = "")
+        atol = 1e-8, rtol = 0.0, workspace = nothing)
 
 Inexact (Newton-Krylov) solver for a real system: the Newton step is taken
 from [`gmres!`](@ref) on the exact matrix-free product `jvp!(y, v)` rather
@@ -60,7 +60,6 @@ solver is kept simple.
     previous solve of the same system, or holding `nothing`, in which case
     the vectors are allocated and stored into it for the next solve. With
     no `Ref` at all they are allocated and dropped.
-- `label = ""`: the label of the returned `IterationInfo`.
 
 And, read off `method`: `linearsolver`, the linear solver of the Newton
 step, a [`GMRES`](@ref) or a [`KrylovJL`](@ref); `refresh`, when the
@@ -82,8 +81,7 @@ norm is treated as stagnated and the preconditioner solve taken as the
 step; and a solve whose residual came down by less than 0.5 per Arnoldi
 step is reported to the preconditioner as slow ([`stalled!`](@ref); off
 under [`Never`](@ref), which also disables the count rule). These are
-fixed: none has been changed in any measured case, and each was set by the
-inexact Newton theory or by a measurement recorded beside it. The line
+fixed, not options of the method. The line
 search is the method's [`Backtracking`](@ref), interpolating by default.
 Two budgets bound the work: `iterations` Newton steps, and `iterations`
 restart lengths of Arnoldi steps in total, so that a preconditioner which
@@ -108,11 +106,11 @@ descent direction after the exact rescue), or `:progress`.
 function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     x::AbstractVector{T}, pc::AbstractPreconditioner,
     method::NewtonKrylov = NewtonKrylov(); iterations = 1000, atol = 1e-8,
-    rtol = 0.0, workspace::Union{Nothing,Base.RefValue} = nothing,
-    label = "") where {T<:AbstractFloat}
+    rtol = 0.0,
+    workspace::Union{Nothing,Base.RefValue} = nothing) where {T<:AbstractFloat}
 
     linearsolver = method.linearsolver
-    refresh = method.refresh
+    policy = method.refresh
     escalate = method.escalate
 
     # The fixed constants of the iteration, under the names the loop below
@@ -121,9 +119,9 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # solve thresholds are those the docstring describes.
     krylovrestart = restartlength(linearsolver)
     krylovmaxrestarts = maxrestarts(linearsolver)
-    krylovrefreshiterations = refresh isa Never ? typemax(Int) : 1
-    krylovrefreshrate = refresh isa Never ? 1.0 : 0.5
-    krylovrefresh = refresh isa Probe ? :probe : :count
+    krylovrefreshiterations = policy isa Never ? typemax(Int) : 1
+    krylovrefreshrate = policy isa Never ? 1.0 : 0.5
+    krylovrefresh = policy isa Probe ? :probe : :count
     krylovrtolmin = 1e-10
     krylovrtolmax = 0.9
     krylovrtol0 = 0.3
@@ -210,9 +208,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # direction the line search has to damp. The inexact Newton theory
     # needs only eta < 1 and a sufficient decrease line search.
 
-    # the preconditioner object itself is handed to the linear solve, so a
-    # form which fuses its application with the operator product can
-    # (`preconditionedproduct!`); a plain closure would hide that
+    # the preconditioner object itself is handed to the linear solve, which
+    # applies it through `applypreconditioner!`
     Mop! = pc
     # Where the recycled subspace is read out of the Arnoldi factorization.
     # A preconditioner which harvests per cycle gets the callback and is not
@@ -230,9 +227,6 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # Jacobian and therefore does not accept the combined fj! interface
     residual!(Fv, xv) = fj!(Fv, nothing, xv)
 
-    # rebuild the preconditioner at the current point. a preconditioner is
-    # free to move the evaluation point of the matrix-free products while
-    # rebuilding, so it is resynchronized afterwards
     # the one-step reduction of the preconditioned residual: one solve of
     # the residual and one product, into the scratch the solve overwrites
     function onestepreduction()
@@ -243,14 +237,18 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         Jv .-= F
         return norm(Jv)/nF
     end
+    # rebuild the preconditioner at the current point. a preconditioner is
+    # free to move the evaluation point of the matrix-free products while
+    # rebuilding, so it is resynchronized afterwards. Returns the time the
+    # rebuild took and, under the probe rule, the one-step reduction of the
+    # fresh preconditioner, which calibrate the probe of later steps; the
+    # caller assigns them, so no variable is shared with the closure
     function refreshpreconditioner!()
         t0 = time()
         updatepreconditioner!(pc, x)
         fj!(nothing, nothing, x)
-        tfactor = time() - t0
-        # the fresh reduction calibrates the probe of later steps
-        krylovrefresh === :probe && (rhofresh = onestepreduction())
-        return nothing
+        t = time() - t0
+        return t, krylovrefresh === :probe ? onestepreduction() : NaN
     end
 
     # the residual norm at the initial point; every later entry of normF is
@@ -281,7 +279,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         end
         justrefreshed = refresh
         if refresh
-            refreshpreconditioner!()
+            tfactor, rhofresh = refreshpreconditioner!()
             refresh = false
             refreshreason = :forced
         end
@@ -311,25 +309,10 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         tstep = tsolve/max(out.iterations, 1)
         justrefreshed && (kfresh = max(out.iterations, 1))
         harvestafter!(out)
-        # one record per GMRES call; the step outcome is filled in later
-        function record!(o, role, refreshedbefore, stag)
-            push!(krylovrecord, KrylovSolveInfo(; iteration = n, role = role,
-                normF = normF[end], forcing = forcing,
-                residualratio = normF[end] > 0 ? o.residual/normF[end] : NaN,
-                iterations = o.iterations, cycles = o.cycles,
-                reason = o.reason, refreshed = refreshedbefore,
-                escalated = false, stagnated = stag, slope = NaN, alpha = NaN,
-                backtracks = 0, armijo = false, time = time() - tstart,
-                escalationrequested = false, deflationsize = deflationsize(pc),
-                deflationrebuilds = deflationrebuilds(pc),
-                precondtime = get(o, :precondtime, NaN),
-                products = get(o, :products, 0),
-                deflationproducts = deflationproducts(pc)))
-            return nothing
-        end
         stagnated = !out.converged &&
             out.residual > krylovstagnation*normF[end]
-        record!(out, :step, justrefreshed, stagnated)
+        push!(krylovrecord, krylovsolverecord(out, n, :step, normF[end],
+            forcing, justrefreshed, stagnated, tstart, pc))
         # `!justrefreshed` matters: a retry only makes sense against a
         # preconditioner which had drifted. If it was rebuilt at this very
         # point immediately before the solve, rebuilding it again reproduces
@@ -342,7 +325,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             # means the Krylov space contributed nothing, which is a
             # preconditioner too crude for the problem rather than one that
             # is merely stale.
-            refreshpreconditioner!()
+            tfactor, rhofresh = refreshpreconditioner!()
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts, oncycle = oncycle)
@@ -350,7 +333,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             work += out.iterations
             stagnated = !out.converged &&
                 out.residual > krylovstagnation*normF[end]
-            record!(out, :retry, true, stagnated)
+            push!(krylovrecord, krylovsolverecord(out, n, :retry, normF[end],
+                forcing, true, stagnated, tstart, pc))
         end
         # A GMRES which ran out of iterations is not automatically a failure
         # to be undone: it still returns the step which minimizes the linear
@@ -425,9 +409,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             # is the best step in the Krylov space of a fresh operator,
             # which is the strongest direction available without assembling
             # the Jacobian. If that is not a descent direction either, the
-            # steepest descent direction -J'F of the merit function is the
-            # last resort before declaring the iteration stalled.
-            refreshpreconditioner!()
+            # iteration has stalled.
+            tfactor, rhofresh = refreshpreconditioner!()
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts, oncycle = oncycle)
@@ -435,7 +418,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             # and its Arnoldi steps count against the work budget like any
             # other solve's
             harvestafter!(out)
-            record!(out, :rescue, true, false)
+            push!(krylovrecord, krylovsolverecord(out, n, :rescue,
+                normF[end], forcing, true, false, tstart, pc))
             work += out.iterations
             rmul!(deltax, -1)
             dϕ0dα = meritslope!(Jv, jvp, deltax, F, ϕ0,
@@ -504,5 +488,23 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         end
     end
 
-    return IterationInfo(tr, label, krylovrecord)
+    return IterationInfo(tr, "", krylovrecord)
+end
+
+# the record of a linear solve `o` of Newton step `n` at the residual norm
+# `normF`; the step's outcome is filled in once the line search is done
+function krylovsolverecord(o, n, role, normF, forcing, refreshed, stagnated,
+        tstart, pc)
+    return KrylovSolveInfo(; iteration = n, role = role, normF = normF,
+        forcing = forcing,
+        residualratio = normF > 0 ? o.residual/normF : NaN,
+        iterations = o.iterations, cycles = o.cycles, reason = o.reason,
+        refreshed = refreshed, escalated = false, stagnated = stagnated,
+        slope = NaN, alpha = NaN, backtracks = 0, armijo = false,
+        time = time() - tstart, escalationrequested = false,
+        deflationsize = deflationsize(pc),
+        deflationrebuilds = deflationrebuilds(pc),
+        precondtime = get(o, :precondtime, NaN),
+        products = get(o, :products, 0),
+        deflationproducts = deflationproducts(pc))
 end

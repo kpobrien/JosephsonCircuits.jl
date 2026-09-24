@@ -72,30 +72,6 @@ using SpecialFunctions
 
     end
 
-    @testset "keepfreqs" begin
-
-        @test JosephsonCircuits.comparestruct(
-            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),[(0,0),(1,0),(0,1),(1,1)]),
-            JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (5, 5), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(1, 2), CartesianIndex(2, 2)], [(0, 0), (1, 0), (0, 1), (1, 1)]),
-        )
-
-        @test JosephsonCircuits.comparestruct(
-            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),Tuple{Int64,Int64}[]),
-            JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (5, 5), CartesianIndex{2}[], Tuple{Int64, Int64}[]),
-        )
-
-        @test JosephsonCircuits.comparestruct(
-            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[]),
-            JosephsonCircuits.Frequencies{1}((2,), (3,), (5,), CartesianIndex{1}[], Tuple{Int64}[]),
-        )
-
-        @test JosephsonCircuits.comparestruct(
-            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,)]),
-            JosephsonCircuits.Frequencies{1}((2,), (3,), (5,), CartesianIndex{1}[CartesianIndex(1)], [(0,)]),
-        )
-
-    end
-
     @testset "removefreqs" begin
 
         @test JosephsonCircuits.comparestruct(
@@ -158,20 +134,6 @@ using SpecialFunctions
         )
     end
 
-
-    @testset "calcindexdict" begin
-
-        @test isequal(
-            JosephsonCircuits.calcindexdict(3),
-            Dict{CartesianIndex{1}, Int64}(CartesianIndex(3) => 3, CartesianIndex(2) => 2, CartesianIndex(1) => 1),
-        )
-
-        @test isequal(
-            JosephsonCircuits.calcindexdict((2,3)),
-            Dict{CartesianIndex{2}, Int64}(CartesianIndex(1, 1) => 1, CartesianIndex(2, 3) => 6, CartesianIndex(2, 1) => 2, CartesianIndex(1, 2) => 3, CartesianIndex(2, 2) => 4, CartesianIndex(1, 3) => 5),
-        )
-
-    end
 
     @testset "applynl: cos(z*cos(theta))" begin
         # test against Jacobi-Anger expansion for cos(z*cos(theta))
@@ -295,7 +257,18 @@ using SpecialFunctions
         @test isapprox(out1,out2)
     end
 
-    @testset "phivectortomatrix! and phimatrixtovector!" begin
+    @testset "phivectortomatrix! and its inverse" begin
+
+        # the vector back from the array, read at the positions the index map
+        # gives, which the packing must have written
+        function phimatrixtovector!(phivector, phimatrix, indexmap, Nbranches)
+            Nvector = length(phivector) ÷ Nbranches
+            Nmatrix = prod(size(phimatrix)[1:end-1])
+            for i in 1:Nbranches, j in eachindex(indexmap)
+                phivector[j+(i-1)*Nvector] = phimatrix[indexmap[j]+(i-1)*Nmatrix]
+            end
+            return phivector
+        end
 
         # test whether vector -> matrix -> vector gives the same result
         Nharmonics = (4,3)
@@ -326,64 +299,11 @@ using SpecialFunctions
             Nbranches,
         )
 
-        JosephsonCircuits.phimatrixtovector!(phivector1,
-            phimatrix,
-            freqindexmap,
-            conjsourceindices,
-            conjtargetindices,
-            Nbranches,
-        )
+        phimatrixtovector!(phivector1, phimatrix, freqindexmap, Nbranches)
 
         # isapprox(phivector,phivector1)
         @test all(phivector .== phivector1)
 
-    end
-
-    @testset "phimatrixtovector!"  begin
-
-        begin
-            freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-            conjsourceindices = [16, 6]
-            conjtargetindices = [21, 31]
-            Nbranches = 1
-
-            phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap)-1)
-            phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
-
-            @test_throws(
-                DimensionMismatch("Unexpected length for phivector"),
-                JosephsonCircuits.phimatrixtovector!(phivector,
-                    phimatrix,
-                    freqindexmap,
-                    conjsourceindices,
-                    conjtargetindices,
-                    Nbranches,
-                )
-            )
-        end
-
-        begin
-            freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-            conjsourceindices = [16, 6]
-            conjtargetindices = [21, 31]
-            Nbranches = 1
-
-            phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
-            phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
-
-            phimatrix1 = similar(phimatrix)
-            phivector1 = similar(phivector)
-
-            JosephsonCircuits.phimatrixtovector!(phivector1,
-                phimatrix,
-                freqindexmap,
-                conjsourceindices,
-                conjtargetindices,
-                Nbranches,
-            )
-
-            @test all(phivector .== phivector1)
-        end
     end
 
 

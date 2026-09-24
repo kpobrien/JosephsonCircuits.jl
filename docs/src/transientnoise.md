@@ -7,8 +7,9 @@ and the resistors, through that time dependent linear system: the
 Gaussian approximation of harmonic balance's noise calculation carried
 into time, small fluctuations about a classical mean rather than the
 full quantum state. It runs on the tangent and the adjoint of the
-recorded steps, so it is exact for the discrete trajectory it is given
-and needs no interpolation, replay or quadrature grid of its own.
+recorded steps, so it is exact for the discrete trajectory it is given,
+replayed from its checkpoints where it recorded them, and needs no
+interpolation or quadrature grid of its own.
 
 ## Temporal modes
 
@@ -95,12 +96,13 @@ noise.gain                # the incremental quadrature response to the inputs
 
 The bath is periodic over the record by default: every positive Fourier
 bin `k/T` of its duration `T` with the weight `1/T`, up to the record's
-Nyquist frequency, which is the complete bath of the recorded steps. Its
-cost grows with the frequency count: the adjoint method contracts a sum
-per bath, frequency and time, and the stationary prehistory of the
-baths is one factorization of the stationary operator per frequency and
-distinct initial state, so the complete bath of a long record is not
-cheap. A `cutoff` in Hz bounds it, and `frequencies` with `weights`
+Nyquist frequency, which is the complete bath of the recorded steps. The
+adjoint method contracts those bins with the kernels by fast Fourier
+transforms over the recorded times, and frequencies given by a sum per
+bath, frequency and time; the stationary prehistory of the baths is one
+factorization of the stationary operator per frequency and distinct
+initial state, so the complete bath of a long record is not free. A
+`cutoff` in Hz bounds it, and `frequencies` with `weights`
 replace it, which is what a circuit with loss spread along a line wants:
 a few bands around the tones and their idlers at the resolution of the
 window; the forward method, two directions per bath and frequency,
