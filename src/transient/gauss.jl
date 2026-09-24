@@ -175,6 +175,12 @@ struct RationalCoupling{M}
     # the port rows with a modulated output term, the only rows the
     # stage correction acts on
     modulated::Vector{Int}
+    # the output scatter entrywise in magnitude, which bounds its rounding
+    # against the states themselves rather than against their largest:
+    # the scatter and the states both run over the decades the poles of a
+    # fit span, and a norm of each pairs the largest of one with the
+    # largest of the other whatever rows they are in
+    SCabs::Vector{M}
 end
 
 function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc::GaussCoefficients, h, Lscale,
@@ -279,7 +285,8 @@ function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc
         d(t(Pd)), d(t(Px)), d(t(Zz)), d(t(Ezb)), d(t(Ed)), d(t(Ex)),
         [d(M) for M in SC], [d(t(M)) for M in SC], terms, Cblk,
         sparse(blockscatter), sparse(Pd + Px),
-        sort!(unique!(reduce(vcat, [rowvals(C) for C in Cblk[2:end]]; init = Int[]))))
+        sort!(unique!(reduce(vcat, [rowvals(C) for C in Cblk[2:end]]; init = Int[]))),
+        [d(abs.(M)) for M in SC])
 end
 
 # the weight of every output term at the time `t`: one for the

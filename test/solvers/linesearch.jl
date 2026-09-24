@@ -121,10 +121,11 @@ using Logging
         # a pumped junction hard enough that the step is shortened, so the
         # two ways of shortening it leave different traces while reaching
         # the same point
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit, ("P1","1","0",1)); push!(circuit, ("R1","1","0",:Rleft))
-        push!(circuit, ("C1","1","2",:Cc)); push!(circuit, ("Lj1","2","0",:Lj))
-        push!(circuit, ("C2","2","0",:Cj))
+        circuit = Any[]
+        push!(circuit, ("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit, ("C1", "1", "2", Capacitor(:Cc))); push!(circuit, ("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit, ("C2", "2", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         defs = Dict{Symbol,Complex{Float64}}(:Lj => 1000e-12, :Cc => 100.0e-15,
             :Cj => 1000e-15, :Rleft => 50.0)
         wp = (2*pi*5e9,)

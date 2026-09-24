@@ -174,16 +174,16 @@ function componentlookups(coupledbranches, Ljb)
 end
 
 """
-    componentstamp(idx::Integer, psc::CompiledCircuit, cg::CircuitGraph,
+    componentstamp(idx::Integer, psc::CompiledCircuit,
         nm::CircuitMatrices, lookups, Nmodes::Integer, Nnodes::Integer)
 
 Classify the component at index `idx` for sensitivity analysis and build its
 raw one-component matrix, without any solver scaling, negative frequency
 conjugation, or padding, which the callers apply for their own grids. The
-component matrices are built with the same functions which build the system
-matrices, [`calcCn`](@ref), [`calcGn`](@ref), [`calcLb`](@ref) and
-[`calcinvLn`](@ref), applied to the single component, so the node and mode
-conventions agree by construction. Returns one of
+component matrices are assembled on the stamp plans which assemble the
+system matrices ([`nodalstampplan`](@ref), [`branchstampplan`](@ref) and
+[`inverseinductanceplan`](@ref)), planned for the single component, so the
+node and mode conventions agree by construction. Returns one of
 
 - `(:C, M)`: the component's capacitance matrix,
 - `(:G, M)`: the component's conductance matrix,
@@ -200,35 +200,38 @@ message from both the fixed operating point stamps
 tables of [`componentlookups`](@ref).
 """
 function componentstamp(idx::Integer, psc::CompiledCircuit,
-    cg::CircuitGraph, nm::CircuitMatrices, lookups,
+    nm::CircuitMatrices, lookups,
     Nmodes::Integer, Nnodes::Integer)
 
+    topology = psc.topology
     componenttypes = psc.componenttypes
     nodeindices = psc.nodeindices
     vvn = nm.vvn
     componenttype = componenttypes[idx]
     value = vvn[idx]
     if !(value isa Number)
-        throw(ArgumentError(lazy"Sensitivities require a numeric component value, but the value of $(psc.componentnames[idx]) is $(value). Components with symbolic frequency dependent values are not supported."))
+        throw(ArgumentError(lazy"Sensitivities require a numeric component value, but the value of $(psc.componentnames[idx]) is $(value). Frequency dependent values are not supported."))
     end
     n1 = nodeindices[1, idx]
     n2 = nodeindices[2, idx]
+    # the storage type the value's group would assemble in: floating point
+    # for a plain number however it was written, so that the reciprocal of
+    # an integer value has somewhere to go
+    T = grouptype(vvn, (idx,), true)
     if componenttype == :C
-        return (:C, calcCn(componenttypes[[idx]], nodeindices[:,[idx]],
-            vvn[[idx]], Nmodes, Nnodes))
+        return (:C, assemblenodal(T, nodalstampplan(psc, [idx], Nnodes), T[value], Nmodes))
     elseif componenttype == :R
-        return (:G, calcGn(componenttypes[[idx]], nodeindices[:,[idx]],
-            vvn[[idx]], Nmodes, Nnodes))
+        return (:G, assemblenodal(T, nodalstampplan(psc, [idx], Nnodes; invert = true), T[value], Nmodes))
     elseif componenttype == :L
-        b = cg.edge2indexdict[(n1, n2)]
+        b = topology.edge2indexdict[(n1, n2)]
         if b in lookups.coupled
             throw(ArgumentError(lazy"Sensitivities are not supported for the mutually coupled inductor $(psc.componentnames[idx])."))
         end
-        Lb = calcLb(componenttypes[[idx]], nodeindices[:,[idx]],
-            vvn[[idx]], cg.edge2indexdict, 1, cg.Nbranches)
-        return (:invL, calcinvLn(Lb, cg.Rbn, Nmodes))
+        Lb = assemblebranch(T, branchstampplan(psc, [idx], topology.edge2indexdict, topology.Nbranches), T[value],
+            combine_reciprocal_sum, 1)
+        return (:invL, assembleinvinductance(T, inverseinductanceplan(topology, Lb.nzind, Int[]), Lb, Nmodes))
     elseif componenttype == :Lj
-        b = cg.edge2indexdict[(n1, n2)]
+        b = topology.edge2indexdict[(n1, n2)]
         j = get(lookups.junctionordinal, b, nothing)
         if isnothing(j)
             throw(ArgumentError(lazy"The Josephson junction $(psc.componentnames[idx]) was not found in the branch inductance vector."))
@@ -240,7 +243,7 @@ function componentstamp(idx::Integer, psc::CompiledCircuit,
 end
 
 """
-    calcresidualsensitivity(op::HBOperatingPoint, psc, cg, nm,
+    calcresidualsensitivity(op::HBOperatingPoint, psc, nm,
         sensitivityindices, alphas = ones(Complex{Float64}, length(sensitivityindices)))
 
 Calculate the derivative of the harmonic balance residual with respect to a
@@ -279,7 +282,7 @@ the physical quantity and the only rows the linearized system depends on,
 are unaffected.
 """
 function calcresidualsensitivity(op::HBOperatingPoint,
-    psc::CompiledCircuit, cg::CircuitGraph, nm::CircuitMatrices,
+    psc::CompiledCircuit, nm::CircuitMatrices,
     sensitivityindices,
     alphas::AbstractVector = ones(Complex{Float64},
         length(sensitivityindices)))
@@ -349,7 +352,7 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     Nm = length(wmodes)
     lookups = componentlookups(op.coupledbranches, op.sys.Ljb)
     for (comp, idx) in enumerate(sensitivityindices)
-        kind, info = componentstamp(idx, psc, cg, nm, lookups,
+        kind, info = componentstamp(idx, psc, nm, lookups,
             Nmodes, Nnodes)
         if kind == :C || kind == :G || kind == :invL
             # dF_comp = c * Ms * Diagonal(w.^power) * x, accumulated per

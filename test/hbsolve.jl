@@ -11,21 +11,20 @@ using Test
         atol = 5e-17
 
         JosephsonCircuits.@params R Cc Lj Cj
-        circuit = [
-            ("P1","1","0",1),
-            ("R1","1","0",R),
-            ("C1","1","2",Cc),
-            ("Lj1","2","0",Lj),
-            ("C2","2","0",Cj)]
+        circuit = Circuit([
+            ("P1", "1", "0", Port(1; Z0 = R)),
+            ("C1", "1", "2", Capacitor(Cc)),
+            ("Lj1", "2", "0", JosephsonJunction(Lj)),
+            ("C2", "2", "0", Capacitor(Cj))])
 
         for tandelta in [0,1e-3]
-            
+
             circuitdefs = Dict(
                 Lj =>1000.0e-12,
                 Cc => 100.0e-15,
                 Cj => 1000.0e-15/(1+im*tandelta),
                 R => 50.0)
-            
+
             ws = 2*pi*4.74*1e9
             wp = 2*pi*4.75001*1e9
             Ip = 0.00565e-6
@@ -55,7 +54,7 @@ using Test
             sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, atol = atol)
             S3ss = sol3.S((1,0),1,(1,0),1)
             S3is = sol3.S((1,-2),1,(1,0),1)
-            
+
             @test(isapprox(S1ss,S2ss))
             # conjugate the idler from this simulation since it has a positive
             # frequency  wi = 2wp - ws where wp > ws. it has a negative
@@ -72,12 +71,12 @@ using Test
     @testset "uncommon options give the same numbers" begin
 
         JosephsonCircuits.@params Rleft Cc Lj Cj w
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",Rleft))
-        push!(circuit,("C1","1","2",Cc))
-        push!(circuit,("Lj1","2","0",Lj))
-        push!(circuit,("C2","2","0",Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
+        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(Lj => 1000.0e-12, Cc => 100.0e-15,
             Cj => 1000.0e-15, Rleft => 50.0)
         ws = 2*pi*(4.5:0.05:5.0)*1e9
@@ -87,11 +86,11 @@ using Test
         base = hbsolve(ws, wp, sources, (8,), (16,), circuit, circuitdefs;
             atol = 1e-12, returnnodeflux = true, returnvoltage = true,
             keyedarrays = false)
-        # a symbolic frequency variable, four batches, and every output
-        # flag the other way round must give the same numbers where both
-        # computed them, and nothing where they were not asked for
+        # four batches and every output flag the other way round must give
+        # the same numbers where both computed them, and nothing where they
+        # were not asked for
         other = hbsolve(ws, wp, sources, (8,), (16,), circuit, circuitdefs;
-            atol = 1e-12, symfreqvar = w, returnS = false,
+            atol = 1e-12, returnS = false,
             returnSnoise = true, returnQE = false, returnnodeflux = true,
             returnnodefluxadjoint = true, returnCM = false,
             returnvoltage = true, returnvoltageadjoint = true,
@@ -113,17 +112,17 @@ using Test
 
     @testset "hbsolve initial nodeflux" begin
 
-        circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("I1","1","0",:Ipump))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("L1","1","0",:Lm)) 
-        push!(circuit,("K1","L1","L2",:K1))
-        push!(circuit,("C1","1","2",:Cc)) 
-        push!(circuit,("L2","2","3",:Lm)) 
-        push!(circuit,("Lj3","3","0",:Lj)) 
-        push!(circuit,("Lj4","2","0",:Lj)) 
-        push!(circuit,("C2","2","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("I1", "1", "0", CurrentSource(:Ipump)))
+        push!(circuit,("L1", "1", "0", Inductor(:Lm)))
+        push!(circuit,("K1", "L1", "L2", MutualInductor(:K1)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("L2", "2", "3", Inductor(:Lm)))
+        push!(circuit,("Lj3", "3", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("Lj4", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict{Symbol,Complex{Float64}}(
             :Lj =>2000e-12,
             :Lm =>10e-12,
@@ -163,19 +162,18 @@ using Test
     @testset verbose=true "hbsolve return flags" begin
 
         JosephsonCircuits.@params R Cc Lj Cj
-        circuit = [
-            ("P1","1","0",1),
-            ("R1","1","0",R),
-            ("C1","1","2",Cc),
-            ("Lj1","2","0",Lj),
-            ("C2","2","0",Cj)]
-        
+        circuit = Circuit([
+            ("P1", "1", "0", Port(1; Z0 = R)),
+            ("C1", "1", "2", Capacitor(Cc)),
+            ("Lj1", "2", "0", JosephsonJunction(Lj)),
+            ("C2", "2", "0", Capacitor(Cj))])
+
         circuitdefs = Dict(
             Lj =>1000.0e-12,
             Cc => 100.0e-15,
             Cj => 1000.0e-15/(1+1e-3im),
             R => 50.0)
-        
+
         ws = 2*pi*(4.5:0.5:5.0)*1e9
         wp = (2*pi*4.75001*1e9,)
         Ip = 0.00565e-6
@@ -239,12 +237,12 @@ using Test
     @testset verbose=true "hbnlsolve lossless error" begin
 
         JosephsonCircuits.@params Rleft Cc Lj Cj w L1
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",Rleft))
-        push!(circuit,("C1","1","2",Cc)) 
-        push!(circuit,("Lj1","2","0",Lj)) 
-        push!(circuit,("C2","2","0",Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
+        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(
             Lj =>1000.0e-12,
             Cc => 100.0e-15,
@@ -269,7 +267,7 @@ using Test
 
     @testset "hbnlsolve simple testcase" begin
 
-        circuit = [("P1","1","0",1),("R1","1","0",50.0)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0))])
         circuitdefs = Dict()
         Idc = 50e-5
         Ip = 1.0e-6
@@ -293,7 +291,7 @@ using Test
         # system matrix with a DC mode would be structurally singular, but
         # with the modified nodal analysis formulation the DC node flux is
         # gauge fixed and the circuit solves exactly.
-        circuit = [("P1","1","0",1),("R1","1","0",50.0)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0))])
         circuitdefs = Dict()
         Idc = 50e-5
         Ip = 1.0e-6
@@ -319,8 +317,8 @@ using Test
         # component and the undefined variable, instead of a downstream
         # error about the symbolic frequency variable.
         JosephsonCircuits.@params Rv Ccv Ljv Cjv
-        circuit = [("P1","1","0",1),("R1","1","0",Rv),("C1","1","2",Ccv),
-            ("Lj1","2","0",Ljv),("C2","2","0",Cjv)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = Rv)),("C1", "1", "2", Capacitor(Ccv)),
+            ("Lj1", "2", "0", JosephsonJunction(Ljv)),("C2", "2", "0", Capacitor(Cjv))])
         circuitdefs = Dict(Ljv=>1000.0e-12, Cjv=>1000.0e-15, Rv=>50.0)
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
@@ -347,50 +345,69 @@ using Test
         @test err2 isa ArgumentError
         @test occursin("Ccv", sprint(showerror, err2))
 
-        # frequency dependent values through symfreqvar are accepted, and
-        # a value mixing symfreqvar with an undefined variable is rejected
-        # naming both the component and the variable
-        JosephsonCircuits.@params wsym Rundef
-        c2 = [("P1","1","0",1),("R1","1","0",50.0 + 0.0*wsym),
-            ("C1","1","0",100.0e-15),("L1","1","0",1.0e-9)]
-        out = JosephsonCircuits.hbnlsolve(wp, (1,), sources, c2, Dict();
-            symfreqvar = wsym)
+        # a frequency dependent value is accepted, and one which also
+        # carries an undefined parameter is rejected naming both the
+        # component and the parameter
+        JosephsonCircuits.@params Rundef
+        wfd = FrequencyDependent(identity)
+        c2 = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0 + 0.0*wfd)),("C1", "1", "0", Capacitor(100.0e-15)),("L1", "1", "0", Inductor(1.0e-9))])
+        out = JosephsonCircuits.hbnlsolve(wp, (1,), sources, c2, Dict())
         @test out.solverinfo.converged
-        c3 = [("P1","1","0",1),("R1","1","0",Rundef/(1 + wsym*1e-12)),
-            ("C1","1","0",100.0e-15),("L1","1","0",1.0e-9)]
+        c3 = Circuit([("P1", "1", "0", Port(1; Z0 = Rundef/(1 + wfd*1e-12))),("C1", "1", "0", Capacitor(100.0e-15)),("L1", "1", "0", Inductor(1.0e-9))])
         err3 = try
-            JosephsonCircuits.hbnlsolve(wp, (1,), sources, c3, Dict();
-                symfreqvar = wsym)
+            JosephsonCircuits.hbnlsolve(wp, (1,), sources, c3, Dict())
             nothing
         catch e
             e
         end
         @test err3 isa ArgumentError
         @test occursin("Rundef", sprint(showerror, err3))
-        @test occursin("R1", sprint(showerror, err3))
+        @test occursin("P1", sprint(showerror, err3))
     end
 
-    @testset "FrequencyDependent matches symfreqvar" begin
-        # the same frequency law spelled two ways: an expression in the
-        # symbolic frequency variable, and a plain Julia closure through
-        # FrequencyDependent. The scattering parameters must agree to
-        # roundoff.
+    @testset "a value written as a closure of the frequency" begin
+        # the same frequency law spelled two ways: a closure passed whole,
+        # and the identity closure entering an expression. The scattering
+        # parameters must agree to roundoff.
         wp = (2*pi*4.75001*1e9,)
         ws = 2*pi*(4.5:0.1:5.0)*1e9
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
-        JosephsonCircuits.@params wsym
         law(w) = 50.0*(1 + (w/1e11)^2)
-        csym = [("P1","1","0",1),("R1","1","0",law(wsym)),
-            ("C1","1","2",100.0e-15),("Lj1","2","0",1000.0e-12),
-            ("C2","2","0",1000.0e-15)]
-        cfun = [("P1","1","0",1),
-            ("R1","1","0",FrequencyDependent(law)),
-            ("C1","1","2",100.0e-15),("Lj1","2","0",1000.0e-12),
-            ("C2","2","0",1000.0e-15)]
-        Ssym = hbsolve(ws, wp, sources, (2,), (8,), csym, Dict();
-            symfreqvar = wsym).linearized.S
+        wfd = FrequencyDependent(identity)
+        cexp = Circuit([("P1", "1", "0", Port(1; Z0 = law(wfd))),("C1", "1", "2", Capacitor(100.0e-15)),("Lj1", "2", "0", JosephsonJunction(1000.0e-12)),
+            ("C2", "2", "0", Capacitor(1000.0e-15))])
+        cfun = Circuit([("P1", "1", "0", Port(1; Z0 = FrequencyDependent(law))),
+            ("C1", "1", "2", Capacitor(100.0e-15)),("Lj1", "2", "0", JosephsonJunction(1000.0e-12)),
+            ("C2", "2", "0", Capacitor(1000.0e-15))])
+        Sexp = hbsolve(ws, wp, sources, (2,), (8,), cexp, Dict()).linearized.S
         Sfun = hbsolve(ws, wp, sources, (2,), (8,), cfun).linearized.S
-        @test isapprox(Array(Ssym), Array(Sfun), rtol = 1e-12)
+        @test isapprox(Array(Sexp), Array(Sfun), rtol = 1e-12)
+
+        # a lossy capacitor is a noise channel however its value is
+        # written: as a plain complex number, or as a frequency dependent
+        # closure. The imaginary part is only visible once the value is
+        # resolved at a frequency, so both must resolve before the
+        # channels are chosen.
+        lossy(v) = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)),
+            ("C1", "1", "2", Capacitor(v)),
+            ("Lj1", "2", "0", JosephsonJunction(1000.0e-12)),
+            ("C2", "2", "0", Capacitor(500.0e-15))])
+        C0, tand = 100.0e-15, 1e-3
+        outs = (hbsolve(ws, wp, sources, (2,), (8,), lossy(C0*(1 - im*tand)),
+                    Dict(); keyedarrays = false),
+            hbsolve(ws, wp, sources, (2,), (8,),
+                lossy(C0*(1 - im*tand)*(1 + 0*wfd)), Dict();
+                keyedarrays = false),
+            hbsolve(ws, wp, sources, (2,), (8,),
+                lossy(FrequencyDependent(w -> C0*(1 - im*tand))), Dict();
+                keyedarrays = false))
+        for o in outs
+            @test [o.linearized.componentnames[i]
+                for i in o.linearized.noiseportimpedanceindices] == ["C1"]
+            @test isapprox(o.linearized.QE, first(outs).linearized.QE,
+                rtol = 1e-12)
+            @test o.linearized.QE[1,1,1] < o.linearized.QEideal[1,1,1]
+        end
     end
 
     @testset "calcsources errors" begin
@@ -446,12 +463,12 @@ using Test
         JosephsonCircuits.@params Rleft Rright Cc Lj Cj Lla Llb Kab
 
         # a JPA: one port, so one promoted port resistor
-        circuitjpa = Tuple{String,String,String,Any}[]
-        push!(circuitjpa,("P1","1","0",1))
-        push!(circuitjpa,("R1","1","0",Rleft))
-        push!(circuitjpa,("C1","1","2",Cc))
-        push!(circuitjpa,("Lj1","2","0",Lj))
-        push!(circuitjpa,("C2","2","0",Cj))
+        circuitjpa = Any[]
+        push!(circuitjpa,("P1", "1", "0", Port(1; Z0 = Rleft)))
+        push!(circuitjpa,("C1", "1", "2", Capacitor(Cc)))
+        push!(circuitjpa,("Lj1", "2", "0", JosephsonJunction(Lj)))
+        push!(circuitjpa,("C2", "2", "0", Capacitor(Cj)))
+        circuitjpa = Circuit(circuitjpa)
         circuitdefsjpa = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
             Rleft=>50.0)
 
@@ -463,17 +480,16 @@ using Test
         # two ports and a mutually coupled inductor pair, which is promoted to
         # auxiliary branch currents as well. exercises both auxiliary blocks at
         # once, with the coupling coefficient close to one.
-        circuitmutual = Tuple{String,String,String,Any}[]
-        push!(circuitmutual,("P1","1","0",1))
-        push!(circuitmutual,("R1","1","0",Rleft))
-        push!(circuitmutual,("C1","1","2",Cc))
-        push!(circuitmutual,("Lj1","2","0",Lj))
-        push!(circuitmutual,("C2","2","0",Cj))
-        push!(circuitmutual,("L1","2","0",Lla))
-        push!(circuitmutual,("L2","3","0",Llb))
-        push!(circuitmutual,("P2","3","0",2))
-        push!(circuitmutual,("R2","3","0",Rright))
-        push!(circuitmutual,("K1","L1","L2",Kab))
+        circuitmutual = Any[]
+        push!(circuitmutual,("P1", "1", "0", Port(1; Z0 = Rleft)))
+        push!(circuitmutual,("C1", "1", "2", Capacitor(Cc)))
+        push!(circuitmutual,("Lj1", "2", "0", JosephsonJunction(Lj)))
+        push!(circuitmutual,("C2", "2", "0", Capacitor(Cj)))
+        push!(circuitmutual,("L1", "2", "0", Inductor(Lla)))
+        push!(circuitmutual,("L2", "3", "0", Inductor(Llb)))
+        push!(circuitmutual,("P2", "3", "0", Port(2; Z0 = Rright)))
+        push!(circuitmutual,("K1", "L1", "L2", MutualInductor(Kab)))
+        circuitmutual = Circuit(circuitmutual)
         circuitdefsmutual = Dict(Lj=>500.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
             Lla=>300.0e-12, Llb=>300.0e-12, Rleft=>50.0, Rright=>50.0,
             Kab=>0.99)
@@ -504,11 +520,10 @@ using Test
                 nonlinear = hbnlsolve(wp, Npumpharmonics, sources, circuit,
                     circuitdefs; keyedarrays=false)
                 psc = JosephsonCircuits.compile(circuit)
-                cg = JosephsonCircuits.calccircuitgraph(psc)
                 signalfreq = JosephsonCircuits.truncfreqs(
                     JosephsonCircuits.calcfreqsdft(Nmodulationharmonics);
                     dc=true, odd=false, even=true, maxintermodorder=Inf)
-                d = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
+                d = JosephsonCircuits.hblinsolve(ws, psc, circuitdefs,
                     signalfreq; nonlinear=nonlinear, debuglsys=true)
                 lsys = d.lsys
 
@@ -553,7 +568,7 @@ using Test
                 # end to end: the transposed solve used by hblinsolve gives the
                 # same adjoint node fluxes as an independent solve of the
                 # conjugated pump system.
-                sol = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
+                sol = JosephsonCircuits.hblinsolve(ws, psc, circuitdefs,
                     signalfreq; nonlinear=nonlinear, keyedarrays=false,
                     returnnodefluxadjoint=true, returnSnoise=true, returnQE=true)
                 for (i, wsi) in enumerate(ws)
@@ -571,6 +586,60 @@ using Test
 
 
     @testset verbose=true "scattering parameter sensitivities" begin
+        @testset "integer component values" begin
+            # a value written as an integer assembles in the floating point
+            # storage its group takes, in the sensitivity stamps as in the
+            # matrices, so a reciprocal never asks an integer to hold a
+            # fraction
+            mk(L, R) = Circuit([(:p, 1, 0, Port(1)), (:l, 1, 0, Inductor(L)),
+                (:r, 1, 0, Resistor(R)), (:c, 1, 0, Capacitor(1e-12))])
+            wsi = [2pi*5e9]
+            si = hblinsolve(wsi, mk(2, 50); keyedarrays = false,
+                sensitivitynames = ["l", "r"], returnSsensitivity = true)
+            sf = hblinsolve(wsi, mk(2.0, 50.0); keyedarrays = false,
+                sensitivitynames = ["l", "r"], returnSsensitivity = true)
+            @test si.S == sf.S
+            @test si.Ssensitivity == sf.Ssensitivity
+            # and through the operating point of a pumped circuit
+            jj(L) = Circuit([(:p, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(100e-15)),
+                (:jj, 2, 0, JosephsonJunction(1e-9)), (:l, 2, 0, Inductor(L)),
+                (:c, 2, 0, Capacitor(1e-12))])
+            wpi = (2pi*4.75e9,); srci = [(mode = (1,), port = 1, current = 1e-8)]
+            hi = hbsolve(wsi, wpi, srci, (1,), (2,), jj(1); keyedarrays = false,
+                sensitivitynames = ["l"], returnSsensitivity = true)
+            hf = hbsolve(wsi, wpi, srci, (1,), (2,), jj(1.0); keyedarrays = false,
+                sensitivitynames = ["l"], returnSsensitivity = true)
+            @test hi.linearized.Ssensitivity == hf.linearized.Ssensitivity
+        end
+
+        @testset "components are named as the frontend names them" begin
+            # the typed frontend names a component with a symbol, so the
+            # sensitivity names take one as readily as a string
+            c = Circuit([(:p, 1, 0, Port(1; termination = nothing)),
+                (:l, 1, 0, Inductor(2.0)), (:r, 1, 0, Resistor(50.0)),
+                (:c, 1, 0, Capacitor(1e-12))])
+            ws1 = [2pi*5e9]
+            bystring = hblinsolve(ws1, c; keyedarrays = false,
+                sensitivitynames = ["l", "r"], returnSsensitivity = true)
+            bysymbol = hblinsolve(ws1, c; keyedarrays = false,
+                sensitivitynames = [:l, :r], returnSsensitivity = true)
+            @test bystring.Ssensitivity == bysymbol.Ssensitivity
+            @test bystring.sensitivitynames == bysymbol.sensitivitynames
+            # a name the circuit does not have is refused the same way by
+            # every entry point, naming it
+            wp1 = (2pi*4.75e9,); src1 = [(mode = (1,), port = 1, current = 1e-8)]
+            for f in (() -> hblinsolve(ws1, c; sensitivitynames = [:nope],
+                          returnSsensitivity = true),
+                      () -> hbsolve(ws1, wp1, src1, (1,), (2,), c;
+                          sensitivitynames = [:nope], returnSsensitivity = true),
+                      () -> JosephsonCircuits.hbnlsolve(wp1, (2,), src1, c;
+                          sensitivitynames = ["nope"]))
+                e = try f(); nothing catch e; e end
+                @test e isa ArgumentError
+                @test occursin("nope", sprint(showerror, e))
+            end
+        end
+
 
         # dS/dr, the derivative of the scattering matrix with respect to a
         # relative perturbation of a component value at a fixed pump
@@ -581,17 +650,18 @@ using Test
 
         @testset "linear network" begin
             JosephsonCircuits.@params R1v R2v R3v C1v L1v C2v
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",R1v))
-            push!(circuit,("C1","1","2",C1v)); push!(circuit,("L1","2","0",L1v))
-            push!(circuit,("C2","2","0",C2v)); push!(circuit,("P2","2","0",2))
-            push!(circuit,("R2","2","0",R2v)); push!(circuit,("R3","1","2",R3v))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = R1v)))
+            push!(circuit,("C1", "1", "2", Capacitor(C1v))); push!(circuit,("L1", "2", "0", Inductor(L1v)))
+            push!(circuit,("C2", "2", "0", Capacitor(C2v))); push!(circuit,("P2", "2", "0", Port(2; Z0 = R2v)))
+            push!(circuit,("R3", "1", "2", Resistor(R3v)))
+            circuit = Circuit(circuit)
             defs = Dict(R1v=>50.0, R2v=>50.0, R3v=>300.0, C1v=>100e-15,
                 L1v=>1e-9, C2v=>200e-15)
             ws = 2*pi*[5.0e9, 7.0e9]
-            names = ["C1","L1","C2","R3","R1","R2"]
+            names = ["C1","L1","C2","R3","P1/termination","P2/termination"]
             syms = Dict("C1"=>C1v,"L1"=>L1v,"C2"=>C2v,"R3"=>R3v,
-                "R1"=>R1v,"R2"=>R2v)
+                "P1/termination"=>R1v,"P2/termination"=>R2v)
             sol = hblinsolve(ws, circuit, defs; keyedarrays=false,
                 sensitivitynames=names, returnSsensitivity=true)
             @test size(sol.Ssensitivity) ==
@@ -612,16 +682,17 @@ using Test
 
         @testset "pumped junction" begin
             JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
             wp = (2*pi*4.75001e9,)
             sources = [(mode=(1,),port=1,current=0.00565e-6)]
             ws = 2*pi*[4.5e9, 4.75e9]
-            names = ["C1","C2","Lj1","R1"]
-            syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"R1"=>Rl)
+            names = ["C1","C2","Lj1","P1/termination"]
+            syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"P1/termination"=>Rl)
 
             sol = hbsolve(ws, wp, sources, (4,), (8,), circuit, defs;
                 keyedarrays=false, sensitivitynames=names,
@@ -631,11 +702,10 @@ using Test
             nonlinear = hbnlsolve(wp, (8,), sources, circuit, defs;
                 keyedarrays=false)
             psc = JosephsonCircuits.compile(circuit)
-            cg = JosephsonCircuits.calccircuitgraph(psc)
             signalfreq = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((4,)); dc=true, odd=false,
                 even=true, maxintermodorder=Inf)
-            frozen(d) = JosephsonCircuits.hblinsolve(ws, psc, cg, d,
+            frozen(d) = JosephsonCircuits.hblinsolve(ws, psc, d,
                 signalfreq; nonlinear=nonlinear, keyedarrays=false).S
 
             h = 1e-6
@@ -670,16 +740,17 @@ using Test
             # operating point contribution is comparable to or larger than the
             # frozen pump term, so the two must differ substantially.
             JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
             wp = (2*pi*4.75001e9,)
             sources = [(mode=(1,),port=1,current=0.00565e-6)]
             ws = 2*pi*[4.5e9, 4.75e9]
-            names = ["C1","C2","Lj1","R1"]
-            syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"R1"=>Rl)
+            names = ["C1","C2","Lj1","P1/termination"]
+            syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"P1/termination"=>Rl)
             solve(d; op=false) = hbsolve(ws, wp, sources, (4,), (8,),
                 circuit, d; keyedarrays=false, atol=1e-13,
                 sensitivitynames=names, returnSsensitivity=true,
@@ -734,19 +805,19 @@ using Test
             # independent of the number of components. The two must agree.
             JosephsonCircuits.@params Rl Ljx Cg Cjx Cg1v
             Ncells = 3
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
             for i in 1:Ncells
-                push!(circuit,("Lj$(i)","$(i)","$(i+1)",Ljx))
-                push!(circuit,("Cj$(i)","$(i)","$(i+1)",Cjx))
-                push!(circuit,("Cg$(i)","$(i+1)","0", i == 1 ? Cg1v : Cg))
+                push!(circuit,("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(Ljx)))
+                push!(circuit,("Cj$(i)", "$(i)", "$(i+1)", Capacitor(Cjx)))
+                push!(circuit,("Cg$(i)", "$(i+1)", "0", Capacitor(i == 1 ? Cg1v : Cg)))
             end
-            push!(circuit,("P2","$(Ncells+1)","0",2))
-            push!(circuit,("R2","$(Ncells+1)","0",Rl))
+            push!(circuit,("P2", "$(Ncells+1)", "0", Port(2; Z0 = Rl)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Ljx=>JosephsonCircuits.IctoLj(3.4e-6),
                 Cg=>45e-15, Cg1v=>45e-15, Cjx=>55e-15)
             ws = 2*pi*[5.5e9, 6.4e9]
-            names = ["Cg1","Cg2","Lj2","R1"]
+            names = ["Cg1","Cg2","Lj2","P1/termination"]
 
             # The transform of the pump harmonic grid is applied one
             # dimension at a time, so both orders work for any number of
@@ -809,16 +880,16 @@ using Test
             # not discovered as out of bounds indexing inside the
             # contractions (the contraction loops are @inbounds).
             JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>200e-15)
             wp = (2*pi*5e9,)
             sources = [(mode=(1,),port=1,current=1e-7)]
             ws = 2*pi*[4.5e9]
             psc = compile(circuit)
-            cg = calccircuitgraph(psc)
             nl = hbnlsolve(wp, (4,), sources, circuit, defs;
                 returnoperatingpoint=true)
             op = nl.operatingpoint
@@ -826,11 +897,10 @@ using Test
                 JosephsonCircuits.calcfreqsdft((2,)); dc=true, odd=false,
                 even=true)
             names = ["C2"]
-            good = JosephsonCircuits.calcresidualsensitivity(op, psc, cg,
-                JosephsonCircuits.numericmatrices(psc, cg, defs,
+            good = JosephsonCircuits.calcresidualsensitivity(op, psc, JosephsonCircuits.numericmatrices(psc, defs,
                     Nmodes=length(nl.modes)),
                 [psc.componentnamedict[n] for n in names])
-            lin(; kwargs...) = hblinsolve(ws, psc, cg, defs, signalfreq;
+            lin(; kwargs...) = hblinsolve(ws, psc, defs, signalfreq;
                 nonlinear=nl, keyedarrays=false, sensitivitynames=names,
                 returnSsensitivity=true, kwargs...)
             # the residual derivatives are sparse from construction and
@@ -865,10 +935,11 @@ using Test
             # and the operating point machinery must not be constructed at
             # all.
             JosephsonCircuits.@params Rl Ll Cs
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("L1","1","2",Ll)); push!(circuit,("C1","2","0",Cs))
-            push!(circuit,("P2","2","0",2)); push!(circuit,("R2","2","0",Rl))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("L1", "1", "2", Inductor(Ll))); push!(circuit,("C1", "2", "0", Capacitor(Cs)))
+            push!(circuit,("P2", "2", "0", Port(2; Z0 = Rl)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Ll=>300e-12, Cs=>300e-15)
             wp = (2*pi*6e9,)
             sources = [(mode=(1,),port=1,current=1e-7)]
@@ -905,10 +976,11 @@ using Test
             # well below the junction critical current so the finite
             # difference re-solves stay on the same solution branch.
             JosephsonCircuits.@params Rl Ll Lj Cj
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("L1","1","2",Ll)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("L1", "1", "2", Inductor(Ll))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Ll=>300e-12, Lj=>800e-12, Cj=>1200e-15)
             wp = (2*pi*5.2e9,)
             sources = [(mode=(0,),port=1,current=0.1e-6),
@@ -951,10 +1023,11 @@ using Test
             # which other outputs are requested, including when S itself is
             # not returned.
             JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
             wp = (2*pi*4.75001e9,)
             sources = [(mode=(1,),port=1,current=0.00565e-6)]
@@ -976,10 +1049,11 @@ using Test
             # an unknown contraction order is rejected even when no operating
             # point derivatives are in play
             JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
             @test_throws ArgumentError hblinsolve(2*pi*[4.5e9], circuit,
                 defs; keyedarrays=false, sensitivitynames=["C1"],
@@ -988,13 +1062,14 @@ using Test
 
         @testset "unsupported components" begin
             JosephsonCircuits.@params Rl Cc Lj Cj Lla Llb Kab
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
-            push!(circuit,("L1","2","0",Lla)); push!(circuit,("L2","3","0",Llb))
-            push!(circuit,("P2","3","0",2)); push!(circuit,("R2","3","0",Rl))
-            push!(circuit,("K1","L1","L2",Kab))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
+            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+            push!(circuit,("L1", "2", "0", Inductor(Lla))); push!(circuit,("L2", "3", "0", Inductor(Llb)))
+            push!(circuit,("P2", "3", "0", Port(2; Z0 = Rl)))
+            push!(circuit,("K1", "L1", "L2", MutualInductor(Kab)))
+            circuit = Circuit(circuit)
             defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>500e-12, Cj=>1000e-15,
                 Lla=>300e-12, Llb=>300e-12, Kab=>0.5)
             ws = 2*pi*[5.0e9]
@@ -1038,23 +1113,24 @@ using Test
         # analysis rows join the node blocks, and the sensitivity path takes
         # its own factorization of the pump Jacobian
         JosephsonCircuits.@params Rl Rr Cc Lj Cj Lla Llb Kab
-        circuitm = Tuple{String,String,String,Any}[]
-        push!(circuitm,("P1","1","0",1)); push!(circuitm,("R1","1","0",Rl))
-        push!(circuitm,("C1","1","2",Cc)); push!(circuitm,("Lj1","2","0",Lj))
-        push!(circuitm,("C2","2","0",Cj))
-        push!(circuitm,("L1","2","0",Lla)); push!(circuitm,("L2","3","0",Llb))
-        push!(circuitm,("P2","3","0",2)); push!(circuitm,("R2","3","0",Rr))
-        push!(circuitm,("K1","L1","L2",Kab))
+        circuitm = Any[]
+        push!(circuitm,("P1", "1", "0", Port(1; Z0 = Rl)))
+        push!(circuitm,("C1", "1", "2", Capacitor(Cc))); push!(circuitm,("Lj1", "2", "0", JosephsonJunction(Lj)))
+        push!(circuitm,("C2", "2", "0", Capacitor(Cj)))
+        push!(circuitm,("L1", "2", "0", Inductor(Lla))); push!(circuitm,("L2", "3", "0", Inductor(Llb)))
+        push!(circuitm,("P2", "3", "0", Port(2; Z0 = Rr)))
+        push!(circuitm,("K1", "L1", "L2", MutualInductor(Kab)))
+        circuitm = Circuit(circuitm)
         defsm = Dict(Rl=>50.0, Rr=>50.0, Cc=>100e-15, Lj=>500e-12,
             Cj=>1000e-15, Lla=>300e-12, Llb=>300e-12, Kab=>0.5)
         wp = (2*pi*4.75001e9,)
         sources = [(mode=(1,),port=1,current=1.0e-6)]
         wsm = 2*pi*[4.5e9, 4.7e9]
         sa = hbsolve(wsm, wp, sources, (4,), (8,), circuitm, defsm;
-            keyedarrays = false, sensitivitynames = ["R1"],
+            keyedarrays = false, sensitivitynames = ["P1/termination"],
             returnSsensitivity = true, returnSnoise = true)
         sb = hbsolve(wsm, wp, sources, (4,), (8,), circuitm, defsm;
-            keyedarrays = false, sensitivitynames = ["R1"],
+            keyedarrays = false, sensitivitynames = ["P1/termination"],
             returnSsensitivity = true, returnSnoise = true,
             factorization = BlockFactorization())
         for name in (:S, :Snoise, :QE, :CM, :Ssensitivity)
@@ -1107,13 +1183,14 @@ using Test
                 JosephsonCircuits.calcfreqsrdft(map(i -> 2i, Npump)); dc = true,
                 odd = true, even = true, maxharmonics = Npump, w = wp))
             indices = JosephsonCircuits.fourierindices(freq)
-            psc, cg, nm = JosephsonCircuits.preparecircuit(circuit, defs;
-                sorting = :number, Nmodes = length(freq.modes))
-            nl = JosephsonCircuits.hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
+            psc = JosephsonCircuits.compile(circuit; sorting = :number)
+            nm = JosephsonCircuits.numericmatrices(psc, defs;
+                Nmodes = length(freq.modes))
+            nl = JosephsonCircuits.hbnlsolve(wp, sources, freq, indices, psc, nm;
                 keyedarrays = false)
             sf = JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsdft(Nmod);
                 dc = true, odd = true, even = true, maxharmonics = Nmod)
-            return JosephsonCircuits.hblinsolve(ws[1:1], psc, cg, nm.vvn, sf;
+            return JosephsonCircuits.hblinsolve(ws[1:1], psc, nm.vvn, sf;
                 nonlinear = nl, debuglsys = true).factorization
         end
         @test resolved((w1,w2), (8,4), (2,2), src) isa BlockFactorization
@@ -1124,11 +1201,11 @@ using Test
         # every output consumes the per frequency view of S, so whether the
         # scattering cube is retained changes none of them
         JosephsonCircuits.@params R1v R2v C1v L1v C2v Ljv
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",R1v))
-        push!(circuit,("C1","1","2",C1v)); push!(circuit,("Lj1","2","0",Ljv))
-        push!(circuit,("C2","2","0",C2v)); push!(circuit,("P2","2","0",2))
-        push!(circuit,("R2","2","0",R2v))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = R1v)))
+        push!(circuit,("C1", "1", "2", Capacitor(C1v))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Ljv)))
+        push!(circuit,("C2", "2", "0", Capacitor(C2v))); push!(circuit,("P2", "2", "0", Port(2; Z0 = R2v)))
+        circuit = Circuit(circuit)
         defs = Dict(R1v=>50.0, R2v=>50.0, C1v=>100e-15, Ljv=>1000e-12,
             C2v=>200e-15)
         ws = 2*pi*[4.5e9, 5.0e9]
@@ -1149,7 +1226,7 @@ using Test
         # the sensitivity scaling reads the per frequency scattering matrix,
         # so it must still be computed when only the sensitivities are asked
         # for and S itself is not returned
-        names = ["C1","C2","R1"]
+        names = ["C1","C2","P1/termination"]
         sensS = hblinsolve(ws, circuit, defs; keyedarrays=false,
             sensitivitynames=names, returnSsensitivity=true, returnS=true)
         sensnoS = hblinsolve(ws, circuit, defs; keyedarrays=false,
@@ -1163,14 +1240,20 @@ end
 
 @testset "the frequency window of the pump modes" begin
     JC = JosephsonCircuits
-    circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-    push!(circuit, ("P1","1","0",1)); push!(circuit, ("R1","1","0",:R))
+    circuit = Any[]
+    push!(circuit, ("P1", "1", "0", Port(1; Z0 = :R)))
     for i in 1:6
-        push!(circuit, ("Lj$(i)","$(i)","$(i+1)",:Lj))
-        push!(circuit, ("C$(i)","$(i)","0",:Cg))
+        push!(circuit, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Lj)))
+        push!(circuit, ("C$(i)", "$(i)", "0", Capacitor(:Cg)))
     end
-    push!(circuit, ("C7","7","0",:Cg)); push!(circuit, ("R2","7","0",:R))
+    push!(circuit, ("C7", "7", "0", Capacitor(:Cg))); push!(circuit, ("R2", "7", "0", Resistor(:R)))
+    circuit = Circuit(circuit)
     defs = Dict{Symbol,Complex{Float64}}(:Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
+    # the same circuit in the typed form, for the cache
+    typed = Circuit(Any[(:P1, 1, 0, Port(1; Z0 = :R)),
+        [(Symbol(:Lj, i), i, i + 1, JosephsonJunction(:Lj)) for i in 1:6]...,
+        [(Symbol(:C, i), i, 0, Capacitor(:Cg)) for i in 1:6]...,
+        (:C7, 7, 0, Capacitor(:Cg)), (:R2, 7, 0, Resistor(:R))])
     w = (2*pi*5.0e9, 2*pi*1.19e9)
     src = [(mode=(1,0),port=1,current=0.6e-6), (mode=(0,1),port=1,current=0.6e-6)]
     full = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
@@ -1203,8 +1286,7 @@ end
         threewavemixing = true, fourwavemixing = true, keyedarrays = false,
         frequencywindow = (2*pi*0.5e9, 2*pi*30e9))
     @test hs.nonlinear.modes == box.modes
-    builder(; Lj) = [(n, a, b, v isa Symbol ? (v === :Lj ? Lj : defs[v]) : v) for (n, a, b, v) in circuit]
-    cache = JC.hbcache(w, (8,4), src, builder, (; Lj = 100e-12); dc = true, odd = true, even = true,
+    cache = JC.hbcache(w, (8,4), src, typed, defs; dc = true, odd = true, even = true,
         frequencywindow = (2*pi*0.5e9, 2*pi*30e9), method = Newton())
     @test length(cache.frequencies.modes) == length(box.modes)
     st = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
@@ -1215,14 +1297,20 @@ end
 
 @testset "the evaluation grid of the pump modes" begin
     JC = JosephsonCircuits
-    circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-    push!(circuit, ("P1","1","0",1)); push!(circuit, ("R1","1","0",:R))
+    circuit = Any[]
+    push!(circuit, ("P1", "1", "0", Port(1; Z0 = :R)))
     for i in 1:6
-        push!(circuit, ("Lj$(i)","$(i)","$(i+1)",:Lj))
-        push!(circuit, ("C$(i)","$(i)","0",:Cg))
+        push!(circuit, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Lj)))
+        push!(circuit, ("C$(i)", "$(i)", "0", Capacitor(:Cg)))
     end
-    push!(circuit, ("C7","7","0",:Cg)); push!(circuit, ("R2","7","0",:R))
+    push!(circuit, ("C7", "7", "0", Capacitor(:Cg))); push!(circuit, ("R2", "7", "0", Resistor(:R)))
+    circuit = Circuit(circuit)
     defs = Dict{Symbol,Complex{Float64}}(:Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
+    # the same circuit in the typed form, for the cache
+    typed = Circuit(Any[(:P1, 1, 0, Port(1; Z0 = :R)),
+        [(Symbol(:Lj, i), i, i + 1, JosephsonJunction(:Lj)) for i in 1:6]...,
+        [(Symbol(:C, i), i, 0, Capacitor(:Cg)) for i in 1:6]...,
+        (:C7, 7, 0, Capacitor(:Cg)), (:R2, 7, 0, Resistor(:R))])
     w = (2*pi*5.0e9, 2*pi*1.19e9)
     src = [(mode=(1,0),port=1,current=0.6e-6), (mode=(0,1),port=1,current=0.6e-6)]
     kw = (; dc = true, odd = true, even = true, method = Newton(), keyedarrays = false)
@@ -1245,9 +1333,7 @@ end
     @test_throws ArgumentError JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., method = Staged(), Nevaluationharmonics = (8,3))
     @test_throws ArgumentError JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
         threewavemixing = true, fourwavemixing = true, keyedarrays = false, Nevaluationharmonics = (7,4))
-    make(; Lj, Cg, R) = [(String(n), a, b, v isa Symbol ? Dict(:Lj => Lj, :Cg => Cg, :R => R)[v] : v)
-        for (n, a, b, v) in circuit]
-    @test_throws ArgumentError JC.hbcache(w, (8,4), src, make, (Lj = 100e-12, Cg = 40e-15, R = 50.0);
+    @test_throws ArgumentError JC.hbcache(w, (8,4), src, typed, defs;
         dc = true, odd = true, even = true, Nevaluationharmonics = (8,3))
     # the grid travels through hbsolve, hbcache and the staged solver
     hs = JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
@@ -1261,7 +1347,7 @@ end
     st = JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., method = Staged(), Nevaluationharmonics = (24,12))
     @test st.frequencies.Nharmonics == (24,12)
     @test isapprox(st.nodeflux, wide.nodeflux; rtol = 1e-6)
-    cache = JC.hbcache(w, (8,4), src, make, (Lj = 100e-12, Cg = 40e-15, R = 50.0);
+    cache = JC.hbcache(w, (8,4), src, typed, defs;
         dc = true, odd = true, even = true, Nevaluationharmonics = (24,12), keyedarrays = false)
     @test cache.frequencies.Nharmonics == (24,12)
     cached = JC.hbsolve!(cache, (Lj = 100e-12, Cg = 40e-15, R = 50.0))

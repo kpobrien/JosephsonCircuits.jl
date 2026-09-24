@@ -1,19 +1,54 @@
-# The legacy tuple netlist.
+# The deprecated input formats.
 #
-# The typed `Circuit` is the input format of the package. A netlist of
-# `(name, node1, node2, value)` tuples, the original input format, is
-# converted into a `Circuit` here and then follows the same path as one.
-# Everything specific to the tuple format lives in this file, so that the
-# format can be removed by deleting the file: the name prefix table with
-# the two functions that read it, and the convention that a port's
-# reference impedance is the resistor placed across it.
+# The typed `Circuit` whose frequency dependent values are closures of the
+# frequency is the input format of the package. Two older ways of writing
+# a circuit are deprecated, and each is converted here, with a warning,
+# into one written the current way, which then follows the same path.
+# Everything specific to them lives in this file, so that they are removed
+# by deleting it and test/circuit/legacy.jl.
+#
+# A netlist of `(name, node1, node2, value)` tuples, the original input
+# format: the name prefix table with the two functions that read it, the
+# convention that a port's reference impedance is the resistor placed
+# across it and the port termination which records that resistor, the
+# tuple forms of every entry point, which sort the nodes by number as the
+# format always did, and the tuple netlist file reader and writer.
+#
+# A value written as an expression in a parameter named by the
+# `symfreqvar` keyword of the solvers, rewritten as a
+# `FrequencyDependent` closure.
+#
+# Outside this file, the `Circuit(netlist)` constructor in
+# circuit/parse.jl hands a netlist whose entries end in values rather than
+# components to `legacycircuit`, the Symbolics extension unwraps a `Num`
+# port number for `legacyportnumber`, and the three solver entry points
+# which hold a compiled circuit beside its definitions hand a
+# `symfreqvar` to `frequencydependentcircuit`.
 
 # Unwrap a wrapped symbolic value to whatever it holds. The Symbolics
 # extension adds the method for `Num`; everything else is already unwrapped.
 unwrapvalue(value) = value
 
+"""
+    LegacyTermination(component)
 
-# === legacy tuple netlist -> Circuit ===
+The port owned environment of a tuple netlist: a resistor the netlist
+already contains, named by its instance identifier.
+
+Internal. A tuple netlist states a port's impedance by placing a resistor
+across it and carries no role marker, so the adapter finds that resistor once
+and records which one it is. Everything downstream then reads the port's
+environment from the port, exactly as for a native matched port, and nothing
+searches for a resistor sharing a port's branch.
+"""
+struct LegacyTermination{I} <: AbstractPortTermination
+    component::I
+end
+namedtermination(t::LegacyTermination) = t.component
+showtermination(io::IO, t::LegacyTermination) =
+    print(io, ", termination = LegacyTermination(", repr(t.component), ")")
+
+# === the tuple netlist -> Circuit ===
 
 # The component type prefixes of the tuple format. Two letter prefixes must
 # come before one letter prefixes with the same first letter; see
@@ -126,13 +161,14 @@ end
 """
     Circuit(netlist::AbstractVector, circuitdefs::AbstractDict)
 
-Construct a typed [`Circuit`](@ref) from a legacy tuple netlist. Each entry
-is `(name, node1, node2, value)` and the component type is taken from the
-prefix of `name`: `Lj` (Josephson junction), `NL`, `L`, `C`, `K` (mutual
-inductor, whose "nodes" are the two inductor names), `I`, `R`, and `P`
-(port, whose value is the port number). Only this adapter reads a name
+Construct a typed [`Circuit`](@ref) from a tuple netlist, which is
+deprecated: this warns and will be removed in a future release. Each
+entry is `(name, node1, node2, value)` and the component type is taken
+from the prefix of `name`: `Lj` (Josephson junction), `L`, `C`, `K`
+(mutual inductor, whose "nodes" are the two inductor names), `I`, `R`, and
+`P` (port, whose value is the port number). Only this adapter reads a name
 prefix; typed component models never infer behavior from an instance name.
-The one argument `Circuit(netlist)` reads a legacy netlist the same way
+The one argument `Circuit(netlist)` reads a tuple netlist the same way
 when its entries end in values rather than typed components.
 
 Node labels become net names, so [`compile`](@ref) of the result gives the
@@ -144,7 +180,7 @@ during conversion; otherwise they pass through unchanged and
 `circuitdefs` is given to the analysis as usual.
 
 # Examples
-```jldoctest
+```julia
 julia> Circuit([("P1","1","0",1),("R1","1","0",50.0),("C1","1","0",1e-12)]) isa Circuit
 true
 ```
@@ -171,13 +207,15 @@ function legacyportimpedances!(components, netlist)
     # port with two resistors across it has always been an error in this
     # format, and picking one silently would change the meaning of such a
     # netlist.
-    resistorsat = Dict{Tuple{String,String},Vector{Any}}()
+    # the resistors across each pair of nodes, by index into the component
+    # table rather than by a copy of their names and values, which may be
+    # symbolic
+    resistorsat = Dict{Tuple{String,String},Vector{Int}}()
     for (i, entry) in enumerate(netlist)
         components[i].second isa Resistor || continue
         n1, n2 = string(entry[2]), string(entry[3])
-        r = (value = components[i].second.R, name = components[i].first)
-        push!(get!(Vector{Any}, resistorsat, (n1, n2)), r)
-        n1 == n2 || push!(get!(Vector{Any}, resistorsat, (n2, n1)), r)
+        push!(get!(Vector{Int}, resistorsat, (n1, n2)), i)
+        n1 == n2 || push!(get!(Vector{Int}, resistorsat, (n2, n1)), i)
     end
     for (i, entry) in enumerate(netlist)
         p = components[i].second
@@ -188,21 +226,30 @@ function legacyportimpedances!(components, netlist)
             throw(ArgumentError(lazy"Ports without resistors detected. Each port must have a resistor to define the impedance. Port $(p.number) has none; place a resistor across it, or write the circuit in the typed format, where a port states its own reference impedance."))
         end
         if length(rs) > 1
-            names = join([r.name for r in rs], ", ")
+            names = join((components[j].first for j in rs), ", ")
             throw(ArgumentError(lazy"Only one resistor allowed per port. Port $(p.number) has $(length(rs)) resistors across it ($(names)), and a legacy netlist has no way to say which one is its environment. Give the port a single resistor, or write the circuit in the typed format, where a port states its own termination and any number of device resistors may share its terminals."))
         end
-        R = only(rs)
-        components[i] = components[i].first =>
-            Port(p.number; Z0 = R.value,
-                termination = LegacyTermination(R.name))
+        resistor = components[only(rs)]
+        components[i] = Pair{String,Any}(components[i].first,
+            Port(p.number; Z0 = resistor.second.R,
+                termination = LegacyTermination(resistor.first)))
     end
     return components
 end
 
-# Convert the tuple netlist to components and connection groups. Each
-# distinct node label becomes one `Net` holding every terminal on it, in
-# order of first appearance, with `Ground` appended to net "0".
-function legacycircuit(netlist, circuitdefs)
+const tuplenetlistmessage = "The netlist of (name, node1, node2, value) tuples is deprecated and will be removed in a future release. Write the circuit as a Circuit of typed components, `Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(100e-15)), ...])`, where a port states its own reference impedance and needs no resistor across it; see the Circuit docstring."
+
+# Convert the tuple netlist to components and connection groups, with the
+# deprecation warning attributed to the entry point `caller` the netlist
+# was given to. Each distinct node label becomes one `Net` holding every
+# terminal on it, in order of first appearance, with `Ground` appended to
+# net "0".
+function legacycircuit(netlist, circuitdefs; pins = nothing, ports = nothing,
+        caller::Symbol = :Circuit)
+    Base.depwarn(tuplenetlistmessage, caller; force = true)
+    if !isnothing(pins) || !isnothing(ports)
+        throw(ArgumentError("A tuple netlist has no interface; give pins and ports to a netlist of typed components or to the connection-group form."))
+    end
     checkcomponenttypes(legacyallowedcomponents)
     components = Vector{Pair{String,Any}}(undef, length(netlist))
     nodeorder = String[]
@@ -223,8 +270,8 @@ function legacycircuit(netlist, circuitdefs)
         if !isnothing(circuitdefs)
             value = valuetonumber(value, circuitdefs)
         end
-        components[i] = String(name) => legacycomponent(typesymbol, name,
-            node1, node2, value)
+        components[i] = Pair{String,Any}(String(name),
+            legacycomponent(typesymbol, name, node1, node2, value))
         if typesymbol != :K
             for (t, node) in enumerate((node1, node2))
                 label = string(node)
@@ -238,7 +285,7 @@ function legacycircuit(netlist, circuitdefs)
         end
     end
     legacyportimpedances!(components, netlist)
-    connections = Vector{Any}(undef, length(nodeorder))
+    connections = Vector{Net{String,Vector{Any}}}(undef, length(nodeorder))
     for (i, label) in enumerate(nodeorder)
         group = nodegroups[label]
         if label == "0"
@@ -250,4 +297,243 @@ function legacycircuit(netlist, circuitdefs)
         connections[i] = Net(label, group)
     end
     return Circuit(components, connections, nothing)
+end
+
+# === the symbolic frequency variable, deprecated ===
+#
+# The deprecated way of writing a frequency dependent value is an
+# expression in a parameter named by the `symfreqvar` keyword of the
+# solvers. `FrequencyDependent` states the same law as a closure of the
+# frequency, which needs neither a free parameter nor a keyword, so a
+# circuit given a symbolic frequency variable is rewritten here into one
+# whose dependent values are closures, and then follows the same path as
+# one written that way.
+
+const symfreqvarmessage = "The `symfreqvar` keyword is deprecated and will be removed in a future release. Write a frequency dependent value as a closure of the frequency, `Capacitor(FrequencyDependent(w -> C0*(1 + im*w/wc)))`, which needs neither a symbolic variable nor a keyword; see the FrequencyDependent docstring."
+
+"""
+    frequencydependentcircuit(psc, circuitdefs, symfreqvar, caller)
+
+A compiled circuit whose values depending on the symbolic frequency
+variable `symfreqvar` are rewritten as [`FrequencyDependent`](@ref)
+closures resolving them at `circuitdefs` and at the frequency, and a
+deprecation warning attributed to `caller`.
+
+Every other value is left as it was, including one which still depends on
+a parameter the definitions do not give, so that the undefined parameter
+is still reported by [`checkcomponentvaluesdefined`](@ref) naming its
+component rather than failing later inside a closure.
+"""
+function frequencydependentcircuit(psc::CompiledCircuit, circuitdefs,
+        symfreqvar, caller::Symbol)
+    Base.depwarn(symfreqvarmessage, caller; force = true)
+    values = Any[frequencydependentvalue(v, circuitdefs, symfreqvar)
+        for v in psc.componentvalues]
+    return CompiledCircuit(psc.nodenames, psc.nodeindices, psc.Nnodes,
+        psc.componentnames, psc.componenttypes, values,
+        psc.componentnamedict, psc.componenttemperatures, psc.junctioncprs,
+        psc.capacitors, psc.resistors,
+        psc.inductors, psc.junctions, psc.currentsources,
+        psc.mutualinductors, psc.ports, psc.scatteringblocks,
+        psc.couplings, psc.topology)
+end
+
+function frequencydependentvalue(value, circuitdefs, symfreqvar)
+    checkissymbolic(value) || return value
+    any(v -> isequal(v, symfreqvar), circuitvariables(value)) || return value
+    # the definitions resolved once, so that only the frequency is left for
+    # the closure to give
+    partial = valuetonumber(value, circuitdefs)
+    if checkissymbolic(partial) &&
+            any(v -> !isequal(v, symfreqvar), circuitvariables(partial))
+        return value
+    end
+    # the frequency reaches the value two ways: as the symbolic variable it
+    # substitutes, and as the argument of any frequency dependent leaf the
+    # same expression already carries, which `substitutefreq` evaluates.
+    return FrequencyDependent(
+        w -> substitutefreq(
+            valuetonumber(partial, Dict{Any,Any}(symfreqvar => w)), w))
+end
+
+# === the tuple forms of the entry points ===
+#
+# Each converts the netlist, which warns, compiles it with the nodes
+# sorted by number as the tuple format always did, and forwards the
+# compiled circuit to the typed form.
+
+compile(netlist::AbstractVector; sorting::Symbol = :number) =
+    compile(legacycircuit(netlist, nothing; caller = :compile); sorting = sorting)
+
+# the netlist compiled the way the tuple format ordered its nodes
+legacycompiled(netlist, caller::Symbol) =
+    compile(legacycircuit(netlist, nothing; caller = caller); sorting = :number)
+
+function hbsolve(ws, wp::NTuple{N,Number}, sources,
+        Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
+        netlist::AbstractVector, circuitdefs::AbstractDict = Dict{Symbol,Any}();
+        kwargs...) where {N,M}
+    return hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
+        legacycompiled(netlist, :hbsolve), circuitdefs; kwargs...)
+end
+
+function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
+        netlist::AbstractVector, circuitdefs::AbstractDict = Dict{Symbol,Any}();
+        kwargs...) where {N}
+    return hbnlsolve(w, Nharmonics, sources,
+        legacycompiled(netlist, :hbnlsolve), circuitdefs; kwargs...)
+end
+
+function hblinsolve(w, netlist::AbstractVector,
+        circuitdefs::AbstractDict = Dict{Symbol,Any}(); kwargs...)
+    return hblinsolve(w, legacycompiled(netlist, :hblinsolve), circuitdefs;
+        kwargs...)
+end
+
+function transientproblem(netlist::AbstractVector,
+        circuitdefs::AbstractDict = Dict{Symbol,Any}(); sources = ())
+    return transientproblem(legacycompiled(netlist, :transientproblem),
+        circuitdefs; sources = sources)
+end
+
+function numericmatrices(netlist::AbstractVector, circuitdefs::Dict;
+        Nmodes::Int = 1)
+    return numericmatrices(legacycompiled(netlist, :numericmatrices),
+        circuitdefs; Nmodes = Nmodes)
+end
+
+function symbolicmatrices(netlist::AbstractVector; Nmodes::Int = 1)
+    return symbolicmatrices(legacycompiled(netlist, :symbolicmatrices);
+        Nmodes = Nmodes)
+end
+
+function exportnetlist(netlist::AbstractVector, circuitdefs::Dict;
+        port::Int = 1, jj::Bool = true)
+    return exportnetlist(legacycompiled(netlist, :exportnetlist), circuitdefs;
+        port = port, jj = jj)
+end
+
+# === the tuple netlist file ===
+#
+# A text file with one `name node1 node2 value` entry per line, read into
+# a tuple netlist and written from one.
+
+"""
+    export_netlist(filename, circuit, circuitdefs)
+
+Export the netlist in `circuit` to the file with name and path `filename`.
+"""
+function export_netlist(filename, circuit, circuitdefs)
+    open(filename, "w") do io
+        export_netlist!(io, circuit, circuitdefs)
+    end
+    return nothing
+end
+
+"""
+    export_netlist(filename, circuit)
+
+Export the netlist in `circuit` to the file with name and path `filename`.
+"""
+function export_netlist(filename, circuit)
+    return export_netlist(filename, circuit, Dict())
+end
+
+"""
+    export_netlist!(io::IO, circuit, circuitdefs)
+
+Export the netlist in `circuit` to the IOBuffer or IOStream `io`.
+
+# Examples
+```julia
+julia> io = IOBuffer();JosephsonCircuits.export_netlist!(io, [("P","1","0",1),("R","1","0",50.0)],Dict());println(String(take!(io)))
+P 1 0 1
+R 1 0 50.0
+```
+"""
+function export_netlist!(io::IO, circuit::AbstractVector, circuitdefs::Dict)
+    Base.depwarn(tuplenetlistmessage, :export_netlist; force = true)
+    for i in eachindex(circuit)
+        c = circuit[i]
+        for j in eachindex(c)
+            cj = c[j]
+            if j > 1
+                write(io," ")
+            end
+            write(io,string(substitutedefs(cj,circuitdefs)))
+        end
+        write(io,"\n")
+    end
+end
+
+"""
+    import_netlist(filename)
+
+Import the netlist from the file with name and path `filename` and return
+it as a vector of `(name, node1, node2, value)` tuples. The value field is
+`Any`: a number for a literal and a `CircuitValue` for an expression.
+"""
+function import_netlist(filename)
+    # the value field is a number when the netlist holds a literal and a
+    # `CircuitValue` when it holds an expression, so the tuple is
+    # heterogeneous. Pass your own vector to `import_netlist!` to pin a
+    # narrower element type.
+    circuit = Tuple{String,String,String,Any}[]
+    open(filename, "r") do io
+        import_netlist!(io, circuit)
+    end
+    return circuit
+end
+
+"""
+    import_netlist!(io::IO, circuit)
+
+Import the netlist from the IOBuffer or IOStream `io` to the vector of tuples
+`circuit`.
+
+# Examples
+```julia
+julia> io = IOBuffer();circuit1=[("P","1","0",1),("R","1","0",50.0)];JosephsonCircuits.export_netlist!(io,circuit1,Dict());circuit2 = Tuple{String,String,String,Any}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
+2-element Vector{Tuple{String, String, String, Any}}:
+ ("P", "1", "0", 1.0)
+ ("R", "1", "0", 50.0)
+```
+"""
+function import_netlist!(io::IO, circuit::AbstractVector)
+    Base.depwarn(tuplenetlistmessage, :import_netlist; force = true)
+    seekstart(io)
+    for line in eachline(io)
+        split_line = split(strip(line),r"\s+")
+        if length(split_line) != 4
+            error(lazy"each line should have component name, node1, node2, component value")
+        end
+        value = try
+            parse(Float64,split_line[4])
+        catch
+            # https://docs.sciml.ai/Symbolics/stable/manual/parsing/
+            # Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),Main)
+            parsecomponentvalue(split_line[4])
+        end
+        push!(circuit,(split_line[1],split_line[2],split_line[3],value))
+    end
+    return nothing
+end
+
+
+
+# export_netlist("test1.net", circuit,circuitdefs)
+
+# Reading a component value back out of a netlist line. Only
+# `import_netlist!` above uses it.
+"""
+    parsecomponentvalue(s::AbstractString)
+
+Parse a SPICE netlist component value into a number or a `CircuitValue`.
+Replaces `Symbolics.parse_expr_to_symbolic`; unlike it, this does not
+evaluate into a module, so a netlist cannot introduce arbitrary code.
+"""
+function parsecomponentvalue(s::AbstractString)
+    v = tryparse(Float64, s)
+    isnothing(v) || return v
+    return CircuitValues.fromexpr(Meta.parse(s))
 end

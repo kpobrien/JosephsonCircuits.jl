@@ -61,7 +61,10 @@ The explicit direct current block of an [`HBNonlinearProblem`](@ref).
 - `dcmatrix`: the transpose of the block's constant matrix `M`, restricted
   to the window, which is what the transposed product needs.
 - `scale`: the drive scale, kept in step with [`setdrive!`](@ref).
-- `dwork`, `Fwork`, `zwork`: workspaces for the transposed product.
+- `win`: the canonical positions of the direct current window, which the
+  transposed product gathers and scatters by, held because they are a
+  property of the layout and the product runs inside the Krylov loop.
+- `dwork`, `Fwork`, `zwork`, `mwork`: workspaces for the transposed product.
 """
 struct DCAugmentation{W,JP,JI}
     work::W
@@ -71,9 +74,11 @@ struct DCAugmentation{W,JP,JI}
     constant::Vector{Float64}
     dcmatrix::SparseMatrixCSC{Float64,Int}
     scale::Base.RefValue{Float64}
+    win::Vector{Int}
     dwork::Vector{Float64}
     Fwork::Vector{Float64}
     zwork::Vector{Float64}
+    mwork::Vector{Float64}
 end
 
 function DCAugmentation(work, jint)
@@ -94,8 +99,8 @@ function DCAugmentation(work, jint)
     constant[win] .= up.cresidual
     jplan = isnothing(jint) ? nothing : canonicaljacobianplan(jint, work)
     return DCAugmentation(work, jplan, jint, keep, constant, Mt,
-        Ref(1.0), zeros(Float64, nw), zeros(Float64, L.rdim),
-        zeros(Float64, N))
+        Ref(1.0), win, zeros(Float64, nw), zeros(Float64, L.rdim),
+        zeros(Float64, N), zeros(Float64, nw))
 end
 
 """
@@ -601,12 +606,12 @@ function hbvjp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
     fill!(out, 0.0)
     gathercanonical!(out, a.Fwork, L)
     # the window, gathered by index: `M'` is a window matrix
-    win = windowindices(L)
+    win = a.win
     dw = a.dwork
     @inbounds for k in eachindex(win)
         dw[k] = w[win[k]]
     end
-    mw = a.dcmatrix * dw
+    mw = mul!(a.mwork, a.dcmatrix, dw)
     @inbounds for k in eachindex(win)
         out[win[k]] += mw[k]
     end

@@ -17,8 +17,9 @@ Use [`assemblesystemmatrix!`](@ref) to assemble
 
     A(ws) = AoLjnm + invLnm + im*Gnm*W - Cnm*W^2
 
-(with the negative frequency mode conjugations and symbolic frequency
-substitutions of the linearized solver) into a matrix sharing the sparsity
+(with the negative frequency mode conjugations and the frequency
+dependent values resolved, as the linearized solver does) into a matrix
+sharing the sparsity
 structure of the `Asparse` field, at the signal frequency `ws`, for either
 the pump modulation `AoLjnm` or its complex conjugate (the adjoint system of
 the noise and quantum efficiency calculations). Operator products and
@@ -49,10 +50,10 @@ struct HBLinearizedSystem{TinvL,TG,TC}
     # with the sparsity structure of Asparse
     AoLjnmnzval::Vector{Complex{Float64}}
     AoLjnmconjnzval::Vector{Complex{Float64}}
-    # the frequency dependent linear term matrices (possibly containing
-    # symbolic frequency variables), their index maps into Asparse, and
-    # whether any of their entries is symbolic, in which case the stored
-    # values themselves change with the frequency
+    # the linear term matrices (whose entries may be frequency
+    # dependent), their index maps into Asparse, and whether any of their
+    # entries is, in which case the stored values themselves change with
+    # the frequency
     invLnm::TinvL
     Gnm::TG
     Cnm::TC
@@ -65,8 +66,6 @@ struct HBLinearizedSystem{TinvL,TG,TC}
     # and the scattering block port currents, and its index map
     Amna0::SparseMatrixCSC{Complex{Float64},Int}
     Amna0indexmap::Vector{Int}
-    # the symbolic frequency variable, or nothing
-    symfreqvar
     # the pump mode frequency offsets of the signal modes, and the numbers
     # of modes and nodes, for computing the mode frequency matrices
     wpumpmodes::Vector{Float64}
@@ -82,7 +81,7 @@ end
         Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
         phimatrix::Array, invLnmcopy::SparseMatrixCSC,
         Gnmcopy::SparseMatrixCSC, Cnmcopy::SparseMatrixCSC, invLnm, Gnm,
-        Cnm, symbolicvalues::Bool, Amna0::SparseMatrixCSC, symfreqvar,
+        Cnm, symbolicvalues::Bool, Amna0::SparseMatrixCSC,
         wpumpmodes, Nnodes::Integer; scattering = nothing)
 
 Construct an [`HBLinearizedSystem`](@ref) from the signal frequency grid
@@ -105,7 +104,7 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
     Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
     phimatrix::Array, invLnmcopy::SparseMatrixCSC,
     Gnmcopy::SparseMatrixCSC, Cnmcopy::SparseMatrixCSC, invLnm, Gnm, Cnm,
-    symbolicvalues::Bool, Amna0::SparseMatrixCSC, symfreqvar, wpumpmodes,
+    symbolicvalues::Bool, Amna0::SparseMatrixCSC, wpumpmodes,
     Nnodes::Integer; scattering = nothing)
 
     # the sparsity structure must contain the modified nodal analysis
@@ -143,7 +142,7 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
 
     return HBLinearizedSystem(Asparse, complexjacobianplan, AoLjnmnzval,
         AoLjnmconjnzval, invLnm, Gnm, Cnm, invLnmindexmap, Gnmindexmap,
-        Cnmindexmap, symbolicvalues, Amna0, Amna0indexmap, symfreqvar,
+        Cnmindexmap, symbolicvalues, Amna0, Amna0indexmap,
         wpumpmodes, Nmodes, Nnodes, scattering)
 end
 
@@ -165,7 +164,7 @@ conjugate of the pump modulation contribution is used, which for a circuit
 without scattering blocks is a similarity transformation of the transposed
 system, as below. The
 negative frequency mode entries of the linear term matrices are conjugated
-and any symbolic frequency variables substituted, exactly as in the
+and any frequency dependent ones resolved, exactly as in the
 per-frequency loop of [`hblinsolve`](@ref), which calls this function.
 Returns `A`.
 
@@ -215,15 +214,13 @@ function assemblesystemmatrix!(A::SparseMatrixCSC,
     end
 
     # take the complex conjugate of the negative frequency terms in
-    # the capacitance and conductance matrices. substitute in the symbolic
-    # frequency variable if present. the frequency scaling of each term is
-    # the per column mode frequency raised to the given power.
-    sparseaddconjsubst!(A, -1, lsys.Cnm, lsys.Cnmindexmap, wmodes, 2,
-        lsys.symfreqvar)
-    sparseaddconjsubst!(A, im, lsys.Gnm, lsys.Gnmindexmap, wmodes, 1,
-        lsys.symfreqvar)
-    sparseaddconjsubst!(A, 1, lsys.invLnm, lsys.invLnmindexmap, wmodes, 0,
-        lsys.symfreqvar)
+    # the capacitance and conductance matrices, and resolve a frequency
+    # dependent entry at the mode frequency of its column. the frequency
+    # scaling of each term is the per column mode frequency raised to the
+    # given power.
+    sparseaddconjsubst!(A, -1, lsys.Cnm, lsys.Cnmindexmap, wmodes, 2)
+    sparseaddconjsubst!(A, im, lsys.Gnm, lsys.Gnmindexmap, wmodes, 1)
+    sparseaddconjsubst!(A, 1, lsys.invLnm, lsys.invLnmindexmap, wmodes, 0)
 
     # the frequency independent augmentation: the coupled inductor and
     # scattering block port current rows

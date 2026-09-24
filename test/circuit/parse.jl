@@ -4,7 +4,166 @@ using Test
 
 @testset verbose=true "input path" begin
 
-    @testset "hierarchy: repeated subcircuit vs flat legacy" begin
+    @testset "frontend collection ownership and normalization" begin
+        JC = JosephsonCircuits
+        grouprecords(pd) = [(g.name, g.endpoints, g.hasground) for g in pd.groups]
+        components = [:r => Resistor(50.0), :c => Capacitor(1e-12)]
+        connections = Any[Net(:signal, [(:r, 1), (:c, 1)]),
+            Any[Ground, (:r, 2), Ground, (:c, 2)], [Ground]]
+        circuit = Circuit(components, connections)
+        @test circuit.components === components
+        @test circuit.connections === connections
+        @test grouprecords(JC.parsecircuitlevel(circuit)) == [
+            ("signal", [(1, 1), (2, 1)], false),
+            (nothing, [(1, 2), (2, 2)], true),
+            (nothing, Tuple{Int,Int}[], true)]
+
+        # the constructor validates its collections and keeps them as they
+        # are, so an edit after construction, an error late in a group
+        # among them, is seen by the next parse
+        push!(connections[2], (:missing, 1))
+        @test_throws ArgumentError JC.parsecircuitlevel(circuit)
+        pop!(connections[2])
+        connections[1] = Net(:signal, ((:r, 1), (:c, 1)))
+        @test grouprecords(JC.parsecircuitlevel(circuit))[1] ==
+            ("signal", [(1, 1), (2, 1)], false)
+
+        # a netlist is stored in one container type whatever its components,
+        # the spelling of its names and its size, the identifiers as given
+        a = Circuit([(:r, 1, 0, Resistor(50.0))])
+        b = Circuit(Any[("c", 1, 0, Capacitor(1e-12)),
+            (:l, 1, 0, Inductor(1e-9))])
+        @test typeof(a) == typeof(b)
+        @test isconcretetype(eltype(a.components))
+        @test isconcretetype(eltype(a.connections))
+        @test first(a.components).first === :r
+        @test first(b.components).first == "c"
+        @test grouprecords(JC.parsecircuitlevel(b)) == [
+            ("1", [(1, 1), (2, 1)], false),
+            ("0", [(1, 2), (2, 2)], true)]
+
+        # a bond written as a pair is normalized like one written as a
+        # group, a bond of grounds alone included
+        pairs = Circuit(components,
+            Any[(:r, 1) => (:c, 1), (:r, 2) => Ground,
+                Ground => (:c, 2), Ground => Ground])
+        @test grouprecords(JC.parsecircuitlevel(pairs)) == [
+            (nothing, [(1, 1), (2, 1)], false),
+            (nothing, [(1, 2)], true),
+            (nothing, [(2, 2)], true),
+            (nothing, Tuple{Int,Int}[], true)]
+    end
+
+    @testset "capacity hints do not consume unknown-length inputs" begin
+        components = [:r => Resistor(50.0)]
+        connections = [[(:r, 1)], [(:r, 2), Ground]]
+        # a collection which does not know its length, a filter which keeps
+        # every entry, is validated in one pass and never counted in a
+        # pass of its own for a capacity hint
+        ncalls = Ref(0)
+        comps = Iterators.filter(x -> (ncalls[] += 1; true), components)
+        conns = Iterators.filter(_ -> true, connections)
+        c = Circuit(comps, conns)
+        @test ncalls[] == 1
+        @test JosephsonCircuits.comparestruct(compile(c),
+            compile(Circuit(components, connections)))
+        @test_throws ArgumentError Circuit([(:r, "bad/node", 0, Resistor(50.0))])
+        @test_throws ArgumentError Circuit([(:r, 1, Resistor(50.0))])
+    end
+
+    @testset "interface indexing and per-call freshness" begin
+        JC = JosephsonCircuits
+        for n in (2, 9, 128)
+            keys = Any[isodd(i) ? i : Symbol(:pin, i) for i in 1:n]
+            components = [Symbol(:r, i) => Resistor(50.0) for i in 1:n]
+            connections = [Any[(Symbol(:r, i), 2), Ground] for i in 1:n]
+            pins = Pair{Any,Any}[keys[i] => (Symbol(:r, i), 1) for i in 1:n]
+            ports = Pair{Any,Any}[Symbol(:w, i) => (keys[i], Ground) for i in 1:n]
+            cell = Circuit(components, connections; pins = pins, ports = ports)
+            instances = [:a => cell, :b => cell]
+            top = Circuit(instances,
+                [PortRef(:a, Symbol(:w, i)) => PortRef(:b, Symbol(:w, i)) for i in 1:n])
+            explicit = Circuit(instances,
+                [[PinRef(:a, k), PinRef(:b, k)] for k in keys])
+            a, b = elaborate(top), elaborate(explicit)
+            @test a.terminalnets == b.terminalnets
+            @test a.netnames == b.netnames
+            @test a.instancepaths == b.instancepaths
+
+            # the interface indexes are rebuilt from the interface as it is
+            # at every call: a key changed under a port invalidates the
+            # port, and restored gives the same circuit back, the enclosing
+            # Circuit untouched
+            pins[1] = :renamed => (Symbol(:r, 1), 1)
+            @test_throws ArgumentError elaborate(top)
+            ports[1] = :w1 => (:renamed, Ground)
+            @test elaborate(top).terminalnets == a.terminalnets
+            ports[1] = :w1 => (keys[2], Ground)
+            @test elaborate(top).terminalnets != a.terminalnets
+            pins[end] = pins[1]
+            @test_throws ArgumentError elaborate(top)
+        end
+        # keys of different types which are isequal are duplicates
+        @test_throws ArgumentError Circuit([:r => Resistor(50.0)], Any[];
+            pins = [i => (:r, 1) for i in 1:9] |> x -> [x; 1.0 => (:r, 2)])
+        # a wide interface keeps a key which is a pin and a port ambiguous,
+        # and a key which is a pin alone falls back to the scalar
+        pins = [Symbol(:p, i) => (:r, 1) for i in 1:16]
+        ports = [Symbol(:p, i) => (Symbol(:p, i), Ground) for i in 1:9]
+        cell = Circuit([:r => Resistor(50.0)], Any[(:r, 2) => Ground];
+            pins = pins, ports = ports)
+        @test_throws ArgumentError Circuit([:a => cell, :b => cell],
+            [(:a, :p1) => (:b, :p1)])
+        @test length(JC.parsecircuitlevel(Circuit([:a => cell, :b => cell],
+            [(:a, :p16) => (:b, :p16)])).groups) == 1
+    end
+
+    @testset "flat wire storage and net naming precedence" begin
+        leaf = Circuit([:r => Resistor(50.0)], Any[(:r, 2) => Ground];
+            pins = [1 => (:r, 1)])
+        a = elaborate(Circuit([:a => leaf, :b => leaf], Any[]))
+        @test a.netnames == ["0", "a/net1", "b/net1"]
+        @test a.terminalnets == [2, 1, 3, 1]
+        # an unnamed net takes its scope from its shallowest terminal even
+        # when a child was flattened first; a ground instance has no wires
+        root = Circuit([:a => leaf, :r => Resistor(50.0), :g => Ground()],
+            Any[[(:a, 1), (:r, 1)], [(:r, 2), (:g, 1)]])
+        @test elaborate(root).netnames == ["0", "net1"]
+        @test elaborate(root).terminaloffsets == [1, 3, 5]
+        # the shallowest user name names a net, and the first at that depth
+        named = Circuit([:r => Resistor(50.0)],
+            Any[Net(:inner, [(:r, 1)]), (:r, 2) => Ground];
+            pins = [1 => (:r, 1)])
+        namedroot = Circuit([:a => named, :b => named],
+            [Net(:first, [(:a, 1), (:b, 1)]), Net(:second, [(:b, 1)])])
+        @test elaborate(namedroot).netnames == ["0", "first"]
+        # every instance of one definition has internal nets of its own
+        cell = Circuit([:r => Resistor(50.0), :c => Capacitor(1e-12)],
+            Any[[(:r, 2), (:c, 1)], [(:c, 2), Ground]];
+            pins = [1 => (:r, 1), 2 => (:r, 2)])
+        top = Circuit([:x => cell, :y => cell], [[(:x, 2), (:y, 1)]])
+        e = elaborate(top)
+        @test e.terminalnets == [2, 3, 3, 1, 3, 4, 4, 1]
+        @test e.netnames == ["0", "x/net1", "x/net2", "y/net1"]
+        # a device without terminals may sit between ordinary instances
+        coupled = Circuit([:l1 => Inductor(1e-9),
+            :k => MutualInductor(0.2, :l1, :l2), :g => Ground(),
+            :l2 => Inductor(2e-9)],
+            [[(:l1, 1), (:l2, 1)], [(:l1, 2), (:l2, 2), (:g, 1)]])
+        e = elaborate(coupled)
+        @test e.terminaloffsets == [1, 3, 3, 5]
+        @test e.couplings == [(2, 1, 3)]
+        empty = elaborate(Circuit([:g => Ground()], [[Ground]]))
+        @test empty.netnames == ["0"]
+        @test isempty(empty.terminalnets)
+        @test empty.terminaloffsets == [1]
+        # an automatic name is checked for uniqueness like a given one
+        @test_throws ArgumentError elaborate(Circuit(
+            [:a => Resistor(50.0), :b => Resistor(50.0)],
+            Any[Net(:net1, [(:b, 1)]), [(:a, 2), (:b, 2), Ground]]))
+    end
+
+    @testset "hierarchy: repeated subcircuit vs flat netlist" begin
         function laddercell(L, Lj, C)
             return Circuit(
                 [:l => Inductor(L), :jj => JosephsonJunction(Lj),
@@ -47,18 +206,14 @@ using Test
         # (between l, jj, c), and they are distinct
         @test length(unique(elab.terminalnets)) == JosephsonCircuits.nnets(elab)
 
-        # flat legacy equivalent
-        flat = [
-            ("P1","1","0",1),
-            ("R1","1","0",50.0),
-            ("L1","1","2",L), ("Lj1","2","0",Lj), ("C1","2","0",C),
-            ("L2","2","3",L), ("Lj2","3","0",Lj), ("C2","3","0",C),
-            ("L3","3","4",L), ("Lj3","4","0",Lj), ("C3","4","0",C),
-            ("P2","4","0",1),
-            ("R2","4","0",50.0),
-        ]
-        # the port numbers must match: legacy P2 has value 1 -> fix to 2
-        flat[end-1] = ("P2","4","0",2)
+        # the flat equivalent
+        flat = Circuit([
+            ("P1", "1", "0", Port(1; Z0 = 50.0)),
+            ("L1", "1", "2", Inductor(L)), ("Lj1", "2", "0", JosephsonJunction(Lj)), ("C1", "2", "0", Capacitor(C)),
+            ("L2", "2", "3", Inductor(L)), ("Lj2", "3", "0", JosephsonJunction(Lj)), ("C2", "3", "0", Capacitor(C)),
+            ("L3", "3", "4", Inductor(L)), ("Lj3", "4", "0", JosephsonJunction(Lj)), ("C3", "4", "0", Capacitor(C)),
+            ("P2", "4", "0", Port(2; Z0 = 50.0)),
+            ])
         ws = 2*pi*(3.0:0.5:7.0)*1e9
         sol1 = hblinsolve(ws, flat, Dict{Symbol,Float64}())
         sol2 = hblinsolve(ws, hier)
@@ -119,7 +274,8 @@ using Test
                 :c1 => Capacitor(1e-12), :gnd => Ground()],
             Any[[(:p1,1),(:l1,1),(:c1,1)], [(:l1,2),(:l2,1)],
                 [(:l2,2),(:l3,1)], [(:l3,2),(:p1,2),(:c1,2),(:gnd,1)]]))
-        @test km.mutualinductorbranchnames == kg.mutualinductorbranchnames
+        @test JosephsonCircuits.coupledinductornames(km) ==
+            JosephsonCircuits.coupledinductornames(kg)
         @test km.componenttypes == kg.componenttypes
         # the fully named component is accepted when it agrees with the
         # entry (the trailing resistor is the port's matched termination)
@@ -197,17 +353,12 @@ using Test
                  [(:p1,2),(:p2,2),(:gnd,1)]])))
         @test_throws ArgumentError Circuit([
             (:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 2, 0, Capacitor(1e-12))])
-        # the two netlist forms do not mix, and the legacy adapter still
-        # reads its own
-        @test_throws ArgumentError Circuit([
-            (:p1, 1, 0, Port(1; Z0 = 50.0)), ("C1", "1", "0", 1e-12)])
+        # a netlist of typed components takes no definitions
         @test_throws ArgumentError Circuit([
             (:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(1e-12))],
             Dict{Symbol,Number}())
-        @test compile(Circuit([("P1","1","0",1), ("R1","1","0",50.0),
-            ("C1","1","0",1e-12)])).componenttypes == [:P, :R, :C]
-        @test_throws ArgumentError Circuit([("P1","1","0",1),
-            ("R1","1","0",50.0)]; pins = [1 => ("P1", 1)])
+        # a matched port's termination is emitted directly after the port
+        @test compile(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12))])).componenttypes == [:P, :R, :C]
     end
 
     @testset "pair syntax and subcircuit ports" begin
@@ -465,7 +616,7 @@ using Test
                [(:p1,2),(:r1,2),(:jj,2),(:cj,2),Ground]])
         nmm, nme = map((true, false)) do matched
             psc = compile(mk(matched))
-            numericmatrices(psc, calccircuitgraph(psc), Dict{Any,Any}();
+            numericmatrices(psc, Dict{Any,Any}();
                 Nmodes = 1)
         end
         @test nmm.Gnm == nme.Gnm
@@ -501,20 +652,6 @@ using Test
         ir = findfirst(==(:R), pscd.componenttypes)
         @test pscd.nodeindices[:,ir] == pscd.nodeindices[:,ip]
         @test !any(isone, pscd.nodeindices[:,ir])   # node 1 is ground
-
-        # the legacy netlist states its port impedance as a resistor, which
-        # the adapter discovers once and records; it must not gain a second
-        # termination
-        legacy = [("P1","1","0",1), ("R1","1","0",50.0), ("C1","1","2",100e-15),
-                  ("Lj1","2","0",1e-9), ("C2","2","0",1e-12)]
-        lc = Circuit(legacy)
-        lport = only([v for (k,v) in lc.components if v isa Port])
-        @test lport.Z0 == 50.0
-        # the netlist's own resistor is the port's environment, named rather
-        # than rediscovered later
-        @test lport.termination isa JosephsonCircuits.LegacyTermination
-        @test count(==(:R), compile(lc).componenttypes) == 1
-        @test Array(sol(lc).linearized.S) == Array(sol(mk(true)).linearized.S)
     end
 
     @testset "compiled circuit" begin
@@ -583,7 +720,7 @@ using Test
              [(:p1,2),(:r1,2),(:r2,2),(:c1,2),Ground]]))
         @test only(cu.ports).environment == 0
         @test cu.componentvalues[only(cu.ports).component] == 50.0
-        nmu = JC.numericmatrices(cu, calccircuitgraph(cu), Dict{Any,Any}();
+        nmu = JC.numericmatrices(cu, Dict{Any,Any}();
             Nmodes = 1)
         # normalized to the declared Z0, not to the resistor beside it
         @test nmu.portimpedances == [50.0]
@@ -648,28 +785,23 @@ using Test
         end
         @test b.path == "blk"
 
-        # a legacy netlist compiles too, and its port owns nothing because
-        # the netlist already states its termination
-        cl = JC.compile(Circuit([("P1","1","0",1), ("R1","1","0",50.0),
-            ("C1","1","0",1e-12)]))
-        # a legacy port owns the resistor the netlist already contains, and
-        # no second one is generated
-        @test cl.componentnames[only(cl.ports).environment] == "R1"
+        # a netlist with string names compiles too, and its port owns the
+        # termination generated for it
+        cl = JC.compile(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12))]))
+        @test cl.componentnames[only(cl.ports).environment] == "P1/termination"
         @test length(cl.resistors) == 1
     end
 
     @testset "port and noise roles from the compiled circuit" begin
         JC = JosephsonCircuits
-        # a legacy netlist names the resistor it already contains as the
-        # port's environment, so nothing downstream searches for it
-        lc = Circuit([("P1","1","0",1), ("R1","1","0",50.0),
-            ("C1","1","2",100e-15), ("Lj1","2","0",1e-9), ("C2","2","0",1e-12)])
+        # a matched port owns the termination generated for it, named after
+        # the port, so nothing downstream searches for a resistor
+        lc = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1e-9)), ("C2", "2", "0", Capacitor(1e-12))])
         lport = only([v for (k,v) in lc.components if v isa Port])
-        @test lport.termination isa JC.LegacyTermination
-        @test lport.termination.component == "R1"
+        @test lport.termination isa JC.MatchedTermination
         lcc = JC.compile(lc)
-        @test lcc.componentnames[only(lcc.ports).environment] == "R1"
-        # and no second termination is generated
+        @test lcc.componentnames[only(lcc.ports).environment] == "P1/termination"
+        # and it is the one resistor of the table
         @test count(==(:R), lcc.componenttypes) == 1
 
         # the three lists a circuit's roles produce, by name so that the
@@ -678,25 +810,24 @@ using Test
             cc = JC.compile(c)
             vals = JC.componentvaluestonumber(cc.componentvalues,
                 Dict{Any,Any}())
-            idx, numbers = JC.portindicesnumbers(cc)
+            ps = JC.orderedports(cc)
             nm(v) = [cc.componentnames[i] for i in v]
-            return (ports = nm(idx), numbers = numbers,
-                environments = nm(JC.portenvironmentindices(cc)),
+            return (ports = nm([p.component for p in ps]),
+                numbers = [p.number for p in ps],
+                environments = nm([p.environment for p in ps]),
                 noise = nm(JC.noiseindices(cc, vals)))
         end
 
-        # the port's environment is the resistor the netlist already had, and
-        # a circuit whose only resistor is that environment has no internal
-        # noise channel at all
+        # the port's environment is its own termination, and a circuit whose
+        # only resistor is that environment has no internal noise channel
         @test roles(lc) == (ports = ["P1"], numbers = [1],
-            environments = ["R1"], noise = String[])
+            environments = ["P1/termination"], noise = String[])
 
         # a second resistor is an ordinary device resistor and a capacitor
         # with a nonzero imaginary part is lossy, so both are noise channels
-        @test roles(Circuit([("P1","1","0",1), ("R1","1","0",50.0),
-            ("R2","1","2",75.0), ("C1","1","2",100e-15 + 1e-18im),
-            ("Lj1","2","0",1e-9)])) ==
-            (ports = ["P1"], numbers = [1], environments = ["R1"],
+        @test roles(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("R2", "1", "2", Resistor(75.0)), ("C1", "1", "2", Capacitor(100e-15 + 1e-18im)),
+            ("Lj1", "2", "0", JosephsonJunction(1e-9))])) ==
+            (ports = ["P1"], numbers = [1], environments = ["P1/termination"],
              noise = ["R2", "C1"])
 
         # two typed ports each generate and own their own termination
@@ -719,12 +850,12 @@ using Test
                 :gnd => Ground()],
             Any[[(:p1,1),(:rload,1),(:cc,1)], [(:cc,2),(:jj,1)],
                 [(:p1,2),(:rload,2),(:jj,2),(:gnd,1)]])
-        cc = JC.compile(cshared); b = JC.bind(cc)
-        cg = calccircuitgraph(cc)
-        nm = JC.assemblematrices(JC.circuitmatrixplan(cc, cg, b; Nmodes = 1), b)
+        cc = JC.compile(cshared)
+        b = JC.bindvalues(cc, JC.componentvaluestonumber(cc.componentvalues, Dict{Any,Any}()))
+        nm = JC.assemblematrices(JC.circuitmatrixplan(cc; Nmodes = 1), b)
         # both assemblies take the port roles from the ports rather than
         # from a resistor across a port's terminals, and agree
-        ref = numericmatrices(cc, cg, Dict{Any,Any}(); Nmodes = 1)
+        ref = numericmatrices(cc, Dict{Any,Any}(); Nmodes = 1)
         @test nm.portimpedances == ref.portimpedances
         @test nm.portenvironmentindices == ref.portenvironmentindices
         @test nm.noiseportimpedanceindices == ref.noiseportimpedanceindices
@@ -737,42 +868,32 @@ using Test
         # the checks the geometric path made are still made
         # both ports sit across the same terminals, so each is loaded by the
         # other's termination and compiling says so; the refusal under test
-        # is the one `portindicesnumbers` makes about the port numbers, so
+        # is the one `orderedports` makes about the port numbers, so
         # the compile is hoisted out and its warning asserted
         samenumber = @test_logs((:warn,), match_mode=:any, JC.compile(Circuit(
             Any[:p1 => Port(1), :p2 => Port(1), :c1 => Capacitor(1e-12),
                 :gnd => Ground()],
             Any[[(:p1,1),(:p2,1),(:c1,1)],
                 [(:p1,2),(:p2,2),(:c1,2),(:gnd,1)]])))
-        @test_throws ArgumentError JC.portindicesnumbers(samenumber)
+        @test_throws ArgumentError JC.orderedports(samenumber)
         sharedterminals = @test_logs((:warn,), match_mode=:any,
             JC.compile(Circuit(
                 Any[:p1 => Port(1), :p2 => Port(2), :c1 => Capacitor(1e-12),
                     :gnd => Ground()],
                 Any[[(:p1,1),(:p2,1),(:c1,1)],
                     [(:p1,2),(:p2,2),(:c1,2),(:gnd,1)]])))
-        @test_throws ArgumentError JC.portindicesnumbers(sharedterminals)
+        @test_throws ArgumentError JC.orderedports(sharedterminals)
         # a port which owns nothing reports zero rather than failing: it has
         # a reference impedance like every port, it simply loads nothing
-        @test JC.portenvironmentindices(JC.compile(
+        @test [p.environment for p in JC.orderedports(JC.compile(
             Circuit([:p1 => Port(1; termination = nothing),
                      :c1 => Capacitor(1e-12)],
-                [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2),Ground]]))) == [0]
+                [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2),Ground]])))] == [0]
 
-        # the per group element types are what the whole table scan produced
-        function typesagree(c)
-            cc = JC.compile(c)
-            vals = JC.componentvaluestonumber(cc.componentvalues,
-                Dict{Any,Any}())
-            return all(((g, t),) -> JC.grouptype(vals, g, true) ==
-                    eltype(JC.calcvaluetype(cc.componenttypes, vals, [t])),
-                ((cc.capacitors, :C), (cc.resistors, :R),
-                 (cc.inductors, :L), (cc.junctions, :Lj),
-                 (cc.currentsources, :I),
-                 (cc.mutualinductors, :K)))
-        end
-        @test typesagree(lc)
-        @test typesagree(Circuit(
+        # the per group element types: real where a group's values are
+        # real, complex where one has an imaginary part, and a group is
+        # typed by its own values alone
+        mixed = JC.compile(Circuit(
             Any[:p1 => Port(1), :l1 => Inductor(1e-9),
                 :c1 => Capacitor(1e-12 + 1im*1e-15), :c2 => Capacitor(2e-12),
                 :jj => JosephsonJunction(1e-9), :i1 => CurrentSource(1),
@@ -781,6 +902,13 @@ using Test
             Any[[(:p1,1),(:l1,1),(:c1,1),(:i1,1)],
                 [(:l1,2),(:c2,1),(:jj,1),(:l2,1)],
                 [(:l2,2),(:p1,2),(:c1,2),(:c2,2),(:jj,2),(:i1,2),(:gnd,1)]]))
+        bmixed = JC.bindvalues(mixed, JC.componentvaluestonumber(
+            mixed.componentvalues, Dict{Any,Any}()))
+        @test eltype(bmixed.capacitors) == ComplexF64
+        @test eltype(bmixed.resistors) == Float64
+        @test eltype(bmixed.inductors) == Float64
+        @test eltype(bmixed.junctions) == Float64
+        @test eltype(bmixed.mutualinductors) == Float64
     end
 
     @testset "vector connection groups" begin
@@ -854,13 +982,12 @@ using Test
     end
 
     @testset "symbolic values through the typed path" begin
-        circuit = Tuple{String,String,String,Any}[
-            ("P1","1","0",1),
-            ("R1","1","0",50.0),
-            ("C1","1","2",:Cc),
-            ("Lj1","2","0",:Lj),
-            ("C2","2","0",:Cj),
-        ]
+        circuit = Circuit(Any[
+            ("P1", "1", "0", Port(1; Z0 = 50.0)),
+            ("C1", "1", "2", Capacitor(:Cc)),
+            ("Lj1", "2", "0", JosephsonJunction(:Lj)),
+            ("C2", "2", "0", Capacitor(:Cj)),
+        ])
         circuitdefs = Dict(:Lj => 1000e-12, :Cc => 100e-15, :Cj => 1000e-15)
         native = Circuit(
             [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :c1 => Capacitor(:Cc),
@@ -899,9 +1026,9 @@ using Test
         defs = Dict(:Z => 50.0)
 
         cs = JosephsonCircuits.compile(symbolic)
-        @test JosephsonCircuits.portreferenceimpedances(cs, JosephsonCircuits.bind(cs, defs).values) == [50.0]
+        @test JosephsonCircuits.portreferenceimpedances(JosephsonCircuits.orderedports(cs), JosephsonCircuits.componentvaluestonumber(cs.componentvalues, defs)) == [50.0]
         cm = JosephsonCircuits.compile(matched)
-        @test JosephsonCircuits.portreferenceimpedances(cm, JosephsonCircuits.bind(cm, defs).values) == [50.0]
+        @test JosephsonCircuits.portreferenceimpedances(JosephsonCircuits.orderedports(cm), JosephsonCircuits.componentvaluestonumber(cm.componentvalues, defs)) == [50.0]
 
         ref = hblinsolve(ws, numeric, Dict{Symbol,Any}())
         sol = hblinsolve(ws, symbolic, defs)
@@ -921,6 +1048,19 @@ using Test
         end
     end
 
+    @testset "the node order is the compilation's" begin
+        c = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 2, Capacitor(100e-15)),
+            (:Lj1, 2, 0, JosephsonJunction(1000e-12)),
+            (:C2, 2, 0, Capacitor(1000e-15))])
+        psc = compile(c)
+        # a compiled circuit is taken as it is, and asking it for another
+        # node order is an error rather than silently the order it has
+        @test compile(psc) === psc
+        @test_throws ArgumentError compile(psc; sorting = :number)
+        @test compile(c; sorting = :number).nodenames == ["0", "1", "2"]
+    end
+
     @testset "calcnodesorting" begin
         @test_throws(
             ArgumentError("Unknown sorting type."),
@@ -928,12 +1068,12 @@ using Test
         )
 
         @test_throws(
-            ArgumentError("No ground node found in netlist."),
+            ArgumentError("The circuit has no connection to Ground. Connect at least one endpoint to Ground; the ground net is required by the solver."),
             JosephsonCircuits.calcnodesorting(["30","11","1","2"];sorting=:none)
         )
 
         @test_throws(
-            ArgumentError("No ground node found in netlist."),
+            ArgumentError("The circuit has no connection to Ground. Connect at least one endpoint to Ground; the ground net is required by the solver."),
             JosephsonCircuits.calcnodesorting(String[];sorting=:none)
         )
 
@@ -976,8 +1116,8 @@ using Test
 
         # a negative node name must survive parsing rather than being silently
         # renamed to ground, which is what the corrupted permutation did
-        circuit = [("P1","0","-1",1),("R1","0","-1",:R),("C1","-1","2",:Cc),
-            ("Lj1","2","0",:Lj),("C2","2","0",:Cj)]
+        circuit = Circuit([("P1", "0", "-1", Port(1; Z0 = :R)),("C1", "-1", "2", Capacitor(:Cc)),
+            ("Lj1", "2", "0", JosephsonJunction(:Lj)),("C2", "2", "0", Capacitor(:Cj))])
         psc = JosephsonCircuits.compile(circuit;sorting=:number)
         @test psc.nodenames == ["0","-1","2"]
         @test length(unique(psc.nodenames)) == length(psc.nodenames)

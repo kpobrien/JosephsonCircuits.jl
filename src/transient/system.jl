@@ -156,7 +156,7 @@ integrated in time by [`transientsolve`](@ref). Built by
 [`transientproblem`](@ref).
 
 # Fields
-- `circuit`, `graph`, `matrices`: the compiled circuit, its graph and its
+- `circuit`, `matrices`: the compiled circuit and its
     [`CircuitMatrices`](@ref) at one mode, with real values.
 - `Nnodal`, `Naux`: the node flux unknowns and the auxiliary branch
     currents of the mutually coupled inductors; the state has
@@ -196,7 +196,6 @@ integrated in time by [`transientsolve`](@ref). Built by
 """
 struct TransientProblem
     circuit::CompiledCircuit
-    graph::CircuitGraph
     matrices::CircuitMatrices
     Nnodal::Int
     Naux::Int
@@ -226,7 +225,9 @@ end
 
 Base.length(p::TransientProblem) = p.Nnodal + p.Naux
 
-# a real, finite value of a component, or an argument error naming it
+# a real value of a component, or an argument error naming it. The values
+# of the table are already numbers, from `numericvalues`; a port impedance
+# is checked here too and may not be
 function transientreal(value, name)
     (value isa Number && !checkissymbolic(value)) || throw(ArgumentError(
         lazy"the component $(name) has the value $(value); the transient needs real, frequency independent values."))
@@ -240,7 +241,7 @@ end
 
 """
     transientproblem(circuit, circuitdefs = Dict(); sources = (),
-        sorting = defaultsorting(circuit))
+        )
 
 Compile a circuit for integration in time: the same compiler and
 [`numericmatrices`](@ref) as harmonic balance, at one mode, with the
@@ -248,8 +249,8 @@ mutually coupled inductors promoted to auxiliary branch currents and the
 floating inductive subnetworks gauge fixed as [`hbnlsolve`](@ref) does.
 `sources` is a tuple or vector of [`TransientSource`](@ref)s; the
 netlist's constant `CurrentSource` components keep their constant values
-unless a source names them. The circuit may be a typed [`Circuit`](@ref),
-a compiled circuit or a legacy netlist.
+unless a source names them. The circuit may be a typed [`Circuit`](@ref)
+or a compiled circuit.
 
 Supported are real, constant resistors, capacitors, inductors, mutual
 inductors, sinusoidal Josephson junctions, current sources and ports.
@@ -258,12 +259,11 @@ causal realization in time. A [`ScatteringParameters`](@ref) block with a
 constant real matrix is realized as it is, see [`TransientBlock`](@ref);
 any other block is rejected for the same reason.
 """
-function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
-        sources = (), sorting::Symbol = defaultsorting(circuit))
-    psc = compile(circuit; sorting)
-    cg = calccircuitgraph(psc; loops = false)
-    vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
-    checkcomponentvaluesdefined(psc.componentnames, vvn, circuitdefs)
+function transientproblem(circuit::CompilableCircuit,
+        circuitdefs::AbstractDict = Dict{Symbol,Any}();
+        sources = ())
+    psc = compile(circuit)
+    vvn = numericvalues(psc, circuitdefs)
     for k in eachindex(vvn)
         v = transientreal(vvn[k], psc.componentnames[k])
         psc.componenttypes[k] == :R || isfinite(v) || throw(ArgumentError(
@@ -271,7 +271,7 @@ function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
         vvn[k] = v
     end
     checkstaticstiffnessvalues(psc.componenttypes, vvn)
-    nm = numericmatrices(psc, cg, vvn; Nmodes = 1)
+    nm = numericmatrices(psc, vvn; Nmodes = 1)
     for (name, A) in (("capacitance", nm.Cnm), ("conductance", nm.Gnm),
             ("inverse inductance", nm.invLnm))
         all(isfinite, nonzeros(A)) || throw(ArgumentError(
@@ -294,7 +294,7 @@ function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
     # inductance the impedance scale times the impedance and mean
     # capacitance, or a picosecond
     Lscale = transientscale(psc, vvn, nm)
-    _, Gs, Ls, _ = transientlinearmatrices(nm, coupledbranches, cg.Rbn, gaugeindices, blocks, lines, Lscale, Nnodal, Naux)
+    _, Gs, Ls, _ = transientlinearmatrices(nm, coupledbranches, psc.topology.Rbn, gaugeindices, blocks, lines, Lscale, Nnodal, Naux)
     inertialess, algebraic, directions, constraints =
         transientclassification(psc, vvn, Gs, Ls, Nnodal, length(coupledbranches), blocks)
 
@@ -342,11 +342,11 @@ function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
         n1 > 0 && (constantcurrent[n1] += vvn[c])
         n2 > 0 && (constantcurrent[n2] -= vvn[c])
     end
-    return TransientProblem(psc, cg, nm, Nnodal, Naux, Lscale, coupledbranches,
+    return TransientProblem(psc, nm, Nnodal, Naux, Lscale, coupledbranches,
         floatingcomponents, gaugeindices, inertialess, algebraic, directions, constraints,
         injection, drives, constantcurrent, portpositive, portnegative, portimpedances, portconductances, blocks, lines,
         calcjunctionrelations(psc.componenttypes, psc.nodeindices,
-            psc.junctioncprs, cg.edge2indexdict, nm.Ljb))
+            psc.junctioncprs, psc.topology.edge2indexdict, nm.Ljb))
 end
 
 # the ideal lines of a compiled circuit, in compiled order
@@ -592,39 +592,32 @@ function orthonormalcolumns(M::AbstractMatrix; rtol = 1e-10)
     return F.U[:, 1:r]
 end
 
-# the subnetworks of the nodes that no element of the given types with a
-# finite nonzero value, nor any of the extra edges, connects to ground, as
-# sorted lists of state indices in the order of their first node
-function transientsubnetworks(psc::CompiledCircuit, vvn::Vector, types, edges = Tuple{Int,Int}[])
-    Nnodes = psc.Nnodes
-    parent = collect(1:Nnodes)
-    function findroot(i::Int)
-        while parent[i] != i
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        end
-        return i
-    end
+# the branches of the elements of the given types which have a finite
+# nonzero value, and with `blocks` the ports of every scattering block or
+# line, which connect their two terminals as an element does
+function transientedges(psc::CompiledCircuit, vvn::Vector, types;
+        blocks::Bool = false)
+    edges = Tuple{Int,Int}[]
     for k in eachindex(psc.componenttypes)
         psc.componenttypes[k] in types || continue
         v = vvn[k]
         (v isa Number && isfinite(v) && !iszero(v)) || continue
-        a, b = findroot(psc.nodeindices[1, k]), findroot(psc.nodeindices[2, k])
-        a == b || (parent[max(a, b)] = min(a, b))
+        push!(edges, (psc.nodeindices[1, k], psc.nodeindices[2, k]))
     end
-    for (i, j) in edges
-        a, b = findroot(i), findroot(j)
-        a == b || (parent[max(a, b)] = min(a, b))
+    blocks && for cb in psc.scatteringblocks, q in eachindex(cb.signalnodes)
+        push!(edges, (cb.signalnodes[q], cb.refnodes[q]))
     end
-    components = Dict{Int,Vector{Int}}()
-    for node in 2:Nnodes
-        root = findroot(node)
-        root == 1 && continue
-        push!(get!(components, root, Int[]), node - 1)
-    end
-    directions = sort!(collect(values(components)); by = first)
-    foreach(sort!, directions)
-    return directions
+    return edges
+end
+
+# the subnetworks of the nodes that no element of the given types with a
+# finite nonzero value, nor any of the extra edges, connects to ground, as
+# sorted lists of state indices in the order of their first node
+function transientsubnetworks(psc::CompiledCircuit, vvn::Vector, types,
+        edges = Tuple{Int,Int}[])
+    nodes = nodecomponents(psc.Nnodes,
+        append!(transientedges(psc, vvn, types), edges))
+    return [n .- 1 for n in nodes]
 end
 
 # The floating subnetworks of the circuit in time. Harmonic balance gauge
@@ -636,40 +629,9 @@ end
 # flux offset, and it is those the gauge rows fix. The same union-find as
 # `calcstaticfluxcomponents`, over every two terminal element with a finite
 # nonzero value.
-function transientfloatingcomponents(psc::CompiledCircuit, vvn::Vector)
-    Nnodes = psc.Nnodes
-    parent = collect(1:Nnodes)
-    function findroot(i::Int)
-        while parent[i] != i
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        end
-        return i
-    end
-    for k in eachindex(psc.componenttypes)
-        t = psc.componenttypes[k]
-        t in (:C, :R, :L, :Lj) || continue
-        v = vvn[k]
-        (v isa Number && isfinite(v) && !iszero(v)) || continue
-        a, b = findroot(psc.nodeindices[1, k]), findroot(psc.nodeindices[2, k])
-        a == b || (parent[max(a, b)] = min(a, b))
-    end
-    # a port of a scattering block or a line connects its two terminals
-    # as an element does
-    for cb in psc.scatteringblocks, q in eachindex(cb.signalnodes)
-        a, b = findroot(cb.signalnodes[q]), findroot(cb.refnodes[q])
-        a == b || (parent[max(a, b)] = min(a, b))
-    end
-    components = Dict{Int,Vector{Int}}()
-    for node in 2:Nnodes
-        root = findroot(node)
-        root == 1 && continue
-        push!(get!(components, root, Int[]), node)
-    end
-    floating = sort!(collect(values(components)); by = first)
-    foreach(sort!, floating)
-    return floating
-end
+transientfloatingcomponents(psc::CompiledCircuit, vvn::Vector) =
+    nodecomponents(psc.Nnodes,
+        transientedges(psc, vvn, (:C, :R, :L, :Lj); blocks = true))
 
 """
     TransientState
@@ -740,11 +702,11 @@ function transientstate(p::TransientProblem; flux = zeros(p.Nnodal), voltage = z
     xc = complex(x)
     mnagaugenormalize!(xc, p.floatingcomponents, [0.0], 1)
     mnainitialauxind!(xc, p.coupledbranches, p.matrices.Lb, p.matrices.Mb,
-        p.graph.Rbn, 1, p.Nnodal, p.Lscale)
+        p.circuit.topology.Rbn, 1, p.Nnodal, p.Lscale)
     vc = complex(v)
     mnagaugenormalize!(vc, p.floatingcomponents, [0.0], 1)
     mnainitialauxind!(vc, p.coupledbranches, p.matrices.Lb, p.matrices.Mb,
-        p.graph.Rbn, 1, p.Nnodal, p.Lscale)
+        p.circuit.topology.Rbn, 1, p.Nnodal, p.Lscale)
     xr = real.(xc)
     # the port currents of the blocks from their constitutive rows at the
     # port voltages, where the rows determine them

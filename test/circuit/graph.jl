@@ -1,3 +1,4 @@
+using Random
 using JosephsonCircuits
 using Test
 import Graphs
@@ -7,17 +8,17 @@ import SparseArrays
     @testset "calcgraphs" begin
         @test JosephsonCircuits.comparestruct(
             JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (2, 1), (3, 1)], 3; loops = true),
-            JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2),
+            JosephsonCircuits.CircuitGraph(JosephsonCircuits.CircuitTopology(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]])),
             )
 
         @test JosephsonCircuits.comparestruct(
             JosephsonCircuits.calcgraphs([(4, 3), (3, 6), (5, 3), (3, 7), (2, 4), (6, 8), (2, 5), (8, 7), (2, 8)], 8; loops = true),
-            JosephsonCircuits.CircuitGraph(Dict((6, 8) => 8, (7, 8) => 9, (2, 5) => 2, (3, 6) => 6, (8, 6) => 8, (5, 2) => 2, (2, 8) => 3, (6, 3) => 6, (3, 5) => 5, (3, 4) => 4, (5, 3) => 5, (3, 7) => 7, (8, 7) => 9, (2, 4) => 1, (4, 3) => 4, (8, 2) => 3, (7, 3) => 7, (4, 2) => 1), SparseArrays.sparse([1, 2, 3, 4, 5, 6, 7, 1, 4, 2, 5, 6, 8, 7, 9, 3, 8, 9], [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7], [-1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, -1, 1, -1, 1, 1, 1], 9, 7), [(2, 4), (2, 5), (2, 8), (3, 4), (3, 6), (3, 7)], [(5, 3), (8, 6), (8, 7)], [(2, 4), (2, 5), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (6, 8), (7, 8)], [[3, 4, 2, 5], [6, 3, 4, 2, 8], [7, 3, 4, 2, 8]], [1], Graphs.SimpleGraphs.SimpleGraph{Int64}(9, [Int64[], [4, 5, 8], [4, 5, 6, 7], [2, 3], [2, 3], [3, 8], [3, 8], [2, 6, 7]]), 9),
+            JosephsonCircuits.CircuitGraph(JosephsonCircuits.CircuitTopology(Dict((6, 8) => 8, (7, 8) => 9, (2, 5) => 2, (3, 6) => 6, (8, 6) => 8, (5, 2) => 2, (2, 8) => 3, (6, 3) => 6, (3, 5) => 5, (3, 4) => 4, (5, 3) => 5, (3, 7) => 7, (8, 7) => 9, (2, 4) => 1, (4, 3) => 4, (8, 2) => 3, (7, 3) => 7, (4, 2) => 1), SparseArrays.sparse([1, 2, 3, 4, 5, 6, 7, 1, 4, 2, 5, 6, 8, 7, 9, 3, 8, 9], [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7], [-1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, -1, 1, -1, 1, 1, 1], 9, 7), 9), [(2, 4), (2, 5), (2, 8), (3, 4), (3, 6), (3, 7)], [(5, 3), (8, 6), (8, 7)], [(2, 4), (2, 5), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (6, 8), (7, 8)], [[3, 4, 2, 5], [6, 3, 4, 2, 8], [7, 3, 4, 2, 8]], [1], Graphs.SimpleGraphs.SimpleGraph{Int64}(9, [Int64[], [4, 5, 8], [4, 5, 6, 7], [2, 3], [2, 3], [3, 8], [3, 8], [2, 6, 7]])),
             )
 
         @test JosephsonCircuits.comparestruct(
             JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (3, 1)], 4; loops = true),
-            JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 3), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2),
+            JosephsonCircuits.CircuitGraph(JosephsonCircuits.CircuitTopology(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 3), 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]])),
             )
     end
 
@@ -26,50 +27,6 @@ import SparseArrays
             JosephsonCircuits.edge2index(JosephsonCircuits.Graphs.path_digraph(4)),
             Dict((1, 2) => 1, (2, 1) => 1, (3, 2) => 2, (3, 4) => 3, (2, 3) => 2, (4, 3) => 3),
             )
-    end
-
-    @testset "tuple2edge" begin
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Int}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2)),
-            Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Int64}(Graphs.Edge(3 => 4) => 3, Graphs.Edge(2 => 3) => 2, Graphs.Edge(1 => 2) => 1),
-            )
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Float64}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2)),
-            Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Float64}(Graphs.Edge(3 => 4) => 3.0, Graphs.Edge(2 => 3) => 2.0, Graphs.Edge(1 => 2) => 1.0),
-            )
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Complex{Float64}}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2)),
-            Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, ComplexF64}(Graphs.Edge(3 => 4) => 3.0 + 0.0im, Graphs.Edge(2 => 3) => 2.0 + 0.0im, Graphs.Edge(1 => 2) => 1.0 + 0.0im),
-            )
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Any}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2)),
-             Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Any}(Graphs.Edge(3 => 4) => 3, Graphs.Edge(2 => 3) => 2, Graphs.Edge(1 => 2) => 1),
-            )
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Int}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3)),
-            Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Int64}((Graphs.Edge(5 => 6), Graphs.Edge(7 => 8),) => 3, (Graphs.Edge(1 => 2), Graphs.Edge(3 => 4),) => 1),
-            )
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Float64}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3)),
-            Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Float64}((Graphs.Edge(5 => 6), Graphs.Edge(7 => 8),) => 3.0, (Graphs.Edge(1 => 2), Graphs.Edge(3 => 4),) => 1.0),
-            )
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Complex{Float64}}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3)),
-            Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, ComplexF64}((Graphs.Edge(5 => 6), Graphs.Edge(7 => 8),) => 3.0 + 0.0im, (Graphs.Edge(1 => 2), Graphs.Edge(3 => 4),) => 1.0 + 0.0im),
-            )
-
-        @test isequal(
-            JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Any}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3)),
-            Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Any}((Graphs.Edge(5 => 6), Graphs.Edge(7 => 8),) => 3, (Graphs.Edge(1 => 2), Graphs.Edge(3 => 4),) => 1),
-            )
-
     end
 
     # the branches the incidence matrix is built from
@@ -140,4 +97,27 @@ end
     @test JC.treepath(parent, depth, 3, 4) == [3, 2, 1, 4]
     @test JC.treepath(parent, depth, 4, 3) == [4, 1, 2, 3]
     @test JC.treepath(parent, depth, 2, 2) == [2]
+end
+
+@testset "solver topology preserves public graph incidence" begin
+    rng = Random.MersenneTwister(190926)
+    JC = JosephsonCircuits
+    for trial in 1:100
+        n = rand(rng, 1:40)
+        edges = [(rand(rng,1:n), rand(rng,1:n)) for _ in 1:rand(rng,0:80)]
+        full = JC.calcgraphs(edges, n).topology
+        core = JC.circuittopology(edges, n)
+        @test core.edge2indexdict == full.edge2indexdict
+        @test core.Rbn.colptr == full.Rbn.colptr
+        @test core.Rbn.rowval == full.Rbn.rowval
+        @test core.Rbn.nzval == full.Rbn.nzval
+        @test size(core.Rbn) == size(full.Rbn)
+        @test core.Nbranches == full.Nbranches
+    end
+    # and the topology `compile` stores is the same one
+    c = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:l1, 1, 2, Inductor(1e-9)),
+        (:jj, 2, 0, JosephsonJunction(1e-9)), (:cj, 2, 0, Capacitor(1e-12))])
+    psc = compile(c)
+    @test JosephsonCircuits.comparestruct(psc.topology,
+        JC.calccircuitgraph(psc).topology)
 end

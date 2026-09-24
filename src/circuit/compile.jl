@@ -130,9 +130,9 @@ mutable struct FlattenState
     terminaloffsets::Vector{Int}
     terminalwires::Vector{Int}
     couplings::Vector{NTuple{3,Int}}
-    # the names the user gave to nets, as (depth, sequence, qualified
-    # name, wire); the shallowest and then earliest one wins for a net
-    usernames::Vector{Tuple{Int,Int,String,Int}}
+    # the names the user gave to nets, as (depth, qualified name, wire);
+    # the shallowest and then earliest entry wins for a net
+    usernames::Vector{Tuple{Int,String,Int}}
     # What an unnamed net is named from: the hierarchy path of the level
     # containing the shallowest, earliest terminal on it. `levelpaths` holds
     # the path of each level visited, and `autodepth` and `autopathid` give
@@ -143,10 +143,10 @@ mutable struct FlattenState
     autopathid::Vector{Int}                        # per instance
     # each distinct circuit definition is parsed once
     parsedcache::IdDict{Any,ParsedLevel}
+    interfacecache::IdDict{Any,InterfaceIndex}
     # the definitions on the current path from the root, to detect recursion
     active::IdDict{Any,Nothing}
     maxdepth::Int
-    seq::Int
 end
 
 function FlattenState(maxdepth::Int)
@@ -154,11 +154,10 @@ function FlattenState(maxdepth::Int)
     ground = newwire!(wires)
     return FlattenState(wires, ground, Any[], IdDict{Any,Int}(), Int[],
         String[], Int[1], Int[], NTuple{3,Int}[],
-        Tuple{Int,Int,String,Int}[], String[], Int[], Int[],
-        IdDict{Any,ParsedLevel}(), IdDict{Any,Nothing}(), maxdepth, 0)
+        Tuple{Int,String,Int}[], String[], Int[], Int[],
+        IdDict{Any,ParsedLevel}(), IdDict{Any,InterfaceIndex}(),
+        IdDict{Any,Nothing}(), maxdepth)
 end
-
-nextseq!(st::FlattenState) = (st.seq += 1; st.seq)
 
 # the index of `def` in the deduplicated definition list, adding it if new
 function definitionindex!(st::FlattenState, def)
@@ -201,10 +200,10 @@ function elaborate(circuit::Circuit; maxdepth::Integer = 64)
     return finishelaboration(st)
 end
 
-# Flatten one level of the hierarchy at `path`, returning the wires of its
-# interface pins so the parent can connect them.
+# Flatten one level of the hierarchy at `path`, appending the wires of its
+# interface pins to `pinwires` so the parent can connect them.
 function flattencircuit!(st::FlattenState, c::Circuit, path::String,
-        depth::Int)
+        depth::Int, pinwires::Vector{Int} = Int[])
     if haskey(st.active, c)
         location = isempty(path) ? "the top level" : path
         throw(ArgumentError(lazy"The circuit definition at $(location) contains itself, directly or indirectly. Recursive circuit definitions are not allowed."))
@@ -214,37 +213,52 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
     end
     st.active[c] = nothing
 
-    pd = get!(() -> parsecircuitlevel(c), st.parsedcache, c)
+    pd = get!(() -> parsecircuitlevel(c, st.interfacecache), st.parsedcache, c)
+    flattenlevel!(st, pd, path, depth, pinwires)
+    delete!(st.active, c)
+    return pinwires
+end
+
+# The walk of one level reads the parsed connectivity alone, so it is
+# compiled once, whatever the container and interface types of the
+# circuits it came from.
+@noinline function flattenlevel!(st::FlattenState, pd::ParsedLevel,
+        path::String, depth::Int, pinwires::Vector{Int})
     table = pd.table
     push!(st.levelpaths, path)
     pathid = length(st.levelpaths)
 
     # the wires of each local instance's terminals; for a subcircuit, the
     # wires of its interface pins
-    instwires = Vector{Vector{Int}}(undef, length(table.ids))
+    # the wires of every instance's terminals in one array with an offset
+    # per instance, the children's interface wires appended as they are
+    # flattened, rather than a two-element array per lumped component
+    instwires = Int[]
+    sizehint!(instwires, 2*length(table.ids))
+    instoffsets = Vector{Int}(undef, length(table.ids))
+    wireat((i, t)) = instwires[instoffsets[i] + t - 1]
     # the flattened index of each local primitive instance; 0 for a
     # subcircuit or a ground instance, which contribute none
     localglobal = zeros(Int, length(table.ids))
 
     for (i, def) in enumerate(table.defs)
         id = table.ids[i]
+        instoffsets[i] = length(instwires) + 1
         if def isa Circuit
-            instwires[i] = flattencircuit!(st, def, joinpath_(path, id),
-                depth + 1)
+            flattencircuit!(st, def, joinpath_(path, id),
+                depth + 1, instwires)
         elseif def isa GroundType
             # a declared ground instance is a spelling of the reference net,
             # not a device: it produces no instance, and every reference to
             # its terminal was already resolved to `Ground` by the parser,
-            # so its (empty) wire list is never read
-            instwires[i] = Int[]
+            # so its empty range of local wires is never read
         else
             n = nterminals(def)
-            w = Vector{Int}(undef, n)
             for t in 1:n
-                w[t] = newwire!(st.wires)
-                push!(st.terminalwires, w[t])
+                w = newwire!(st.wires)
+                push!(instwires, w)
+                push!(st.terminalwires, w)
             end
-            instwires[i] = w
             push!(st.autodepth, depth)
             push!(st.autopathid, pathid)
             push!(st.definitionof, definitionindex!(st, def))
@@ -255,21 +269,20 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
     end
 
     # the reference terminals of grounded multiport blocks are tied to ground
-    for (i, t) in pd.groundties
-        unionwires!(st.wires, instwires[i][t], st.groundwire)
+    for endpoint in pd.groundties
+        unionwires!(st.wires, wireat(endpoint), st.groundwire)
     end
 
     # each connection group unions the wires of its endpoints, and records
     # its name as a candidate name for the resulting net
-    for (name, endpoints, hasground) in pd.groups
-        first = hasground ? st.groundwire :
-            instwires[endpoints[1][1]][endpoints[1][2]]
-        for (i, t) in endpoints
-            unionwires!(st.wires, first, instwires[i][t])
+    for group in pd.groups
+        first = group.hasground ? st.groundwire : wireat(group.endpoints[1])
+        for endpoint in group.endpoints
+            unionwires!(st.wires, first, wireat(endpoint))
         end
-        if !isnothing(name)
-            push!(st.usernames, (depth, nextseq!(st), joinpath_(path, name),
-                hasground ? st.groundwire : first))
+        if !isnothing(group.name)
+            push!(st.usernames, (depth, joinpath_(path, group.name),
+                first))
         end
     end
 
@@ -280,36 +293,38 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
     end
 
     # the wires of the interface pins, for the parent to connect
-    pinwires = Vector{Int}(undef, length(pd.pinendpoints))
-    for (j, (i, t)) in enumerate(pd.pinendpoints)
-        pinwires[j] = instwires[i][t]
+    for endpoint in pd.pinendpoints
+        push!(pinwires, wireat(endpoint))
     end
 
-    delete!(st.active, c)
     return pinwires
 end
 
 # Number the nets and name them, and assemble the `ElaboratedCircuit`.
 function finishelaboration(st::FlattenState)
     # number the union-find roots densely, in order of first appearance
-    # over the terminals; the ground net is 1
-    netofroot = Dict{Int,Int}()
+    # over the terminals; the ground net is 1. The wires are numbered
+    # densely, so the net of a root is an array over them; the naming
+    # metadata below is per net.
+    netofroot = zeros(Int, length(st.wires.parent))
     netofroot[findwire(st.wires, st.groundwire)] = 1
     terminalnets = Vector{Int}(undef, length(st.terminalwires))
-    # for each net, the (depth, terminal index, level path) of the
-    # shallowest and then earliest terminal on it, which names the net when
-    # no user name does
-    autopath = Dict{Int,Tuple{Int,Int,String}}()
+    # the depth and the level path of the terminal which names each net,
+    # the first at the shallowest depth, the terminals being visited in
+    # order
+    unset = (typemax(Int), 0)
+    autopath = Tuple{Int,Int}[unset]
     nnets = 1
     inst = 1
     ninst = length(st.autodepth)
     for (i, w) in enumerate(st.terminalwires)
         r = findwire(st.wires, w)
-        n = get(netofroot, r, 0)
+        n = netofroot[r]
         if n == 0
             nnets += 1
             n = nnets
             netofroot[r] = n
+            push!(autopath, unset)
         end
         terminalnets[i] = n
         # advance to the instance which owns terminal `i`
@@ -318,9 +333,8 @@ function finishelaboration(st::FlattenState)
         end
         if n != 1 && inst <= ninst
             d = st.autodepth[inst]
-            best = get(autopath, n, (typemax(Int), typemax(Int), ""))
-            if (d, i) < (best[1], best[2])
-                autopath[n] = (d, i, st.levelpaths[st.autopathid[inst]])
+            if d < autopath[n][1]
+                autopath[n] = (d, st.autopathid[inst])
             end
         end
     end
@@ -329,26 +343,29 @@ function finishelaboration(st::FlattenState)
     # user names. Any other net is named "<level path>/net<k>" from the
     # shallowest, earliest level which touches it, with `k` counting the
     # automatically named nets of that level.
-    username = Dict{Int,Tuple{Int,Int,String}}()
-    for (depth, seq, name, w) in st.usernames
-        n = get(netofroot, findwire(st.wires, w), 0)
+    # the record which names each net, by index rather than by a copy of
+    # its name
+    username = zeros(Int, nnets)
+    for (j, (depth, name, w)) in enumerate(st.usernames)
+        n = netofroot[findwire(st.wires, w)]
         (n == 0 || n == 1) && continue # a net with no terminal, or ground
-        best = get(username, n, (typemax(Int), typemax(Int), ""))
-        if (depth, seq) < (best[1], best[2])
-            username[n] = (depth, seq, name)
+        winner = username[n]
+        if winner == 0 || depth < st.usernames[winner][1]
+            username[n] = j
         end
     end
     netnames = Vector{String}(undef, nnets)
     netnames[1] = "0"
-    autocounter = Dict{String,Int}()
+    # a counter of automatic names per level, whose instance path is unique
+    autocounter = zeros(Int, length(st.levelpaths))
     for n in 2:nnets
-        if haskey(username, n)
-            netnames[n] = username[n][3]
+        winner = username[n]
+        if winner != 0
+            netnames[n] = st.usernames[winner][2]
         else
-            path = autopath[n][3]
-            k = get(autocounter, path, 0) + 1
-            autocounter[path] = k
-            netnames[n] = joinpath_(path, "net$(k)")
+            pathid = autopath[n][2]
+            autocounter[pathid] += 1
+            netnames[n] = joinpath_(st.levelpaths[pathid], "net$(autocounter[pathid])")
         end
     end
 
@@ -424,6 +441,75 @@ struct CompiledScatteringBlock
 end
 
 """
+    CircuitTopology(edge2indexdict, Rbn, Nbranches)
+
+The branches of a compiled circuit, which is what the solvers read of its
+graph.
+
+# Fields
+- `edge2indexdict`: maps a branch `(node1, node2)` in either orientation to
+    its branch index, the row of `Rbn` it occupies.
+- `Rbn`: the sparse oriented incidence matrix, `Nbranches` by
+    `Nnodes - 1`; the ground node column is omitted.
+- `Nbranches`: the number of branches, `size(Rbn, 1)`.
+
+[`compile`](@ref) builds one for every circuit, see
+[`circuittopology`](@ref). The spanning tree, the loops and the isolated
+nodes are diagnostics of the same branches and are computed on request by
+[`calccircuitgraph`](@ref).
+"""
+struct CircuitTopology
+    edge2indexdict::Dict{Tuple{Int,Int},Int}
+    Rbn::SparseMatrixCSC{Int,Int}
+    Nbranches::Int
+end
+
+"""
+    circuittopology(componenttypes, nodeindices, Nnodes)
+    circuittopology(branchvector, Nnodes)
+
+The [`CircuitTopology`](@ref) of the branch carrying components listed by
+`componenttypes` and `nodeindices`, or of the branches `branchvector`
+given as `(node1, node2)` tuples, over `Nnodes` nodes with ground being
+node 1; see [`extractbranches`](@ref) for which components make a branch.
+
+The branches are the edges of the undirected graph of those endpoints, in
+ascending order of their endpoints, oriented from the lower to the higher
+node index, which is the order and the orientation
+[`calcgraphs`](@ref) gives them. A circuit with a component whose two
+terminals are the same node has a branch of no incidence, which only the
+diagnostic construction places, so that case is built through it.
+"""
+circuittopology(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    Nnodes::Int) = circuittopology(
+        extractbranches(componenttypes, nodeindices), Nnodes)
+
+function circuittopology(branchvector::Vector{Tuple{Int,Int}}, Nnodes::Int)
+    if any(e -> first(e) == last(e), branchvector)
+        return calcgraphs(branchvector, Nnodes).topology
+    end
+    gl = Graphs.SimpleGraphFromIterator(tuple2edge(branchvector))
+    edge2indexdict = Dict{Tuple{Int,Int},Int}()
+    I = Int[]; J = Int[]; V = Int[]
+    Nbranches = Graphs.ne(gl)
+    sizehint!(edge2indexdict, 2Nbranches)
+    sizehint!(I, 2Nbranches); sizehint!(J, 2Nbranches); sizehint!(V, 2Nbranches)
+    for (i, edge) in enumerate(Graphs.edges(gl))
+        a, b = Graphs.src(edge), Graphs.dst(edge)
+        edge2indexdict[(a,b)] = i
+        edge2indexdict[(b,a)] = i
+        if a > 1
+            push!(I, i); push!(J, a-1); push!(V, -1)
+        end
+        if b > 1
+            push!(I, i); push!(J, b-1); push!(V, 1)
+        end
+    end
+    return CircuitTopology(edge2indexdict,
+        sparse(I, J, V, Nbranches, Nnodes-1), Nbranches)
+end
+
+"""
     CompiledCircuit
 
 An elaborated circuit lowered to a flat table of two terminal components,
@@ -448,11 +534,15 @@ The flat table, in elaboration order:
     evaluate `sin` and `cos` as they always did.
 - `componenttemperatures`: the temperature of each entry which states one,
     keyed by flat index.
-- `mutualinductorbranchnames`: the names of the coupled inductors, two per
-    `:K` entry in order.
+- `couplings`: resolved `(coupling, inductor1, inductor2)` flat indices,
+    in coupling table order; the names of the coupled inductors are
+    `componentnames` at those indices, see
+    [`coupledinductornames`](@ref).
 - `nodenames`, `Nnodes`: the node names in sorted order (ground first) and
     their count.
 - `componentnamedict`: component name to flat index.
+- `topology`: the branches and the oriented incidence matrix, see
+    [`CircuitTopology`](@ref).
 
 The groups, each a vector of flat indices in table order:
 
@@ -477,7 +567,6 @@ struct CompiledCircuit
     componentnamedict::Dict{String,Int}
     componenttemperatures::Dict{Int,Float64}
     junctioncprs::Dict{Int,PolynomialCPR{Float64}}
-    mutualinductorbranchnames::Vector{String}
     capacitors::Vector{Int}
     resistors::Vector{Int}
     inductors::Vector{Int}
@@ -486,6 +575,9 @@ struct CompiledCircuit
     mutualinductors::Vector{Int}
     ports::Vector{CompiledPort}
     scatteringblocks::Vector{CompiledScatteringBlock}
+    # (coupling, first inductor, second inductor), in flat table order
+    couplings::Vector{NTuple{3,Int}}
+    topology::CircuitTopology
 end
 
 function Base.show(io::IO, c::CompiledCircuit)
@@ -503,11 +595,6 @@ The number of entries in the flat component table.
 """
 ncomponents(c::CompiledCircuit) = length(c.componenttypes)
 
-# A tuple netlist names its nodes with integers and is sorted by their
-# numeric value; a typed circuit has hierarchical net names, which are not
-# integers, and is sorted by name.
-defaultsorting(circuit) = circuit isa AbstractVector ? :number : :name
-
 # === lowering one component to a table entry ===
 #
 # `lowercomponent` returns the `(typesymbol, value)` of a component the
@@ -515,7 +602,7 @@ defaultsorting(circuit) = circuit isa AbstractVector ? :number : :name
 # `ComponentNotSupportedError` for one the solvers cannot use, so the
 # diagnostics are in one place. The lumped elements are lowered by the
 # chain alone; a second table for them would be a second place to get one
-# wrong. The legacy `NL` element adds its own method in circuit/legacy.jl.
+# wrong.
 
 # A nonlinear inductor is a junction whatever its relation: the branch it
 # makes, the matrices it enters and the small signal inductance `L0` are
@@ -526,7 +613,7 @@ function lowercomponent(def::NonlinearInductor, path)
     return :Lj, def.L0
 end
 function lowercomponent(def::VoltageSource, path)
-    throw(ComponentNotSupportedError(lazy"the VoltageSource at $(path) is not supported by the solver, which matches the legacy parser (voltage sources are not currently supported)."))
+    throw(ComponentNotSupportedError(lazy"the VoltageSource at $(path) is not supported by the solvers."))
 end
 function lowercomponent(def::GaussianChannel, path)
     throw(ComponentNotSupportedError(lazy"the GaussianChannel at $(path) is not yet supported by the harmonic balance solvers. It parsed, validated, and elaborated successfully; solver support for Gaussian channels is planned. Currently solvable components: Inductor, Capacitor, Resistor, JosephsonJunction, MutualInductor, CurrentSource, and Port."))
@@ -550,22 +637,179 @@ componenttemperature(def::Capacitor) = def.temperature
 componenttemperature(def::Inductor) = def.temperature
 componenttemperature(def) = nothing
 
+# === node ordering ===
+#
+# `compile` numbers the nets in the order their terminals are met, sorts
+# that list with `calcnodesorting` and renumbers every recorded node index
+# with `sortnodes`.
+
+"""
+    findgroundnodeindex(uniquenodevector::Vector{String})
+
+The index of the ground node `"0"` in `uniquenodevector`, or `0` if there
+is none.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.findgroundnodeindex(["1","0","2"])
+2
+
+julia> JosephsonCircuits.findgroundnodeindex(["1","2"])
+0
+
+julia> JosephsonCircuits.findgroundnodeindex(String[])
+0
+```
+"""
+function findgroundnodeindex(uniquenodevector::Vector{String})
+    for i in eachindex(uniquenodevector)
+        if uniquenodevector[i] == "0"
+            return i
+        end
+    end
+    return 0
+end
+
+"""
+    calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
+
+The permutation which sorts the node names in `uniquenodevector` according
+to `sorting`, with the ground node `"0"` moved to the front in every case.
+Throws an `ArgumentError` if there is no ground node.
+
+# Keywords
+- `sorting = :number`: parse the names as integers and sort numerically.
+    Throws an `ArgumentError` if a name is not an integer.
+- `sorting = :name`: sort the names as strings, so that `"101"` sorts
+    before `"11"`.
+- `sorting = :none`: keep the names in order of first appearance, apart
+    from moving ground to the front.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:name)
+4-element Vector{Int64}:
+ 3
+ 2
+ 4
+ 1
+
+julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:number)
+4-element Vector{Int64}:
+ 3
+ 4
+ 2
+ 1
+
+julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:none)
+4-element Vector{Int64}:
+ 3
+ 1
+ 2
+ 4
+```
+"""
+function calcnodesorting(uniquenodevector::Vector{String};
+    sorting::Symbol = :number)
+
+    # the identity permutation, which `:none` keeps
+    uniquenodevectorsortindices = Vector{Int}(undef,length(uniquenodevector))
+    for i in eachindex(uniquenodevectorsortindices)
+        uniquenodevectorsortindices[i] = i
+    end
+
+    if sorting == :name
+        sortperm!(uniquenodevectorsortindices,uniquenodevector,initialized=true)
+
+    elseif sorting == :number
+        uniquenodevectorints = Vector{Int}(undef,length(uniquenodevector))
+        for i in eachindex(uniquenodevectorints)
+            parsednode = tryparse(Int,uniquenodevector[i])
+            if !isnothing(parsednode)
+                uniquenodevectorints[i] = parsednode
+            else
+                throw(ArgumentError(lazy"Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."))
+            end
+        end
+        sortperm!(uniquenodevectorsortindices, uniquenodevectorints, initialized=true)
+
+    elseif sorting == :none
+        nothing
+    else
+        throw(ArgumentError(lazy"Unknown sorting type."))
+    end
+
+    groundnodeindex = findgroundnodeindex(uniquenodevector)
+
+    if groundnodeindex == 0
+        throw(ArgumentError("The circuit has no connection to Ground. Connect at least one endpoint to Ground; the ground net is required by the solver."))
+    end
+
+    # move ground to the front, shifting the nodes which sorted before it
+    # back by one
+    if uniquenodevectorsortindices[1] != groundnodeindex
+        groundpos = findfirst(==(groundnodeindex), uniquenodevectorsortindices)
+        for j = groundpos:-1:2
+            uniquenodevectorsortindices[j] = uniquenodevectorsortindices[j-1]
+        end
+        uniquenodevectorsortindices[1] = groundnodeindex
+    end
+
+    return uniquenodevectorsortindices
+end
+
+"""
+    noderenumbering(order)
+
+The renumbering induced by the sorting permutation `order` returned by
+[`calcnodesorting`](@ref): `renumber[j]` is the new index of the node whose
+old index was `j`. `compile` uses it to renumber the node indices of
+scattering blocks, which have no component table entry to be re-read from.
+"""
+noderenumbering(order::Vector{Int}) = invperm(order)
+
+"""
+    sortnodes(uniquenodevector, nodeindexvector, order)
+
+Apply the precomputed sorting permutation `order` (see
+[`calcnodesorting`](@ref)), returning the sorted names, the renumbered
+component node indices as a 2 by `Ncomponents` matrix, and the
+renumbering itself (see [`noderenumbering`](@ref)).
+"""
+function sortnodes(uniquenodevector::Vector{String},
+        nodeindexvector::Vector{Int}, order::Vector{Int})
+
+    nodeindices = zeros(eltype(nodeindexvector),2,length(nodeindexvector)÷2)
+
+    nodevectorsortindices = noderenumbering(order)
+
+    for (i,j) in enumerate(nodeindexvector)
+        # a mutual inductor couples two inductors rather than two nodes, so
+        # its node indices are zero and stay zero
+        if j == 0
+            nothing
+        else
+            nodeindices[i] = nodevectorsortindices[j]
+        end
+    end
+
+    return uniquenodevector[order], nodeindices, nodevectorsortindices
+end
+
 """
     compile(elab::ElaboratedCircuit; sorting = :name)
     compile(circuit::Circuit; sorting = :name)
-    compile(netlist::AbstractVector; sorting = :name)
     compile(c::CompiledCircuit; sorting = :name)
 
 Lower a circuit to a [`CompiledCircuit`](@ref). A [`Circuit`](@ref) is
-elaborated first, and a legacy tuple netlist is converted to a `Circuit`
-first; a `CompiledCircuit` is returned unchanged.
+elaborated first; a `CompiledCircuit` is returned unchanged, and asking it
+for a node order other than the one it carries is an error.
 
 Components appear in the table in elaboration order, with a matched port's
 own termination emitted as a resistor entry directly after the port. Nodes
 are numbered by [`calcnodesorting`](@ref) with ground first; the default
 `sorting = :name` sorts the net names as strings, since hierarchical net
-names are not integers (the tuple netlist entry points of the solvers
-default to `:number` instead).
+names are not integers, and `:number` sorts integer node names by value.
 
 Only components the solvers support can be lowered: a
 [`GaussianChannel`](@ref), a [`VoltageSource`](@ref), a non-sinusoidal
@@ -583,24 +827,27 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
     nodeindexvector = Int[]
     componenttemperatures = Dict{Int,Float64}()
     junctioncprs = Dict{Int,PolynomialCPR{Float64}}()
-    mutualinductorbranchnames = String[]
     sizehint!(componentnames, N)
     sizehint!(componenttypes, N)
     sizehint!(componentvalues, N)
     sizehint!(nodeindexvector, 2*N)
 
-    uniquenodedict = Dict{String,Int}()
+    # the nets are numbered in the order their terminals are met, by the
+    # dense net ids the elaboration resolved
+    netnumber = zeros(Int, nnets(elab))
     uniquenodevector = String[]
-
-    # the names of the two inductors coupled by each mutual inductor
-    couplingnames = Dict{Int,Tuple{String,String}}()
-    for (k, i1, i2) in elab.couplings
-        couplingnames[k] = (elab.instancepaths[i1], elab.instancepaths[i2])
+    for net in elab.terminalnets
+        if netnumber[net] == 0
+            push!(uniquenodevector, elab.netnames[net])
+            netnumber[net] = length(uniquenodevector)
+        end
     end
 
     ports = CompiledPort[]
     scatteringblocks = CompiledScatteringBlock[]
-    legacyenvironments = Pair{Int,String}[]
+    namedenvironments = Pair{Int,String}[]
+    hascouplings = !isempty(elab.couplings)
+    compiledindex = zeros(Int, hascouplings ? N : 0)
 
     for i in 1:N
         def = instancedefinition(elab, i)
@@ -616,10 +863,8 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
             signalnodes = Vector{Int}(undef, n)
             refnodes = Vector{Int}(undef, n)
             for p in 1:n
-                signalnodes[p] = processnode(uniquenodedict, uniquenodevector,
-                    elab.netnames[terminals[2*p-1]])
-                refnodes[p] = processnode(uniquenodedict, uniquenodevector,
-                    elab.netnames[terminals[2*p]])
+                signalnodes[p] = netnumber[terminals[2*p-1]]
+                refnodes[p] = netnumber[terminals[2*p]]
             end
             push!(scatteringblocks, CompiledScatteringBlock(def, signalnodes,
                 refnodes, path))
@@ -628,9 +873,9 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
 
         # The common components are lowered by an `isa` chain, ordered by
         # how many of each a large circuit typically holds, and everything
-        # else falls through to `lowercomponent`. On a heterogeneous vector
-        # a branch chain avoids dynamic dispatch, although the interning of
-        # node names below dominates this loop either way.
+        # else falls through to `lowercomponent`; on a heterogeneous vector
+        # the chain of branches is one dispatch where a method per model
+        # would be one per component
         typesymbol, value = if def isa Capacitor
             (:C, def.C)
         elseif def isa NonlinearInductor
@@ -655,6 +900,7 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         push!(componenttypes, typesymbol)
         push!(componentvalues, value)
         marker = length(componentnames)
+        hascouplings && (compiledindex[i] = marker)
         # a component which states its own temperature records it; the rest
         # take the temperature the analysis is run at
         t = componenttemperature(def)
@@ -667,9 +913,6 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         end
 
         if typesymbol == :K
-            l1, l2 = couplingnames[i]
-            push!(mutualinductorbranchnames, l1)
-            push!(mutualinductorbranchnames, l2)
             push!(nodeindexvector, 0)
             push!(nodeindexvector, 0)
             continue
@@ -679,10 +922,8 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         if length(terminals) != 2
             throw(ComponentNotSupportedError(lazy"the component $(typeof(def)) at $(path) has $(length(terminals)) terminals; the solver supports two terminal components."))
         end
-        n1 = processnode(uniquenodedict, uniquenodevector,
-            elab.netnames[terminals[1]])
-        n2 = processnode(uniquenodedict, uniquenodevector,
-            elab.netnames[terminals[2]])
+        n1 = netnumber[terminals[1]]
+        n2 = netnumber[terminals[2]]
         push!(nodeindexvector, n1)
         push!(nodeindexvector, n2)
 
@@ -706,23 +947,19 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
                 push!(nodeindexvector, n1)
                 push!(nodeindexvector, n2)
                 environment = length(componentnames)
-            elseif def.termination isa LegacyTermination
-                # the termination is a resistor which already exists in the
-                # table. Its name is relative to the port's level, so a
-                # legacy circuit instanced as a subcircuit still resolves;
-                # the index is looked up once the table is complete.
+            elseif !isnothing(namedtermination(def.termination))
+                # the termination names a resistor which already exists in
+                # the table. Its name is relative to the port's level, so a
+                # circuit instanced as a subcircuit still resolves; the
+                # index is looked up once the table is complete.
                 k = findlast('/', path)
                 prefix = isnothing(k) ? "" : path[1:k]
-                push!(legacyenvironments,
-                    length(ports) + 1 => prefix*string(def.termination.component))
+                push!(namedenvironments, length(ports) + 1 =>
+                    prefix*string(namedtermination(def.termination)))
             end
             push!(ports, CompiledPort(def.number, n1, n2, environment,
                 marker))
         end
-    end
-
-    if !haskey(uniquenodedict, "0")
-        throw(ArgumentError("The circuit has no connection to Ground. Connect at least one endpoint to Ground; the ground net is required by the solver."))
     end
 
     nodenames, nodeindices, renumber = sortnodes(uniquenodevector,
@@ -739,8 +976,8 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         componentnamedict[name] = i
     end
 
-    # resolve the legacy terminations now that every name is in the table
-    for (k, name) in legacyenvironments
+    # resolve the named terminations now that every name is in the table
+    for (k, name) in namedenvironments
         i = get(componentnamedict, name, 0)
         if iszero(i) || componenttypes[i] !== :R
             throw(ArgumentError(lazy"The port $(componentnames[ports[k].component]) names $(name) as its termination, which is not a resistor in this circuit."))
@@ -767,14 +1004,17 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         end
     end
 
+    couplings = sort!([(compiledindex[k], compiledindex[i], compiledindex[j])
+        for (k, i, j) in elab.couplings]; by = first)
     group(t) = [i for (i, s) in enumerate(componenttypes) if s === t]
 
-    return CompiledCircuit(nodenames, nodeindices, length(uniquenodevector),
+    Nnodes = length(uniquenodevector)
+    return CompiledCircuit(nodenames, nodeindices, Nnodes,
         componentnames, componenttypes, tightenvalues(componentvalues),
         componentnamedict, componenttemperatures, junctioncprs,
-        mutualinductorbranchnames,
         group(:C), group(:R), group(:L), group(:Lj), group(:I),
-        group(:K), ports, scatteringblocks)
+        group(:K), ports, scatteringblocks, couplings,
+        circuittopology(componenttypes, nodeindices, Nnodes))
 end
 
 """
@@ -793,19 +1033,30 @@ duplicate rather than a device.
 """
 function warnduplicatematchedload(ports, componentnames, componenttypes,
         componentvalues, nodeindices)
-    isempty(ports) && return nothing
+    any(p -> !iszero(p.environment), ports) || return nothing
+    resistors = Dict{Tuple{Int,Int},Vector{Int}}()
+    for i in eachindex(componenttypes)
+        componenttypes[i] === :R || continue
+        componentvalues[i] isa Number || continue
+        key = minmax(nodeindices[1,i], nodeindices[2,i])
+        push!(get!(() -> Int[], resistors, key), i)
+    end
     for p in ports
         iszero(p.environment) && continue
         z = componentvalues[p.environment]
         z isa Number || continue
-        for i in eachindex(componenttypes)
-            componenttypes[i] === :R || continue
+        key = minmax(p.positivenode, p.negativenode)
+        candidates = get(resistors, key, nothing)
+        isnothing(candidates) && continue
+        for i in candidates
             i == p.environment && continue
-            n1, n2 = nodeindices[1, i], nodeindices[2, i]
-            ((n1 == p.positivenode && n2 == p.negativenode) ||
-             (n1 == p.negativenode && n2 == p.positivenode)) || continue
             v = componentvalues[i]
-            (v isa Number && v == z) || continue
+            # `Number` admits a symbolic value, whose equality is another
+            # symbolic value rather than a Bool, so the comparison is asked
+            # for a definite `true`: a warning about two loads of the same
+            # value cannot be made about values which are not yet numbers,
+            # and a circuit carrying one is compiled rather than refused
+            ((v isa Number && z isa Number) && (v == z) === true) || continue
             @warn "This port owns a matched environment of its own and a device resistor of the same value sits across the same terminals, so the port is loaded twice. If the resistor was written as the port's termination, which is how a port was terminated before a port could own one, either delete it or write the port as `termination = nothing` to keep it as the only load. If two loads are intended, this is correct and the warning can be ignored." port=p.number resistor=componentnames[i] value=z
         end
     end
@@ -815,45 +1066,78 @@ end
 compile(circuit::Circuit; sorting::Symbol = :name) =
     compile(elaborate(circuit); sorting = sorting)
 
-# a tuple netlist becomes a typed circuit first
-compile(netlist::AbstractVector; sorting::Symbol = :name) =
-    compile(Circuit(netlist); sorting = sorting)
+# a compiled circuit is returned as it is, so the solver entry points
+# accept one; it carries the node order it was compiled with, and asking
+# for another one here would be silently ignored
+function compile(c::CompiledCircuit; sorting::Symbol = :name)
+    sorting === :name || throw(ArgumentError(
+        lazy"the nodes of a compiled circuit are already ordered; pass the Circuit to compile it with sorting = $(repr(sorting))."))
+    return c
+end
 
-# a compiled circuit is returned as is, so the solver entry points accept one
-compile(c::CompiledCircuit; sorting::Symbol = :name) = c
+# what the entry points of the analyses take as a circuit: anything
+# `compile` accepts
+const CompilableCircuit = Union{Circuit,ElaboratedCircuit,CompiledCircuit}
 
 # === port and noise roles, read from the compiled circuit ===
 #
 # A compiled port states its own reference impedance and, through
 # `environment`, which table entry realizes it. The functions below read
-# those records; none of them looks for a resistor on a port's branch. The
-# only place a role is recovered from circuit geometry is the legacy
-# adapter, where the tuple format has no way to state one.
+# those records; none of them looks for a resistor on a port's branch.
 
 """
     scatteringblockindex(c::CompiledCircuit, name)
 
 The position in `c.scatteringblocks` of the block whose instance path is
-`name`, or zero when there is none. The spelling `"<path>/port1"` is also
-accepted for compatibility with names the design sensitivities once
-produced.
+`name`, or zero when there is none. A block is also named by the
+`"<path>/port1"` spelling its stamp carries, which is what the solver
+messages and the sensitivity labels print.
 """
 function scatteringblockindex(c::CompiledCircuit, name)
     s = String(name)
+    bare = endswith(s, "/port1") ? chop(s; tail = 6) : s
     for (k, b) in enumerate(c.scatteringblocks)
-        (b.path == s || b.path*"/port1" == s) && return k
+        (b.path == s || b.path == bare) && return k
     end
     return 0
 end
 
 """
-    portindicesnumbers(c::CompiledCircuit)
+    coupledinductornames(c::CompiledCircuit)
 
-The flat table indices and the numbers of the ports, both ordered by port
-number. Throws an `ArgumentError` for duplicate port numbers or two ports
-on the same branch.
+The names of the two inductors each mutual inductor couples, two per `:K`
+entry in the order the couplings are listed. Read from the `couplings` the
+compilation resolved, which is where the pairing lives; the names are for
+printing and for the output objects.
 """
-function portindicesnumbers(c::CompiledCircuit)
+coupledinductornames(c::CompiledCircuit) =
+    String[c.componentnames[i] for (_, i1, i2) in c.couplings for i in (i1, i2)]
+
+"""
+    componentindex(c::CompiledCircuit, name)
+
+The flat table index of the component named `name`, a `Symbol` or a
+`String`. A name which is not in the circuit is an `ArgumentError` naming
+it. This is the one place a name becomes an index, so every entry point
+refuses an unknown one the same way.
+"""
+function componentindex(c::CompiledCircuit, name)
+    idx = get(c.componentnamedict, String(name), 0)
+    iszero(idx) && throw(ArgumentError(
+        lazy"The component $(name) is not in this circuit."))
+    return idx
+end
+
+"""
+    orderedports(c::CompiledCircuit)
+
+The ports of a compiled circuit ordered by port number. Throws an
+`ArgumentError` for duplicate port numbers or two ports on the same
+branch. Every port list the assembly reads is built from this one, so the
+indices, the numbers, the environments and the reference impedances are
+in one order.
+"""
+function orderedports(c::CompiledCircuit)
     numbers = [p.number for p in c.ports]
     if !allunique(numbers)
         throw(ArgumentError(lazy"Duplicate ports are not allowed."))
@@ -867,34 +1151,21 @@ function portindicesnumbers(c::CompiledCircuit)
         throw(ArgumentError(lazy"Only one port allowed per branch."))
     end
     sp = sortperm(numbers)
-    return [p.component for p in c.ports][sp], numbers[sp]
+    return c.ports[sp]
 end
 
 """
-    portenvironmentindices(c::CompiledCircuit)
+    portreferenceimpedances(ports::Vector{CompiledPort}, values)
 
-The flat table index of each port's own termination, ordered by port
-number, or zero for a port which owns none.
+The reference impedance of each port of [`orderedports`](@ref), read from
+a bound flat value table.
 
-A port owns a termination when it was written with the default
-[`MatchedTermination`](@ref), or when the legacy adapter recorded the
-resistor a tuple netlist placed across it. A port written with
-`termination = nothing` owns none. The index identifies a role rather than
-a value: it says which entry realizes the port's reference impedance, which
-the noise classification needs (a port termination is an external bath,
-not an internal noise channel) and the sensitivities need (perturbing that
-entry also moves the wave normalization). The impedance itself comes from
-[`portreferenceimpedances`](@ref), which is defined for every port.
-"""
-portenvironmentindices(c::CompiledCircuit) =
-    [c.ports[i].environment
-     for i in sortperm([p.number for p in c.ports])]
-
-"""
-    portreferenceimpedances(c::CompiledCircuit, values)
-
-The reference impedance of each port, ordered by port number, read from a
-bound flat value table.
+A port's `environment` field carries the other half of its role: the flat
+index of the termination it owns, or zero for a port which owns none. That
+index says which entry realizes the impedance, which the noise
+classification needs (a port termination is an external bath, not an
+internal noise channel) and the sensitivities need (perturbing that entry
+also moves the wave normalization).
 
 This is the impedance the incoming and outgoing waves are normalized to. It
 is the port's declared `Z0`, which is the value of the port's own entry in
@@ -902,18 +1173,17 @@ the table, and it is read from there for every port, whatever the port owns:
 a symbolic or swept impedance then resolves the same way a component value
 does, and an unterminated port resolves the same way a matched one. The two
 cannot disagree with an environment either, because a matched environment
-is generated with the port's own `Z0` and a legacy port's `Z0` is the value
-of the resistor it adopted.
+is generated with the port's own `Z0`, and a port whose termination names a
+resistor has that resistor's value as its `Z0`.
 
 A bound value must be a finite positive real number. The constructor lets a
 symbol or a deferred value through so that it can be bound; this is where
 what it bound to is checked, before any matrix or wave is built from it.
 """
-function portreferenceimpedances(c::CompiledCircuit, values)
-    order = sortperm([p.number for p in c.ports])
-    z = [values[c.ports[i].component] for i in order]
-    for (k, i) in enumerate(order)
-        checkportimpedance(z[k], c.ports[i].number)
+function portreferenceimpedances(ports::Vector{CompiledPort}, values)
+    z = [values[p.component] for p in ports]
+    for (k, p) in enumerate(ports)
+        checkportimpedance(z[k], p.number)
     end
     return z
 end
@@ -930,17 +1200,17 @@ A port termination is an external bath rather than an internal channel and
 is excluded by its role; any other resistor across a port's nodes is an
 ordinary device resistor and is included.
 """
-function noiseindices(c::CompiledCircuit, values)
+function noiseindices(c::CompiledCircuit, values, candidates = noisecandidates(c))
+    return [i for i in candidates if c.componenttypes[i] === :R ||
+        (values[i] isa Complex && !iszero(values[i].im))]
+end
+
+# the components which can be noise channels whatever their values: the
+# resistors which are not a port's own environment, and the capacitors
+# and inductors, which are when their value has an imaginary part; a plan
+# holds them so that an assembly reads the values of these alone
+function noisecandidates(c::CompiledCircuit)
     owned = Set(p.environment for p in c.ports if !iszero(p.environment))
-    out = Int[]
-    for i in eachindex(c.componenttypes)
-        t = c.componenttypes[i]
-        if t === :R
-            i in owned || push!(out, i)
-        elseif (t === :C || t === :L) && values[i] isa Complex &&
-                !iszero(values[i].im)
-            push!(out, i)
-        end
-    end
-    return out
+    return [i for (i, t) in enumerate(c.componenttypes)
+        if (t === :R && !(i in owned)) || t === :C || t === :L]
 end

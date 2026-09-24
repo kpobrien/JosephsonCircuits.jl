@@ -86,12 +86,12 @@ end
 Whether the linearized system's per-frequency assembly can be reduced to the
 constant coefficients of a [`FrequencySweepPlan`](@ref).
 
-It cannot when a component value depends on the symbolic frequency variable:
-then the stored values themselves change with the frequency and there is no
-constant quadratic to precompute.
+It cannot when a component value is frequency dependent: then the stored
+values themselves change with the frequency and there is no constant
+quadratic to precompute.
 """
 function cansweepondevice(lsys::HBLinearizedSystem)
-    return isnothing(lsys.symfreqvar) && !lsys.symbolicvalues
+    return !lsys.symbolicvalues
 end
 
 # scatter the stored values of `As` into the slots of the system matrix its
@@ -148,7 +148,7 @@ block factors solve both directions.
 function planfrequencysweep(lsys::HBLinearizedSystem, backend;
     adjoint::Bool = false)
     cansweepondevice(lsys) || throw(ArgumentError(
-        "the linearized system's component values depend on the symbolic frequency variable, so its assembly is not a constant quadratic in the signal frequency."))
+        "a component value of the linearized system is frequency dependent, so its assembly is not a constant quadratic in the signal frequency."))
     A = lsys.Asparse
     n = size(A, 1)
     nz = nnz(A)

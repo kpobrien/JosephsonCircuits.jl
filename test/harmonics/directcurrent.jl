@@ -863,10 +863,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test length(op.dc.u) == JC.canonicaldim(L)
 
         psc = JC.compile(mk(R2))
-        cg = calccircuitgraph(psc)
-        nm = numericmatrices(psc, cg, Dict{Any,Any}(); Nmodes = op.Nmodes)
+        nm = numericmatrices(psc, Dict{Any,Any}(); Nmodes = op.Nmodes)
         ir2 = findfirst(==("r2"), psc.componentnames)
-        dFr = JC.calcresidualsensitivity(op, psc, cg, nm, [ir2])
+        dFr = JC.calcresidualsensitivity(op, psc, nm, [ir2])
         # the residual derivative is in the canonical coordinates, and it
         # reaches the transport rows, which the harmonic one cannot
         @test size(dFr, 1) == JC.canonicaldim(L)

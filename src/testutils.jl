@@ -85,7 +85,7 @@ true
 julia> JosephsonCircuits.compare(nothing,nothing)
 true
 
-julia> cg = JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2);JosephsonCircuits.compare(cg,cg)
+julia> cg = JosephsonCircuits.CircuitGraph(JosephsonCircuits.CircuitTopology(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]));JosephsonCircuits.compare(cg,cg)
 true
 ```
 """
@@ -153,6 +153,7 @@ compare(x::JosephsonCircuits.LinearizedHB,y::JosephsonCircuits.LinearizedHB) = c
 compare(x::JosephsonCircuits.CircuitMatrices,y::JosephsonCircuits.CircuitMatrices) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CompiledCircuit,y::JosephsonCircuits.CompiledCircuit) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitGraph,y::JosephsonCircuits.CircuitGraph) = comparestruct(x,y)
+compare(x::JosephsonCircuits.CircuitTopology,y::JosephsonCircuits.CircuitTopology) = comparestruct(x,y)
 compare(x::JosephsonCircuits.Frequencies,y::JosephsonCircuits.Frequencies) = comparestruct(x,y)
 compare(x::JosephsonCircuits.PassiveNetwork,y::JosephsonCircuits.PassiveNetwork) = comparestruct(x,y)
 compare(x::String,y::String) = isequal(x,y)

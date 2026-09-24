@@ -42,12 +42,13 @@ end
 # `modes`), which need not match the order the original solver used.
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
-    symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
+    symfreqvar = nothing,
+    nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
     returnCM::Bool = true, returnnodeflux::Bool = false,
     returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = false,
-    sensitivitynames::Vector{String} = String[],
+    sensitivitynames::AbstractVector = String[],
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
@@ -92,13 +93,14 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     Nmodes = length(freq.modes)
 
     psc = compile(circuit; sorting = sorting)
-    # nothing here reads the loops of the circuit graph
-    cg = calccircuitgraph(psc; loops = false)
-    nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
+        circuitdefs, symfreqvar, :hbsolve))
+    nm=numericmatrices(psc, circuitdefs, Nmodes = Nmodes)
 
-    nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
+    nonlinear = hbnlsolve(w, sources, freq, indices, psc, nm;
         iterations = iterations, atol = ftol,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
         method = NewtonKrylov(preconditioner = isnothing(factorization) ?
             Automatic() : BlockDiagonal(factorization = factorization)))
@@ -119,8 +121,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         )
     end
 
-    linearized = hblinsolve(ws, psc, cg, circuitdefs, signalfreq;
-        nonlinear = nonlinear, symfreqvar = symfreqvar, nbatches = nbatches,
+    linearized = hblinsolve(ws, psc, circuitdefs, signalfreq;
+        nonlinear = nonlinear, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,

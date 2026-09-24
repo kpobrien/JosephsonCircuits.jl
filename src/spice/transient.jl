@@ -292,13 +292,13 @@ function wrspiceread(out::SpiceRaw, p::TransientProblem, junctions, t0, tf,
     phases = zeros(length(Ljb.nzind), length(times))
     for jn in junctions
         n1, n2 = p.circuit.nodeindices[1, jn.index], p.circuit.nodeindices[2, jn.index]
-        b = p.graph.edge2indexdict[(n1, n2)]
+        b = p.circuit.topology.edge2indexdict[(n1, n2)]
         row = searchsortedfirst(Ljb.nzind, b)
         key = lowercase("v($(jn.phasenode))")
         haskey(rows, key) || throw(ArgumentError(
             lazy"the WRSPICE output has no phase trace $(key) for the junction $(p.circuit.componentnames[jn.index])."))
         r = rows[key]
-        s = wrspicephasesign(p.graph.Rbn, b, n1, n2)
+        s = wrspicephasesign(p.circuit.topology.Rbn, b, n1, n2)
         for j in eachindex(times)
             phases[row, j] = s*V[r, j]
         end

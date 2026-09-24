@@ -22,7 +22,7 @@ const fitranktolerance = 1e-12
 """
     RationalScattering(block::ScatteringParameters, npoles;
         frequencies = nothing, iterations = 30, passivity = true, atol = 1e-8,
-        margin = 1e-6, rounds = 20, pruneslack = 0.05)
+        margin = 1e-6, rounds = 20, pruneslack = 0.05, delays = nothing)
 
 A [`RationalScattering`](@ref) block fitted to the scattering data of
 `block` at `npoles` common poles by vector fitting: starting poles
@@ -36,9 +36,27 @@ returned; too few poles settle on a poor fit that typically cannot be
 made passive, which is an error. The result is a real state space
 realization, stable by construction, with as many states per pole as its
 residue has rank. The fitted block keeps the reference impedances,
-grounding and noise model of `block`. A delay is not a rational
-function: model a cable as a [`TransmissionLine`](@ref) of its delay in
-cascade with a fit of the data with that delay removed.
+grounding and noise model of `block`.
+
+A delay is not a rational function. A stable proper rational function's
+impulse response starts at zero time, so a fit of a delay answers
+throughout the delay rather than after it, and no pole budget removes
+that: the fit follows the phase of `exp(-i w tau)` over the band it is
+given and no further, and the turns above the band are what arrive
+early. `delays`, one per port in seconds, takes a delay out of the data
+before the fit, as a cable's is taken out before its fit: the entry
+from port `q` to port `p` is fitted with `exp(i w (tau_p + tau_q))`
+taken out, so the block returned is the device with a lossless line of
+delay `tau_p` cut off each port, and is put back with a
+[`TransmissionLine`](@ref) of that delay in cascade at the port, which
+carries it exactly. A stated covariance is a correlation of the waves
+the block emits and is rotated by the difference of the delays where
+the scatter carries their sum, so delays which are all equal, and
+uncorrelated ports, leave it alone; one they do turn is turned at the
+frequency it is read at, whatever kind of provider states it. The
+delays leave a block passive, a diagonal phase on each side of `S`
+holding its singular values, and leave the zero frequency statement of
+a `dcmodel` alone.
 
 With `passivity = true` the fit is perturbed wherever its largest
 singular value crosses one, by the smallest change of its residues and
@@ -88,7 +106,7 @@ fit.
 """
 function RationalScattering(block::ScatteringParameters, npoles::Integer; frequencies = nothing,
         iterations::Integer = 30, passivity::Bool = true, atol::Real = 1e-8,
-        margin::Real = 1e-6, rounds::Integer = 20, pruneslack::Real = 0.05)
+        margin::Real = 1e-6, rounds::Integer = 20, pruneslack::Real = 0.05, delays = nothing)
     npoles >= 1 || throw(ArgumentError("fit at least one pole."))
     (isfinite(margin) && 0 <= margin < 1) || throw(ArgumentError(
         "margin must be finite and in [0, 1): it is how far below one a singular value is put."))
@@ -96,10 +114,12 @@ function RationalScattering(block::ScatteringParameters, npoles::Integer; freque
     iterations >= 1 || throw(ArgumentError("give at least one relocation iteration."))
     rounds >= 1 || throw(ArgumentError("give at least one round of passivity enforcement."))
     (isfinite(pruneslack) && pruneslack >= 0) || throw(ArgumentError("pruneslack must be finite and nonnegative."))
-    fs, S = samplescattering(block, frequencies)
+    taus = fitdelays(delays, block.nports)
+    fs, S = samplescattering(block, frequencies; delays = taus)
     return fitsampled(block, S, fs, Int(npoles); iterations = Int(iterations),
         passivity = passivity, atol = atol, margin = Float64(margin),
-        rounds = Int(rounds), pruneslack = Float64(pruneslack))
+        rounds = Int(rounds), pruneslack = Float64(pruneslack),
+        noise = undelaynoise(block.noise, taus))
 end
 
 # The sample frequencies a fit accepts, checked once for both fitters: a
@@ -121,7 +141,7 @@ end
 # The frequencies in Hz the fit is to match the block at, and the block
 # sampled there, split out because the order search fits the same
 # samples many times and a computed provider is not cheap to evaluate.
-function samplescattering(block::ScatteringParameters, frequencies)
+function samplescattering(block::ScatteringParameters, frequencies; delays = nothing)
     # A tabulated block is evaluated at the angular frequencies it
     # stores: dividing by 2 pi and multiplying back is off by an ulp,
     # which puts the first sample outside the table's own range. The
@@ -138,12 +158,53 @@ function samplescattering(block::ScatteringParameters, frequencies)
     checkfrequencies(fs)
     S = zeros(ComplexF64, block.nports, block.nports, length(ws))
     evaluatescattering!(S, block, ws)
+    undelayscattering!(S, ws, delays)
     return fs, S
+end
+
+# One finite nonnegative delay per port, or nothing where none is asked
+# for and where every one of them is zero, which is the same block.
+function fitdelays(delays, nports::Int)
+    isnothing(delays) && return nothing
+    taus = Float64.(collect(delays))
+    length(taus) == nports && all(t -> isfinite(t) && t >= 0, taus) || throw(ArgumentError(
+        lazy"give one finite nonnegative delay per port ($(nports))."))
+    return all(iszero, taus) ? nothing : taus
+end
+
+# The delays taken out of the samples: a wave from port `q` to port `p`
+# travels the line of both, so the block left to fit is the device with
+# a lossless line of `tau_p` cut off each port.
+function undelayscattering!(S, ws, taus)
+    isnothing(taus) && return S
+    @inbounds for i in eachindex(ws), q in axes(S, 2), p in axes(S, 1)
+        S[p, q, i] *= cis(ws[i]*(taus[p] + taus[q]))
+    end
+    return S
+end
+
+# A stated covariance at the same reference planes. It is a correlation
+# of the waves the block emits, each delayed by the line of its own
+# port, so it carries the difference of the two delays where the scatter
+# carries their sum. The phase is put on the covariance the provider
+# returns at each frequency, so it composes with the interpolation and
+# the extrapolation the covariance declares and holds between the
+# samples as well as on them. Nothing to rotate where that difference is
+# zero for every pair the covariance is nonzero on: delays which are all
+# equal, and a covariance of uncorrelated ports.
+function undelaynoise(noise, taus)
+    (isnothing(taus) || !(noise isa NoiseCovariance)) && return noise
+    all(==(first(taus)), taus) && return noise
+    v = noise.provider
+    v isa ConstantMatrixProvider && isdiag(v.A) && return noise
+    return NoiseCovariance(RotatedMatrixProvider(v, taus), noise.interpolation,
+        noise.extrapolation, noise.atol, noise.completed, noise.padding)
 end
 
 # One fit of already sampled data at a fixed order.
 function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; iterations::Int,
-        passivity::Bool, atol::Real, margin::Float64, rounds::Int, pruneslack::Float64)
+        passivity::Bool, atol::Real, margin::Float64, rounds::Int, pruneslack::Float64,
+        noise = block.noise)
     # a block which states what it does at zero frequency has the fit meet
     # it exactly; one which states nothing leaves it to the extrapolation
     dc = block.dcmodel isa ScatteringLimit ? nothing :
@@ -151,7 +212,7 @@ function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; iterations:
     # the constant term is repaired only for a caller who asked for the
     # fit to be made passive, and to that caller's tolerances; a block
     # which states its noise may be active and is fitted as it is
-    enforce = passivity && !(block.noise isa NoiseCovariance)
+    enforce = passivity && !(noise isa NoiseCovariance)
     poles, residues, D = vectorfit(S, 2pi .* fs, npoles, iterations;
         pruneslack = pruneslack, dc = dc,
         constanttol = enforce ? atol : nothing, constantmargin = margin)
@@ -161,7 +222,7 @@ function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; iterations:
             margin = margin, rounds = rounds, dc = dc)
     end
     return RationalScattering(A, B, C, D; zref = block.zref,
-        grounded = block.grounded, noise = block.noise, atol = atol)
+        grounded = block.grounded, noise = noise, atol = atol)
 end
 
 # The number of poles the samples can determine, from the numerical
@@ -217,9 +278,11 @@ function relativefiterror(fit, S, fs)
     worst, scale = 0.0, 0.0
     # one factorization for the whole sweep, not one solve per sample
     rf = resolventfactors(P.A, P.B)
+    work = ResolventWorkspace(rf)
+    F = similar(P.D, ComplexF64)
     CZ = P.C*rf.Z
     for (k, f) in enumerate(fs)
-        F = transferat(rf, CZ, P.D, 2pi*f, nz)
+        transferat!(F, rf, CZ, P.D, 2pi*f, nz, work)
         worst = max(worst, opnorm(F .- view(S, :, :, k)))
         scale = max(scale, opnorm(view(S, :, :, k)))
     end
@@ -230,7 +293,7 @@ end
     RationalScattering(block::ScatteringParameters; tol, minpoles = 4,
         maxpoles = nothing, noisefloor = 1e-12, frequencies = nothing,
         iterations = 30, passivity = true, atol = 1e-8, margin = 1e-6,
-        rounds = 20, pruneslack = 0.05)
+        rounds = 20, pruneslack = 0.05, delays = nothing)
 
 A [`RationalScattering`](@ref) block fitted to the scattering data of
 `block` at the fewest poles that meet `tol`, the largest allowed error
@@ -268,6 +331,10 @@ an error, since a block quietly less accurate than asked for is worse
 than none: loosen `tol`, raise `maxpoles`, sample the block more
 finely, or fit a narrower band.
 
+A `delays` given here is taken out before the search, so the order it
+reports is the order of what is left after the delay, which for a cable
+is a small fraction of what the delay itself would cost.
+
 See the `npoles` method for the meaning of the remaining arguments, and
 for the warning about fitting a block with little loss: a tolerance
 which looks tight against `S` may still be far too loose against the
@@ -277,7 +344,7 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
         minpoles::Integer = 4, maxpoles = nothing, noisefloor::Real = 1e-12,
         frequencies = nothing, iterations::Integer = 30, passivity::Bool = true,
         atol::Real = 1e-8, margin::Real = 1e-6, rounds::Integer = 20,
-        pruneslack::Real = 0.05)
+        pruneslack::Real = 0.05, delays = nothing)
     (isfinite(tol) && tol > 0) || throw(ArgumentError("tol must be finite and positive."))
     minpoles >= 1 || throw(ArgumentError("give minpoles >= 1."))
     (isfinite(noisefloor) && noisefloor > 0) || throw(ArgumentError("noisefloor must be finite and positive."))
@@ -287,7 +354,9 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
     iterations >= 1 || throw(ArgumentError("give at least one relocation iteration."))
     rounds >= 1 || throw(ArgumentError("give at least one round of passivity enforcement."))
     (isfinite(pruneslack) && pruneslack >= 0) || throw(ArgumentError("pruneslack must be finite and nonnegative."))
-    fs, S = samplescattering(block, frequencies)
+    taus = fitdelays(delays, block.nports)
+    fs, S = samplescattering(block, frequencies; delays = taus)
+    noise = undelaynoise(block.noise, taus)
     # fitting N poles needs N + 1 samples, so a scan from minpoles needs
     # at least that many; refusing here names the samples rather than
     # reporting a scan of no orders
@@ -309,7 +378,7 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
         fit, err = try
             candidate = fitsampled(block, S, fs, np; iterations = Int(iterations),
                 passivity = passivity, atol = atol, margin = Float64(margin),
-                rounds = Int(rounds), pruneslack = Float64(pruneslack))
+                rounds = Int(rounds), pruneslack = Float64(pruneslack), noise = noise)
             (candidate, relativefiterror(candidate, S, fs))
         catch e
             e isa ArgumentError || rethrow()
@@ -969,27 +1038,15 @@ end
 # than the `O(nz^3)` of a fresh dense solve at each frequency. The
 # violation sweep evaluates the fit over a grid in every band and
 # dominates the enforcement, so this is where its time goes.
-struct ResolventFactors{TZ,TT,TB}
-    Z::TZ
-    T::TT
-    ZtB::TB
-end
-function resolventfactors(A, B)
-    F = schur(complex(Matrix(A)))
-    return ResolventFactors(F.Z, F.T, F.Z'*B)
-end
-# `(i w I - A)^-1 B` through the held Schur factors
-resolventat(rf::ResolventFactors, w) =
-    rf.Z*(UpperTriangular(im*w*I - rf.T) \ rf.ZtB)
-
 # the fit at one frequency, `D + C (i w I - A)^-1 B`, through the held
 # factors; a realization whose poles have run away cannot be evaluated,
 # and the failure is named here rather than surfacing from a
 # factorization downstream
-function transferat(rf::ResolventFactors, CZ, D, w, nstates)
+function transferat!(F, rf::ResolventFactors, CZ, D, w, nstates,
+        work::ResolventWorkspace)
     isfinite(w) || throw(ArgumentError(
         lazy"the fit with $(nstates) states is not passive at infinite frequency: its feedthrough alone has a singular value above one, so no perturbation over the band can make it passive. Fit with fewer poles, or over a narrower band."))
-    F = D .+ CZ*(UpperTriangular(im*w*I - rf.T) \ rf.ZtB)
+    rationaltransfer!(F, rf, CZ, D, w, work)
     all(isfinite, F) || throw(ArgumentError(
         lazy"the fit with $(nstates) states cannot be evaluated at $(w) rad/s: its realization is not finite there. Fit with fewer poles, or over a narrower band."))
     return F
@@ -1238,8 +1295,11 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
     blocks = portblocks(n, nz)
     blockfactors = nothing
     rf = resolventfactors(A, B)
+    work = ResolventWorkspace(rf)
+    response = similar(D, ComplexF64)
+    resolvent = similar(B, ComplexF64)
     for roundindex in 1:rounds
-        bands = sampledviolations(rf, C, D, ws; atol = atol)
+        bands = sampledviolations(rf, C, D, ws; atol = atol, work = work)
         # the rounds refine; the guarantee below is what every path ends at
         isempty(bands) && break
         # the worst point of each band; constraining every grid point
@@ -1249,7 +1309,7 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
         points = Float64[]
         for (w1, w2) in bands
             grid = range(w1, w2; length = bandpoints)
-            k = argmax([opnorm(transferat(rf, CZ, D, w, nz)) for w in grid])
+            k = argmax([opnorm(transferat!(response, rf, CZ, D, w, nz, work)) for w in grid])
             push!(points, grid[k])
         end
         # the perturbation of C and D, `delta S(i w) = delta C (i w I - A)^(-1) B + delta D`,
@@ -1257,7 +1317,7 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
         # the points for the constraints
         nunk = n*nz + n*n
         function perturbation(w)
-            X = resolventat(rf, w)
+            X = resolventat!(resolvent, rf, w, work)
             # delta S[i, j] = sum_k delta C[i, k] X[k, j] + delta D[i, j]
             M = zeros(ComplexF64, n*n, nunk)
             for i in 1:n, j in 1:n
@@ -1284,7 +1344,7 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
             Hb = zeros(nb, nb)
             G = zeros(ComplexF64, n, nb)
             for w in ws
-                X = resolventat(rf, w)
+                X = resolventat!(resolvent, rf, w, work)
                 fill!(G, 0)
                 for j in 1:n
                     for k in 1:nz
@@ -1310,7 +1370,7 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
         rows = Vector{Float64}[]
         rhs = Float64[]
         for w in points
-            Sw = transferat(rf, CZ, D, w, nz)
+            Sw = transferat!(response, rf, CZ, D, w, nz, work)
             F = svd(Sw)
             M = perturbation(w)
             for j in 1:n
@@ -1488,7 +1548,7 @@ end
 # exact norm at the end still catches (Gustavsen, IEEE Transactions on
 # Electromagnetic Compatibility 67(3), 2025, section X-B).
 function sampledviolations(rf::ResolventFactors, C, D, ws; atol = 1e-8, density::Int = 12,
-        pad::Real = 10.0)
+        pad::Real = 10.0, work::ResolventWorkspace = ResolventWorkspace(rf))
     level = 1 + atol/2
     n, nz = size(D, 1), size(rf.T, 1)
     # the logarithmic grid starts from the lowest positive sample, a band
@@ -1499,8 +1559,9 @@ function sampledviolations(rf::ResolventFactors, C, D, ws; atol = 1e-8, density:
     grid = vcat(0.0, exp.(range(log(lo/pad), log(hi*pad); length = density*nz)))
     CZ = C*rf.Z
     above = falses(length(grid))
+    response = similar(D, ComplexF64)
     for (k, w) in enumerate(grid)
-        above[k] = opnorm(transferat(rf, CZ, D, w, nz)) > level
+        above[k] = opnorm(transferat!(response, rf, CZ, D, w, nz, work)) > level
     end
     bands = Tuple{Float64,Float64}[]
     k = 1
@@ -1700,24 +1761,16 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
     fiterr <= tol*datascale || throw(ArgumentError(lazy"the fit misses the data by $(fiterr/datascale) of the largest response over the samples, against the tol of $(tol): fit with more poles or over a narrower band, take a delay out, or raise tol to accept a fit that far from the data."))
     # the pump phase and the delays are folded into the fitted functions,
     # so a stated covariance is rotated the same way, `<n(nu + k wp) n(nu)'>`
-    # between the ports `p` and `q` by the delays of both emitted waves;
-    # a lossless block states no noise, a covariance of zero
+    # between the ports `p` and `q` by the delays of both emitted waves,
+    # each at the frequency its own wave is emitted at; a lossless block
+    # states no noise, a covariance of zero
     noise = block.noise
     if noise isa NoiseCovariance
         vps = AbstractMatrixProvider[]
         for (j, k) in enumerate(block.harmonics)
             v = noise.provider[j]
             if block.phase != 0 || any(!iszero, taus)
-                rotate(t::TabulatedMatrixProvider) = begin
-                    values = cis(k*block.phase) .* t.values
-                    for (i, nu) in enumerate(t.frequencies), q in 1:n, pp in 1:n
-                        values[pp, q, i] *= cis((nu + k*block.wp)*taus[pp] - nu*taus[q])
-                    end
-                    TabulatedMatrixProvider(t.frequencies, values; interpolation = t.interpolation, extrapolation = t.extrapolation)
-                end
-                v = v isa TabulatedMatrixProvider ? rotate(v) :
-                    v isa PiecewiseTabulatedProvider ? PiecewiseTabulatedProvider([rotate(t) for t in v.tables]) :
-                    throw(ArgumentError("the stated covariance of a pumped block with a pump phase or with delays taken out must be tabulated to be fitted."))
+                v = RotatedMatrixProvider(v, taus; offset = k*block.wp, phase = cis(k*block.phase))
             end
             push!(vps, v)
         end

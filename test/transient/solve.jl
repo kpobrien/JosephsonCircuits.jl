@@ -18,12 +18,20 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
     return WeakRef(buffer)
 end
 
+# the same component at a value scaled by `r`, for finite differences
+rescale(c::Capacitor, r) = Capacitor(r*c.C)
+rescale(c::Inductor, r) = Inductor(r*c.L)
+rescale(c::Resistor, r) = Resistor(r*c.R)
+rescale(c::NonlinearInductor, r) = JosephsonJunction(r*c.L0)
+scaledentries(netlist, name, r) =
+    [c[1] == name ? (c[1], c[2], c[3], rescale(c[4], r)) : c for c in netlist]
+
 @testset "the circuit in time" begin
     JC = JosephsonCircuits
-    rc = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12)]
+    rc = [("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12))]
 
     @testset "the RC response, the rules, the ports and the sources" begin
-        prob = transientproblem(rc; sources = [TransientSource(1, 1e-6)])
+        prob = transientproblem(Circuit(rc); sources = [TransientSource(1, 1e-6)])
         exact = 50e-6*(1 - exp(-4))
         errors = map((5e-12, 2.5e-12, 1.25e-12)) do dt
             abs(transientsolve(prob, (0.0, 200e-12); dt, method = Trapezoidal()).voltage[1, end] - exact)
@@ -47,11 +55,11 @@ end
         # a named current source flows out of its first terminal, a port
         # source into the port's positive terminal; a named drive replaces
         # the constant value, an unnamed constant source stays
-        net = vcat(rc, [("I1", "1", "0", 2e-6)])
-        named = transientsolve(transientproblem(net; sources = [TransientSource(:I1, 1e-6)]),
+        net = vcat(rc, [("I1", "1", "0", CurrentSource(2e-6))])
+        named = transientsolve(transientproblem(Circuit(net); sources = [TransientSource(:I1, 1e-6)]),
             (0.0, 200e-12); dt = 5e-12)
         @test named.voltage ≈ -coarse.voltage
-        static = transientsolve(transientproblem(net), (0.0, 200e-12); dt = 5e-12)
+        static = transientsolve(transientproblem(Circuit(net)), (0.0, 200e-12); dt = 5e-12)
         @test static.voltage ≈ -2coarse.voltage
         typed = Circuit([("p", "1", "0", Port(1)), ("c", "1", "0", Capacitor(1e-12))])
         ts = transientsolve(transientproblem(typed; sources = [TransientSource(1, 1e-6)]),
@@ -75,8 +83,8 @@ end
         # mutually coupled inductors go through the augmentation of the
         # modified nodal analysis: two auxiliary currents, and the normal
         # modes of the coupled tanks
-        coupled = [("C1", "1", "0", C), ("C2", "2", "0", C),
-            ("L1", "1", "0", L), ("L2", "2", "0", L), ("K1", "L1", "L2", 0.3)]
+        coupled = Circuit([("C1", "1", "0", Capacitor(C)), ("C2", "2", "0", Capacitor(C)),
+            ("L1", "1", "0", Inductor(L)), ("L2", "2", "0", Inductor(L)), ("K1", "L1", "L2", MutualInductor(0.3))])
         p2 = transientproblem(coupled)
         @test p2.Naux == 2 && length(p2) == 4 && isempty(p2.gaugeindices)
         s2 = transientsolve(p2, (0.0, 2period); dt = period/800,
@@ -203,7 +211,7 @@ end
 
     @testset "the initial state, the gauge and the unsupported cases" begin
         # a resistor driven from the first sample needs its voltage supplied
-        resistor = transientproblem(rc[1:2]; sources = [TransientSource(1, 1e-6)])
+        resistor = transientproblem(Circuit(rc[1:1]); sources = [TransientSource(1, 1e-6)])
         @test_throws ArgumentError transientsolve(resistor, (0.0, 1e-9); dt = 1e-12)
         rs = transientsolve(resistor, (0.0, 1e-9); dt = 1e-12,
             initialstate = transientstate(resistor; voltage = [50e-6]))
@@ -212,8 +220,8 @@ end
         # nodes joined by one capacitor constrain the sum of their voltages
         # to the drive, so the zero state is rejected, and the consistent
         # one relaxes without ringing to the resistive division
-        pair = transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("P2", "2", "0", 2),
-            ("R2", "2", "0", 50.0), ("C1", "1", "2", 1e-12)]; sources = [TransientSource(1, 1e-6)])
+        pair = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("P2", "2", "0", Port(2; Z0 = 50.0)),
+            ("C1", "1", "2", Capacitor(1e-12))]); sources = [TransientSource(1, 1e-6)])
         @test pair.inertialess == [[1, 2]] && isempty(pair.algebraic)
         @test_throws ArgumentError transientsolve(pair, (0.0, 1e-9); dt = 1e-12)
         ps = transientsolve(pair, (0.0, 1e-9); dt = 1e-12,
@@ -224,15 +232,15 @@ end
         @test maximum(abs.(ps.voltage[1, :] .+ ps.voltage[2, :] .- 50e-6)) < 1e-12
         # a capacitive island reached through an inductor, and a node no
         # capacitor touches between resistors: the same check
-        island2 = transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "2", 1e-12),
-            ("L2", "2", "0", 1e-9)]; sources = [TransientSource(1, 1e-6)])
+        island2 = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(1e-12)),
+            ("L2", "2", "0", Inductor(1e-9))]); sources = [TransientSource(1, 1e-6)])
         @test island2.inertialess == [[1, 2]] && isempty(island2.algebraic)
         @test_throws ArgumentError transientsolve(island2, (0.0, 1e-9); dt = 1e-12)
         i2 = transientsolve(island2, (0.0, 1e-9); dt = 1e-12,
             initialstate = transientstate(island2; voltage = [50e-6, 50e-6]))
         @test i2.voltage[1, 1] ≈ 50e-6
-        divider = transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12),
-            ("R2", "1", "2", 50.0), ("R3", "2", "0", 50.0)]; sources = [TransientSource(1, 1e-6)])
+        divider = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12)),
+            ("R2", "1", "2", Resistor(50.0)), ("R3", "2", "0", Resistor(50.0))]); sources = [TransientSource(1, 1e-6)])
         @test divider.inertialess == [[2]] && isempty(divider.algebraic)
         @test_throws ArgumentError transientsolve(divider, (0.0, 1e-9); dt = 1e-12,
             initialstate = transientstate(divider; voltage = [50e-6, 0.0]))
@@ -244,8 +252,8 @@ end
         # rate is read by the differentiated equation: equal voltages on
         # the two nodes would ring between the inductors, opposite ones
         # are the loop's own mode
-        loop = transientproblem([("C1", "1", "2", 1e-12), ("R1", "1", "2", 50.0),
-            ("L1", "1", "0", 1e-9), ("L2", "2", "0", 1e-9)])
+        loop = transientproblem(Circuit([("C1", "1", "2", Capacitor(1e-12)), ("R1", "1", "2", Resistor(50.0)),
+            ("L1", "1", "0", Inductor(1e-9)), ("L2", "2", "0", Inductor(1e-9))]))
         @test loop.inertialess == [[1, 2]] && loop.algebraic == [[1, 2]]
         @test_throws ArgumentError transientsolve(loop, (0.0, 10e-12); dt = 1e-12,
             initialstate = transientstate(loop; voltage = [1e-6, 1e-6]))
@@ -255,29 +263,29 @@ end
         @test abs(ls.rate[1, 2] - ls.rate[1, 1]) < 0.05*abs(ls.rate[1, 1])
         # two islands joined by a resistor are one algebraic direction, and
         # none once a resistor reaches ground
-        twin = [("C1", "1", "2", 1e-12), ("C2", "3", "4", 1e-12), ("R1", "2", "3", 50.0),
-            ("L1", "1", "0", 1e-9), ("L2", "2", "0", 1e-9), ("L3", "3", "0", 1e-9), ("L4", "4", "0", 1e-9)]
-        twins = transientproblem(twin)
+        twin = [("C1", "1", "2", Capacitor(1e-12)), ("C2", "3", "4", Capacitor(1e-12)), ("R1", "2", "3", Resistor(50.0)),
+            ("L1", "1", "0", Inductor(1e-9)), ("L2", "2", "0", Inductor(1e-9)), ("L3", "3", "0", Inductor(1e-9)), ("L4", "4", "0", Inductor(1e-9))]
+        twins = transientproblem(Circuit(twin))
         @test twins.inertialess == [[1, 2], [3, 4]] && twins.algebraic == [[1, 2, 3, 4]]
         @test_throws ArgumentError transientsolve(twins, (0.0, 10e-12); dt = 1e-12,
             initialstate = transientstate(twins; voltage = [1e-6, 1e-6, 1e-6, 1e-6]))
-        grounded = transientproblem(vcat(twin, [("R2", "4", "0", 50.0)]))
+        grounded = transientproblem(Circuit(vcat(twin, [("R2", "4", "0", Resistor(50.0))])))
         @test grounded.inertialess == [[1, 2], [3, 4]] && isempty(grounded.algebraic)
         @test transientsolve(grounded, (0.0, 10e-12); dt = 1e-12,
             initialstate = transientstate(grounded; voltage = [1e-6, 1e-6, 1e-6, 0.0])) isa JC.TransientSolution
         # a node no element connects to ground has a free flux offset, and
         # only such a node gets a gauge row
-        island = transientproblem([("C1", "1", "0", 1e-12), ("L2", "2", "3", 1e-9), ("C3", "2", "3", 1e-12)])
+        island = transientproblem(Circuit([("C1", "1", "0", Capacitor(1e-12)), ("L2", "2", "3", Inductor(1e-9)), ("C3", "2", "3", Capacitor(1e-12))]))
         @test island.gaugeindices == [2]
-        @test isempty(transientproblem(rc).gaugeindices)
-        @test_throws ArgumentError transientproblem([("C1", "1", "0", 1e-12 + 1e-15im)])
-        @test_throws ArgumentError transientproblem([("R1", "1", "0", FrequencyDependent(w -> 50.0))])
-        @test_throws ArgumentError transientproblem([("L1", "1", "0", 0.0)])
-        @test_throws ArgumentError transientproblem(rc; sources = [TransientSource(9, 0.0)])
-        @test_throws ArgumentError transientproblem(rc; sources = [TransientSource("R1", 0.0)])
-        @test_throws ArgumentError transientsolve(transientproblem(rc), (0.0, 1e-9); dt = 0.0)
-        @test_throws ArgumentError transientsolve(transientproblem(rc), (0.0, 1e-9); dt = 1e-12, record = :phases, saveevery = 2)
-        @test_throws ArgumentError transientsolve(transientproblem(rc), (0.0, 1e-9); dt = 1e-12, maxsteps = 5)
+        @test isempty(transientproblem(Circuit(rc)).gaugeindices)
+        @test_throws ArgumentError transientproblem(Circuit([("C1", "1", "0", Capacitor(1e-12 + 1e-15im))]))
+        @test_throws ArgumentError transientproblem(Circuit([("R1", "1", "0", Resistor(FrequencyDependent(w -> 50.0)))]))
+        @test_throws ArgumentError transientproblem(Circuit([("L1", "1", "0", Inductor(0.0))]))
+        @test_throws ArgumentError transientproblem(Circuit(rc); sources = [TransientSource(9, 0.0)])
+        @test_throws ArgumentError transientproblem(Circuit(rc); sources = [TransientSource("P1/termination", 0.0)])
+        @test_throws ArgumentError transientsolve(transientproblem(Circuit(rc)), (0.0, 1e-9); dt = 0.0)
+        @test_throws ArgumentError transientsolve(transientproblem(Circuit(rc)), (0.0, 1e-9); dt = 1e-12, record = :phases, saveevery = 2)
+        @test_throws ArgumentError transientsolve(transientproblem(Circuit(rc)), (0.0, 1e-9); dt = 1e-12, maxsteps = 5)
     end
 
     @testset "a rejected correction is retried from its base point" begin
@@ -301,8 +309,8 @@ end
         @test corrections <= 6
         # the stepping rule reaches the same discrete solution whatever
         # the path of its factorizations
-        circuit = [("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-15),
-            ("Lj1", "1", "0", 1e-10), ("L1", "1", "0", 1e-9)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-15)),
+            ("Lj1", "1", "0", JosephsonJunction(1e-10)), ("L1", "1", "0", Inductor(1e-9))])
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> 2e-6*sinpi(2*5e9*t))])
         sol = transientsolve(prob, (0.0, 1e-9); dt = 2e-12)
         tight = transientsolve(prob, (0.0, 1e-9); dt = 2e-12, rtol = 1e-12, atol = 1e-13, iterations = 40)
@@ -312,7 +320,7 @@ end
 
     @testset "the step Jacobian, the tangent and the adjoint" begin
         rng = Random.default_rng()
-        circuit = vcat(rc, [("Lj1", "1", "0", 1e-9)])
+        circuit = Circuit(vcat(rc, [("Lj1", "1", "0", JosephsonJunction(1e-9))]))
         drive(t) = 0.12e-6*sinpi(2*3e9*t) + 0.01e-6*sinpi(2*1.3e9*t)
         perturb(t) = 0.02e-6*sinpi(2*1.7e9*t)
         prob = transientproblem(circuit; sources = [TransientSource(1, drive)])
@@ -358,14 +366,15 @@ end
         # one component of each kind the linearized solve differentiates:
         # a series capacitor, a junction, a capacitor and a resistor to
         # ground, and an inductor to a second port
-        circuit = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "2", 100e-15),
-            ("Lj1", "2", "0", 1e-9), ("C2", "2", "0", 500e-15), ("R2", "2", "0", 2000.0),
-            ("L1", "2", "3", 2e-9), ("C3", "3", "0", 300e-15), ("R3", "3", "0", 50.0), ("P2", "3", "0", 2)]
+        netlist = [("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)),
+            ("Lj1", "2", "0", JosephsonJunction(1e-9)), ("C2", "2", "0", Capacitor(500e-15)), ("R2", "2", "0", Resistor(2000.0)),
+            ("L1", "2", "3", Inductor(2e-9)), ("C3", "3", "0", Capacitor(300e-15)), ("P2", "3", "0", Port(2; Z0 = 50.0))]
+        circuit = Circuit(netlist)
         names = ["C1", "Lj1", "C2", "R2", "L1"]
         drive(t) = 0.15e-6*sinpi(2*3e9*t) + 0.01e-6*sinpi(2*1.3e9*t)
         sources = [TransientSource(1, drive)]
         prob = transientproblem(circuit; sources)
-        scaled(name, r) = transientproblem([c[1] == name ? (c[1], c[2], c[3], r*c[4]) : c for c in circuit]; sources)
+        scaled(name, r) = transientproblem(Circuit(scaledentries(netlist, name, r)); sources)
         tspan, dt = (0.0, 1e-9), 2e-12
         tol = (; rtol = 1e-12, atol = 1e-13)
         weights = randn(rng, 2, 501)
@@ -408,16 +417,12 @@ end
         @test_throws ArgumentError transientsensitivity(full, ["P1"])
 
         # a port's own termination moves the port's reference impedance
-        # and conductance with it, which the port waves read directly: the
-        # legacy resistor a port inherits its impedance from, and the
-        # termination a typed port owns
-        for (name, portcircuit) in (("R1", [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12)]),
-                ("p1/termination", Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(1e-12))])))
+        # and conductance with it, which the port waves read directly
+        let name = "p1/termination",
+                portcircuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(1e-12))])
             psources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t))]
             pprob = transientproblem(portcircuit; sources = psources)
-            scaledport(r) = portcircuit isa Circuit ?
-                transientproblem(Circuit([(:p1, 1, 0, Port(1; Z0 = r*50.0)), (:c1, 1, 0, Capacitor(1e-12))]); sources = psources) :
-                transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", r*50.0), ("C1", "1", "0", 1e-12)]; sources = psources)
+            scaledport(r) = transientproblem(Circuit([(:p1, 1, 0, Port(1; Z0 = r*50.0)), (:c1, 1, 0, Capacitor(1e-12))]); sources = psources)
             for method in (Trapezoidal(), BackwardEuler(), GaussLegendre())
                 psol = transientsolve(pprob, (0.0, 1e-9); dt = 2e-12, method, record = :states, tol...)
                 ps = transientsensitivity(psol, [name])
@@ -505,7 +510,7 @@ end
         frequencies = [1e9, 2.3e9, 3.7e9, 4.2e9, 5.1e9]
         amplitudes = [1.0, 0.08, 0.06, 0.04, 0.02]*1e-6
         current(t) = sum(a*cospi(2f*t) for (a, f) in zip(amplitudes, frequencies))
-        prob = transientproblem(rc; sources = [TransientSource(1, current)])
+        prob = transientproblem(Circuit(rc); sources = [TransientSource(1, current)])
         sol = transientsolve(prob, (0.0, 12e-9); dt = 1e-12)
         for (f, a) in zip(frequencies, amplitudes)
             measured = transientdemodulate(sol, 1, f; quantity = :voltage, window = t -> t >= 2e-9 ? 1.0 : 0.0)
@@ -547,9 +552,8 @@ end
     @testset "the Gauss-Legendre rule: fourth order, the responses, the reuse" begin
         # the driven RC against a fine reference: the error falls sixteen
         # fold per halving where the trapezoidal rule's falls four fold
-        rc = [("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12)]
         smooth(t) = 1e-6*sinpi(t/1e-9)^2*sinpi(2*4e9*t)
-        prob = transientproblem(rc; sources = [TransientSource(1, smooth)])
+        prob = transientproblem(Circuit(rc); sources = [TransientSource(1, smooth)])
         ref = transientsolve(prob, (0.0, 1e-9); dt = 1e-9/8192, method = GaussLegendre())
         errors = [maximum(abs.(transientsolve(prob, (0.0, 1e-9); dt = 1e-9/n, method = GaussLegendre()).voltage[1, :] .-
             ref.voltage[1, 1:8192÷n:end])) for n in (64, 128)]
@@ -567,8 +571,8 @@ end
         @test maximum(abs.(v .- V .* cos.(sol.times ./ sqrt(L*C)))) < 3e-4V
         @test sol.stats.factorizations == 1
         # the coupled tanks through their auxiliary rows
-        coupled = transientproblem([("C1", "1", "0", C), ("C2", "2", "0", C),
-            ("L1", "1", "0", L), ("L2", "2", "0", L), ("K1", "L1", "L2", 0.3)])
+        coupled = transientproblem(Circuit([("C1", "1", "0", Capacitor(C)), ("C2", "2", "0", Capacitor(C)),
+            ("L1", "1", "0", Inductor(L)), ("L2", "2", "0", Inductor(L)), ("K1", "L1", "L2", MutualInductor(0.3))]))
         s2 = transientsolve(coupled, (0.0, 2period); dt = period/40, method = GaussLegendre(),
             initialstate = transientstate(coupled; voltage = [V, 0]), record = :states)
         wp, wm = 1/sqrt(L*C*1.3), 1/sqrt(L*C*0.7)
@@ -576,8 +580,8 @@ end
         # the pumped junction against harmonic balance at twenty samples per
         # period, where the trapezoidal rule is off by more than its value;
         # one complex factorization serves the whole solve
-        circuit = [("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0), ("C1", "1", "2", 100e-15),
-            ("Lj1", "2", "0", 1e-9), ("C2", "2", "0", 1e-12)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)),
+            ("Lj1", "2", "0", JosephsonJunction(1e-9)), ("C2", "2", "0", Capacitor(1e-12))])
         fp, ip = 4.75e9, 0.00565e-6
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         pump(t) = 2ip*ramp(t)*cospi(2fp*t)
@@ -759,8 +763,8 @@ end
         icps = transientsolve(ip, (0.0, 0.5e-9); dt = 2e-12, record = :checkpoints, checkpointevery = 16, rtol = 1e-12, method = GaussLegendre())
         @test transientadjoint(icps, iweights; quantity = :voltage).currents ≈ iad.currents rtol=1e-7
         # the coupled tanks and the lossless LC project nothing
-        @test isnothing(JC.transientsystem(transientproblem([("C1", "1", "0", 1e-12), ("C2", "2", "0", 1e-12),
-            ("L1", "1", "0", L), ("L2", "2", "0", L), ("K1", "L1", "L2", 0.3)]), 1e-12, GaussLegendre(), JC.CPU(),
+        @test isnothing(JC.transientsystem(transientproblem(Circuit([("C1", "1", "0", Capacitor(1e-12)), ("C2", "2", "0", Capacitor(1e-12)),
+            ("L1", "1", "0", Inductor(L)), ("L2", "2", "0", Inductor(L)), ("K1", "L1", "L2", MutualInductor(0.3))])), 1e-12, GaussLegendre(), JC.CPU(),
             KLUfactorization()).projection)
         # the tangent against finite differences and the adjoint against
         # the tangent through the projection, on the record, on the
@@ -830,8 +834,8 @@ end
         # the amplifier under three pump amplitudes as one solve: each
         # member equals its own solve, the responses run on a member, and
         # the problems must share the circuit and the targets
-        circuit = [("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0), ("C1", "1", "2", 100e-15),
-            ("Lj1", "2", "0", 1e-9), ("C2", "2", "0", 1e-12)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)),
+            ("Lj1", "2", "0", JosephsonJunction(1e-9)), ("C2", "2", "0", Capacitor(1e-12))])
         fp = 4.75e9
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         base = transientproblem(circuit; sources = [TransientSource(1, t -> 0.0)])
@@ -1056,7 +1060,7 @@ end
         @test transientsolve(problems, (0.0, 1e-9); dt = 5e-12, reuse).finalflux ≈ b3.finalflux rtol=1e-12
         # each condition's state is checked under its own drive, and the
         # sources a batch leaves constant must agree
-        r1 = transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", 50.0)]; sources = [TransientSource(1, 1e-6)])
+        r1 = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0))]); sources = [TransientSource(1, 1e-6)])
         r2 = transientproblem(r1; sources = [TransientSource(1, 2e-6)])
         rstates = [transientstate(r1; voltage = [50e-6]), transientstate(r2; voltage = [100e-6])]
         rb = transientsolve([r1, r2], (0.0, 10e-12); dt = 1e-12, initialstate = rstates)
@@ -1074,8 +1078,8 @@ end
         @test_throws ArgumentError chunked([r1, r2], reverse(rstates))
         blowup = transientproblem(r1; sources = [TransientSource(1, t -> t > 5e-12 ? NaN : 1e-6)])
         @test_throws ArgumentError chunked([r1, blowup], rstates)
-        two = transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12),
-            ("I1", "1", "0", 1e-6), ("I2", "1", "0", 2e-6)]; sources = [TransientSource(:I1, 0.0)])
+        two = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12)),
+            ("I1", "1", "0", CurrentSource(1e-6)), ("I2", "1", "0", CurrentSource(2e-6))]); sources = [TransientSource(:I1, 0.0)])
         @test_throws ArgumentError transientsolve([two, transientproblem(two; sources = [TransientSource(:I2, 0.0)])],
             (0.0, 10e-12); dt = 1e-12)
         same = transientsolve([two, transientproblem(two; sources = [TransientSource(:I1, 1e-6)])], (0.0, 1e-9); dt = 5e-12)
@@ -1098,11 +1102,12 @@ end
         # whole final rate against a central difference, under either
         # rule, from a record of the states, from checkpoints and in a
         # batch
-        divider = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12),
-            ("L1", "1", "2", 1e-9), ("L2", "2", "0", 1e-9)]
+        dividernet = [("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12)),
+            ("L1", "1", "2", Inductor(1e-9)), ("L2", "2", "0", Inductor(1e-9))]
+        divider = Circuit(dividernet)
         sources = [TransientSource(1, t -> 1e-6*sinpi(2*2e9*t))]
         prob = transientproblem(divider; sources)
-        scaled(r) = transientproblem([c[1] == "L1" ? (c[1], c[2], c[3], r*c[4]) : c for c in divider]; sources)
+        scaled(r) = transientproblem(Circuit(scaledentries(dividernet, "L1", r)); sources)
         tspan, dt = (0.0, 153e-12), 1e-12
         eps = 1e-4
         for method in (GaussLegendre(), Trapezoidal())
@@ -1146,11 +1151,11 @@ end
             norm(p.constraints*lv, Inf)/max(norm(bdot, Inf), norm(Lm*v, Inf), 1.0)
         end
         Lc, C = 1e-9, 1e-12
-        junction = transientproblem([("C1", "1", "2", C), ("L1", "1", "0", Lc), ("L2", "2", "0", Lc), ("Lj1", "1", "0", Lc)])
+        junction = transientproblem(Circuit([("C1", "1", "2", Capacitor(C)), ("L1", "1", "0", Inductor(Lc)), ("L2", "2", "0", Inductor(Lc)), ("Lj1", "1", "0", JosephsonJunction(Lc))]))
         wj = sqrt(3/(Lc*C))
         jstate = transientstate(junction; voltage = [1e-6, -2e-6])
         wd = 0.37*sqrt(2/(Lc*C))
-        driven = transientproblem([("C1", "1", "2", C), ("L1", "1", "0", Lc), ("L2", "2", "0", Lc), ("I1", "1", "0", 0.0)];
+        driven = transientproblem(Circuit([("C1", "1", "2", Capacitor(C)), ("L1", "1", "0", Inductor(Lc)), ("L2", "2", "0", Inductor(Lc)), ("I1", "1", "0", CurrentSource(0.0))]);
             sources = [TransientSource(:I1, t -> 1e-6*(1 - cos(wd*t)))])
         for (p, w, state) in ((junction, wj, jstate), (driven, wd, transientstate(driven))), method in (GaussLegendre(), Trapezoidal())
             @test length(p.algebraic) == 1
@@ -1170,7 +1175,8 @@ end
         # stops at a roundoff floor that allows for the cancellation of
         # `C d` along the direction; on the island's two nodes the product
         # itself is a thousandth of its rounding.
-        both = [("C1", "1", "2", C), ("L1", "1", "0", Lc), ("L2", "2", "0", Lc), ("Lj1", "1", "0", Lc), ("I1", "1", "0", 0.0)]
+        bothnet = [("C1", "1", "2", Capacitor(C)), ("L1", "1", "0", Inductor(Lc)), ("L2", "2", "0", Inductor(Lc)), ("Lj1", "1", "0", JosephsonJunction(Lc)), ("I1", "1", "0", CurrentSource(0.0))]
+        both = Circuit(bothnet)
         wb = 0.37*sqrt(3/(Lc*C))
         bdrive = t -> 1e-7*(1 - cos(wb*t))
         bspan, bdt = (0.0, 8pi/wb), 2pi/wb/800
@@ -1180,9 +1186,9 @@ end
                 method, record = :states)
             bsens = transientsensitivity(bsol, ["Lj1", "L1"])
             for (k, name) in enumerate(["Lj1", "L1"])
-                fd = (transientsolve(transientproblem([c[1] == name ? (c[1], c[2], c[3], (1 + 1e-4)*c[4]) : c for c in both];
+                fd = (transientsolve(transientproblem(Circuit(scaledentries(bothnet, name, 1 + 1e-4));
                         sources = [TransientSource(:I1, bdrive)]), bspan; dt = bdt, method).finalrate .-
-                    transientsolve(transientproblem([c[1] == name ? (c[1], c[2], c[3], (1 - 1e-4)*c[4]) : c for c in both];
+                    transientsolve(transientproblem(Circuit(scaledentries(bothnet, name, 1 - 1e-4));
                         sources = [TransientSource(:I1, bdrive)]), bspan; dt = bdt, method).finalrate) ./ 2e-4
                 @test bsens.finalrate[:, k] ≈ fd rtol=1e-5
             end
@@ -1239,10 +1245,10 @@ end
         # a subcircuit the stiffness couples to nothing touched keeps its
         # invariant reading: coupled pairs beside a junction on a winding
         # add invariant directions and leave the projected ones alone
-        core = [("Lj1", "1", "0", 1e-9), ("L1", "1", "0", 1e-9), ("L2", "2", "0", 1e-9), ("K1", "L1", "L2", 0.3),
-            ("C2", "2", "0", 1e-12)]
-        pairs(m) = vcat(core, [c for j in 1:m for c in (("La$j", "$(2j + 1)", "0", 1e-9), ("Ca$j", "$(2j + 1)", "0", 1e-12),
-            ("Lb$j", "$(2j + 2)", "0", 1e-9), ("Cb$j", "$(2j + 2)", "0", 1e-12), ("Kab$j", "La$j", "Lb$j", 0.3))])
+        core = [("Lj1", "1", "0", JosephsonJunction(1e-9)), ("L1", "1", "0", Inductor(1e-9)), ("L2", "2", "0", Inductor(1e-9)), ("K1", "L1", "L2", MutualInductor(0.3)),
+            ("C2", "2", "0", Capacitor(1e-12))]
+        pairs(m) = Circuit(vcat(core, [c for j in 1:m for c in (("La$j", "$(2j + 1)", "0", Inductor(1e-9)), ("Ca$j", "$(2j + 1)", "0", Capacitor(1e-12)),
+            ("Lb$j", "$(2j + 2)", "0", Inductor(1e-9)), ("Cb$j", "$(2j + 2)", "0", Capacitor(1e-12)), ("Kab$j", "La$j", "Lb$j", MutualInductor(0.3)))]))
         for m in (0, 4)
             csys = JC.transientsystem(transientproblem(pairs(m)), 1e-12, GaussLegendre(), JC.CPU(), KLUfactorization())
             @test length(csys.projection.directions) == 3
@@ -1312,7 +1318,7 @@ end
     end
 
     @testset "the stationary limit agrees with harmonic balance" begin
-        circuit = vcat(rc, [("Lj1", "1", "0", 1e-9)])
+        circuit = Circuit(vcat(rc, [("Lj1", "1", "0", JosephsonJunction(1e-9))]))
         f, ip = 3e9, 0.12e-6
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> ip*cospi(2f*t))])
         sol = transientsolve(prob, (0.0, 12e-9); dt = 0.5e-12, method = Trapezoidal())

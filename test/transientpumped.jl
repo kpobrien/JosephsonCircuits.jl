@@ -12,8 +12,8 @@ using Test
     JC = JosephsonCircuits
 
     @testset "a pumped amplifier against harmonic balance" begin
-        circuit = [("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0), ("C1", "1", "2", 100e-15),
-            ("Lj1", "2", "0", 1e-9), ("C2", "2", "0", 1e-12)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)),
+            ("Lj1", "2", "0", JosephsonJunction(1e-9)), ("C2", "2", "0", Capacitor(1e-12))])
         fp, fs, ip = 4.75e9, 4.74e9, 0.00565e-6
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         # a physical cosine of peak 2ip has the positive frequency coefficient ip
@@ -134,14 +134,14 @@ using Test
         # and the phase matching are the constraint, and the periodic gain
         # and the quantum efficiency agree with hbsolve at fourth order
         cells = 200
-        circuit = Any[("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0)]
+        circuit = Any[("P1", "1", "0", Port(1; Z0 = 50.0))]
         for k in 1:cells
-            push!(circuit, ("Lj$k", "$k", "$(k+1)", 100e-12))
-            push!(circuit, ("Cj$k", "$k", "$(k+1)", 300e-15))
-            push!(circuit, ("C$k", "$(k+1)", "0", 50e-15))
+            push!(circuit, ("Lj$k", "$k", "$(k+1)", JosephsonJunction(100e-12)))
+            push!(circuit, ("Cj$k", "$k", "$(k+1)", Capacitor(300e-15)))
+            push!(circuit, ("C$k", "$(k+1)", "0", Capacitor(50e-15)))
         end
-        push!(circuit, ("P2", "$(cells+1)", "0", 2.0))
-        push!(circuit, ("R2", "$(cells+1)", "0", 50.0))
+        push!(circuit, ("P2", "$(cells+1)", "0", Port(2; Z0 = 50.0)))
+        circuit = Circuit(circuit)
         fp, fs, ip = 7e9, 7.3e9, 1.5e-6
         hb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (10,), circuit, Dict(); atol = 1e-14)
         s21 = hb.linearized.S((0,), 2, (0,), 1, 1)
@@ -175,15 +175,15 @@ using Test
         # pass the junction plasma frequency near 29 GHz where the line
         # responds most, beyond which nothing changes
         cells = 100
-        circuit = Any[("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0)]
+        circuit = Any[("P1", "1", "0", Port(1; Z0 = 50.0))]
         for k in 1:cells
-            push!(circuit, ("Lj$k", "$k", "$(k+1)", 100e-12))
-            push!(circuit, ("Cj$k", "$k", "$(k+1)", 300e-15))
-            push!(circuit, ("C$k", "$(k+1)", "0", 50e-15))
-            k < cells && push!(circuit, ("R$(k+2)", "$(k+1)", "0", 10e3))
+            push!(circuit, ("Lj$k", "$k", "$(k+1)", JosephsonJunction(100e-12)))
+            push!(circuit, ("Cj$k", "$k", "$(k+1)", Capacitor(300e-15)))
+            push!(circuit, ("C$k", "$(k+1)", "0", Capacitor(50e-15)))
+            k < cells && push!(circuit, ("R$(k+2)", "$(k+1)", "0", Resistor(10e3)))
         end
-        push!(circuit, ("P2", "$(cells+1)", "0", 2.0))
-        push!(circuit, ("R2", "$(cells+1)", "0", 50.0))
+        push!(circuit, ("P2", "$(cells+1)", "0", Port(2; Z0 = 50.0)))
+        circuit = Circuit(circuit)
         fp, fs, ip = 7e9, 8e9, 1.5e-6
         pulse(t) = t <= 0 ? 0.0 : t < 2e-9 ? (1 - cospi(t/2e-9))/2 : t <= 6e-9 ? 1.0 : t < 8e-9 ? (1 + cospi((t - 6e-9)/2e-9))/2 : 0.0
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> 2ip*pulse(t)*cospi(2fp*t))])

@@ -52,7 +52,7 @@ HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing, nothing,
         Nevaluationharmonics = map(i -> 2i, Nharmonics),
         maxintermodorder = Inf, dc = false, odd = true, even = false,
         atol = 1e-8, rtol = 0.0, method = NewtonKrylov(), x0 = nothing,
-        symfreqvar = nothing, sorting = :number, keyedarrays = true,
+        keyedarrays = true,
         sensitivitynames = String[], returnoperatingpoint = false,
         frequencywindow = (0, Inf), backend = CPU(), debugJacobian = false,
         returnsystem = false, assemblejacobian = true,
@@ -109,8 +109,9 @@ rejected with an `ArgumentError`. See `src/circuit/mna.jl`.
     1\\*wp1 + 0\\*wp2 and the second 0\\*wp1+1\\*wp2 where wp1 is the first
     pump frequency and wp2 is the second pump frequency. Both of the pumps are
     applied to port 1 with currents Ip1 and Ip2, respectively. 
-- `circuit`: a typed [`Circuit`](@ref), a legacy netlist of
-    `(name, node1, node2, value)` tuples, or a [`CompiledCircuit`](@ref).
+- `circuit`: a typed [`Circuit`](@ref) or a [`CompiledCircuit`](@ref). A
+    `Circuit` is compiled with the default node ordering; for another one,
+    pass `compile(circuit; sorting = ...)`.
 - `circuitdefs`: a dictionary from the symbols or symbolic variables used
     as component values to their numerical values. Optional when every
     component value is numeric.
@@ -138,6 +139,9 @@ rejected with an `ArgumentError`. See `src/circuit/mna.jl`.
     padding took from 196 to 16.
 - `maxharmonics`: deprecated and ignored with a warning; `Nharmonics` is
     the retained set and `Nevaluationharmonics` the sampling grid.
+- `symfreqvar = nothing`: deprecated, the parameter a frequency dependent
+    value was written as an expression in. Write the value as a
+    [`FrequencyDependent`](@ref) closure of the frequency instead.
 - `frequencywindow = (0, Inf)`: a lower and upper bound, in the units of
     `w`, on the absolute frequency `abs(dot(w, mode))` of the retained
     modes, a truncation by frequency beside the truncations by order; the
@@ -157,9 +161,6 @@ rejected with an `ArgumentError`. See `src/circuit/mna.jl`.
 $(_DOC_FTOL)
 $(_DOC_METHOD)
 $(_DOC_NLKWARGS)
-- `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
-    when component values are expressions in the frequency.
-$(_DOC_SORTING)
 - `warnnotconverged = true`: warn when the solve does not converge. A
     continuation whose stage solves are expected to fail passes `false`
     and reports its own outcome.
@@ -215,30 +216,30 @@ true
 ```
 """
 function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-    circuit, circuitdefs; sorting = :number, kwargs...) where {N}
+    circuit::CompilableCircuit, circuitdefs::AbstractDict = Dict{Symbol,Any}();
+    kwargs...) where {N}
     # the circuit compiled and the inputs in their canonical forms, so that
     # the solve is compiled once for every way of writing them
-    psc = compile(circuit; sorting = sorting)
-    # nothing here reads the loops of the circuit graph
-    cg = calccircuitgraph(psc; loops = false)
+    psc = compile(circuit)
     return hbnlsolve(tonefrequencies(w), Nharmonics, sourcetable(sources, w),
-        psc, cg, definitiontable(circuitdefs); kwargs...)
+        psc, definitiontable(circuitdefs); kwargs...)
 end
 
 """
     hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
         sources::Vector{SourceTuple{N}}, psc::CompiledCircuit,
-        cg::CircuitGraph, circuitdefs::Dict{Any,Any}; kwargs...)
+        circuitdefs::Dict{Any,Any}; kwargs...)
 
-The general method on a compiled circuit `psc` with its graph `cg`, with
+The general method on a compiled circuit `psc`, with
 the inputs in their canonical forms ([`tonefrequencies`](@ref),
 [`sourcetable`](@ref), [`definitiontable`](@ref)): it builds the mode set
 and the matrices at its mode count, then solves. It takes every keyword of
-the general method except `sorting`, which the compilation consumed.
+the general method.
 """
 function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
-    sources::Vector{SourceTuple{N}}, psc::CompiledCircuit, cg::CircuitGraph,
+    sources::Vector{SourceTuple{N}}, psc::CompiledCircuit,
     circuitdefs::Dict{Any,Any}; rtol = 0.0,
+    symfreqvar = nothing,
     iterations = 1000,
     Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
     maxharmonics = nothing,
@@ -247,13 +248,16 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
     even::Bool = false, x0 = nothing, atol = 1e-8, ftol = nothing,
     switchofflinesearchtol = nothing, alphamin = nothing,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
-    symfreqvar = nothing, keyedarrays::Bool = true,
-    sensitivitynames::Vector{String} = String[],
+    keyedarrays::Bool = true,
+    sensitivitynames::AbstractVector = String[],
     returnoperatingpoint::Bool = false,
     backend = CPU(), debugJacobian = false,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
     warnnotconverged::Bool = true,
     ) where {N}
+    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
+        circuitdefs, symfreqvar, :hbnlsolve))
 
     # deprecation warning for maxharmonics, whose role `Nharmonics` took
     # when the sampling grid became `Nevaluationharmonics`.
@@ -269,12 +273,12 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
         lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
 
     if method isa Staged
-        return stagedhbnlsolve(method, w, Nharmonics, sources, psc, cg,
+        return stagedhbnlsolve(method, w, Nharmonics, sources, psc,
             circuitdefs; iterations = iterations,
             Nevaluationharmonics = Nevaluationharmonics,
             frequencywindow = frequencywindow,
             maxintermodorder = maxintermodorder, dc = dc, odd = odd,
-            even = even, atol = atol, symfreqvar = symfreqvar,
+            even = even, atol = atol,
             keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
             returnoperatingpoint = returnoperatingpoint, backend = backend,
@@ -296,15 +300,15 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
     Nmodes = length(freq.modes)
 
     # the matrices at the mode count
-    nm = assemblegrid(psc, cg, circuitdefs, Nmodes)
+    nm = numericmatrices(psc, circuitdefs; Nmodes = Nmodes)
 
 
-    return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
+    return hbnlsolve(w, sources, freq, indices, psc, nm;
         rtol = rtol,
         iterations = iterations, x0 = initialguess(x0), atol = atol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         method = method,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
         returnoperatingpoint = returnoperatingpoint,
         backend = backend, debugJacobian = debugJacobian,
@@ -314,26 +318,19 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
         )
 end
 
-# A fully numeric circuit needs no component definitions.
-function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-    circuit; kwargs...) where {N}
-    return hbnlsolve(w, Nharmonics, sources, circuit, Dict{Any,Any}();
-        kwargs...)
-end
-
 """
     hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
-        indices::FourierIndices{N}, psc::CompiledCircuit, cg::CircuitGraph,
+        indices::FourierIndices{N}, psc::CompiledCircuit,
         nm::CircuitMatrices; kwargs...)
 
 The nonlinear harmonic balance solve on an already compiled circuit `psc`
-with its graph `cg` and matrices `nm`, at the mode set `frequencies` with
+with its matrices `nm`, at the mode set `frequencies` with
 its Fourier indices `indices`. This is what the other methods call after
 building those, with the inputs in their canonical forms
 ([`tonefrequencies`](@ref), [`sourcetable`](@ref)); it takes every keyword
 of the general method except the ones which describe the mode set
 (`Nharmonics`, `Nevaluationharmonics`, `maxintermodorder`,
-`frequencywindow`, `dc`, `odd`, `even`, `sorting`),
+`frequencywindow`, `dc`, `odd`, `even`),
 and it does not accept `method = Staged()`, whose continuation builds each
 stage's own system. It takes one keyword the general method does not:
 `reuse = nothing`, an [`HBReuse`](@ref) which a `NewtonKrylov` solve fills
@@ -380,8 +377,7 @@ frequencies = JosephsonCircuits.removeconjfreqs(
 fi = JosephsonCircuits.fourierindices(frequencies)
 Nmodes = length(frequencies.modes)
 psc = JosephsonCircuits.compile(circuit)
-cg = JosephsonCircuits.calccircuitgraph(psc)
-nm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+nm = JosephsonCircuits.numericmatrices(psc, circuitdefs, Nmodes = Nmodes)
 
 out=hbnlsolve(
     (wp,),
@@ -389,7 +385,7 @@ out=hbnlsolve(
         (mode=(0,),port=1,current=Idc),
         (mode=(1,),port=1,current=Ip),
     ],
-    frequencies, fi, psc, cg, nm)
+    frequencies, fi, psc, nm)
 isapprox(out.nodeflux[:],
     ComplexF64[15.190314040027383 + 0.0im, 3.029519334903722e-6 - 1.8979297727605957e-8im, 6.835392148518834 + 0.0im, -2.394037089373057e-6 + 1.4998135927423454e-8im, -6.835392148531882 + 0.0im, -5.116466289829032e-6 + 3.2053578928830107e-8im],
     atol = 1e-6)
@@ -402,20 +398,20 @@ See the general [`hbnlsolve`](@ref) docstring for the formulation and the
 keywords.
 """
 function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
-    indices::FourierIndices{N}, psc::CompiledCircuit, cg::CircuitGraph,
+    indices::FourierIndices{N}, psc::CompiledCircuit,
     nm::CircuitMatrices; x0 = nothing, kwargs...) where {N}
     return hbnlsolve(tonefrequencies(w), sourcetable(sources, w), frequencies,
-        indices, psc, cg, nm; x0 = initialguess(x0), kwargs...)
+        indices, psc, nm; x0 = initialguess(x0), kwargs...)
 end
 
 function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     frequencies::Frequencies{N}, indices::FourierIndices{N},
-    psc::CompiledCircuit, cg::CircuitGraph, nm::CircuitMatrices;
+    psc::CompiledCircuit, nm::CircuitMatrices;
     iterations = 1000, x0::Vector{ComplexF64} = ComplexF64[],
     atol = 1e-8, rtol = 0.0, ftol = nothing, switchofflinesearchtol = nothing, alphamin = nothing,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
-    symfreqvar = nothing, keyedarrays::Bool = true,
-    sensitivitynames::Vector{String} = String[],
+    keyedarrays::Bool = true,
+    sensitivitynames::AbstractVector = String[],
     returnoperatingpoint::Bool = false,
     backend = CPU(), debugJacobian = false,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
@@ -457,17 +453,17 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         method isa ExternalSolver || debugJacobian || returnoperatingpoint ||
         returnsystem
     # fail immediately, with the actual cause, if any component value
-    # contains symbolic variables which were not assigned numerical values
-    # in circuitdefs (values depending only on the symbolic frequency
-    # variable are frequency dependent components and are accepted)
-    checkcomponentvaluesdefined(psc.componentnames, nm.vvn, symfreqvar)
+    # still depends on a parameter which was not assigned a numerical
+    # value in circuitdefs (a frequency dependent value carries a closure
+    # rather than a parameter and is accepted)
+    checkcomponentvaluesdefined(psc.componentnames, nm.vvn)
     m = nonlinearmatrices(nm, w, psc.componenttypes,
-        calcmodefreqs(w, frequencies.modes), symfreqvar)
-    s = nonlinearsetup(w, sources, frequencies, indices, psc, cg, m, x0,
-        symfreqvar, backend, precision, reusing ? reuse : nothing;
+        calcmodefreqs(w, frequencies.modes))
+    s = nonlinearsetup(w, sources, frequencies, indices, psc, m, x0,
+        backend, precision, reusing ? reuse : nothing;
         needjx = needjx, needjr = needjr, devicex = devicex,
         realrepresentation = realrepresentation,
-        sensitivitynames = sensitivitynames)
+        sensitivitynames = String[String(n) for n in sensitivitynames])
     (; sys, x, F, xr, Fr, modelayout, Jxb, Jr, complexjacobianplan,
         realjacobianplan, canonwork, dcplan, dcsol, dccanonical, dcexplicit,
         bnm, bnmsource, Lscale, gaugeindices, floatingcomponents,
@@ -475,8 +471,8 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes,
         Amatrixindices, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm,
         Nmodes, Nbranches, Nfreq, phimatrix, modes, portindices, portnumbers,
-        portimpedances, nodeindices, nodenames, componenttypes,
-        componentnames, edge2indexdict, freqindexmap, conjsourceindices,
+        portimpedances, nodeindices, componenttypes,
+        edge2indexdict, freqindexmap, conjsourceindices,
         conjtargetindices, Nnodes, fj!, fjreal!) = s
 
     # the canonical Jacobian is assembled as a host `SparseMatrixCSC`; on a
@@ -567,25 +563,24 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         throw(ArgumentError("Method $(method) is not defined."))
     end
 
-    return nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, atol,
-        symfreqvar, keyedarrays, returnoperatingpoint, sys, x, F, modelayout,
+    return nonlinearoutputs(; psc, info, dcsol, dccanonical, w, frequencies,
+        atol, keyedarrays, returnoperatingpoint, sys, x, F, modelayout,
         warnnotconverged, Jr, canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale,
         gaugeindices, coupledbranches, Nnodal, Amna, wmodes, wmodesm,
         wmodes2m, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes,
         Nbranches, phimatrix, modes, portindices, portnumbers,
-        portimpedances, nodeindices, nodenames, componenttypes,
-        componentnames, edge2indexdict, freqindexmap, conjsourceindices,
+        portimpedances, nodeindices, componenttypes,
+        edge2indexdict, freqindexmap, conjsourceindices,
         conjtargetindices, Nnodes)
 end
 
 """
-    nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
-        symfreqvar)
+    nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes)
 
 The linear term of the nonlinear solve from the circuit matrices `nm`: the
 solver scale (see [`calcsolverscale`](@ref)), and the capacitance,
 conductance and inverse inductance matrices with the mode frequencies
-`wmodes` substituted into frequency dependent values, the entries of the
+`wmodes` resolved in frequency dependent values, the entries of the
 negative frequency modes conjugated and the rows scaled, as
 `SparseMatrixCSC{ComplexF64,Int}` whatever the element types of `nm`; the
 branch vectors and the port lists come along. A stage of its own in front
@@ -593,8 +588,7 @@ of [`nonlinearsetup`](@ref), so that the setup and everything after it is
 compiled once for every way the circuit's values were typed rather than
 once per combination of them.
 """
-function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
-        symfreqvar)
+function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes)
     # if there are no inductors, then Lmean will be zero so set it to be one
     Lscale = iszero(nm.Lmean) ? one(nm.Lmean) : nm.Lmean
     # Nondimensionalize with the solver inductance scale Z0/w0 (see
@@ -609,9 +603,9 @@ function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
     # substitute in the mode frequencies for components which have
     # frequency defined symbolically; the result is complex whatever the
     # input
-    Cnm = freqsubst(nm.Cnm, wmodes, symfreqvar)
-    Gnm = freqsubst(nm.Gnm, wmodes, symfreqvar)
-    invLnm = freqsubst(nm.invLnm, wmodes, symfreqvar)
+    Cnm = freqsubst(nm.Cnm, wmodes)
+    Gnm = freqsubst(nm.Gnm, wmodes)
+    invLnm = freqsubst(nm.invLnm, wmodes)
     # take the complex conjugate of the terms associated with modes with
     # negative frequencies. this is the same operation hblinsolve performs
     # with sparseaddconjsubst!. these matrices are used in both the residual
@@ -630,8 +624,8 @@ function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
 end
 
 """
-    nonlinearsetup(w, sources, frequencies, indices, psc, cg, m, x0,
-        symfreqvar, backend, precision, reuse; needjx, needjr, devicex,
+    nonlinearsetup(w, sources, frequencies, indices, psc, m, x0,
+        backend, precision, reuse; needjx, needjr, devicex,
         realrepresentation, sensitivitynames)
 
 Everything the nonlinear solve of [`hbnlsolve`](@ref) needs before a
@@ -652,8 +646,8 @@ one of those differs.
 """
 function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     frequencies::Frequencies{N}, indices::FourierIndices{N},
-    psc::CompiledCircuit, cg::CircuitGraph, m,
-    x0::Vector{ComplexF64}, symfreqvar, backend, precision::Type{<:AbstractFloat},
+    psc::CompiledCircuit, m,
+    x0::Vector{ComplexF64}, backend, precision::Type{<:AbstractFloat},
     reuse::Union{Nothing,HBReuse}; needjx::Bool, needjr::Bool, devicex::Bool,
     realrepresentation::Bool, sensitivitynames::Vector{String}) where {N}
 
@@ -737,26 +731,20 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     componentnames = psc.componentnames
     componentnamedict = psc.componentnamedict
     componenttypes = psc.componenttypes
-    nodenames = psc.nodenames
     nodeindices = psc.nodeindices
-    Nbranches = cg.Nbranches
+    topology = psc.topology
+    Nbranches = topology.Nbranches
     # the current-phase relation of every junction, in the order of the
     # junction axis of the time domain arrays. `nothing` when they are all
     # the sinusoidal Josephson relation, which is the path the system takes
     # unchanged
     relations = calcjunctionrelations(componenttypes, nodeindices,
-        psc.junctioncprs, cg.edge2indexdict, Ljb)
-    edge2indexdict = cg.edge2indexdict
+        psc.junctioncprs, topology.edge2indexdict, Ljb)
+    edge2indexdict = topology.edge2indexdict
 
     # find the indices associated with the components for which we will
     # calculate sensitivities
-    sensitivityindices = zeros(Int,length(sensitivitynames))
-    for i in eachindex(sensitivitynames)
-        sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
-        if componenttypes[sensitivityindices[i]] == :S
-            throw(ArgumentError(lazy"Sensitivities with respect to scattering block components are not supported; got $(sensitivitynames[i])."))
-        end
-    end
+    sensitivityindices = Int[componentindex(psc, n) for n in sensitivitynames]
 
     # calculate the diagonal frequency matrices
     wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1))
@@ -767,7 +755,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     bbm = calcsources(modes, sources, portindices, portnumbers,
         nodeindices, edge2indexdict, Lscale, Nnodes, Nbranches, Nmodes)
     addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
-        vvn, cg, modes, Lscale, Nmodes)
+        vvn, topology, modes, Lscale, Nmodes)
 
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
@@ -918,7 +906,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # The coupled inductor rows are the augmentation's only value
     # dependent entries and are reassembled, small, at every point.
     linear = reusing ? reuse.linear : nothing
-    AmnaL = calcAmnaind(coupledbranches, Lb, Mb, cg.Rbn, Nmodes,
+    AmnaL = calcAmnaind(coupledbranches, Lb, Mb, topology.Rbn, Nmodes,
         Nnodal, Nnodal + Naux, Lscale)
     if isnothing(linear)
         # the gauge rows, and the coupled inductors' constitutive equations
@@ -993,7 +981,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         x = vcat(Vector{Complex{Float64}}(vec(x)),
             zeros(Complex{Float64}, Naux))
         mnagaugenormalize!(x, floatingcomponents, wmodes, Nmodes)
-        mnainitialauxind!(x, coupledbranches, Lb, Mb, cg.Rbn, Nmodes, Nnodal,
+        mnainitialauxind!(x, coupledbranches, Lb, Mb, topology.Rbn, Nmodes, Nnodal,
             Lscale)
     elseif length(x) == Nnodal + Naux
         # accept a full augmented state, with the layout documented in
@@ -1001,7 +989,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         # the auxiliary currents with the constitutive relations.
         x = Vector{Complex{Float64}}(vec(x))
         mnagaugenormalize!(x, floatingcomponents, wmodes, Nmodes)
-        mnainitialauxind!(x, coupledbranches, Lb, Mb, cg.Rbn, Nmodes, Nnodal,
+        mnainitialauxind!(x, coupledbranches, Lb, Mb, topology.Rbn, Nmodes, Nnodal,
             Lscale)
     else
         throw(DimensionMismatch(lazy"The initial value x0 has length $(length(x)) but the solver expects $(Nnodal) node flux unknowns, optionally followed by $(Naux) auxiliary current unknowns."))
@@ -1188,7 +1176,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         nothing
     end
 
-    return (; sys, x, F, xr, Fr, modelayout, Jxb, Jr, complexjacobianplan, realjacobianplan, canonwork, dcplan, dcsol, dccanonical, dcexplicit, bnm, bnmsource, Lscale, gaugeindices, floatingcomponents, coupledbranches, Nnodal, Amna, wmodes, wmodesm, wmodes2m, Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Amatrixindices, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, phimatrix, modes, portindices, portnumbers, portimpedances, nodeindices, nodenames, componenttypes, componentnames, edge2indexdict, freqindexmap, conjsourceindices, conjtargetindices, Nnodes, fj!, fjreal!)
+    return (; sys, x, F, xr, Fr, modelayout, Jxb, Jr, complexjacobianplan, realjacobianplan, canonwork, dcplan, dcsol, dccanonical, dcexplicit, bnm, bnmsource, Lscale, gaugeindices, floatingcomponents, coupledbranches, Nnodal, Amna, wmodes, wmodesm, wmodes2m, Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Amatrixindices, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, phimatrix, modes, portindices, portnumbers, portimpedances, nodeindices, componenttypes, edge2indexdict, freqindexmap, conjsourceindices, conjtargetindices, Nnodes, fj!, fjreal!)
 end
 
 """
@@ -1462,8 +1450,8 @@ end
 
 
 """
-    nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, atol,
-        symfreqvar, keyedarrays, returnoperatingpoint, ...)
+    nonlinearoutputs(; psc, info, dcsol, dccanonical, w, frequencies, atol,
+        keyedarrays, returnoperatingpoint, ...)
 
 The [`NonlinearHB`](@ref) of a solve: the checks on the accepted point
 (the ungauged Kirchhoff current law, the junctions' direct current), the
@@ -1473,16 +1461,19 @@ direct current node voltages. The remaining keywords are the fields of
 [`nonlinearsetup`](@ref) this stage reads, and `info`, `dcsol` and
 `dccanonical` what the solve returned.
 """
-function nonlinearoutputs(;
-        info, dcsol, dccanonical, w, frequencies, atol, symfreqvar,
+function nonlinearoutputs(; psc,
+        info, dcsol, dccanonical, w, frequencies, atol,
         keyedarrays, returnoperatingpoint, sys, x, F, modelayout, Jr,
         canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale, gaugeindices,
         coupledbranches, Nnodal, Amna, wmodes, wmodesm, wmodes2m, Ljb, Ljbm,
         Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes, Nbranches, phimatrix,
         modes, portindices, portnumbers, portimpedances, nodeindices,
-        nodenames, componenttypes, componentnames, edge2indexdict,
+        componenttypes, edge2indexdict,
         freqindexmap, conjsourceindices, conjtargetindices, Nnodes,
         warnnotconverged::Bool = true)
+    # the names the result records are the compiled circuit's own
+    nodenames = psc.nodenames
+    componentnames = psc.componentnames
     # the diagnostics of each solver invocation, returned in the output
     solverstages = IterationInfo[]
 
@@ -1585,7 +1576,7 @@ function nonlinearoutputs(;
         calcinputoutput!(inputwave, outputwave, nodeflux,
             bnm[1:Nnodal]/Lscale,
             portindices, portindices, portimpedances,
-            portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
+            portimpedances, nodeindices, componenttypes, wmodes)
         calcscatteringmatrix!(S, inputwave, outputwave)
     end
 
@@ -1777,7 +1768,7 @@ end
 
 """
     addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
-        vvn, cg, modes, Lscale, Nmodes)
+        vvn, topology, modes, Lscale, Nmodes)
 
 Add the constant current sources of the netlist to the source vector in
 the branch basis: a `CurrentSource` component of value `I` drives the zero
@@ -1788,7 +1779,7 @@ nonzero source without it is an error, so that a netlist carrying a
 constant source is never solved without its bias in silence.
 """
 function addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
-    vvn, cg, modes, Lscale, Nmodes)
+    vvn, topology, modes, Lscale, Nmodes)
 
     dcmode = findfirst(m -> all(iszero, m), modes)
     endpoints = nothing
@@ -1804,28 +1795,12 @@ function addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
         isnothing(dcmode) && throw(ArgumentError(
             lazy"The circuit has the constant current source $(componentnames[k]) of $(current) A, which drives the zero frequency mode; retain the mode with dc = true, or remove the source."))
         n1, n2 = nodeindices[1, k], nodeindices[2, k]
-        b = cg.edge2indexdict[(n1, n2)]
-        isnothing(endpoints) && (endpoints = branchendpoints(cg.Rbn, cg.Nbranches))
+        b = topology.edge2indexdict[(n1, n2)]
+        isnothing(endpoints) && (endpoints = branchendpoints(topology.Rbn, topology.Nbranches))
         # the branch current is positive toward the branch's destination,
         # the source's toward its second terminal
         sign = (endpoints[1][b], endpoints[2][b]) == (n1, n2) ? 1 : -1
         bbm[(b - 1)*Nmodes + dcmode] += sign*Lscale*current/phi0
     end
     return bbm
-end
-
-"""
-    hbnlsolve(w, Nharmonics, sources, circuit::Circuit,
-        circuitdefs = Dict{Symbol,Number}(); sorting = :name, kwargs...)
-
-The nonlinear solve of a typed [`Circuit`](@ref), with every keyword of
-the general method. `circuitdefs` is needed only when component values are
-symbolic, and `sorting` defaults to `:name` because hierarchical net names
-are not integers.
-"""
-function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-        circuit::Circuit, circuitdefs::AbstractDict = Dict{Symbol,Number}();
-        sorting::Symbol = :name, kwargs...) where N
-    return hbnlsolve(w, Nharmonics, sources, elaborate(circuit),
-        circuitdefs; sorting = sorting, kwargs...)
 end

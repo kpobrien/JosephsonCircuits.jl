@@ -1,5 +1,6 @@
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 using JosephsonCircuits, Test, LinearAlgebra
+isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
 
 @testset "method = Staged()" begin
     circuit, defs = testchaincircuit()
@@ -50,6 +51,34 @@ using JosephsonCircuits, Test, LinearAlgebra
         @test all(x -> x.inner[end] isa JosephsonCircuits.IterationInfo, st)
         @test r.solverinfo.converged
         @test r.solverinfo.finalresidual == st[end].finalresidual
+    end
+
+    @testset "rejected steps and failed grid growth recover" begin
+        c, d = testjpacircuitnumeric()
+        pump = (2*pi*4.75001e9,)
+        drive = [(mode = (1,), port = 1, current = 2e-9)]
+        # half the drive converges, the whole drive fails, three quarters
+        # and then the whole drive converge, and the first attempt at the
+        # whole drive on the larger grid fails: the schedule retreats on
+        # that grid and comes back to the whole drive there
+        controlled = recovery_solver(failat = [2, 5])
+        r = hbnlsolve(pump, (4,), drive, c, d; keyedarrays = false,
+            method = Staged(inner = controlled.method, grids = [(2,), (4,)],
+                s0 = 0.5, smin = 0.1))
+        stages = r.solverinfo.stages
+        @test r.solverinfo.converged
+        @test findall(s -> !s.accepted, stages) == [2, 5]
+        @test controlled.starts[2] ≈ controlled.solutions[1]
+        @test controlled.starts[3] ≈ controlled.solutions[1]
+        @test controlled.starts[6] == controlled.starts[5]
+        @test stages[6].action == :grow && stages[6].starget < 1
+        @test stages[end].grid == (4,) && stages[end].starget == 1
+        @test stages[end].accepted && stages[end].action == :final
+        @test length(controlled.starts[5]) > length(controlled.starts[4])
+        @test isnan(r.solverinfo.sourcefold)
+        fresh = hbnlsolve(pump, (4,), drive, c, d; method = Newton(),
+            keyedarrays = false, atol = 1e-12)
+        @test r.nodeflux ≈ fresh.nodeflux rtol = 1e-8
     end
 
     @testset "guards" begin

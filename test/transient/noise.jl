@@ -92,8 +92,8 @@ using Test
         @test warm.covariance - adjoint.covariance ≈ expectedexcess rtol=1e-4 atol=1e-5
         # the contracts: a state whose drift balances a constant drive with
         # a resistor while the junction phase moves is not an equilibrium
-        moving = transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12),
-            ("Lj1", "1", "0", 1e-9)]; sources = [TransientSource(1, 1e-6)])
+        moving = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12)),
+            ("Lj1", "1", "0", JosephsonJunction(1e-9))]); sources = [TransientSource(1, 1e-6)])
         ms = transientsolve(moving, (0.0, T*(n - 1)/n); dt = T/n, record = :phases,
             initialstate = transientstate(moving; voltage = [50e-6]))
         mplan = transientquantumplan(ms, ms.times, [3e9])

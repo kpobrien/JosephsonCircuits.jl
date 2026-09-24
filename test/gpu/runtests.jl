@@ -172,14 +172,13 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         # the system, the preconditioner and the Krylov vectors are built on
         # the device once and rebound to each point; every point agrees
         # with a fresh device solve and with the host
-        make(; Lj, Cg) = Tuple{String,String,String,Any}[
-            ("P1","1","0",1), ("R1","1","0",50.0),
-            ("Lj1","1","2",Lj), ("C1","1","0",Cg),
-            ("Lj2","2","3",Lj), ("C2","2","0",Cg),
-            ("Lj3","3","4",Lj), ("C3","3","0",Cg),
-            ("C4","4","0",Cg), ("R2","4","0",50.0)]
+        chain3 = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:Lj1, 1, 2, JosephsonJunction(:Lj)), (:C1, 1, 0, Capacitor(:Cg)),
+            (:Lj2, 2, 3, JosephsonJunction(:Lj)), (:C2, 2, 0, Capacitor(:Cg)),
+            (:Lj3, 3, 4, JosephsonJunction(:Lj)), (:C3, 3, 0, Capacitor(:Cg)),
+            (:C4, 4, 0, Capacitor(:Cg)), (:R2, 4, 0, Resistor(50.0))])
         p0 = (Lj = 100e-12, Cg = 40e-15)
-        cache = hbcache((w1,), (8,), src1, make, p0;
+        cache = hbcache((w1,), (8,), src1, chain3, Dict(pairs(p0));
             backend = CUDABackend(), atol = 1e-10)
         hbsolve!(cache, p0)
         @test cache.converged
@@ -188,9 +187,9 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             s = hbsolve!(cache, (Lj = Lj, Cg = Cg))
             @test cache.converged
             @test cache.reuse.sys.phimatrix === pm
-            fresh = hbnlsolve((w1,), (8,), src1, make(; Lj = Lj, Cg = Cg);
+            fresh = hbnlsolve((w1,), (8,), src1, chain3, Dict(:Lj => Lj, :Cg => Cg);
                 backend = CUDABackend(), atol = 1e-10, keyedarrays = false)
-            host = hbnlsolve((w1,), (8,), src1, make(; Lj = Lj, Cg = Cg);
+            host = hbnlsolve((w1,), (8,), src1, chain3, Dict(:Lj => Lj, :Cg => Cg);
                 atol = 1e-10, keyedarrays = false)
             @test agree(s.nodeflux, fresh.nodeflux; rtol = 1e-7)
             @test agree(s.nodeflux, host.nodeflux; rtol = 1e-7)
@@ -673,10 +672,9 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         # the sweep itself, batch by batch
         nl = hbnlsolve(wp, (8,), src, blockcircuit; keyedarrays = false)
         psc = JC.compile(blockcircuit)
-        cg = JC.calccircuitgraph(psc)
         sf = JC.removeconjfreqs(JC.truncfreqs(JC.calcfreqsrdft((8,));
             dc = true, odd = true, even = false, maxintermodorder = Inf))
-        d = JC.hblinsolve(ws, psc, cg, Dict{Any,Any}(), sf; nonlinear = nl,
+        d = JC.hblinsolve(ws, psc, Dict{Any,Any}(), sf; nonlinear = nl,
             debuglsys = true)
         lsys = d.lsys
         b = Matrix{ComplexF64}(d.bnm)

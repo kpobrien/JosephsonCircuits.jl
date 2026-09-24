@@ -48,7 +48,7 @@ function transientproblem(p::TransientProblem; sources)
         n1 > 0 && (constantcurrent[n1] += vvn[c])
         n2 > 0 && (constantcurrent[n2] -= vvn[c])
     end
-    return TransientProblem(psc, p.graph, p.matrices, p.Nnodal, p.Naux, p.Lscale, p.coupledbranches,
+    return TransientProblem(psc, p.matrices, p.Nnodal, p.Naux, p.Lscale, p.coupledbranches,
         p.floatingcomponents, p.gaugeindices, p.inertialess, p.algebraic, p.directions, p.constraints,
         injection, drives, constantcurrent, p.portpositive, p.portnegative, p.portimpedances, p.portconductances, p.blocks, p.lines,
         p.relations)
@@ -413,12 +413,25 @@ function gaussbatchstagesolve!(d, r, sys::TransientSystem, gc::GaussCoefficients
             stepmul!(stage(lwork, i), transposed ? sys.Lt : sys.L, di)
             batchjunctionproduct!(stage(res, i), sys, view(phi, :, :, i), di, jwork, dwork)
         end
-        # the rational blocks' coupling of the stages, or its transpose
+        # the rational blocks' coupling of the stages, or its transpose,
+        # and the rounding of the sum that carries it: as many units of
+        # roundoff as the states it sums, which the matrices' eight do
+        # not cover. `|S| |y|` keeps every scatter entry with the state
+        # it multiplies, where a norm of each would pair the largest row
+        # of one with the largest entry of the other whatever rows they
+        # are in, and the poles of a fit span decades; the bound is per
+        # column, so a strong direction does not lift a weak one's
+        # threshold and the tangent and the adjoint stay transposes.
+        blockfloor = 0.0
         if !isnothing(rw)
             transposed ? rationalsourcestranspose!(rw, sys, d) : rationalsources!(rw, sys, d, d; withstate = false)
             res .-= rw.source
+            if !transposed
+                reflectedwavesbound!(rw, sys.gauss.coupling)
+                blockfloor = sys.gauss.coupling.nstates*eps(Float64) .* colmax(rw.sbound)
+            end
         end
-        floor = 8eps(Float64) .* (scale .+ rounding .* colmax(d) .+ colmax(res))
+        floor = 8eps(Float64) .* (scale .+ rounding .* colmax(d) .+ colmax(res)) .+ blockfloor
         for i in 1:2
             ri = stage(res, i)
             ri .+= stage(lwork, i)
@@ -614,6 +627,10 @@ mutable struct RationalWork{M, A} <: AbstractRationalWork
     ywork::M
     swork::M
     source::A
+    # the entrywise bound of the blocks' contribution, `(n, N, 2)`, and
+    # the magnitudes of the stacked states it is built from
+    sbound::A
+    yabs::M
     weights::Matrix{Float64}
     endweights::Vector{Float64}
     # the exact stage solve of a pumped block, built per step, or nothing
@@ -626,6 +643,7 @@ function rationalwork(p::TransientProblem, backend, n::Int, N::Int)
     nterms = 1 + sum(b -> length(b.modulations), p.blocks; init = 0)
     return RationalWork(allocate(nz, N), allocate(2n, N), allocate(2n, N), allocate(2n, N), allocate(2n, N),
         allocate(nz, N), allocate(nz, N), allocate(2nz, N), allocate(2nz, N), allocate(n, N), allocate(n, N, 2),
+        allocate(n, N, 2), allocate(2nz, N),
         ones(nterms, 2), ones(nterms), nothing)
 end
 
@@ -1909,7 +1927,8 @@ end
 # the stage residual of a batch on `(n, N, 2)` stage
 # increments with the states as the columns of `x`, the norm per column
 function gaussbatchresidual!(norms, residual, sys::TransientSystem, gc::GaussCoefficients, delta, x, lx, X,
-        phi, junction, jwork, cwork, gwork, rhs, colnorm, @nospecialize(rw::Union{Nothing, AbstractRationalWork}))
+        phi, junction, jwork, cwork, gwork, rhs, colnorm, roundoff, colfloor,
+        @nospecialize(rw::Union{Nothing, AbstractRationalWork}))
     h = sys.h
     X .= x .+ delta
     # the rational blocks' reflected waves at the stages, from their states
@@ -1938,6 +1957,56 @@ function gaussbatchresidual!(norms, residual, sys::TransientSystem, gc::GaussCoe
     colnorm .= max.(dropdims(maximum(abs, stage(residual, 1); dims = 1); dims = 1),
         dropdims(maximum(abs, stage(residual, 2); dims = 1); dims = 1))
     copyto!(norms, colnorm)
+    gaussresidualroundoff!(roundoff, sys, gc, delta, lx, junction, rhs, colfloor, rw)
+    return nothing
+end
+
+# A floor for each condition at the point whose residual was just formed.
+# The matrix norms cover cancellation within a product; the other terms
+# are already in residual units. The blocks use |S| |y| so unrelated
+# state coordinates cannot inflate one another's bound. Base and trial
+# evaluations keep separate floors, just as they keep separate norms.
+function gaussresidualroundoff!(roundoff, sys::TransientSystem, gc::GaussCoefficients,
+        delta, lx, junction, rhs, colfloor, @nospecialize(rw::Union{Nothing, AbstractRationalWork}))
+    cs, gs, ls, _ = sys.rowsums
+    h = sys.h
+    rounding = 2maximum(abs, gc.ainv2)*cs/h^2 + 2maximum(abs, gc.ainv)*gs/h + ls
+    isnothing(rw) || reflectedwavesbound!(rw, sys.gauss.coupling)
+    blockbound = isnothing(rw) ? nothing : rw.sbound
+    blockweight = isnothing(rw) ? 0.0 : sys.gauss.coupling.nstates*eps(Float64)
+    gaussroundoffcolumns!(roundoff, rounding, delta, lx, junction, rhs,
+        blockbound, blockweight, colfloor, sys.backend)
+    return nothing
+end
+
+function gaussroundoffcolumns!(roundoff, rounding, delta, lx, junction, rhs,
+        blockbound, blockweight, colfloor, backend)
+    colmax = a -> vec(maximum(abs, a; dims = (1, 3)))
+    colfloor .= 8eps(Float64) .* (rounding .* colmax(delta) .+
+        vec(maximum(abs, lx; dims = 1)) .+ colmax(junction) .+ colmax(rhs))
+    isnothing(blockbound) || (colfloor .+= blockweight .* colmax(blockbound))
+    copyto!(roundoff, colfloor)
+    return nothing
+end
+
+# A host reduction writes the column bounds directly without temporary
+# reduction arrays in every residual evaluation. Devices keep the batched
+# reductions above and copy only the bounds to the Newton engine.
+function gaussroundoffcolumns!(roundoff, rounding, delta, lx, junction, rhs,
+        blockbound, blockweight, colfloor, ::CPU)
+    @inbounds for col in axes(delta, 2)
+        dm, lm, jm, rm, bm = 0.0, 0.0, 0.0, 0.0, 0.0
+        for row in axes(delta, 1)
+            lm = max(lm, abs(lx[row, col]))
+            for i in 1:2
+                dm = max(dm, abs(delta[row, col, i]))
+                jm = max(jm, abs(junction[row, col, i]))
+                rm = max(rm, abs(rhs[row, col, i]))
+                isnothing(blockbound) || (bm = max(bm, abs(blockbound[row, col, i])))
+            end
+        end
+        roundoff[col] = 8eps(Float64)*(rounding*dm + lm + jm + rm) + blockweight*bm
+    end
     return nothing
 end
 
@@ -2114,6 +2183,27 @@ function reflectedwaves!(rw::RationalWork, cp::RationalCoupling)
     return rw
 end
 
+# The rounding of `reflectedwaves!` per unit of roundoff: the same sum
+# with every entry in magnitude, so a scatter row reaches only the states
+# it multiplies. `|S| |y|` rather than `norm(S) norm(y)`, which for a fit
+# whose poles span decades overstates the sum by as many.
+function reflectedwavesbound!(rw::RationalWork, cp::RationalCoupling)
+    nz = cp.nstates
+    rw.yabs .= abs.(rw.ystack)
+    for i in 1:2
+        yi = view(rw.yabs, (i - 1)*nz + 1:i*nz, :)
+        si = stage(rw.sbound, i)
+        fill!(si, 0)
+        for j in eachindex(cp.SCabs)
+            w = abs(rw.weights[j, i])
+            iszero(w) && continue
+            stepmul!(rw.swork, cp.SCabs[j], yi)
+            si .+= w .* rw.swork
+        end
+    end
+    return rw
+end
+
 # the transpose: multipliers `mu` on the blocks' rows at both stages
 # carried to the stacked states, into `rw.ystack`
 function reflectedwavesbar!(rw::RationalWork, cp::RationalCoupling, mu)
@@ -2167,15 +2257,6 @@ function rationalsources!(rw::RationalWork, sys::TransientSystem, delta, X; with
         stepmul!(rw.ywork, cp.Pz, rw.z)
         rw.ystack .+= rw.ywork
     end
-    reflectedwaves!(rw, cp)
-    return rw
-end
-
-# the reflected waves at the stages from the states alone, the part of a
-# linearized step's right hand side its states carry
-function rationalstatesource!(rw::RationalWork, sys::TransientSystem, z)
-    cp = sys.gauss.coupling
-    stepmul!(rw.ystack, cp.Pz, z)
     reflectedwaves!(rw, cp)
     return rw
 end
@@ -2514,7 +2595,6 @@ mutable struct GaussStepper{S, P, A, M, C, F, W, B, R, T, E, U, K, HW, FI, NW}
     correction::A
     rhs::A
     junction::A
-    trialjunction::A
     cwork::A
     gwork::A
     xnew::M
@@ -2524,7 +2604,6 @@ mutable struct GaussStepper{S, P, A, M, C, F, W, B, R, T, E, U, K, HW, FI, NW}
     b2::M
     bend::M
     phi::A
-    trialphi::A
     jwork::A
     # the derivative of the relation at one stage, for a circuit which has
     # a polynomial one, and empty for the Josephson relation, which is
@@ -2567,6 +2646,7 @@ mutable struct GaussStepper{S, P, A, M, C, F, W, B, R, T, E, U, K, HW, FI, NW}
     rw::Union{Nothing, RationalWork{M, A}}
     newtonwork::NW
     tolerance::Vector{Float64}
+    roundoff::Tuple{Vector{Float64}, Vector{Float64}}
     rtol::Float64
     atol::Float64
     iterations::Int
@@ -2593,13 +2673,15 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, iterations, bf
     cosphi = KernelAbstractions.zeros(backend, ComplexF64, nj, N)
     rc, zc = [KernelAbstractions.zeros(backend, ComplexF64, n, N) for _ in 1:2]
     colnorm = allocate(N)
+    colfloor = allocate(N)
+    roundoff = (zeros(N), zeros(N))
     hostvalues = zeros(nd, N)
     values = tobackend(backend, zeros(nd, N))
     portwork = allocate(np, N)
     rw = isempty(sys.gauss.rational) ? nothing : rationalwork(p, backend, n, N)
     cell = RationalWorkCell{typeof(x), typeof(X)}(rw)
-    baseresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, phi, junction, jwork, cwork, gwork, rhs, colnorm, cell.work)
-    trialresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, trialphi, trialjunction, jwork, cwork, gwork, rhs, colnorm, cell.work)
+    baseresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, phi, junction, jwork, cwork, gwork, rhs, colnorm, roundoff[1], colfloor, cell.work)
+    trialresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, trialphi, trialjunction, jwork, cwork, gwork, rhs, colnorm, roundoff[2], colfloor, cell.work)
     # a new factorization of the frozen operator, and the stage
     # correction of a pumped block rebuilt on it, whichever asked
     refresh! = () -> (gaussbatchjacobian!(bf, sys, phi, cosphi, dwork);
@@ -2612,11 +2694,11 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, iterations, bf
     far, readscale, sqrtz = linetables(p, backend)
     npre = lineprehistory(p, sys.h)
     return GaussStepper(sys, problems, N, x, v, X, delta, lastdelta, residual, trial, trialresidual, correction, rhs,
-        junction, trialjunction, cwork, gwork, xnew, cv, lx, b1, b2, bend, phi, trialphi, jwork, dwork, cosphi, rc, zc,
+        junction, cwork, gwork, xnew, cv, lx, b1, b2, bend, phi, jwork, dwork, cosphi, rc, zc,
         colnorm, hostvalues, values, portwork, bf, baseresidual!, trialresidual!, refresh!, solve!, accept!, pw,
         allocate(nl, linering(npre), N), npre, Float64[], 0, allocate(nl, N), zeros(8, nl), allocate(8, nl), far, readscale, sqrtz,
         allocate(nl, N), allocate(n, N), rw,
-        NewtonWork(backend, N), zeros(N), Float64(rtol), Float64(atol), Int(iterations), false, 0, 0, 0)
+        NewtonWork(backend, N), zeros(N), roundoff, Float64(rtol), Float64(atol), Int(iterations), false, 0, 0, 0)
 end
 
 # the stepper given its grid and the `npre` columns of history before
@@ -2757,7 +2839,7 @@ function advance!(st::GaussStepper, tprev, t, step)
     converged, fresh, ncorr, nfact, nretry, _, _ = newtonsolve!(st.delta, st.correction, st.trial,
         st.residual, st.trialresidual, st.baseresidual!, st.trialresidual!, st.refresh!, st.solve!,
         st.tolerance, st.iterations, st.stalefailed, length(sys.lmolj) > 0, false, st.newtonwork;
-        simplified = true, accept! = st.accept!)
+        simplified = true, accept! = st.accept!, roundoff = st.roundoff)
     st.corrections += ncorr
     st.factorizations += nfact
     st.retries += nretry

@@ -1,6 +1,25 @@
 using JosephsonCircuits
 using LinearAlgebra
 using Test
+
+@testset "MNA padding preserves sparse storage and ownership" begin
+    JC = JosephsonCircuits
+    A = JC.SparseArrays.sparse([1, 3, 2], [1, 2, 2], [2.0, 0.0, -3.0], 3, 2)
+    for T in (Float64, ComplexF64), Ti in (Int, Int32), n in (0, 3)
+        source = JC.SparseArrays.SparseMatrixCSC{T,Ti}(A)
+        padded = JC.mnapad(source, n)
+        expected = zeros(T, 3+n, 2+n)
+        expected[1:3, 1:2] .= source
+        @test Matrix(padded) == expected
+        @test padded.rowval == source.rowval
+        @test padded.nzval == source.nzval
+        @test padded.rowval !== source.rowval
+        @test padded.colptr !== source.colptr
+        @test padded.nzval !== source.nzval
+        @test eltype(padded.colptr) == Ti
+    end
+    @test size(JC.mnapad(JC.SparseArrays.spzeros(0, 0), 2)) == (2, 2)
+end
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 
 @testset verbose=true "mna" begin
@@ -50,13 +69,13 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # is structurally nonempty. with dc = true the nodal system matrix
         # is singular; the mna formulation adds one gauge equation for the
         # component and solves exactly.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("Lj1","1","0",:Lj))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("L1","2","3",:L1))
-        push!(circuit,("C2","3","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("L1", "2", "3", Inductor(:L1)))
+        push!(circuit,("C2", "3", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(
             :Lj =>1000.0e-12,
             :Cc => 100.0e-15,
@@ -98,12 +117,12 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # mode is a gauge degree of freedom, and node 1 forms a second
         # floating component on its own. one gauge equation per component
         # is added.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("Lj1","2","3",:Lj))
-        push!(circuit,("C2","3","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("Lj1", "2", "3", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "3", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(
             :Lj =>1000.0e-12,
             :Cc => 100.0e-15,
@@ -142,15 +161,14 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # island is balanced (zero net injection), so a periodic solution
         # exists: the DC current flows through the island inductor and its
         # branch flux is L1*Idc.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("Lj1","1","0",:Lj))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("L1","2","3",:L1))
-        push!(circuit,("P2","2","3",2))
-        push!(circuit,("R2","2","3",:Rright))
-        push!(circuit,("C2","3","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("L1", "2", "3", Inductor(:L1)))
+        push!(circuit,("P2", "2", "3", Port(2; Z0 = :Rright)))
+        push!(circuit,("C2", "3", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(
             :Lj =>1000.0e-12,
             :Cc => 100.0e-15,
@@ -233,14 +251,14 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # frequency dependent interior resistor is left in the conductance
         # matrix. this exercises the partial promotion path where the
         # promoted subset is subtracted from Gnm.
-        JosephsonCircuits.@params w
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj))
-        push!(circuit,("R2","2","0",1.0e6 + 1e-3*w))
+        w = FrequencyDependent(identity)
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+        push!(circuit,("R2", "2", "0", Resistor(1.0e6 + 1e-3*w)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(
             :Lj =>1000.0e-12,
             :Cc => 100.0e-15,
@@ -251,7 +269,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            atol = 1e-12, symfreqvar = w)
+            atol = 1e-12)
         @test out.solverinfo.converged
         # nodal formulation reference values, as in the first testset
         @test isapprox(Vector(out.nodeflux(outputmode=(1,))),
@@ -327,17 +345,15 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # rejected rather than absorbed into the flux reference. the two
         # sources drive opposite DC currents into the same floating island
         # through two ports, mismatched by a relative 1e-10.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("Lj1","1","0",:Lj))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("P2","2","0",2))
-        push!(circuit,("R2","2","0",:Rleft))
-        push!(circuit,("L1","2","3",:L1))
-        push!(circuit,("P3","3","0",3))
-        push!(circuit,("R3","3","0",:Rleft))
-        push!(circuit,("C3","3","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("P2", "2", "0", Port(2; Z0 = :Rleft)))
+        push!(circuit,("L1", "2", "3", Inductor(:L1)))
+        push!(circuit,("P3", "3", "0", Port(3; Z0 = :Rleft)))
+        push!(circuit,("C3", "3", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
             :Cj => 1000.0e-15, :Rleft => 50.0, :L1 => 500.0e-12)
         wp = (2*pi*4.75001*1e9,)
@@ -372,19 +388,19 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # a floating node whose only resistor is symbolic exercises the
         # gauge fixing equations with no promoted resistors (Naux == 0),
         # so gauge correctness is not entangled with resistor promotion.
-        JosephsonCircuits.@params w
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",50.0 + 1e-12*w))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj))
+        w = FrequencyDependent(identity)
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = 50.0 + 1e-12*w)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
             :Cj => 1000.0e-15)
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
         out = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            atol = 1e-12, dc = true, odd = true, symfreqvar = w)
+            atol = 1e-12, dc = true, odd = true)
         @test out.solverinfo.converged
         @test isapprox(abs(out.nodeflux(outputmode=(0,),node="1")), 0.0,
             atol = 1e-12)
@@ -397,16 +413,16 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # interior resistors are not promoted, so these exercise the nodal
         # conductance stamps alongside the promoted port resistor.
         function circuitwith(rs)
-            circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-            push!(circuit,("P1","1","0",1))
-            push!(circuit,("R1","1","0",:Rleft))
-            push!(circuit,("C1","1","2",:Cc))
-            push!(circuit,("Lj1","2","0",:Lj))
-            push!(circuit,("C2","2","0",:Cj))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+            push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+            push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
             # the parallel bank sits on a non-port node pair
             for (k, r) in enumerate(rs)
-                push!(circuit,("R$(k+1)","2","0",complex(r)))
+                push!(circuit,("R$(k+1)", "2", "0", Resistor(complex(r))))
             end
+            circuit = Circuit(circuit)
             return circuit
         end
         circuitdefs = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
@@ -426,18 +442,18 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # a symbolic resistor in parallel with a numeric resistor on an
         # internal node pair converges, with both in the conductance matrix
         # and only the port resistor promoted
-        JosephsonCircuits.@params w
-        cmix = Tuple{String,String,String,Any}[]
-        push!(cmix,("P1","1","0",1))
-        push!(cmix,("R1","1","0",complex(50.0)))
-        push!(cmix,("C1","1","2",:Cc))
-        push!(cmix,("Lj1","2","0",:Lj))
-        push!(cmix,("C2","2","0",:Cj))
-        push!(cmix,("R2","2","3",complex(1.0e6)))
-        push!(cmix,("R3","2","3",2.0e6 + 1e-3*w))
-        push!(cmix,("C3","3","0",:Cj))
+        w = FrequencyDependent(identity)
+        cmix = Any[]
+        push!(cmix,("P1", "1", "0", Port(1; Z0 = complex(50.0))))
+        push!(cmix,("C1", "1", "2", Capacitor(:Cc)))
+        push!(cmix,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(cmix,("C2", "2", "0", Capacitor(:Cj)))
+        push!(cmix,("R2", "2", "3", Resistor(complex(1.0e6))))
+        push!(cmix,("R3", "2", "3", Resistor(2.0e6 + 1e-3*w)))
+        push!(cmix,("C3", "3", "0", Capacitor(:Cj)))
+        cmix = Circuit(cmix)
         mix = hbnlsolve(wp, (8,), sources, cmix, circuitdefs;
-            atol = 1e-12, symfreqvar = w)
+            atol = 1e-12)
         @test mix.solverinfo.converged
     end
 
@@ -557,10 +573,11 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             [:P,:R,:L,:L], Any[1, 50.0, 1e-9, Lsym]))
 
         # end-to-end: a zero inductance in a solve is rejected
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("L1","2","0",:Lz)); push!(circuit,("C2","2","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("L1", "2", "0", Inductor(:Lz))); push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
             :Cj => 1000.0e-15, :Rleft => 50.0, :Lz => 0.0)
         wp = (2*pi*4.75001*1e9,)
@@ -571,11 +588,12 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # end-to-end: an infinite inductance in a solve is rejected with
         # an informative error (an open circuit is represented by omitting
         # the branch, as in the floating island tests above)
-        circuit2 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit2,("P1","1","0",1)); push!(circuit2,("R1","1","0",:Rleft))
-        push!(circuit2,("Lj1","1","0",:Lj))
-        push!(circuit2,("C1","1","2",:Cc)); push!(circuit2,("L1","2","3",:L1))
-        push!(circuit2,("L2","3","0",:Linf)); push!(circuit2,("C2","3","0",:Cj))
+        circuit2 = Any[]
+        push!(circuit2,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit2,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit2,("C1", "1", "2", Capacitor(:Cc))); push!(circuit2,("L1", "2", "3", Inductor(:L1)))
+        push!(circuit2,("L2", "3", "0", Inductor(:Linf))); push!(circuit2,("C2", "3", "0", Capacitor(:Cj)))
+        circuit2 = Circuit(circuit2)
         circuitdefs2 = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
             :Cj => 1000.0e-15, :Rleft => 50.0, :L1 => 300.0e-12,
             :Linf => Inf)
@@ -596,10 +614,11 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             @test_throws ArgumentError hbnlsolve((2*pi*5.0001e9,), (4,),
                 srcs(Ibad), circuit, circuitdefs)
         end
-        lincir = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(lincir,("P1","1","0",1)); push!(lincir,("R1","1","0",:R))
-        push!(lincir,("C1","1","2",:C)); push!(lincir,("L1","2","0",:L))
-        push!(lincir,("P2","2","0",2)); push!(lincir,("R2","2","0",:R))
+        lincir = Any[]
+        push!(lincir,("P1", "1", "0", Port(1; Z0 = :R)))
+        push!(lincir,("C1", "1", "2", Capacitor(:C))); push!(lincir,("L1", "2", "0", Inductor(:L)))
+        push!(lincir,("P2", "2", "0", Port(2; Z0 = :R)))
+        lincir = Circuit(lincir)
         lind = Dict(:R=>50.0,:C=>1e-13,:L=>1e-9)
         for wbad in (Inf, NaN)
             @test_throws ArgumentError hblinsolve([2*pi*5e9, wbad],
@@ -612,10 +631,11 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # the linearized solver as well: matrix assembly builds Inf or NaN
         # entries silently, so the contract check is empirically the first
         # failure for all of these values (verified for both solvers).
-        cir = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(cir,("P1","1","0",1)); push!(cir,("R1","1","0",:R))
-        push!(cir,("C1","1","2",:C)); push!(cir,("Lj1","2","0",:Lj))
-        push!(cir,("L1","2","0",:Lbad)); push!(cir,("C2","2","0",:C))
+        cir = Any[]
+        push!(cir,("P1", "1", "0", Port(1; Z0 = :R)))
+        push!(cir,("C1", "1", "2", Capacitor(:C))); push!(cir,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(cir,("L1", "2", "0", Inductor(:Lbad))); push!(cir,("C2", "2", "0", Capacitor(:C)))
+        cir = Circuit(cir)
         for (v, fragment) in [(0.0, "A zero value"),
                               (Inf, "An infinite value"),
                               (NaN, "has a NaN value")]
@@ -729,11 +749,12 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # modified nodal analysis promotion keeps the branch inductance
         # matrix un-inverted, so the system remains well posed whenever
         # the surrounding circuit determines the branch currents.
-        cir = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(cir,("P1","1","0",1)); push!(cir,("R1","1","0",:R))
-        push!(cir,("L1","1","0",:L)); push!(cir,("L2","2","0",:L))
-        push!(cir,("K1","L1","L2",:K)); push!(cir,("C1","2","0",:C))
-        push!(cir,("Lj1","2","0",:Lj))
+        cir = Any[]
+        push!(cir,("P1", "1", "0", Port(1; Z0 = :R)))
+        push!(cir,("L1", "1", "0", Inductor(:L))); push!(cir,("L2", "2", "0", Inductor(:L)))
+        push!(cir,("K1", "L1", "L2", MutualInductor(:K))); push!(cir,("C1", "2", "0", Capacitor(:C)))
+        push!(cir,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        cir = Circuit(cir)
         d = Dict(:R=>50.0,:L=>1e-9,:K=>1.0,:C=>1e-12,:Lj=>1e-9)
         # the coupled branches are excluded from the inverse inductance
         # matrix and represented by auxiliary branch currents with the
@@ -751,7 +772,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # loosened by these large auxiliary entries: the solve converges,
         # the gauge fixed DC flux is exactly zero, and the pump mode
         # matches the analytic value.
-        circuit = [("P1","1","0",1),("R1","1","0",50.0)]
+        circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0))])
         wpz = 2*pi*5.0*1e9
         Ip = 1.0e-6
         out = hbnlsolve((wpz,),(1,),[(mode=(1,),port=1,current=Ip)],
@@ -841,11 +862,12 @@ end
         return S11, S12, S21, S22
     end
     @testset "hblinsolve analytic linear network" begin
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("L2","2","0",:L2))
-        push!(circuit,("C2","2","0",:C2)); push!(circuit,("C3","2","3",:Cc))
-        push!(circuit,("P2","3","0",2)); push!(circuit,("R2","3","0",:Rleft))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("L2", "2", "0", Inductor(:L2)))
+        push!(circuit,("C2", "2", "0", Capacitor(:C2))); push!(circuit,("C3", "2", "3", Capacitor(:Cc)))
+        push!(circuit,("P2", "3", "0", Port(2; Z0 = :Rleft)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Rleft => 50.0, :Cc => 30.0e-15, :L2 => 1.2e-9,
             :C2 => 0.9e-12)
         ws = collect(2*pi*(3.0:0.1:7.0)*1e9)
@@ -865,10 +887,11 @@ end
     end
 
     @testset "hblinsolve zero frequency error" begin
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("R2","1","2",:Rmid))
-        push!(circuit,("P2","2","0",2)); push!(circuit,("R3","2","0",:Rleft))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("R2", "1", "2", Resistor(:Rmid)))
+        push!(circuit,("P2", "2", "0", Port(2; Z0 = :Rleft)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Rleft => 50.0, :Rmid => 100.0)
         @test_throws ArgumentError hblinsolve([0.0], circuit, circuitdefs)
         # this network is frequency independent, so the result at 1 Hz
@@ -882,12 +905,13 @@ end
         # an internal damping resistor between two non-port nodes is
         # promoted along with the port resistors, exercising the auxiliary
         # current Kirchhoff couplings away from the ports.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("L2","2","0",:L2))
-        push!(circuit,("C2","2","0",:C2)); push!(circuit,("R4","2","3",:Rint))
-        push!(circuit,("C3","3","0",:C2)); push!(circuit,("C4","3","4",:Cc))
-        push!(circuit,("P2","4","0",2)); push!(circuit,("R2","4","0",:Rleft))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("L2", "2", "0", Inductor(:L2)))
+        push!(circuit,("C2", "2", "0", Capacitor(:C2))); push!(circuit,("R4", "2", "3", Resistor(:Rint)))
+        push!(circuit,("C3", "3", "0", Capacitor(:C2))); push!(circuit,("C4", "3", "4", Capacitor(:Cc)))
+        push!(circuit,("P2", "4", "0", Port(2; Z0 = :Rleft)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Rleft => 50.0, :Cc => 30.0e-15, :L2 => 1.2e-9,
             :C2 => 0.9e-12, :Rint => 700.0)
         ws = collect(2*pi*(3.0:0.2:7.0)*1e9)
@@ -919,10 +943,11 @@ end
         # exercise the adjoint solve (noise, quantum efficiency, and
         # commutation relations) and the node flux and voltage output
         # slicing with the taller augmented solution matrix.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj)); push!(circuit,("R3","2","0",:Rint))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(:Cj))); push!(circuit,("R3", "2", "0", Resistor(:Rint)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
             :Cj => 1000.0e-15, :Rleft => 50.0, :Rint => 20000.0)
         ws = 2*pi*(4.6:0.1:4.9)*1e9
@@ -963,10 +988,11 @@ end
         # leave an ulp-level remainder when the two are computed through
         # separate arithmetic paths. this must be detected, not passed
         # through to a catastrophically ill conditioned flux-basis matrix.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
             :Cj => 1000.0e-15, :Rleft => 50.0)
         wp = (2*pi*4.75001*1e9,)
@@ -984,11 +1010,12 @@ end
         # real resistances stored as ComplexF64 are promoted and match the
         # analytic network exactly, and a symbolic frequency dependent
         # resistor is retained in the conductance matrix.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("L2","2","0",:L2))
-        push!(circuit,("C2","2","0",:C2)); push!(circuit,("C3","2","3",:Cc))
-        push!(circuit,("P2","3","0",2)); push!(circuit,("R2","3","0",:Rleft))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("L2", "2", "0", Inductor(:L2)))
+        push!(circuit,("C2", "2", "0", Capacitor(:C2))); push!(circuit,("C3", "2", "3", Capacitor(:Cc)))
+        push!(circuit,("P2", "3", "0", Port(2; Z0 = :Rleft)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict{Symbol,Complex{Float64}}(:Rleft => 50.0,
             :Cc => 30.0e-15, :L2 => 1.2e-9, :C2 => 0.9e-12)
         ws = collect(2*pi*(3.0:0.5:7.0)*1e9)
@@ -1005,17 +1032,18 @@ end
                 inputmode=(0,),inputport=1,freqindex=i), S21, atol = 1e-10)
         end
 
-        # a symbolic frequency dependent resistor across the resonator
-        JosephsonCircuits.@params w
-        circuit2 = Tuple{String,String,String,Any}[]
-        push!(circuit2,("P1","1","0",1)); push!(circuit2,("R1","1","0",complex(50.0)))
-        push!(circuit2,("C1","1","2",:Cc)); push!(circuit2,("L2","2","0",:L2))
-        push!(circuit2,("C2","2","0",:C2))
-        push!(circuit2,("R3","2","0",1.0e4 + 1e-6*w))
-        push!(circuit2,("C3","2","3",:Cc))
-        push!(circuit2,("P2","3","0",2)); push!(circuit2,("R2","3","0",complex(50.0)))
+        # a frequency dependent resistor across the resonator
+        w = FrequencyDependent(identity)
+        circuit2 = Any[]
+        push!(circuit2,("P1", "1", "0", Port(1; Z0 = complex(50.0))))
+        push!(circuit2,("C1", "1", "2", Capacitor(:Cc))); push!(circuit2,("L2", "2", "0", Inductor(:L2)))
+        push!(circuit2,("C2", "2", "0", Capacitor(:C2)))
+        push!(circuit2,("R3", "2", "0", Resistor(1.0e4 + 1e-6*w)))
+        push!(circuit2,("C3", "2", "3", Capacitor(:Cc)))
+        push!(circuit2,("P2", "3", "0", Port(2; Z0 = complex(50.0))))
+        circuit2 = Circuit(circuit2)
         circuitdefs2 = Dict(:Cc => 30.0e-15, :L2 => 1.2e-9, :C2 => 0.9e-12)
-        out2 = hblinsolve(ws, circuit2, circuitdefs2; symfreqvar = w)
+        out2 = hblinsolve(ws, circuit2, circuitdefs2)
         elements2 = [
             (:series, wv -> 1/(im*wv*30.0e-15)),
             (:shunt, wv -> 1/(im*wv*1.2e-9) + im*wv*0.9e-12 +
@@ -1035,12 +1063,13 @@ end
         # produce finite node-sized arrays with a promoted internal
         # resistor present. the sensitivity flags are exercised separately
         # below.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("L2","2","0",:L2))
-        push!(circuit,("C2","2","0",:C2)); push!(circuit,("R4","2","3",:Rint))
-        push!(circuit,("C3","3","0",:C2)); push!(circuit,("C4","3","4",:Cc))
-        push!(circuit,("P2","4","0",2)); push!(circuit,("R2","4","0",:Rleft))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("L2", "2", "0", Inductor(:L2)))
+        push!(circuit,("C2", "2", "0", Capacitor(:C2))); push!(circuit,("R4", "2", "3", Resistor(:Rint)))
+        push!(circuit,("C3", "3", "0", Capacitor(:C2))); push!(circuit,("C4", "3", "4", Capacitor(:Cc)))
+        push!(circuit,("P2", "4", "0", Port(2; Z0 = :Rleft)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Rleft => 50.0, :Cc => 30.0e-15, :L2 => 1.2e-9,
             :C2 => 0.9e-12, :Rint => 700.0)
         ws = collect(2*pi*(3.0:0.25:7.0)*1e9)
@@ -1087,12 +1116,13 @@ end
         # symmetric two-port network must couple with equal magnitude to
         # both ports. this checks the noise wave transfer through the
         # augmented solve without depending on a normalization convention.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("R3","2","0",:Rint))
-        push!(circuit,("L2","2","0",:L2))
-        push!(circuit,("C3","2","3",:Cc))
-        push!(circuit,("P2","3","0",2)); push!(circuit,("R2","3","0",:Rleft))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("R3", "2", "0", Resistor(:Rint)))
+        push!(circuit,("L2", "2", "0", Inductor(:L2)))
+        push!(circuit,("C3", "2", "3", Capacitor(:Cc)))
+        push!(circuit,("P2", "3", "0", Port(2; Z0 = :Rleft)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Rleft => 50.0, :Cc => 30.0e-15, :L2 => 1.2e-9,
             :Rint => 5000.0)
         ws = collect(2*pi*(3.0:0.5:7.0)*1e9)
@@ -1114,10 +1144,11 @@ end
         # gauge equations, and the linearized solve then runs on the MNA
         # operating point. the nodal formulation cannot solve this circuit
         # with a DC pump mode at all.
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)); push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Lj =>1000.0e-12, :Cc => 100.0e-15,
             :Cj => 1000.0e-15, :Rleft => 50.0)
         ws = 2*pi*(4.6:0.1:4.9)*1e9
@@ -1226,17 +1257,16 @@ end
         # inverse inductance entries diverge as 1/(1-k^2), and both solvers
         # remain well behaved.
         function coupled(k)
-            circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-            push!(circuit,("P1","1","0",1))
-            push!(circuit,("R1","1","0",:Rl))
-            push!(circuit,("C1","1","2",:Cc))
-            push!(circuit,("Lj1","2","0",:Lj))
-            push!(circuit,("C2","2","0",:Cj))
-            push!(circuit,("L1","2","0",:Ll))
-            push!(circuit,("L2","3","0",:Lf))
-            push!(circuit,("P2","3","0",2))
-            push!(circuit,("R2","3","0",:Rl))
-            push!(circuit,("K1","L1","L2",:K1))
+            circuit = Any[]
+            push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rl)))
+            push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+            push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+            push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+            push!(circuit,("L1", "2", "0", Inductor(:Ll)))
+            push!(circuit,("L2", "3", "0", Inductor(:Lf)))
+            push!(circuit,("P2", "3", "0", Port(2; Z0 = :Rl)))
+            push!(circuit,("K1", "L1", "L2", MutualInductor(:K1)))
+            circuit = Circuit(circuit)
             circuitdefs = Dict(:Lj=>500.0e-12, :Cc=>100.0e-15,
                 :Cj=>1000.0e-15, :Ll=>300.0e-12, :Lf=>300.0e-12,
                 :Rl=>50.0, :K1=>k)
@@ -1280,16 +1310,15 @@ end
         phi0 = JosephsonCircuits.phi0
         L1 = 300.0e-12
         Lj1v = 500.0e-12
-        ck1 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(ck1,("P1","1","0",1))
-        push!(ck1,("R1","1","0",:Rl))
-        push!(ck1,("L1","1","0",:Ll))
-        push!(ck1,("Lj1","1","0",:Lj))
-        push!(ck1,("C1","1","0",:Cs))
-        push!(ck1,("L2","2","0",:Ll))
-        push!(ck1,("P2","2","0",2))
-        push!(ck1,("R2","2","0",:Rl))
-        push!(ck1,("K1","L1","L2",:K1))
+        ck1 = Any[]
+        push!(ck1,("P1", "1", "0", Port(1; Z0 = :Rl)))
+        push!(ck1,("L1", "1", "0", Inductor(:Ll)))
+        push!(ck1,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(ck1,("C1", "1", "0", Capacitor(:Cs)))
+        push!(ck1,("L2", "2", "0", Inductor(:Ll)))
+        push!(ck1,("P2", "2", "0", Port(2; Z0 = :Rl)))
+        push!(ck1,("K1", "L1", "L2", MutualInductor(:K1)))
+        ck1 = Circuit(ck1)
         dk1 = Dict(:Rl=>50.0, :Ll=>L1, :Lj=>Lj1v, :Cs=>100.0e-15, :K1=>1.0)
         Iflux = 2.0e-6
         outk1 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
@@ -1310,13 +1339,13 @@ end
         # rejected with an informative error, because the parallel
         # inductors are combined into one branch inductance before the
         # coupling is applied, which silently misrepresents the pair
-        csame = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(csame,("P1","1","0",1))
-        push!(csame,("R1","1","0",:Rl))
-        push!(csame,("L1","1","0",:Ll))
-        push!(csame,("L2","1","0",:Ll))
-        push!(csame,("C1","1","0",:Cs))
-        push!(csame,("K1","L1","L2",:K1))
+        csame = Any[]
+        push!(csame,("P1", "1", "0", Port(1; Z0 = :Rl)))
+        push!(csame,("L1", "1", "0", Inductor(:Ll)))
+        push!(csame,("L2", "1", "0", Inductor(:Ll)))
+        push!(csame,("C1", "1", "0", Capacitor(:Cs)))
+        push!(csame,("K1", "L1", "L2", MutualInductor(:K1)))
+        csame = Circuit(csame)
         errsb = try
             JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (1,),
                 [(mode=(1,),port=1,current=1.0e-6)], csame,
@@ -1331,16 +1360,15 @@ end
         # an uncoupled inductor sharing a branch with a coupled inductor
         # is also rejected: the merged branch inductance misrepresents the
         # effective mutual coupling (by the current division factor)
-        cmixed = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(cmixed,("P1","1","0",1))
-        push!(cmixed,("R1","1","0",:Rl))
-        push!(cmixed,("L1","1","0",:Ll))
-        push!(cmixed,("L2","1","0",:Ll))
-        push!(cmixed,("L3","2","0",:Ll))
-        push!(cmixed,("P2","2","0",2))
-        push!(cmixed,("R2","2","0",:Rl))
-        push!(cmixed,("C1","1","0",:Cs))
-        push!(cmixed,("K1","L1","L3",:K1))
+        cmixed = Any[]
+        push!(cmixed,("P1", "1", "0", Port(1; Z0 = :Rl)))
+        push!(cmixed,("L1", "1", "0", Inductor(:Ll)))
+        push!(cmixed,("L2", "1", "0", Inductor(:Ll)))
+        push!(cmixed,("L3", "2", "0", Inductor(:Ll)))
+        push!(cmixed,("P2", "2", "0", Port(2; Z0 = :Rl)))
+        push!(cmixed,("C1", "1", "0", Capacitor(:Cs)))
+        push!(cmixed,("K1", "L1", "L3", MutualInductor(:K1)))
+        cmixed = Circuit(cmixed)
         errmx = try
             JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (1,),
                 [(mode=(1,),port=1,current=1.0e-6)], cmixed,
@@ -1358,17 +1386,17 @@ end
         # and combine by reciprocal sum: two 2L inductors in parallel are
         # equivalent to a single inductor L
         function parcircuit(split::Bool)
-            c = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-            push!(c,("P1","1","0",1))
-            push!(c,("R1","1","0",:Rl))
+            c = Any[]
+            push!(c,("P1", "1", "0", Port(1; Z0 = :Rl)))
             if split
-                push!(c,("L1","1","0",:L2x))
-                push!(c,("L2","1","0",:L2x))
+                push!(c,("L1", "1", "0", Inductor(:L2x)))
+                push!(c,("L2", "1", "0", Inductor(:L2x)))
             else
-                push!(c,("L1","1","0",:Lx))
+                push!(c,("L1", "1", "0", Inductor(:Lx)))
             end
-            push!(c,("Lj1","1","0",:Lj))
-            push!(c,("C1","1","0",:Cs))
+            push!(c,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+            push!(c,("C1", "1", "0", Capacitor(:Cs)))
+            c = Circuit(c)
             return c
         end
         dp = Dict(:Rl=>50.0, :Lx=>L1, :L2x=>2*L1, :Lj=>Lj1v, :Cs=>100.0e-15)
@@ -1383,16 +1411,16 @@ end
 
         # a floating loop biased through a mutual inductor at dc solves
         # with a coupled branch promoted
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rl))
-        push!(circuit,("L1","1","0",:Lm))
-        push!(circuit,("K1","L1","L2",:K1))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("L2","2","3",:Lm))
-        push!(circuit,("Lj3","3","0",:Lj))
-        push!(circuit,("Lj4","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rl)))
+        push!(circuit,("L1", "1", "0", Inductor(:Lm)))
+        push!(circuit,("K1", "L1", "L2", MutualInductor(:K1)))
+        push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(circuit,("L2", "2", "3", Inductor(:Lm)))
+        push!(circuit,("Lj3", "3", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("Lj4", "2", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Lj=>2000.0e-12, :Lm=>10.0e-12,
             :Cc=>200.0e-15, :Cj=>900.0e-15, :Rl=>50.0, :K1=>0.999)
         out = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (4,),
@@ -1415,12 +1443,12 @@ end
         Lj = 500.0e-12
         C = 100.0e-15
         Rl = 50.0
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rl))
-        push!(circuit,("L1","1","0",:Ll))
-        push!(circuit,("Lj1","1","0",:Lj))
-        push!(circuit,("C1","1","0",:Cs))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rl)))
+        push!(circuit,("L1", "1", "0", Inductor(:Ll)))
+        push!(circuit,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit,("C1", "1", "0", Capacitor(:Cs)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(:Rl=>Rl, :Ll=>L, :Lj=>Lj, :Cs=>C)
 
         # dc bias: the node flux satisfies the scalar rf-SQUID equation
@@ -1474,16 +1502,15 @@ end
         # current in the periodic steady state)
         k = 0.6
         M = k*L
-        circuit2 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit2,("P1","1","0",1))
-        push!(circuit2,("R1","1","0",:Rl))
-        push!(circuit2,("L1","1","0",:Ll))
-        push!(circuit2,("Lj1","1","0",:Lj))
-        push!(circuit2,("C1","1","0",:Cs))
-        push!(circuit2,("L2","2","0",:Ll))
-        push!(circuit2,("P2","2","0",2))
-        push!(circuit2,("R2","2","0",:Rl))
-        push!(circuit2,("K1","L1","L2",:K1))
+        circuit2 = Any[]
+        push!(circuit2,("P1", "1", "0", Port(1; Z0 = :Rl)))
+        push!(circuit2,("L1", "1", "0", Inductor(:Ll)))
+        push!(circuit2,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit2,("C1", "1", "0", Capacitor(:Cs)))
+        push!(circuit2,("L2", "2", "0", Inductor(:Ll)))
+        push!(circuit2,("P2", "2", "0", Port(2; Z0 = :Rl)))
+        push!(circuit2,("K1", "L1", "L2", MutualInductor(:K1)))
+        circuit2 = Circuit(circuit2)
         circuitdefs2 = Dict(:Rl=>Rl, :Ll=>L, :Lj=>Lj, :Cs=>C, :K1=>k)
         Iflux = 2.0e-6
         out3 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
@@ -1496,12 +1523,12 @@ end
 
         # two junctions on the same branch are rejected (an existing
         # conservative guard in the branch vector construction)
-        circuit3 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit3,("P1","1","0",1))
-        push!(circuit3,("R1","1","0",:Rl))
-        push!(circuit3,("Lj1","1","0",:Lj))
-        push!(circuit3,("Lj2","1","0",:Lj))
-        push!(circuit3,("C1","1","0",:Cs))
+        circuit3 = Any[]
+        push!(circuit3,("P1", "1", "0", Port(1; Z0 = :Rl)))
+        push!(circuit3,("Lj1", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit3,("Lj2", "1", "0", JosephsonJunction(:Lj)))
+        push!(circuit3,("C1", "1", "0", Capacitor(:Cs)))
+        circuit3 = Circuit(circuit3)
         @test_throws Exception JosephsonCircuits.hbnlsolve((2*pi*5.0e9,),
             (1,), [(mode=(1,),port=1,current=1.0e-6)], circuit3,
             circuitdefs)

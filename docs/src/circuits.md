@@ -79,6 +79,38 @@ connection is not a node list: the bundled port views of scattering blocks
 in pair connections, or nets named explicitly with `Net`. The two forms may
 be mixed freely across a hierarchy, since either produces a `Circuit`.
 
+## Storage and compilation
+
+“Typed” refers to the component models, such as `Capacitor{Float64}`;
+the circuit description can still contain heterogeneous collections.
+The connection-group constructor keeps the collections supplied by the
+caller, without copying them. The netlist constructor builds vectors of
+pairs and named nets. Component models and unresolved endpoint keys may
+have different types, so those fields are heterogeneous.
+
+Parsing resolves connectivity to integer instance and terminal indices.
+`elaborate` flattens the hierarchy, `compile` builds the component tables,
+and value binding gathers numerical values into concrete arrays grouped
+by component kind for matrix assembly. This separates the flexible input
+syntax from numerical kernels without making each circuit topology a new
+solver type.
+
+Use vectors for generated component lists and large connection groups.
+Unlike tuples, their types do not depend on their lengths. There is no
+need to eliminate every `Any` from a circuit description by encoding the
+entire circuit in a tuple type. The constructor validates the current
+contents; elaboration validates them again, so subsequent edits to the
+retained collections are observed.
+
+Within one elaboration, repeated subcircuits share the parsed definition
+and dictionary lookup of interface pin and port keys. These internal
+indexes are rebuilt on the next independent parse or elaboration, so they
+do not hide changes to the supplied interface collections. Custom interface
+keys, when used, must follow Julia's usual `isequal`/`hash` contract.
+
+Elaboration stores terminal wires in flat arrays with instance offsets.
+Wire and net numbers remain runtime data, and do not become type parameters.
+
 ## Subcircuits
 
 A `Circuit` given an interface through the `pins` keyword is a component,
@@ -108,7 +140,43 @@ line = Circuit(
 
 The older netlist of `(name, node1, node2, value)` tuples with the
 component type given by the prefix of the name, `("C1", "1", "0", 1e-12)`,
-is still read; see the `Circuit` docstring.
+is deprecated: it is still read, with a warning, and will be removed in a
+future release. A port of such a netlist takes the resistor across it as
+its termination, so it is written as `Port(1; Z0 = 50.0)` with that
+resistor dropped.
+
+Writing a frequency dependent value as an expression in a parameter named
+by the `symfreqvar` keyword of the solvers is deprecated in the same way.
+The value is a `FrequencyDependent` closure of the frequency instead, and
+`FrequencyDependent(identity)` is the frequency itself where an expression
+reads better than a closure:
+
+```julia
+wc = 2*pi*10e9
+Resistor(FrequencyDependent(w -> 50.0*(1 + im*w/wc)))
+Resistor(50.0*(1 + im*FrequencyDependent(identity)/wc))
+```
+
+### Interface changes
+
+The rest of this release's frontend changes, and what each asks of a
+caller:
+
+- `FrequencyDependent(f)` constructs the frequency dependent leaf of a
+  component value, so a closure combines with an expression in parameters
+  the way any other value does.
+- [`hbcache`](@ref) and [`designsensitivities`](@ref) take a typed circuit
+  with the definitions of its parameters, in place of a function which
+  builds a circuit from a point. The values which move are written as
+  parameters, `Capacitor(:Cc)`, and the definitions give each a number.
+- A circuit's node order is chosen when it is compiled, so `sorting` is a
+  keyword of [`compile`](@ref) alone. A caller who wants an order other
+  than the default compiles with it and passes the compiled circuit, which
+  every entry point accepts: `hbsolve(ws, wp, sources, (2,), (8,),
+  compile(circuit; sorting = :number), circuitdefs)`.
+- A compiled circuit carries its own topology, so no entry point takes a
+  separate graph. [`calccircuitgraph`](@ref) builds the graph with its
+  diagnostics, which is what it is for.
 
 
 ## Nonlinear elements and their current-phase relations
@@ -196,7 +264,9 @@ impedance and a length, with a phase velocity that defaults to the speed
 of light; in the frequency domain it is the exact line, in time the
 method of characteristics with a history of the waves. A delay is not a
 rational function, so a lossy cable is a line in cascade with a fit of
-its data with the delay removed.
+its data with the delay removed, which `RationalScattering` does for a
+`delays` of one delay per port, moving a stated covariance to the same
+reference planes.
 
 A pumped device in its periodic steady state, a parametric amplifier,
 converter or isolator, is a linear time-periodic multiport: it converts

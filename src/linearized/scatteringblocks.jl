@@ -1405,24 +1405,29 @@ end
 # whether a provider holds data at the frequency `nu`: a table within
 # its knots, or everywhere when it declares how it extrapolates, a
 # piecewise table within one of its bands, the data being the samples
-# and what lies between them, with no declaration made beyond them,
-# and a provider of any other kind, a callable, a constant or a
-# filter, everywhere
+# and what lies between them, with no declaration made beyond them, a
+# rotation wherever the provider it turns does, and a provider of any
+# other kind, a callable, a constant or a filter, everywhere
 providercovers(p::TabulatedMatrixProvider, nu::Real) = p.extrapolation != :error || holdsdata(p, nu)
 providercovers(p::PiecewiseTabulatedProvider, nu::Real) = holdsdata(p, nu)
+providercovers(p::RotatedMatrixProvider, nu::Real) = providercovers(p.provider, nu)
 providercovers(p, nu::Real) = true
 
 # whether a provider holds a sample of its own at `nu`, the knots of a
 # table reaching it before any extrapolation, which is where its data can
-# be checked against a relation it must obey; a provider which is not
-# tabulated states its value everywhere
+# be checked against a relation it must obey, and the same samples
+# through a rotation; a provider which is not tabulated states its value
+# everywhere
 holdsdata(p::TabulatedMatrixProvider, nu::Real) = tablecovers(p, nu)
 holdsdata(p::PiecewiseTabulatedProvider, nu::Real) = any(t -> tablecovers(t, nu), p.tables)
+holdsdata(p::RotatedMatrixProvider, nu::Real) = holdsdata(p.provider, nu)
 holdsdata(p, nu::Real) = true
 
-# the knots of a tabulated provider, and none for one of any other kind
+# the knots of a tabulated provider, of a rotation the knots of what it
+# turns, and none for one of any other kind
 tableknots(p::TabulatedMatrixProvider) = p.frequencies
 tableknots(p::PiecewiseTabulatedProvider) = piecewisefrequencies(p)
+tableknots(p::RotatedMatrixProvider) = tableknots(p.provider)
 tableknots(p) = Float64[]
 
 # a provider at the signed frequencies its data covers, into
@@ -1477,7 +1482,7 @@ end
 # the harmonic transfer functions of a block, or with `covariance` the
 # harmonic covariances of its stated noise, at the signed frequencies
 # each harmonic's data covers, rotated by the pump phase as
-# `evaluateharmonics!` and `evaluateharmoniccovariances!` rotate them,
+# `evaluateharmonics!` and the covariance form of this function rotate them,
 # and zero where the data does not reach, which the harmonic map of a
 # family never reads. A covariance is read on the conjugate ladder as
 # well, the relation carrying it there being the same at either sign of
@@ -1536,8 +1541,11 @@ read from the data at its image (see [`NoiseCovariance`](@ref)). Where
 a table holds both a knot and its image the two state the same noise
 and must agree, to the block's `atol` or the covariance's, whichever is
 larger, of the largest entry of the table; a constant covariance is its
-own image and so is symmetric, a Hermitian one real. A callable is
-what it is at each frequency and is not checked.
+own image and so is symmetric, a Hermitian one real. A rotation (see
+[`RotatedMatrixProvider`](@ref)) is checked on the covariance it
+returns, at the knots of the table it turns or at zero for a constant,
+each with its image. A callable is what it is at each frequency and is
+not checked.
 """
 function conjugateladder(block::LinearizedScattering)
     block.noise isa NoiseCovariance || return nothing
@@ -1546,11 +1554,17 @@ function conjugateladder(block::LinearizedScattering)
     atol = max(block.atol, block.noise.atol)
     for (j, k) in enumerate(block.harmonics)
         p = block.noise.provider[j]
-        if p isa ConstantMatrixProvider
-            M = Array{Complex{Float64},3}(undef, n, n, 1)
-            evaluateprovider!(M, p, [0.0])
-            d = maximum(abs, view(M, :, :, 1) .- transpose(view(M, :, :, 1)))
-            d <= atol*max(1.0, maximum(abs, M)) || throw(ArgumentError(lazy"the constant covariance of the harmonic $(k) is not that of a real wave: it differs from its transpose by $(d), and a covariance which is the same at a frequency and at its image on the conjugate ladder is symmetric, V_k(-nu - k wp) = transpose(V_k(nu)). State a covariance which depends on frequency as a table or a callable."))
+        # a constant, or a rotation of one, meets the relation at every
+        # frequency or at none, since a rotation turns the two sides of
+        # it by phases whose difference does not depend on the frequency,
+        # so it is checked at zero and its image, on what the provider
+        # returns there: a constant of its own is its own image, and so
+        # symmetric
+        if unrotated(p) isa ConstantMatrixProvider
+            M = Array{Complex{Float64},3}(undef, n, n, 2)
+            evaluateprovider!(M, p, [0.0, ladderimage(k, wp, 0.0)])
+            d = maximum(abs, view(M, :, :, 2) .- transpose(view(M, :, :, 1)))
+            d <= atol*max(1.0, maximum(abs, M)) || throw(ArgumentError(lazy"the constant covariance of the harmonic $(k) is not that of a real wave: at the image of zero frequency on the conjugate ladder it differs from its transpose at zero by $(d), where the two state the same noise, V_k(-nu - k wp) = transpose(V_k(nu)), which makes a constant symmetric. State a covariance which depends on frequency as a table or a callable."))
             continue
         end
         nus = tableknots(p)
@@ -1925,9 +1939,8 @@ The temperature of each row of the noise scattering matrix, in the order
 unless it states one of its own. A lumped component states it as
 `Resistor(R; temperature = T)` and a [`ScatteringParameters`](@ref) as
 `noise = ThermalEquilibrium(T)`, both of which are recorded by
-[`compile`](@ref) as it lowers the circuit. Only the typed circuit
-format carries them; a netlist of tuples states none and everything in it
-takes the default.
+[`compile`](@ref) as it lowers the circuit; a component which states
+none takes the default.
 
 The channels of a block which states its noise with a
 [`NoiseCovariance`](@ref) are at zero temperature: the covariance it

@@ -22,12 +22,9 @@ using Test
     end
 
     @testset "the deprecated solver forms and keywords" begin
-        circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int}},1}(undef,0)
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj))
+        circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = :Rleft)),
+            (:C1, 1, 2, Capacitor(:Cc)), (:Lj1, 2, 0, JosephsonJunction(:Lj)),
+            (:C2, 2, 0, Capacitor(:Cj))])
         circuitdefs = Dict{Symbol,Complex{Float64}}(
             :Lj =>1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15,
             :Rleft => 50.0)
@@ -77,7 +74,8 @@ using Test
     end
 
     @testset "ftol is atol" begin
-        circuit = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12), ("Lj1", "1", "0", 1e-9)]
+        circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 0, Capacitor(1e-12)), (:Lj1, 1, 0, JosephsonJunction(1e-9))])
         wp = (2pi*5e9,)
         src = [(mode = (1,), port = 1, current = 1e-8)]
         old = @test_logs (:warn,) hbnlsolve(wp, (2,), src, circuit; ftol = 1e-10, keyedarrays = false)

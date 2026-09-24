@@ -50,7 +50,24 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
   interop:
-    name: Extensions - Julia 1 - ubuntu-latest
+    name: Extensions - Julia ${{ matrix.version }} - ubuntu-latest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['lts', '1']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v3
+      # the optional extensions (Krylov.jl, SciMLBase, Symbolics) against the
+      # package from this checkout, in the interop test environment
+      - run: julia --project=test/interop -e 'using Pkg; Pkg.develop(path = "."); Pkg.instantiate()'
+      - run: julia --project=test/interop test/interop/runtests.jl
+  threaded:
+    name: Serial and threaded solver parity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -58,6 +75,20 @@ jobs:
         with:
           version: '1'
       - uses: julia-actions/cache@v3
-      # the optional extensions (Krylov.jl, SciMLBase) against the package
-      # from this checkout, in the interop test environment
-      - run: julia --project=test/interop -e 'using Pkg; Pkg.develop(path = "."); Pkg.instantiate(); include("test/interop/runtests.jl")'
+      - run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      # the same solves in a one-thread and a four-thread process, whose
+      # results must agree
+      - run: julia --project=. test/threaded/compare.jl
+  benchmarks:
+    name: The benchmarks execute
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      # every benchmark script at a small size: nothing is measured, the
+      # check is that each still runs against the current interfaces
+      - run: julia --project=. benchmark/smoke.jl

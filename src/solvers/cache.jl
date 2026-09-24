@@ -1,12 +1,14 @@
 # =====================================================================
 # A reusable harmonic balance solver for parameter sweeps and optimizer
-# loops over circuit builders.
+# loops, over a typed circuit whose values are written in terms of
+# parameters.
 #
 # The expensive, reusable part of a solve is fixed by the topology and the
-# harmonic selection: the parse, the graph, the mode grid and the Fourier
-# index maps. The cheap part is fixed by the component values. `HBCache`
-# holds the first and recomputes the second from the builder, so a loop
-# over parameter values pays the parse once.
+# harmonic selection: the compiled circuit, the mode grid and the Fourier
+# index maps. The cheap part is fixed by the component values.
+# `HBCache` holds the first and recomputes the second from the circuit's
+# values at the point's definitions, so a loop over parameter values pays
+# the compilation once.
 #
 # The cache also carries the one piece of state worth keeping between
 # solves: the previously converged operating point, which warm starts the
@@ -17,10 +19,10 @@
 """
     HBCache
 
-A reusable harmonic balance solver over a circuit builder: the parsed
-sorted circuit, the circuit graph, the mode grid and its Fourier index
-maps, the solver options, and the last converged operating point, which
-[`hbsolve!`](@ref) uses to warm start the next solve.
+A reusable harmonic balance solver over a typed circuit with parameters:
+the compiled circuit and its definitions, the mode grid and its Fourier
+index maps, the solver options, and the last converged operating point,
+which [`hbsolve!`](@ref) uses to warm start the next solve.
 
 Built by [`hbcache`](@ref). `converged` reports whether the last solve
 succeeded, and a solve which does not converge also warns with the reason
@@ -29,12 +31,13 @@ looks like a solution and is not one, and comparing timings or gradients
 against it is meaningless.
 """
 mutable struct HBCache{N,K,P}
-    builder::Any
     compiled::CompiledCircuit
+    # the definitions of every parameter, which a point overrides, and the
+    # keys of the definitions under each parameter name
+    definitions::Dict{Any,Any}
+    definitionkeys::Dict{Symbol,Vector{Any}}
     plan::P
     structure::Any
-    valueorder::Vector{Int}
-    cg::CircuitGraph
     frequencies::Frequencies{N}
     indices::FourierIndices{N}
     Nmodes::Int
@@ -49,62 +52,65 @@ mutable struct HBCache{N,K,P}
     reuse::HBReuse
     # the circuit matrices of the last point, refilled at the next
     nm::Union{Nothing,CircuitMatrices}
+    matrixworkspace::Union{Nothing,CircuitMatrixWorkspace}
 end
 
 """
-    hbcache(w, Nharmonics, sources, builder, p::NamedTuple;
+    hbcache(w, Nharmonics, sources, circuit, circuitdefs = Dict{Symbol,Any}();
         dc = false, odd = true, even = false, maxintermodorder = Inf,
         Nevaluationharmonics = map(i -> 2i, Nharmonics),
-        frequencywindow = (0, Inf), sorting = :number, kwargs...)
+        frequencywindow = (0, Inf), kwargs...)
 
-A reusable nonlinear solver over the circuit builder `builder`, parsed
-once at the parameter point `p`. `builder(; p...)` must return a netlist
-of `(name, node1, node2, value)` tuples with fully numeric values; a typed
-[`Circuit`](@ref) is refused, because the cache rebinds values by walking
-the builder's output. The harmonic selection keywords match
-[`hbnlsolve`](@ref); the remaining keywords are stored and forwarded to
-every solve as keywords of `hbnlsolve` on the compiled circuit, so they
-are the solver keywords (`method`, `atol`, `rtol`, `iterations`,
-`backend`, ...) and are validated here: a keyword the compiled circuit
-solve does not accept is an `ArgumentError` at construction rather than
-a failure at the first solve, as are `x0` and `reuse`, which the cache
-manages itself (the warm start through `warmstart`, the reuse object
-internally), `keyedarrays = true`, since the state is kept as plain
-vectors (`false` is accepted as what the cache does anyway), and
-`method = Staged()`, which the cache does not support since the
-continuation builds its own systems at its own truncations.
+A reusable nonlinear solver over a typed [`Circuit`](@ref), or the
+[`CompiledCircuit`](@ref) of one, whose values are written in terms of
+parameters (symbols, or the parameters of [`@params`](@ref)), with
+`circuitdefs` giving every parameter a number. [`hbsolve!`](@ref) takes
+the parameters to move as a named tuple keyed by their names, reads the
+rest from `circuitdefs`, and evaluates the values at the point; a value
+which is not a number at the definitions (a frequency dependent one) is
+refused.
 
-The builder must keep the circuit topology fixed as the parameters vary;
-[`hbsolve!`](@ref) checks the component names of each new evaluation
-against the parse.
+The harmonic selection keywords match [`hbnlsolve`](@ref); the remaining
+keywords are stored and forwarded to every solve as keywords of
+`hbnlsolve` on the compiled circuit, so they are the solver keywords
+(`method`, `atol`, `rtol`, `iterations`, `backend`, ...) and are validated
+here: a keyword the compiled circuit solve does not accept is an
+`ArgumentError` at construction rather than a failure at the first solve,
+as are `x0` and `reuse`, which the cache manages itself (the warm start
+through `warmstart`, the reuse object internally), `keyedarrays = true`,
+since the state is kept as plain vectors (`false` is accepted as what the
+cache does anyway), and `method = Staged()`, which the cache does not
+support since the continuation builds its own systems at its own
+truncations.
 
 # Examples
 ```julia
-make(; Lj, Cc) = [("P1","1","0",1), ("R1","1","0",50.0),
-    ("C1","1","2",Cc), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
+circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(:Cc)),
+    (:Lj1, 2, 0, JosephsonJunction(:Lj)), (:C2, 2, 0, Capacitor(1000e-15))])
 cache = hbcache((2*pi*4.75e9,), (8,),
-    [(mode=(1,), port=1, current=1e-8)], make,
-    (Lj = 1000e-12, Cc = 100e-15))
+    [(mode=(1,), port=1, current=1e-8)], circuit,
+    Dict(:Lj => 1000e-12, :Cc => 100e-15))
 for Lj in (900:25:1100)*1e-12
-    sol = hbsolve!(cache, (Lj = Lj, Cc = 100e-15))
+    sol = hbsolve!(cache, (Lj = Lj,))
     cache.converged || break
 end
 ```
 """
 function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-        builder, p::NamedTuple;
+        circuit::CompilableCircuit,
+        circuitdefs::AbstractDict = Dict{Symbol,Any}();
         Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
         maxintermodorder = Inf, frequencywindow = (0, Inf),
-        dc::Bool = false, odd::Bool = true, even::Bool = false,
-        sorting = :number, kwargs...) where {N}
-
+        dc::Bool = false, odd::Bool = true, even::Bool = false, kwargs...) where {N}
     all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
         lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
     checkcachekwargs(kwargs)
+    compiled = compile(circuit)
+    definitions = definitiontable(circuitdefs)
+    bound = bindvalues(compiled, cachevalues(compiled, definitions))
     # the inputs in their canonical forms, once, for every solve
     w = tonefrequencies(w)
     sources = sourcetable(sources, w)
-
     frequencies = removeconjfreqs(
         truncfreqs(calcfreqsrdft(Nevaluationharmonics); dc = dc, odd = odd,
             even = even, maxintermodorder = maxintermodorder,
@@ -112,40 +118,60 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
             frequencywindow = frequencywindow))
     indices = fourierindices(frequencies)
     Nmodes = length(frequencies.modes)
-
-    # The builder must return a netlist of tuples, not a typed `Circuit`:
-    # the value table below is built by walking the builder's output entry
-    # by entry, and a typed circuit's compiled table can hold generated
-    # entries (a port's termination) the builder never returned.
-    circuit0 = builder(; p...)
-    circuit0 isa AbstractVector || throw(ArgumentError(lazy"hbcache needs a builder returning a netlist of (name, node1, node2, value) tuples; this one returned a $(typeof(circuit0)). A typed `Circuit` is not supported here yet, because the cache rebinds values by walking the builder's output."))
-    compiled = compile(circuit0; sorting = sorting)
-    # the loop enumeration is quadratic in the number of inductive
-    # loops and nothing here reads it
-    cg = calccircuitgraph(compiled; loops = false)
-    bound = bind(compiled)
-    plan = circuitmatrixplan(compiled, cg, bound; Nmodes = Nmodes)
-
-    # where each component the builder returns lands in the value table.
-    # The topology is fixed as the parameters vary, so this is fixed too, and
-    # looking it up once turns a string hash and a dictionary probe per
-    # component per solve into an array read.
-    valueorder = [get(compiled.componentnamedict, String(first(c)), 0)
-                  for c in circuit0]
-
-    return HBCache(builder, compiled, plan, structuralkey(bound), valueorder,
+    plan = circuitmatrixplan(compiled; Nmodes = Nmodes)
+    return HBCache(compiled, definitions, definitionkeys(definitions), plan,
+        structuralkey(bound),
         # as a named tuple: a keyword splat of mixed value types is a
         # `Pairs{Symbol,Any}`, and splatting that into every solve hands the
         # solver keywords of unknown type
-        cg, frequencies, indices, Nmodes, w, sources, NamedTuple(kwargs),
-        nothing, false, 0, HBReuse(), nothing)
+        frequencies, indices, Nmodes, w, sources, NamedTuple(kwargs),
+        nothing, false, 0, HBReuse(), nothing, nothing)
 end
 
+# The values of the circuit at its definitions, every one a number, as one
+# real or complex vector, which is how the assembly takes them.
+function cachevalues(compiled::CompiledCircuit, definitions)
+    vvn = numericvalues(compiled, definitions)
+    vals = Complex{Float64}[v for v in vvn]
+    return all(v -> iszero(imag(v)), vals) ? real.(vals) : vals
+end
+
+# the keys of the definitions under each parameter name: a parameter may
+# be defined under its parameter object, its symbol or its string, and a
+# point moves every key of its name
+function definitionkeys(definitions::AbstractDict)
+    index = Dict{Symbol,Vector{Any}}()
+    for key in keys(definitions)
+        name = definitionname(key)
+        isnothing(name) && continue
+        push!(get!(Vector{Any}, index, name), key)
+    end
+    return index
+end
+
+# the definitions with the parameters of the point `p` moved, under every
+# key of each name (see `definitionkeys`); a parameter the definitions do
+# not hold is added under its symbol
+function definitionsat(definitions::AbstractDict, index::AbstractDict,
+        p::NamedTuple)
+    d = copy(definitions)
+    for (name, value) in zip(keys(p), values(p))
+        moved = get(index, name, nothing)
+        if isnothing(moved)
+            d[name] = value
+        else
+            for key in moved
+                d[key] = value
+            end
+        end
+    end
+    return d
+end
 # the keywords the compiled circuit solve accepts, read off its method so
 # the check cannot drift from the signature
 function compiledsolvekwargs()
     m = which(hbnlsolve, (NTuple{1,Float64}, Vector{SourceTuple{1}},
-        Frequencies{1}, FourierIndices{1}, CompiledCircuit, CircuitGraph,
+        Frequencies{1}, FourierIndices{1}, CompiledCircuit,
         CircuitMatrices))
     return Base.kwarg_decl(m)
 end
@@ -184,57 +210,12 @@ end
 """
     componentvalues(cache::HBCache, p::NamedTuple)
 
-The component values of `cache.builder` at `p`, in the parsed sorted
-order, without re-parsing. The builder output must have the same
-component names as the parse and fully numeric values.
+The component values of the cache's circuit at `p`, in the compiled order:
+the circuit's values at its definitions with the parameters of `p` moved.
 """
-function componentvalues(cache::HBCache, p::NamedTuple)
-    # A function barrier. The builder is stored as `Any`, so calling it
-    # yields a value of unknown type and everything downstream of it in the
-    # same function is dynamically dispatched -- once per component, per
-    # solve. Handing the result to a function which specializes on its
-    # concrete type costs one dispatch instead of thousands.
-    return gathercomponentvalues(cache.builder(; p...), cache.valueorder,
-        cache.compiled.componentnames, cache.compiled.componentnamedict,
-        cache.compiled.ports)
-end
-
-function gathercomponentvalues(circuit, order::Vector{Int},
-        names::Vector{String}, namedict::Dict{String,Int},
-        ports::Vector{CompiledPort})
-    length(circuit) == length(names) ||
-        throw(ArgumentError(lazy"the builder returned $(length(circuit)) components where the parse has $(length(names)); the circuit topology must be fixed as the parameters vary."))
-    vals = Vector{Complex{Float64}}(undef, length(names))
-    filled = falses(length(names))
-    @inbounds for (k, c) in enumerate(circuit)
-        name = first(c)
-        # the cached position, confirmed by comparing the name rather than
-        # hashing it. A builder which reorders its components between calls
-        # still lands in the right place, it just pays for the lookup.
-        i = (k <= length(order) && !iszero(order[k]) &&
-             isequal(name, names[order[k]])) ? order[k] :
-            get(namedict, String(name), 0)
-        iszero(i) && throw(ArgumentError(lazy"the builder returned the component $(name), which is not in the parsed circuit; the circuit topology must be fixed as the parameters vary."))
-        # a name returned twice would fill one slot twice and leave another
-        # holding whatever it held
-        filled[i] && throw(ArgumentError(lazy"the builder returned the component $(name) twice; component names must be unique."))
-        filled[i] = true
-        v = c[4]
-        v isa Number || throw(ArgumentError(lazy"the component $(name) has the non-numeric value $(v); the cached solver requires a fully numeric builder output."))
-        vals[i] = Complex{Float64}(v)
-    end
-    # A legacy netlist writes the port number where every other entry has
-    # its value, and states the reference impedance through the resistor
-    # across the port; the elaborated circuit carries that impedance as the
-    # port's own value, which the compiled port records as its environment.
-    # The assembly reads the port's slot, so it is bound the same way here.
-    for port in ports
-        iszero(port.environment) ||
-            (vals[port.component] = vals[port.environment])
-    end
-    # keep purely real value vectors real, which the assembly prefers
-    return all(v -> iszero(imag(v)), vals) ? real.(vals) : vals
-end
+componentvalues(cache::HBCache, p::NamedTuple) =
+    cachevalues(cache.compiled,
+        definitionsat(cache.definitions, cache.definitionkeys, p))
 
 """
     reset!(cache::HBCache)
@@ -258,7 +239,7 @@ parameters `p`, warm starting from the previously converged operating
 point. Returns the [`NonlinearHB`](@ref) solution; `cache.converged`
 reports whether it converged.
 
-The parse, the graph and the mode grid are reused, and so are the system,
+The compiled circuit and the mode grid are reused, and so are the system,
 the preconditioner and the Krylov vectors of the previous solve, rebound to
 the new component values (see [`HBReuse`](@ref)); only the numeric matrices
 and the solve itself are recomputed. If the previous solve did not converge
@@ -283,14 +264,23 @@ function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
         throw(ArgumentError("a component value crossed a structural boundary (an inductance became open or shorted, a value became complex, or a mutual coupling reached one), so the cached sparsity patterns no longer apply. Build a new cache for these parameters."))
     end
     # into the storage of the previous point's matrices, once there are any
-    nm = isnothing(cache.nm) ? assemblematrices(cache.plan, bound) :
-        assemblematrices!(cache.nm, cache.plan, bound)
+    nm = if isnothing(cache.nm)
+        matrices = assemblematrices(cache.plan, bound)
+        cache.matrixworkspace = CircuitMatrixWorkspace(cache.plan, matrices)
+        matrices
+    else
+        matrices = assemblematrices!(cache.nm, cache.plan, bound, cache.matrixworkspace)
+        if eltype(matrices.Mb) !== eltype(cache.nm.Mb)
+            cache.matrixworkspace = CircuitMatrixWorkspace(cache.plan, matrices)
+        end
+        matrices
+    end
     cache.nm = nm
     x0 = (warmstart && cache.converged) ? initialguess(cache.x) : ComplexF64[]
     # keyed arrays are a presentation convenience and pure overhead in a
     # loop; the stored state has to be a plain vector for the warm start
     nl = hbnlsolve(cache.w, cache.sources, cache.frequencies,
-        cache.indices, cache.compiled, cache.cg, nm;
+        cache.indices, cache.compiled, nm;
         x0 = x0, keyedarrays = false, reuse = cache.reuse, cache.kwargs...)
     cache.x = vec(collect(nl.nodeflux))
     cache.converged = nl.solverinfo.converged

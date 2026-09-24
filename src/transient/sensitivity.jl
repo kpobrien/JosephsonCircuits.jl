@@ -200,16 +200,6 @@ end
 # entries, for the forcing of a tangent
 stackedderivative(t::PerturbationTriplets, n::Int, nc::Int) = sparse((t.c .- 1) .* n .+ t.i, t.j, t.v, nc*n, t.k)
 
-# the component's index in the flat table from its name, however the
-# table is keyed
-function componentindex(psc::CompiledCircuit, name)
-    key = String(name)
-    idx = get(psc.componentnamedict, key, 0)
-    iszero(idx) && (idx = get(psc.componentnamedict, Symbol(key), 0))
-    iszero(idx) && throw(ArgumentError(lazy"The component $(name) is not in this circuit."))
-    return idx
-end
-
 # the junction incidence of a problem and the junction coefficients
 # `Lscale/Lj`, on the host, as the system builds them
 function junctionincidence(p::TransientProblem)
@@ -227,7 +217,7 @@ end
 # with the state times the components. The entries are read here, once,
 # from each component's stamp padded to the state, which no step builds.
 function componentperturbation(p::TransientProblem, names, backend; forcing::Bool)
-    psc, cg, nm = p.circuit, p.graph, p.matrices
+    psc, nm = p.circuit, p.matrices
     n, Nnodal, Lscale = length(p), p.Nnodal, p.Lscale
     Ljb = nm.Ljb
     nj = length(Ljb.nzval)
@@ -240,7 +230,7 @@ function componentperturbation(p::TransientProblem, names, backend; forcing::Boo
     ports = zeros(Int, nc)
     for (c, name) in enumerate(names)
         idx = componentindex(psc, name)
-        kind, info = componentstamp(idx, psc, cg, nm, lookups, 1, psc.Nnodes)
+        kind, info = componentstamp(idx, psc, nm, lookups, 1, psc.Nnodes)
         pad = M -> mnapad(SparseMatrixCSC{Float64,Int}(real.(M)), n - Nnodal)
         # the capacitance enters as `r C`, the others inversely, so their
         # derivatives carry the minus of `d(1/(r p))/dr`

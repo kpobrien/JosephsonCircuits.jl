@@ -80,10 +80,9 @@ using Test
              ((:cc, 1, 2), (:cc, 2, 2), (:p1, 2), (:r2, 2), Ground)])
         ws = 2*pi*[4.0e9, 5.0e9]
         psc = compile(mk(seriesS))
-        cg = JosephsonCircuits.calccircuitgraph(psc)
         sf = JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsdft((0,));
             dc = true)
-        out = hblinsolve(ws, psc, cg, Dict{Symbol,Number}(), sf;
+        out = hblinsolve(ws, psc, Dict{Symbol,Number}(), sf;
             keyedarrays = false, returnSsensitivity = true,
             nsensitivityparameters = 2,
             sensitivityblockpairs = [("cc", 2,
@@ -119,10 +118,9 @@ using Test
         shared = blk(t0)
         ws = 2*pi*[4.0e9, 5.0e9]
         psc = compile(mk(shared, shared))
-        cg = JosephsonCircuits.calccircuitgraph(psc)
         sf = JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsdft((0,));
             dc = true)
-        out = hblinsolve(ws, psc, cg, Dict{Symbol,Number}(), sf;
+        out = hblinsolve(ws, psc, Dict{Symbol,Number}(), sf;
             keyedarrays = false, returnSsensitivity = true,
             nsensitivityparameters = 1,
             sensitivityblockpairs = [("cc2", 1,
@@ -466,13 +464,11 @@ using Test
                     ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
-            cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((4,)); dc = true, odd = false,
                 even = true, maxintermodorder = Inf)
             wsweep = 2*pi*collect(range(4.13e9, 5.27e9, length = 7))
-            d = JosephsonCircuits.hblinsolve(wsweep, psc, cg,
-                Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
+            d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
             ssys = d.lsys.scattering
             @test JosephsonCircuits.candeviceevaluate(ssys)
 
@@ -512,11 +508,10 @@ using Test
                 ((:jj,2), (:p1,2), Ground)])
         cnl = hbnlsolve(wp, (16,), sources, ccircuit; keyedarrays = false)
         cpsc = JosephsonCircuits.compile(ccircuit)
-        ccg = JosephsonCircuits.calccircuitgraph(cpsc)
         csf = JosephsonCircuits.truncfreqs(
             JosephsonCircuits.calcfreqsdft((4,)); dc = true, odd = false,
             even = true, maxintermodorder = Inf)
-        cd = JosephsonCircuits.hblinsolve(2*pi*[4.13e9, 5.27e9], cpsc, ccg,
+        cd = JosephsonCircuits.hblinsolve(2*pi*[4.13e9, 5.27e9], cpsc,
             Dict{Symbol,Number}(), csf; nonlinear = cnl, debuglsys = true)
         @test !JosephsonCircuits.candeviceevaluate(cd.lsys.scattering)
     end
@@ -593,13 +588,11 @@ using Test
                 ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
         nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
         psc = JosephsonCircuits.compile(circuit)
-        cg = JosephsonCircuits.calccircuitgraph(psc)
         sf = JosephsonCircuits.truncfreqs(
             JosephsonCircuits.calcfreqsdft((4,)); dc = true, odd = false,
             even = true, maxintermodorder = Inf)
         wsweep = 2*pi*collect(range(4.13e9, 5.27e9, length = 7))
-        d = JosephsonCircuits.hblinsolve(wsweep, psc, cg,
-            Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
+        d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
         ssys = d.lsys.scattering
         @test JosephsonCircuits.candeviceevaluate(ssys)
 
@@ -644,8 +637,7 @@ using Test
                  Ground)])
         tnl = hbnlsolve(wp, (16,), sources, tcircuit; keyedarrays = false)
         tpsc = JosephsonCircuits.compile(tcircuit)
-        tcg = JosephsonCircuits.calccircuitgraph(tpsc)
-        td = JosephsonCircuits.hblinsolve(wsweep, tpsc, tcg,
+        td = JosephsonCircuits.hblinsolve(wsweep, tpsc,
             Dict{Symbol,Number}(), sf; nonlinear = tnl, debuglsys = true)
         tssys = td.lsys.scattering
         @test JosephsonCircuits.candeviceevaluate(tssys)
@@ -686,8 +678,7 @@ using Test
                 ((:jj,2), (:p1,2), Ground)])
         hnl = hbnlsolve(wp, (16,), sources, hcircuit; keyedarrays = false)
         hpsc = JosephsonCircuits.compile(hcircuit)
-        hcg = JosephsonCircuits.calccircuitgraph(hpsc)
-        hd = JosephsonCircuits.hblinsolve(wsweep[1:3], hpsc, hcg,
+        hd = JosephsonCircuits.hblinsolve(wsweep[1:3], hpsc,
             Dict{Symbol,Number}(), sf; nonlinear = hnl, debuglsys = true)
         @test !JosephsonCircuits.candeviceevaluate(hd.lsys.scattering)
     end
@@ -723,13 +714,11 @@ using Test
                     ((:iso,1,2), (:iso,2,2), (:jj,2), (:cg,2), (:p1,2), (:p2,2), (:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
-            cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((2,)); dc = true, odd = false,
                 even = true, maxintermodorder = Inf)
             wsweep = 2*pi*collect(range(4.13e9, 5.27e9, length = 5))
-            d = JosephsonCircuits.hblinsolve(wsweep, psc, cg,
-                Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
+            d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
             lsys = d.lsys
             @test !isnothing(lsys.scattering)
 
@@ -841,13 +830,11 @@ using Test
                     ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
-            cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((4,)); dc = true, odd = false,
                 even = true, maxintermodorder = Inf)
             wsweep = 2*pi*collect(range(4.13e9, 5.27e9, length = 7))
-            d = JosephsonCircuits.hblinsolve(wsweep, psc, cg,
-                Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
+            d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
             lsys = d.lsys
             @test !isnothing(lsys.scattering)
             A = copy(lsys.Asparse)
@@ -1205,13 +1192,11 @@ using Test
                     ((:x,2,1), (:l1,1), (:p2,1)),
                     ((:x,1,2), (:x,2,2), (:l1,2), (:p1,2), (:p2,2), Ground)])
             psc = JosephsonCircuits.compile(circuit)
-            cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((0,)); dc = true, odd = false,
                 even = true, maxintermodorder = Inf)
             wsweep = 2*pi*[5.0e9]
-            d = JosephsonCircuits.hblinsolve(wsweep, psc, cg,
-                Dict{Symbol,Number}(), sf; debuglsys = true)
+            d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; debuglsys = true)
             lsys = d.lsys
             ssys = lsys.scattering
             noiseplan = JosephsonCircuits.planscatteringnoise(ssys)
@@ -1384,13 +1369,11 @@ using Test
             n = size(S, 1)
             circuit = n == 4 ? fourport(S) : threeport(S)
             psc = JosephsonCircuits.compile(circuit)
-            cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((0,)); dc = true, odd = false,
                 even = true, maxintermodorder = Inf)
             wsweep = 2*pi*[5.0e9]
-            d = JosephsonCircuits.hblinsolve(wsweep, psc, cg,
-                Dict{Symbol,Number}(), sf; debuglsys = true)
+            d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; debuglsys = true)
             lsys = d.lsys
             ssys = lsys.scattering
             noiseplan = JosephsonCircuits.planscatteringnoise(ssys)
@@ -1516,12 +1499,10 @@ using Test
                 Any[((:p1,1), (:cc,1)), ((:cc,2), (:x,1)),
                     ((:p1,2), Ground)])
             psc = JosephsonCircuits.compile(circuit)
-            cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((0,)); dc = true, odd = false,
                 even = true, maxintermodorder = Inf)
-            d = JosephsonCircuits.hblinsolve(2*pi*[5e9], psc, cg,
-                Dict{Symbol,Number}(), sf; debuglsys = true)
+            d = JosephsonCircuits.hblinsolve(2*pi*[5e9], psc, Dict{Symbol,Number}(), sf; debuglsys = true)
             @test JosephsonCircuits.candeviceevaluate(d.lsys.scattering) == ok
             # either way the block is dissipative and carries noise channels
             @test !isnothing(
@@ -1604,22 +1585,22 @@ using Test
             @test isapprox(o.CM[1,1], 1.0; atol = 1e-12)
         end
 
-        # a netlist of tuples states no temperatures, so everything in one
-        # takes the analysis default; that format is unchanged
-        legacy = [("P1","1","0",1), ("R1","1","0",:Rp), ("C1","1","2",:Cc),
-                  ("Lj1","2","0",:Lj), ("C2","2","0",:Cj), ("R2","2","0",2.0e4)]
+        # a circuit which states no temperatures takes the analysis
+        # default throughout
+        plain = Circuit([("P1", "1", "0", Port(1; Z0 = :Rp)), ("C1", "1", "2", Capacitor(:Cc)),
+                  ("Lj1", "2", "0", JosephsonJunction(:Lj)), ("C2", "2", "0", Capacitor(:Cj)), ("R2", "2", "0", Resistor(2.0e4))])
         defs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15,
             :Rp => 50.0)
-        lcold = hblinsolve(wst, legacy, defs; keyedarrays = false,
+        lcold = hblinsolve(wst, plain, defs; keyedarrays = false,
             returnCM = true, returnQE = true)
-        lwarm = hblinsolve(wst, legacy, defs; keyedarrays = false,
+        lwarm = hblinsolve(wst, plain, defs; keyedarrays = false,
             returnCM = true, returnQE = true, temperature = 1.0)
         @test isapprox(lcold.CM[1,1], 1.0; atol = 1e-12)
         @test isapprox(lwarm.CM[1,1], 1.0; atol = 1e-12)
         @test lwarm.QE[1,1,1] < lcold.QE[1,1,1]
-        # and a parsed netlist of tuples carries no temperatures at all
+        # and its compiled form carries no temperatures at all
         @test isempty(JosephsonCircuits.compile(
-            legacy).componenttemperatures)
+            plain).componenttemperatures)
     end
 
     @testset "the added noise covariance" begin
@@ -2203,6 +2184,31 @@ end
         @test db(fl.linearized.S, s3.linearized.S) < 1e-6
         @test db(fl.linearized.Cnoise, s3.linearized.Cnoise) < 5e-5
         @test maximum(abs, abs.(Array(fl.linearized.CM)[inband, :, :]) .- 1) < 1e-5
+        # the delays come off the covariance the block states at a
+        # frequency and not off the samples it stores, so between the
+        # samples the fitted covariance is the stated one turned by the
+        # delay of each emitted wave at the frequency it is emitted at
+        let taus3 = [0.0, len3/vp3], worst = 0.0
+            for (j, k) in enumerate(blk3.harmonics)
+                p, q = blk3.noise.provider[j], fit3.noise.provider[j]
+                knots = JosephsonCircuits.tableknots(p)
+                # every frequency between two samples the table holds
+                # data at, which is where rotating the samples instead
+                # would state a different covariance
+                mids = [(knots[i] + knots[i + 1])/2 for i in 1:length(knots) - 1
+                    if JosephsonCircuits.holdsdata(p, (knots[i] + knots[i + 1])/2)]
+                isempty(mids) && continue
+                A = zeros(ComplexF64, 2, 2, length(mids))
+                B = zeros(ComplexF64, 2, 2, length(mids))
+                JosephsonCircuits.evaluateprovider!(A, p, mids)
+                JosephsonCircuits.evaluateprovider!(B, q, mids)
+                for (i, nu) in enumerate(mids), qq in 1:2, pp in 1:2
+                    R = cis(k*blk3.phase)*cis((nu + k*blk3.wp)*taus3[pp] - nu*taus3[qq])
+                    worst = max(worst, abs(B[pp, qq, i] - R*A[pp, qq, i]))
+                end
+            end
+            @test worst < 1e-12
+        end
         @test_throws ArgumentError RationalScattering(blk3, 8; delays = [0.0])
         @test_throws ArgumentError RationalScattering(blk3, 8; band = (6e9, 5e9))
     end
@@ -2356,13 +2362,12 @@ end
     # the refusal holds for a solve on a reused operator too, built by a
     # solve without a source
     psc = JC.compile(one(conv))
-    cg = JC.calccircuitgraph(psc)
     fs = JC.removeconjfreqs(JC.truncfreqs(JC.calcfreqsrdft((12,)); maxharmonics = (6,), dc = false, odd = true, even = false))
     indices = JC.fourierindices(fs)
-    nm = JC.numericmatrices(psc, cg, Dict{Symbol,Float64}(); Nmodes = length(fs.modes))
+    nm = JC.numericmatrices(psc, Dict{Symbol,Float64}(); Nmodes = length(fs.modes))
     reuse = JC.HBReuse()
-    hbnlsolve((wp,), [], fs, indices, psc, cg, nm; reuse, method = NewtonKrylov(), keyedarrays = false)
-    @test_throws ArgumentError hbnlsolve((wp,), [(mode = (1,), port = 1, current = 1e-9)], fs, indices, psc, cg, nm; reuse, method = NewtonKrylov(), keyedarrays = false)
+    hbnlsolve((wp,), [], fs, indices, psc, nm; reuse, method = NewtonKrylov(), keyedarrays = false)
+    @test_throws ArgumentError hbnlsolve((wp,), [(mode = (1,), port = 1, current = 1e-9)], fs, indices, psc, nm; reuse, method = NewtonKrylov(), keyedarrays = false)
     # and for a conversion through a negative harmonic on a multi-tone
     # grid, whose retained modes have negative frequencies: the conjugate
     # of the mode at -0.4 wp converts into itself through the harmonic -2
@@ -2520,6 +2525,15 @@ end
         noise = NoiseCovariance([tab(Vc, both)]))
     @test LinearizedScattering([tab(Hc, both)], wp; harmonics = [0], nports = 2, zref = Z0,
         noise = NoiseCovariance([tab(complex(real(Vc)), both)])) isa LinearizedScattering
+    # a rotation of a constant is checked on the covariance it returns:
+    # one whose offset is not its harmonic's turns a symmetric constant
+    # off the conjugate ladder, against unequal delays, and one which is
+    # not symmetric onto it
+    taus = [0.3e-9, 0.0]
+    rotated(A) = LinearizedScattering([Hc, zeros(ComplexF64, 2, 2)], wp; harmonics = [0, 1], nports = 2, zref = Z0,
+        noise = NoiseCovariance([complex(real(Vc)), JC.RotatedMatrixProvider(JC.ConstantMatrixProvider(A), taus)]))
+    @test_throws ArgumentError rotated(ComplexF64[0.5 0.2; 0.2 0.4])
+    @test rotated(ComplexF64[0.5 0.2*cis(wp*taus[1]); 0.2 0.4]) isa LinearizedScattering
     # every mode a solve asks of a completed block is completed, one the
     # block scatters nothing at carrying the vacuum its commutator
     # requires: a tabulated export solved with more sidebands than its

@@ -111,10 +111,9 @@ using XicTools_jll
             occursin("isrcc2 0 2 1.0e-8", inputb)
         # a net named as an integer past the node count collides with a
         # phase node
-        colliding = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0),
-            ("C1", "1", "2", 100e-15), ("Lj1", "2", "0", 1000e-12),
-            ("C2", "2", "0", 1000e-15), ("C3", "2", "4", 10e-15),
-            ("R2", "4", "0", 1e4)]
+        colliding = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1000e-12)),
+            ("C2", "2", "0", Capacitor(1000e-15)), ("C3", "2", "4", Capacitor(10e-15)),
+            ("R2", "4", "0", Resistor(1e4))])
         pcol = transientproblem(colliding)
         @test_throws ArgumentError JC.wrspiceinput(pcol, WRspice(),
             0.0, 1e-12, 10, 1e-12)
@@ -156,9 +155,8 @@ using XicTools_jll
         # without the jj model there are no instances to name
         @test isempty(JosephsonCircuits.exportnetlist(circuit; jj = false).junctions)
         # an infinite resistance is an open and writes no line
-        open = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0),
-            ("C1", "1", "2", 100e-15), ("Lj1", "2", "0", 1000e-12),
-            ("C2", "2", "0", 1000e-15), ("R2", "2", "0", Inf)]
+        open = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1000e-12)),
+            ("C2", "2", "0", Capacitor(1000e-15)), ("R2", "2", "0", Resistor(Inf))])
         @test !occursin("R2", JosephsonCircuits.exportnetlist(open, Dict()).netlist)
     end
 end

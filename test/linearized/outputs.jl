@@ -26,14 +26,14 @@ using Test
         begin
             @test_throws(
                 ErrorException("Unknown component type"),
-                JosephsonCircuits.calcimpedance(30.0,:D,-1.0,nothing))
+                JosephsonCircuits.calcimpedance(30.0,:D,-1.0))
         end
 
         begin
-            JosephsonCircuits.@params w
             @test_throws(
                 ErrorException("Unknown component type"),
-                JosephsonCircuits.calcimpedance(30*w,:D,-2.0,w))
+                JosephsonCircuits.calcimpedance(
+                    JosephsonCircuits.FrequencyDependent(w->30*w),:D,-2.0))
         end
     end
 

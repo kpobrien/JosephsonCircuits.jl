@@ -30,20 +30,19 @@ end
 
 @testset verbose=true "structureassembly" begin
 
-    circuit = Tuple{String,String,String,Any}[]
-    push!(circuit,("P1_0","1","0",1))
-    push!(circuit,("R1_0","1","0",:Rleft))
-    push!(circuit,("C1_0","1","0",:Cghalf))
-    push!(circuit,("Lj1_2","1","2",:Lj))
-    push!(circuit,("C1_2","1","2",:Cj))
+    circuit = Any[]
+    push!(circuit,("P1_0", "1", "0", Port(1; Z0 = :Rleft)))
+    push!(circuit,("C1_0", "1", "0", Capacitor(:Cghalf)))
+    push!(circuit,("Lj1_2", "1", "2", JosephsonJunction(:Lj)))
+    push!(circuit,("C1_2", "1", "2", Capacitor(:Cj)))
     for j in 2:6
-        push!(circuit,("C$(j)_0","$(j)","0",:Cg))
-        push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",:Lj))
-        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",:Cj))
+        push!(circuit,("C$(j)_0", "$(j)", "0", Capacitor(:Cg)))
+        push!(circuit,("Lj$(j)_$(j+1)", "$(j)", "$(j+1)", JosephsonJunction(:Lj)))
+        push!(circuit,("C$(j)_$(j+1)", "$(j)", "$(j+1)", Capacitor(:Cj)))
     end
-    push!(circuit,("C7_0","7","0",:Cghalf))
-    push!(circuit,("R7_0","7","0",:Rright))
-    push!(circuit,("P7_0","7","0",2))
+    push!(circuit,("C7_0", "7", "0", Capacitor(:Cghalf)))
+    push!(circuit,("P7_0", "7", "0", Port(2; Z0 = :Rright)))
+    circuit = Circuit(circuit)
     circuitdefs = Dict(:Lj => JosephsonCircuits.IctoLj(1e-6), :Cg => 45e-15,
         :Cghalf => 45e-15/2, :Cj => 55e-15, :Rleft => 50.0, :Rright => 50.0)
 

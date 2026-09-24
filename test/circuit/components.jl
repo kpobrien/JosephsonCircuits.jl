@@ -247,6 +247,9 @@ using Test
             write(io, "1.0 0.0 0.0 0.5 0.0 0.5 0.0 0.0 0.0\n")
             write(io, "2.0 0.0 0.0 0.5 0.0 0.5 0.0 0.0 0.0\n")
         end
+        @test_throws ArgumentError ScatteringParameters(path; noise = Lossless())
+        # a line is lossless at every frequency, so it may say so
+        @test TransmissionLine(50.0, 1e-3; noise = Lossless()).noise isa Lossless
         blk = ScatteringParameters(path)
         @test blk.nports == 2
         @test blk.zref == [50.0, 50.0]
@@ -268,4 +271,48 @@ using Test
         @test ScatteringParameters(path75; zref = 75.0).zref == [75.0, 75.0]
         @test_throws ArgumentError ScatteringParameters(path75; zref = 50.0)
     end
+end
+
+@testset "shared signed provider evaluation and rational workspace" begin
+    JC = JosephsonCircuits
+    S = [0.1 0.2im; -0.2im 0.1]
+    V = Matrix(1.0I,2,2)
+    for rule in (ConjugateSymmetry(),Native())
+        block = ScatteringParameters(S;noise=NoiseCovariance(V),negative_frequency=rule)
+        frequencies = [-1.,0.,2.]
+        scattering = zeros(ComplexF64,2,2,3)
+        covariance = similar(scattering)
+        buffer = Float64[]
+        JC.evaluatescattering!(scattering,block,frequencies,buffer)
+        JC.evaluatecovariance!(covariance,block,frequencies,buffer)
+        for (i,w) in enumerate(frequencies)
+            @test scattering[:,:,i] == (rule isa ConjugateSymmetry && w<0 ? conj.(S) : S)
+            @test covariance[:,:,i] == V
+        end
+    end
+    # a defective realization, which has no usable eigenvectors, goes
+    # through the Schur factors; two workspaces on one set of factors are
+    # independent
+    A = [-2. 1.;0. -2.]; B = [1. 0.;0. 1.]; C = [0.2 0.1;0. 0.3]; D=zeros(2,2)
+    rf = JC.resolventfactors(A,B)
+    work1 = JC.ResolventWorkspace(rf); work2 = JC.ResolventWorkspace(rf)
+    out1 = zeros(ComplexF64,2,2); out2=similar(out1)
+    for w in (-3.,0.,1.,4.)
+        JC.rationaltransfer!(out1,rf,C*rf.Z,D,w,work1)
+        saved = copy(out1)
+        JC.rationaltransfer!(out2,rf,C*rf.Z,D,w+1,work2)
+        @test out1 == saved
+        @test out1 ≈ D+C*((im*w*I-A)\B)
+        @test out2 ≈ D+C*((im*(w+1)*I-A)\B)
+    end
+    provider = JC.RationalScatteringProvider(A,B,C,D)
+    ws = collect(range(-4.,4.;length=21))
+    out = zeros(ComplexF64,2,2,length(ws))
+    JC.evaluateprovider!(out,provider,ws)
+    @test all(out[:,:,k] ≈ D+C*((im*w*I-A)\B) for (k,w) in enumerate(ws))
+    # a sweep reads the realization as it is, holding no factors from an
+    # earlier one
+    A[1,1] = -3.
+    JC.evaluateprovider!(out,provider,ws)
+    @test all(out[:,:,k] ≈ D+C*((im*w*I-A)\B) for (k,w) in enumerate(ws))
 end

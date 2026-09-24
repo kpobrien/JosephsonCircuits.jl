@@ -3,52 +3,48 @@
 # close.
 
 """
-    CircuitGraph(edge2indexdict, Rbn, searray, cearray, glearray, lvarray,
-        isolatednodes, gl, Nbranches)
+    CircuitGraph(topology, searray, cearray, glearray, lvarray,
+        isolatednodes, gl)
 
 The graph of the branch carrying components of a circuit, as computed by
-[`calccircuitgraph`](@ref).
+[`calccircuitgraph`](@ref): the [`CircuitTopology`](@ref) the solvers read
+and the diagnostics of the same branches.
 
 # Fields
-- `edge2indexdict`: maps a branch `(node1, node2)` in either orientation to
-    its branch index, the row of `Rbn` it occupies.
-- `Rbn`: the sparse oriented incidence matrix, `Nbranches` by
-    `Nnodes - 1`; the ground node column is omitted.
+- `topology`: the branch map and the oriented incidence matrix, see
+    [`CircuitTopology`](@ref).
 - `searray`: the edges of the spanning tree, as `(node1, node2)` tuples.
 - `cearray`: the closure branches, the edges not in the spanning tree.
 - `glearray`: all edges, spanning tree first and closure branches after.
 - `lvarray`: for each closure branch, the vertices of the loop it closes
-    through the spanning tree (empty for a loop of only two vertices).
-    Empty altogether when `calccircuitgraph` was called with
-    `loops = false`.
+    through the spanning tree (empty for a loop of only two vertices, and
+    empty altogether unless `loops = true` was asked for).
 - `isolatednodes`: nodes which appear in the graph but have no branch to
     any other node.
 - `gl`: the undirected `Graphs.SimpleGraph` of all branches.
-- `Nbranches`: the number of branches, `size(Rbn, 1)`.
 """
 struct CircuitGraph
-    edge2indexdict
-    Rbn
-    searray
-    cearray
-    glearray
-    lvarray
-    isolatednodes
-    gl
-    Nbranches
+    topology::CircuitTopology
+    searray::Vector{Tuple{Int,Int}}
+    cearray::Vector{Tuple{Int,Int}}
+    glearray::Vector{Tuple{Int,Int}}
+    lvarray::Vector{Vector{Int}}
+    isolatednodes::Vector{Int}
+    gl::Graphs.SimpleGraph{Int}
 end
 
 """
     calccircuitgraph(compiledcircuit::CompiledCircuit; loops = false)
 
-Compute the [`CircuitGraph`](@ref) of a compiled circuit: the incidence
-matrix, a spanning tree, the closure branches, and (when `loops = true`)
-the loop each closure branch closes.
+Compute the [`CircuitGraph`](@ref) of a compiled circuit: a spanning tree,
+the closure branches, and (when `loops = true`) the loop each closure
+branch closes, beside the topology.
 
 The graph is built from the branches of the inductive components, the
 Josephson junctions, the current and voltage sources and the ports; see
-[`extractbranches`](@ref) for the list. Nothing in the solvers reads the
-loops, and enumerating them costs a tree walk per closure branch, so they
+[`extractbranches`](@ref) for the list. Nothing in the solvers reads any
+of it: they read `compiledcircuit.topology`, which [`compile`](@ref)
+built. Enumerating the loops costs a tree walk per closure branch, so they
 are enumerated only for a caller which passes `loops = true`.
 
 See also [`calcgraphs`](@ref).
@@ -67,7 +63,7 @@ circuit = Circuit(
      [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 psc = JosephsonCircuits.compile(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc; loops = true)
-JosephsonCircuits.comparestruct(cg,JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1, (2, 3) => 3), JosephsonCircuits.SparseArrays.sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[2, 1, 3]], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]]), 3))
+JosephsonCircuits.comparestruct(cg,JosephsonCircuits.CircuitGraph(JosephsonCircuits.CircuitTopology(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1, (2, 3) => 3), JosephsonCircuits.SparseArrays.sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), 3), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[2, 1, 3]], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]])))
 # output
 true
 ```
@@ -78,8 +74,7 @@ function calccircuitgraph(compiledcircuit::CompiledCircuit;
     branchvector = extractbranches(compiledcircuit.componenttypes,
                                 compiledcircuit.nodeindices)
 
-    return calcgraphs(branchvector, compiledcircuit.Nnodes;
-        loops = loops)
+    return calcgraphs(branchvector, compiledcircuit.Nnodes; loops = loops)
 
 end
 
@@ -100,7 +95,6 @@ carry no branch so that the matrix has `Nnodes - 1` columns.
 """
 function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
         loops::Bool = false)
-
     gl = Graphs.SimpleGraphFromIterator(tuple2edge(Ledgearray))
 
     searray = Vector{Tuple{Int, Int}}(undef, 0)
@@ -191,8 +185,47 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
 
     Nbranches = Graphs.ne(gl2)
 
-    return CircuitGraph(edge2indexdict, Rbn, searray, cearray, glearray,
-        lvarray, isolatednodes, gl, Nbranches)
+    return CircuitGraph(CircuitTopology(edge2indexdict, Rbn, Nbranches),
+        searray, cearray, glearray, lvarray, isolatednodes, gl)
+end
+
+"""
+    nodecomponents(Nnodes::Int, edges)
+
+The connected components of `Nnodes` nodes joined by `edges`, given as
+`(node1, node2)` pairs, leaving out the component which contains ground
+(node 1). Each component is a sorted vector of node indices and the
+components are sorted by their lowest node.
+
+A union-find with path halving, unioning toward the lower node index so
+that ground is the root of its own component. Which components are
+floating depends on which branches count as an edge, so each caller
+supplies its own: the static flux stiffness of the direct current gauge
+(`calcstaticfluxcomponents`) and the conduction paths of the transient
+(`transientfloatingcomponents`).
+"""
+function nodecomponents(Nnodes::Int, edges)
+    parent = collect(1:Nnodes)
+    function findroot(i::Int)
+        while parent[i] != i
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        end
+        return i
+    end
+    for (n1, n2) in edges
+        a, b = findroot(n1), findroot(n2)
+        a == b || (parent[max(a, b)] = min(a, b))
+    end
+    components = Dict{Int,Vector{Int}}()
+    for node in 2:Nnodes
+        root = findroot(node)
+        root == 1 && continue
+        push!(get!(components, root, Int[]), node)
+    end
+    out = collect(values(components))
+    foreach(sort!, out)
+    return sort!(out; by = first)
 end
 
 """
@@ -302,79 +335,6 @@ function tuple2edge(tuplevector::Vector{Tuple{Int, Int}})
         push!(edgevector,Graphs.Edge(tuplevector[i][1],tuplevector[i][2]))
     end
     return edgevector
-end
-
-"""
-    tuple2edge(tuplevector::Vector{Tuple{Int, Int, Int, Int}})
-
-Convert a vector of `(src1, dst1, src2, dst2)` tuples to a vector of pairs
-of `Graphs` edges.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.tuple2edge([(1,2,3,4),(5,6,7,8)])
-2-element Vector{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}}:
- (Edge 1 => 2, Edge 3 => 4)
- (Edge 5 => 6, Edge 7 => 8)
-```
-"""
-function tuple2edge(tuplevector::Vector{Tuple{Int, Int, Int, Int}})
-    edgevector = Vector{
-        Tuple{
-            Graphs.SimpleGraphs.SimpleEdge{Int},
-            Graphs.SimpleGraphs.SimpleEdge{Int}
-        }
-    }(undef, 0)
-
-    for i in 1:length(tuplevector)
-        push!(
-            edgevector,
-            (
-                Graphs.Edge(tuplevector[i][1],tuplevector[i][2]),
-                Graphs.Edge(tuplevector[i][3],tuplevector[i][4])
-            )
-        )
-    end
-
-    return edgevector
-end
-
-"""
-    tuple2edge(tupledict::Dict{Tuple{Int, Int},T})
-
-Convert a dictionary keyed by `(src, dst)` tuples to one keyed by `Graphs`
-edges, keeping the values.
-"""
-function tuple2edge(tupledict::Dict{Tuple{Int, Int},T}) where T
-    edgedict = Dict{Graphs.SimpleGraphs.SimpleEdge{Int},T}()
-
-    for (key,val) in tupledict
-        edgedict[Graphs.Edge(key[1],key[2])]=val
-    end
-
-    return edgedict
-end
-
-"""
-    tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T})
-
-Convert a dictionary keyed by `(src1, dst1, src2, dst2)` tuples to one
-keyed by pairs of `Graphs` edges, keeping the values.
-"""
-function tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T}) where T
-    edgedict = Dict{
-        Tuple{
-            Graphs.SimpleGraphs.SimpleEdge{Int},
-            Graphs.SimpleGraphs.SimpleEdge{Int}
-        },
-        T
-    }()
-
-    for (key,val) in tupledict
-        edgedict[(Graphs.Edge(key[1],key[2]),Graphs.Edge(key[3],key[4]))]=val
-    end
-
-    return edgedict
 end
 
 """

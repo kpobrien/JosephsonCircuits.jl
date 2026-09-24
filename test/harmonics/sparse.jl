@@ -231,7 +231,7 @@ using Test
             @test_throws(
                 DimensionMismatch("A and conjflag must be the same size."),
                 JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,
-                    wmodesm,nothing)
+                    wmodesm)
             )
         end
 
@@ -244,7 +244,7 @@ using Test
             @test_throws(
                 DimensionMismatch("As cannot have more nonzero elements than A"),
                 JosephsonCircuits.sparseaddconjsubst!(As,2,A,Ad,indexmap,wmodesm .< 0,
-                    wmodesm,nothing)
+                    wmodesm)
             )
         end
 
@@ -257,7 +257,7 @@ using Test
             @test_throws(
                 DimensionMismatch("The indexmap must be the same length as As"),
                 JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap[1:end-1],
-                    wmodesm .< 0,wmodesm,nothing)
+                    wmodesm .< 0,wmodesm)
             )
         end
 
@@ -271,7 +271,7 @@ using Test
             @test_throws(
                 DimensionMismatch("A and wmodesm must be the same size."),
                 JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,
-                    wmodesm2,nothing)
+                    wmodesm2)
             )
         end
 
@@ -284,7 +284,7 @@ using Test
             @test_throws(
                 DimensionMismatch("A and Ad must be the same size."),
                 JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,
-                    wmodesm,nothing)
+                    wmodesm)
             )
         end
 
@@ -298,7 +298,7 @@ using Test
             @test_throws(
                 DimensionMismatch("A and As must be the same size."),
                 JosephsonCircuits.sparseaddconjsubst!(A,2,As2,Ad,indexmap,
-                    wmodesm .< 0,wmodesm,nothing)
+                    wmodesm .< 0,wmodesm)
             )
         end
     end
@@ -337,28 +337,31 @@ using Test
             wmodes = [-1,2];
             A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
             @test_throws(
-                str -> occursin("use FrequencyDependent", str),
-                JosephsonCircuits.freqsubst(A,wmodes,nothing)
+                str -> occursin("FrequencyDependent closure", str),
+                JosephsonCircuits.freqsubst(A,wmodes)
             )
         end
 
         begin
-            JosephsonCircuits.@params w
             wmodes = [-1,1,2];
-            A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
+            f = JosephsonCircuits.FrequencyDependent
+            A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [f(w->w),f(w->2*w),f(w->3*w)],2,2),2);
             @test_throws(
                 DimensionMismatch("The dimensions of A must be integer multiples of the length of wmodes."),
-                JosephsonCircuits.freqsubst(A,wmodes,w)
+                JosephsonCircuits.freqsubst(A,wmodes)
             )
         end
 
+        # each frequency dependent value is resolved at the mode frequency
+        # of its own column
         begin
             wmodes = [-1,2];
-            A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,3],2,2),2);
-            @test_throws(
-                ErrorException("symfreqvar must be a symbolic variable (or nothing if no symbolic variables)"),
-                JosephsonCircuits.freqsubst(A,wmodes,1)
-            )
+            f = JosephsonCircuits.FrequencyDependent
+            A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], Any[f(w->1.0*w),f(w->2.0*w),f(w->3.0*w)],2,2),2);
+            B = JosephsonCircuits.freqsubst(A,wmodes)
+            @test B[1,1] == -1.0 && B[2,2] == 2.0
+            @test B[3,3] == -2.0 && B[4,4] == 4.0
+            @test B[1,3] == -3.0 && B[2,4] == 6.0
         end
     end
 

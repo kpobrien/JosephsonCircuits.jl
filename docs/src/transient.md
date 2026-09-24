@@ -24,12 +24,11 @@ through a recorded trajectory.
 ```julia
 using JosephsonCircuits
 
-circuit = [
-    ("P1", "1", "0", 1),
-    ("R1", "1", "0", 50.0),
-    ("C1", "1", "0", 1e-12),
-    ("Lj1", "1", "0", 1e-9),
-]
+circuit = Circuit([
+    (:P1, 1, 0, Port(1; Z0 = 50.0)),
+    (:C1, 1, 0, Capacitor(1e-12)),
+    (:Lj1, 1, 0, JosephsonJunction(1e-9)),
+])
 rise(t) = t <= 0 ? 0.0 : t >= 15e-9 ? 1.0 : sinpi(t/30e-9)^2
 pulse(t) = rise(t - 20e-9)*rise(120e-9 - t)
 drive(t) = 0.12e-6*rise(t)*cospi(2*3e9*t) +
@@ -54,8 +53,7 @@ together. A source function must return finite real values and must be
 deterministic, because the tangent and adjoint evaluate it again on the
 recorded grid.
 
-The circuit may be a typed [`Circuit`](@ref), a compiled circuit, or a
-legacy netlist.
+The circuit may be a typed [`Circuit`](@ref) or a compiled circuit.
 
 
 ## Choosing the rule, the step and the record
@@ -189,7 +187,10 @@ fitted from any [`ScatteringParameters`](@ref) block, tabulated,
 Touchstone or callable, by `RationalScattering(block, npoles)`; ask for
 as many poles as the data might need, since the poles it does not need
 are dropped. A delay is not a rational function, so a cable is a line in
-cascade with a fit of the data with that delay removed. A block's
+cascade with a fit of the data with that delay removed, which
+`RationalScattering` does itself for a `delays` of one delay per port
+in seconds, moving a stated covariance to the same reference planes.
+A block's
 `ThermalEquilibrium(T)` sets the temperature of the noise its loss
 emits, a declared `Lossless()` is validated, and a block which states
 its noise with a `NoiseCovariance`, an amplifier given by its
@@ -367,17 +368,15 @@ by demodulating the port 2 wave through a smooth window.
 using JosephsonCircuits
 
 function transientline(cells)
-    circuit = Tuple{String,String,String,Float64}[]
-    push!(circuit, ("P1", "1", "0", 1.0), ("R1", "1", "0", 50.0))
+    circuit = Any[(:P1, 1, 0, Port(1; Z0 = 50.0))]
     for k in 1:cells
-        push!(circuit, ("Lj$k", string(k), string(k + 1), 100e-12))
-        push!(circuit, ("Cj$k", string(k), string(k + 1), 20e-15))
-        push!(circuit, ("Cg$k", string(k), "0", 40e-15))
+        push!(circuit, (Symbol(:Lj, k), k, k + 1, JosephsonJunction(100e-12)))
+        push!(circuit, (Symbol(:Cj, k), k, k + 1, Capacitor(20e-15)))
+        push!(circuit, (Symbol(:Cg, k), k, 0, Capacitor(40e-15)))
     end
-    last = string(cells + 1)
-    push!(circuit, ("Cend", last, "0", 40e-15), ("P2", last, "0", 2.0),
-        ("R2", last, "0", 50.0))
-    return circuit
+    push!(circuit, (:Cend, cells + 1, 0, Capacitor(40e-15)),
+        (:P2, cells + 1, 0, Port(2; Z0 = 50.0)))
+    return Circuit(circuit)
 end
 
 rise(t, width) = t <= 0 ? 0.0 : t >= width ? 1.0 : sinpi(t/(2width))^2

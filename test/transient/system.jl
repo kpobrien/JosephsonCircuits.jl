@@ -12,7 +12,7 @@ using Test
 # different workers.
 @testset "scattering blocks and transmission lines in time" begin
     JC = JosephsonCircuits
-    rc = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12)]
+    rc = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12))])
 
     @testset "constant scattering blocks" begin
         # a real constant block is its hybrid rows on auxiliary port
@@ -439,6 +439,31 @@ using Test
         @test size(sm.linewaves) == (2, 501)
         @test_throws ArgumentError transientsolve(pm, (0.0, 1e-9); dt = 0.5e-9, method = GaussLegendre())
         @test_throws ArgumentError transientsolve(pm, (0.0, 1e-9); dt = 2e-12, method = Trapezoidal())
+        # a delay taken out of a fit is carried in time by the lines it
+        # is put back as and not by the fit's poles. The same cable
+        # fitted whole answers through its delay, a stable proper
+        # rational function starting at zero time and so having no dead
+        # time to hold; the core the delay came off has none to hold,
+        # and behind the lines of that delay it answers when the wave
+        # arrives and not a pole's ring earlier
+        cable(w) = (g = exp(-im*w*2tau)/(1 + im*w*2tau); ComplexF64[0 g; g 0])
+        cableblock = ScatteringParameters(cable; nports = 2, zref = 50.0)
+        cablefs = collect(range(0.0, 20e9; length = 200))
+        core = RationalScattering(cableblock, 4; frequencies = cablefs, delays = (tau, tau))
+        whole = RationalScattering(cableblock, 4; frequencies = cablefs)
+        line() = TransmissionLine(50.0, tau*3e8; vp = 3e8)
+        pulsed(c) = transientsolve(transientproblem(c; sources = [TransientSource(1, pulse)]),
+            (0.0, 1.5e-9); dt = 2e-12, method = GaussLegendre())
+        sw = pulsed(Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:b, 1, 2, whole),
+            (:p2, 2, 0, Port(2; Z0 = 50.0))]))
+        @test maximum(abs.(sw.outgoing[2, sw.times .< 2tau])) > 0.1*maximum(abs.(sw.outgoing[2, :]))
+        sc = pulsed(Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:la, 1, 2, line()), (:b, 2, 3, core),
+            (:lb, 3, 4, line()), (:p2, 4, 0, Port(2; Z0 = 50.0))]))
+        @test maximum(abs.(sc.outgoing[2, sc.times .< 2tau])) < 1e-9*maximum(abs.(sc.outgoing[2, :]))
+        # and the response it carries is the cable's, arriving with the
+        # wave: a fit which kept the delay would put the peak a further
+        # 2 tau out
+        @test 0.1e-9 + 2tau <= sc.times[argmax(abs.(sc.outgoing[2, :]))] <= 0.1e-9 + 2tau + 0.2e-9
         @test_throws ArgumentError transientproblem(Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:line, 1, 2, TransmissionLine(50.0, 0.0)),
             (:p2, 2, 0, Port(2; Z0 = 50.0))]))
         # the order of the transmitted pulse through a fractional delay (an

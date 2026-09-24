@@ -846,24 +846,6 @@ function stationaryresponses(sys::TransientSystem, x0, injection, frequencies, t
     return flux, rate, waves, states
 end
 
-# The stationary initial term of the adjoint method: the contraction of
-# the adjoint's initial flux and rate with the stationary responses of
-# every bath at every frequency, without building those responses. For an
-# objective `o` and a bath `b` at `w`, with `z = F^{-1} inj_b exp(i w (t0 - reference))`
-# and `F = -w^2 C + i w G + L + J'(x0)` symmetric, the term is
-# `Re((lambda_x + i w lambda_v)' z)` for the cosine quadrature and the
-# imaginary part for the sine, so one solve of `F` per frequency and
-# objective, `y = F^{-1} (lambda_x + i w lambda_v)`, and the sparse
-# products `inj' y` give every bath. Returns the terms in the column order
-# of the responses, (frequency, bath, cosine/sine).
-function stationaryinitialterm(sys::TransientSystem, x0, injection, frequencies, t0, reference, initialflux, initialrate,
-        initialwaves = nothing, initialstates = nothing)
-    return stationaryinitialterms(sys, reshape(x0, :, 1), injection, frequencies, t0, reference,
-        reshape(initialflux, size(initialflux, 1), :, 1), reshape(initialrate, size(initialrate, 1), :, 1),
-        isnothing(initialwaves) ? nothing : reshape(initialwaves, size(initialwaves, 1), size(initialwaves, 2), :, 1),
-        isnothing(initialstates) ? nothing : reshape(initialstates, size(initialstates, 1), :, 1))[1]
-end
-
 # the terms of every condition, `(n, m, N)` initial fluxes and rates, one
 # factorization per frequency and group of conditions sharing an initial
 # state, solved for the objectives of the whole group together

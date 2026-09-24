@@ -1,18 +1,17 @@
 # Binding values, and assembling the circuit matrices from a fixed
 # sparsity pattern.
 #
-# The circuit matrices can be built from coordinate triples on every call
-# (`calcnodematrix` in circuit/matrices.jl, which `numericmatrices` uses), which
-# rebuilds every sparse matrix when one value changes. The solvers use a
-# plan instead: the pattern and the destination of every stamp are computed
-# once from the compiled topology, and assembly is a scatter-add into a
-# preallocated `nzval` with no allocation, no sort and no scan for
-# component types. This matches the rest of the solve, where `freqsubst`
-# replaces only `nzval`, `spaddkeepzeros` keeps structural zeros so a
-# pattern never depends on a value, and the Jacobian assembly writes into a
-# structure built once. The contributions are accumulated in the order the
-# coordinate form sums duplicates, so the result is bit for bit the same as
-# `calcnodematrix`'s.
+# The circuit matrices are assembled on a plan: the pattern and the
+# destination of every stamp are computed once from the compiled topology,
+# and an assembly is a scatter-add into a preallocated `nzval` with no
+# allocation, no sort and no scan for component types, for
+# `numericmatrices` and the solvers alike. This matches the rest of the
+# solve, where `freqsubst` replaces only `nzval`, `spaddkeepzeros` keeps
+# structural zeros so a pattern never depends on a value, and the Jacobian
+# assembly writes into a structure built once. The contributions of parallel
+# components are summed in the order the netlist lists them, so a matrix
+# is bit for bit the coordinate form's. A plan holds the patterns and the
+# resolved couplings and ports; the scratch of a refill is a solve's own.
 
 """
     BoundCircuit
@@ -91,39 +90,63 @@ plainnumber(v) = v isa Union{Integer,AbstractFloat,Rational,Irrational}
 
 gather(::Type{T}, values, idx) where {T} = T[values[i] for i in idx]
 
+# the mean of the linear and Josephson inductances, zero when the circuit
+# has none. An empty group is left out of the sum rather than started from
+# its own zero, so the mean is the sum's own type and a value type with no
+# zero of its own, such as a symbolic expression, is still summed.
+function inductancemean(b::BoundCircuit)
+    n = length(b.inductors) + length(b.junctions)
+    n == 0 && return 0.0
+    total = if isempty(b.junctions)
+        sum(b.inductors)
+    elseif isempty(b.inductors)
+        sum(b.junctions)
+    else
+        sum(b.inductors) + sum(b.junctions)
+    end
+    return total/n
+end
+
 """
-    bind(c::CompiledCircuit, circuitdefs = Dict{Symbol,Any}())
+    numericvalues(c::CompiledCircuit, definitions)
 
-Resolve the component values of a compiled circuit into concrete per group
-arrays.
-
-Symbolic values are substituted from `circuitdefs`; values which depend on
-frequency are resolved per mode later and are carried through unevaluated.
-
-A bound circuit records the assumptions the compiled structure rests on --
-which inductances and resistances are finite and nonzero, which values are
-complex, which mutual couplings are unit -- so that rebinding at new values can tell a change
-which only moves numbers from one which changes the topology. See
-[`structuralkey`](@ref).
+The flat value table of a compiled circuit resolved at `definitions`, with
+every entry a number. A value which still depends on an undefined
+parameter, and one which is frequency dependent rather than a number, are
+both refused naming their component, so a caller which can work with
+neither fails with the cause rather than downstream.
 """
-bind(c::CompiledCircuit, circuitdefs = Dict{Symbol,Any}()) =
-    bindvalues(c, componentvaluestonumber(c.componentvalues, circuitdefs))
+function numericvalues(c::CompiledCircuit, definitions)
+    vvn = componentvaluestonumber(c.componentvalues, definitions)
+    checkcomponentvaluesdefined(c.componentnames, vvn)
+    for (i, v) in enumerate(vvn)
+        v isa Number || throw(ArgumentError(
+            lazy"the component $(c.componentnames[i]) has the value $(v) at these definitions, which is not a number."))
+    end
+    return vvn
+end
 
 """
     bindvalues(c::CompiledCircuit, values)
 
-A [`BoundCircuit`](@ref) from an already resolved flat value table.
+A [`BoundCircuit`](@ref) from the flat value table `values`, the component
+values resolved with [`componentvaluestonumber`](@ref): the values gathered
+into the per group arrays, each in the element type its group promotes to.
 
-This is the entry point for rebinding: the topology, the groups and the
-assembly plans are unchanged when only the numbers move, so a sweep resolves
-its values once per point and gathers them into the groups without touching
-anything structural. Check [`structuralkey`](@ref) before reusing a plan
-across a rebind.
+A bound circuit records the assumptions the compiled structure rests on,
+which inductances and resistances are finite and nonzero, which values are
+complex, which mutual couplings are unit, so that rebinding at new values
+can tell a change which only moves numbers from one which changes the
+topology; see [`structuralkey`](@ref). The topology, the groups and the
+assembly plans are unchanged when only the numbers move, so a sweep binds
+its values at each point and refills the matrices on the same plan.
 """
 function bindvalues(c::CompiledCircuit, values)
+    length(values) == ncomponents(c) || throw(DimensionMismatch(
+        "componenttypes and componentvalues should have the same length"))
     TC = grouptype(values, c.capacitors, true)
-    TR = grouptype(values, c.resistors, true)
     TL = grouptype(values, c.inductors, true)
+    TR = grouptype(values, c.resistors, true)
     TJ = grouptype(values, c.junctions, true)
     TK = grouptype(values, c.mutualinductors, true)
     return BoundCircuit(c,
@@ -175,10 +198,11 @@ end
 The fixed pattern and stamp destinations of a nodal matrix.
 
 `dest[k]` is the position in `nzval` which contribution `k` accumulates into,
-`src[k]` names the group value it comes from, and `negate[k]` marks the off
-diagonal terms. `invert` inverts the value after negating, which is the order
-[`calcnodematrix`](@ref) uses and therefore the one that reproduces its
-arithmetic exactly.
+`src[k]` names the group value it comes from, and `weights[k]` holds its
+incidence coefficient, `1` on the diagonal and `-1` off it. `invert`
+inverts the value after applying that coefficient, so a conductance is
+`-1/R` off the diagonal, the arithmetic of the coordinate form entry for
+entry.
 
 The plan is built once per topology; [`assemblenodal!`](@ref) is a
 scatter-add which allocates nothing.
@@ -188,7 +212,7 @@ struct NodalStampPlan{Ti<:Integer}
     rowval::Vector{Ti}
     dest::Vector{Ti}
     src::Vector{Ti}
-    negate::Vector{Bool}
+    weights::Vector{Int8}
     invert::Bool
     n::Int
 end
@@ -209,28 +233,33 @@ function nodalstampplan(c::CompiledCircuit, group::Vector{Int}, Nnodes::Int;
     # the coordinate form `calcnodematrix` builds, in the order it builds
     # it: one diagonal entry for a grounded component, two diagonal and two
     # off diagonal for a floating one
-    I = Int[]; J = Int[]; S = Int[]; G = Bool[]
+    I = Int[]; J = Int[]; S = Int[]; G = Int8[]
     for (k, i) in enumerate(group)
         n1, n2 = c.nodeindices[1, i], c.nodeindices[2, i]
         if n1 == 1
-            push!(I, n2-1); push!(J, n2-1); push!(S, k); push!(G, false)
+            push!(I, n2-1); push!(J, n2-1); push!(S, k); push!(G, 1)
         elseif n2 == 1
-            push!(I, n1-1); push!(J, n1-1); push!(S, k); push!(G, false)
+            push!(I, n1-1); push!(J, n1-1); push!(S, k); push!(G, 1)
         else
-            push!(I, n1-1); push!(J, n1-1); push!(S, k); push!(G, false)
-            push!(I, n2-1); push!(J, n2-1); push!(S, k); push!(G, false)
-            push!(I, n1-1); push!(J, n2-1); push!(S, k); push!(G, true)
-            push!(I, n2-1); push!(J, n1-1); push!(S, k); push!(G, true)
+            push!(I, n1-1); push!(J, n1-1); push!(S, k); push!(G, 1)
+            push!(I, n2-1); push!(J, n2-1); push!(S, k); push!(G, 1)
+            push!(I, n1-1); push!(J, n2-1); push!(S, k); push!(G, -1)
+            push!(I, n2-1); push!(J, n1-1); push!(S, k); push!(G, -1)
         end
     end
 
     # the pattern, and where each contribution lands in it; built from the
     # same coordinate triples as the coordinate form, so the two patterns
     # are identical, structural zeros included
+    return nodalstampplan(I, J, S, G, invert, n)
+end
+
+# the pattern of a set of coordinate contributions and where each lands in
+# it, which the nodal, the inverse inductance and the mutual stamps share
+function nodalstampplan(I, J, S, G, invert::Bool, n::Int)
     pattern = sparse(I, J, ones(Int, length(I)), n, n)
     dest = Vector{Int}(undef, length(I))
     for k in eachindex(I)
-        # I and J are already indices into the grounded-node-removed matrix
         col = J[k]
         r = searchsortedfirst(view(pattern.rowval,
             pattern.colptr[col]:(pattern.colptr[col+1]-1)), I[k])
@@ -259,7 +288,11 @@ function assemblenodal!(nzval::Vector, seen::Vector{Bool},
     fill!(seen, false)
     @inbounds for k in eachindex(plan.dest)
         v = values[plan.src[k]]
-        plan.negate[k] && (v = -v)
+        # a self loop has an incidence of zero, kept so that the pattern is
+        # the coordinate form's, and contributes nothing
+        weight = plan.weights[k]
+        weight == -1 && (v = -v)
+        weight == 0 && (v = 0*v)
         plan.invert && (v = 1/v)
         d = plan.dest[k]
         nzval[d] = seen[d] ? nzval[d] + v : v
@@ -389,37 +422,32 @@ struct InverseInductancePlan{Ti<:Integer}
 end
 
 """
-    inverseinductanceplan(c, cg, Lb, coupled)
+    inverseinductanceplan(c, Lb, coupled)
 
 Build the [`InverseInductancePlan`](@ref) from the incidence matrix, the
 branches which carry an inductance, and the branches which are mutually
 coupled.
 """
-function inverseinductanceplan(c::CompiledCircuit, cg::CircuitGraph,
-        Lb::SparseVector, coupled)
+inverseinductanceplan(c::CompiledCircuit, Lb::SparseVector, coupled) =
+    inverseinductanceplan(c.topology, Lb.nzind, coupled)
+
+function inverseinductanceplan(topology::CircuitTopology,
+        inductivebranches::Vector{Int}, coupled)
     coupledset = Set(coupled)
-    positions = [k for (k, b) in enumerate(Lb.nzind) if !(b in coupledset)]
-    branches = Lb.nzind[positions]
-    Rbn = cg.Rbn
+    positions = [k for (k, b) in enumerate(inductivebranches) if !(b in coupledset)]
+    branches = inductivebranches[positions]
+    Rbn = topology.Rbn
     n = size(Rbn, 2)
-    I = Int[]; J = Int[]; S = Int[]; G = Bool[]
+    I = Int[]; J = Int[]; S = Int[]; G = Int8[]
     Rt = sparse(transpose(Rbn))    # columns are branches, so a row is one lookup
     for (k, b) in enumerate(branches)
         nodes = Rt.rowval[Rt.colptr[b]:(Rt.colptr[b+1]-1)]
         signs = Rt.nzval[Rt.colptr[b]:(Rt.colptr[b+1]-1)]
         for (bi, sb) in zip(nodes, signs), (ai, sa) in zip(nodes, signs)
-            push!(I, ai); push!(J, bi); push!(S, k); push!(G, sa*sb < 0)
+            push!(I, ai); push!(J, bi); push!(S, k); push!(G, sa*sb)
         end
     end
-    pattern = sparse(I, J, ones(Int, length(I)), n, n)
-    dest = Vector{Int}(undef, length(I))
-    for k in eachindex(I)
-        col = J[k]
-        r = searchsortedfirst(view(pattern.rowval,
-            pattern.colptr[col]:(pattern.colptr[col+1]-1)), I[k])
-        dest[k] = pattern.colptr[col] + r - 1
-    end
-    stamp = NodalStampPlan(pattern.colptr, pattern.rowval, dest, S, G, false, n)
+    stamp = nodalstampplan(I, J, S, G, false, n)
     return InverseInductancePlan(stamp, positions)
 end
 
@@ -434,6 +462,83 @@ function assembleinvinductance(::Type{T}, plan::InverseInductancePlan,
         return spzeros(T, Nmodes*plan.stamp.n, Nmodes*plan.stamp.n)
     invL = T[1/Lb.nzval[p] for p in plan.positions]
     return assemblenodal(T, plan.stamp, invL, Nmodes)
+end
+
+"""
+    MutualStampPlan
+
+The mutual inductance stamps: every coupling resolved once against the
+graph to the two branches it couples and the sign the netlist's terminal
+order gives it, so a refill reads the three values of a coupling, the
+coefficient and the two inductances, from the flat table and nothing
+structural. `sharedbranches` lists the coupled branches on which more than
+one inductor sits, which a refill refuses when the coupling is nonzero.
+"""
+struct MutualStampPlan{Ti<:Integer}
+    stamp::NodalStampPlan{Ti}
+    components::Vector{NTuple{3,Int}}
+    sharedbranches::Vector{Pair{Int,Vector{Int}}}
+end
+
+"""
+    mutualstampplan(c::CompiledCircuit)
+
+Build the [`MutualStampPlan`](@ref) of a compiled circuit and its graph, and
+return it with the orientation of every coupling and the sorted branches
+the couplings touch. Throws if a coupling names a component which is not an
+inductor.
+"""
+function mutualstampplan(c::CompiledCircuit)
+    topology = c.topology
+    I = Int[]; J = Int[]; S = Int[]; G = Int8[]
+    orientations = Int8[]
+    from, to = isempty(c.couplings) ? (Int[], Int[]) :
+        branchendpoints(topology.Rbn, topology.Nbranches)
+    for (n, (_, i, j)) in enumerate(c.couplings)
+        for k in (i, j)
+            c.componenttypes[k] === :L || throw(ArgumentError(
+                lazy"Mutual coupling coefficient K must couple two inductors. $(c.componentnames[k]) is not an inductor."))
+        end
+        e1 = (c.nodeindices[1,i], c.nodeindices[2,i])
+        e2 = (c.nodeindices[1,j], c.nodeindices[2,j])
+        b1, b2 = topology.edge2indexdict[e1], topology.edge2indexdict[e2]
+        negative = ((from[b1], to[b1]) == e1) != ((from[b2], to[b2]) == e2)
+        push!(orientations, negative ? -1 : 1)
+        append!(I, (b1, b2)); append!(J, (b2, b1))
+        append!(S, (n, n)); append!(G, (orientations[end], orientations[end]))
+    end
+    coupled = sort!(unique(I))
+    members = Dict(b => Int[] for b in coupled)
+    if !isempty(coupled)
+        for i in c.inductors
+            b = topology.edge2indexdict[(c.nodeindices[1,i], c.nodeindices[2,i])]
+            haskey(members, b) && push!(members[b], i)
+        end
+    end
+    shared = [b => members[b] for b in coupled if length(members[b]) > 1]
+    return MutualStampPlan(nodalstampplan(I, J, S, G, false, topology.Nbranches),
+        copy(c.couplings), shared), orientations, coupled
+end
+
+function mutualvalues!(out, plan::MutualStampPlan, values)
+    for (n, (k, i, j)) in enumerate(plan.components)
+        out[n] = values[k]*sqrt(values[i]*values[j])
+    end
+    return out
+end
+
+function assemblemutual(::Type{T}, plan::MutualStampPlan, values) where {T}
+    mv = mutualvalues!(Vector{T}(undef, length(plan.components)), plan, values)
+    return assemblenodal(T, plan.stamp, mv, 1)
+end
+
+function checkmutualbranches(c::CompiledCircuit, plan::MutualStampPlan, Mb)
+    checkcoupleddiagonal(Mb)
+    for (branch, components) in plan.sharedbranches
+        any(k -> !iszero(nonzeros(Mb)[k]), nzrange(Mb, branch)) || continue
+        throwsharedinductors(c.componentnames[components])
+    end
+    return nothing
 end
 
 # === the circuit matrices ===
@@ -451,13 +556,15 @@ values reuses all of it; only the values are refilled. See
 
 `mutualorientations` is the sign which carries each coupling from the
 terminal order the netlist declared to the orientation the graph gave its
-two branches (see [`mutualorientations`](@ref)). It depends on the
+two branches, which [`mutualstampplan`](@ref) resolves. It depends on the
 topology and the declared terminal order alone, so a refill reads it
 rather than the incidence matrix.
+
+A plan depends on the compiled circuit alone; the scratch of a refill is a
+[`CircuitMatrixWorkspace`](@ref), one per solve.
 """
 struct CircuitMatrixPlan{Ti<:Integer}
     circuit::CompiledCircuit
-    graph::CircuitGraph
     Nmodes::Int
     capacitance::NodalStampPlan{Ti}
     conductance::NodalStampPlan{Ti}
@@ -465,46 +572,41 @@ struct CircuitMatrixPlan{Ti<:Integer}
     junction::BranchStampPlan{Ti}
     invinductance::InverseInductancePlan{Ti}
     mutualorientations::Vector{Int8}
+    mutual::MutualStampPlan{Ti}
+    ports::Vector{CompiledPort}
+    noisecandidates::Vector{Int}
     Rbnm::SparseMatrixCSC{Int,Int}
 end
 
 """
-    circuitmatrixplan(c::CompiledCircuit, cg::CircuitGraph, b::BoundCircuit;
-        Nmodes = 1)
+    circuitmatrixplan(c::CompiledCircuit; Nmodes = 1)
 
-Build the [`CircuitMatrixPlan`](@ref) of a compiled circuit, given its
-bound values `b`.
+Build the [`CircuitMatrixPlan`](@ref) of a compiled circuit.
+The plan depends on neither the values nor their types; a rebind which
+crosses a structural boundary (an inductance open or shorted, a value
+complex, a coupling at one) is caught by [`structuralkey`](@ref).
 
 The conductance plan covers the resistors and the port owned environments
 together, because at this stage an environment is realized as an ordinary
 resistor; when ports become direct boundary stamps it gains its own plan.
 """
-function circuitmatrixplan(c::CompiledCircuit, cg::CircuitGraph,
-        b::BoundCircuit; Nmodes::Int = 1)
-    inductance = branchstampplan(c, c.inductors, cg.edge2indexdict,
-        cg.Nbranches)
-    # the orientation of each coupling depends on the topology alone, so it
-    # is found once and held by the plan; the mutual inductance matrix built
-    # below reads it too
-    orientations = mutualorientations(c.componenttypes, c.nodeindices,
-        c.componentnamedict, c.mutualinductorbranchnames, cg.edge2indexdict,
-        cg.Rbn, cg.Nbranches)
-    # which branches are mutually coupled is read off the mutual inductance
-    # matrix, so the plan is built from a bound circuit and is valid while
-    # `structuralkey` is unchanged
-    Mb = calcMb(c.componenttypes, c.nodeindices, b.values,
-        c.componentnamedict, c.mutualinductorbranchnames, cg.edge2indexdict,
-        orientations, 1, cg.Nbranches)
-    Lb = assemblebranch(eltype(b.inductors), inductance, b.inductors,
-        combine_reciprocal_sum, 1)
-    return CircuitMatrixPlan(c, cg, Nmodes,
+@noinline function circuitmatrixplan(c::CompiledCircuit; Nmodes::Int = 1)
+    topology = c.topology
+    size(c.nodeindices,2) == ncomponents(c) || throw(DimensionMismatch(
+        "componenttypes, nodeindices, and componentvalues should have the same length"))
+    size(c.nodeindices,1) == 2 || throw(DimensionMismatch(
+        "nodeindices should have a first dimension size of 2."))
+    inductance = branchstampplan(c, c.inductors, topology.edge2indexdict,
+        topology.Nbranches)
+    mutual, orientations, coupled = mutualstampplan(c)
+    return CircuitMatrixPlan(c, Nmodes,
         nodalstampplan(c, c.capacitors, c.Nnodes),
         nodalstampplan(c, c.resistors, c.Nnodes; invert = true),
         inductance,
-        branchstampplan(c, c.junctions, cg.edge2indexdict, cg.Nbranches),
-        inverseinductanceplan(c, cg, Lb, mnacoupledbranches(Mb)),
-        orientations,
-        diagrepeat(cg.Rbn, Nmodes))
+        branchstampplan(c, c.junctions, topology.edge2indexdict, topology.Nbranches),
+        inverseinductanceplan(topology, inductance.nzind, coupled),
+        orientations, mutual, orderedports(c), noisecandidates(c),
+        diagrepeat(topology.Rbn, Nmodes))
 end
 
 """
@@ -513,19 +615,16 @@ end
 The [`CircuitMatrices`](@ref) of a bound circuit, assembled against the fixed
 patterns of `plan`.
 
-Numerically identical to [`numericmatrices`](@ref) on the same circuit, entry
-for entry. The parts which are cheap to rebuild and depend on the values in
-ways a stamp plan does not express -- the mutual inductance matrix, the
-solver scale and the port index lists -- are still computed the same way;
-the plan covers the five which dominate (the capacitance, conductance,
-inductance, junction and inverse inductance stamps).
+The assembly of [`numericmatrices`](@ref) and of the solvers: every stamp,
+the mutual inductances included, on the plan's patterns and resolved
+couplings and ports, so that only the values, the solver scale and the
+noise channels are read at an assembly. The numeric types are the bound
+circuit's.
 """
 function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     c = plan.circuit
-    cg = plan.graph
     vvn = b.values
     Nmodes = plan.Nmodes
-    ct, ni = c.componenttypes, c.nodeindices
 
     TC = eltype(b.capacitors)
     TR = eltype(b.resistors)
@@ -536,29 +635,26 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     Gnm = assemblenodal(TR, plan.conductance, b.resistors, Nmodes)
     Lb = assemblebranch(TL, plan.inductance, b.inductors,
         combine_reciprocal_sum, 1)
-    Lbm = assemblebranch(TL, plan.inductance, b.inductors,
-        combine_reciprocal_sum, Nmodes)
+    Lbm = Nmodes == 1 ? copy(Lb) : diagrepeat(Lb, Nmodes)
     Ljb = assemblebranch(TJ, plan.junction, b.junctions, combine_error, 1)
-    Ljbm = assemblebranch(TJ, plan.junction, b.junctions, combine_error,
-        Nmodes)
+    Ljbm = Nmodes == 1 ? copy(Ljb) : diagrepeat(Ljb, Nmodes)
 
-    Mb = calcMb(ct, ni, vvn, c.componentnamedict,
-        c.mutualinductorbranchnames, cg.edge2indexdict,
-        plan.mutualorientations, 1, cg.Nbranches)
-    checkcoupledbranchinductors(c.componentnames, ct, ni, cg.edge2indexdict,
-        Mb)
+    TM = promote_type(eltype(b.inductors), eltype(b.mutualinductors))
+    Mb = assemblemutual(TM, plan.mutual, vvn)
+    checkmutualbranches(c, plan.mutual, Mb)
     invLnm = assembleinvinductance(TL, plan.invinductance, Lb, Nmodes)
 
-    Lmean = calcLmean(ct, vvn)
+    Lmean = inductancemean(b)
     # a port states its reference impedance and what realizes it; nothing
     # here looks at what shares its branch
-    portindices, portnumbers = portindicesnumbers(c)
-    portimpedances = portreferenceimpedances(c, vvn)
-    noiseportimpedanceindices = noiseindices(c, vvn)
+    portindices = [p.component for p in plan.ports]
+    portnumbers = [p.number for p in plan.ports]
+    portimpedances = portreferenceimpedances(plan.ports, vvn)
+    noiseportimpedanceindices = noiseindices(c, vvn, plan.noisecandidates)
 
     return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm,
         plan.Rbnm, portindices, portnumbers, portimpedances,
-        portenvironmentindices(c), noiseportimpedanceindices, Lmean, vvn)
+        [p.environment for p in plan.ports], noiseportimpedanceindices, Lmean, vvn)
 end
 
 # === the same matrices at new values ===
@@ -586,105 +682,109 @@ function repeatvalues!(out::AbstractVector, base::AbstractVector,
     return out
 end
 
+# the scratch of one stamp's assembly, a solve's own rather than the
+# plan's, so that solves on one plan do not write over each other
+struct StampWorkspace{T}
+    values::Vector{T}
+    seen::Vector{Bool}
+end
+StampWorkspace(::Type{T}, n::Int) where {T} =
+    StampWorkspace(Vector{T}(undef, n), Vector{Bool}(undef, n))
+
+"""
+    CircuitMatrixWorkspace(plan::CircuitMatrixPlan, nm::CircuitMatrices)
+
+Scratch for refilling matrices built from `plan`. Reuse it with the same
+patterns and numeric types, and keep separate workspaces for concurrent solves.
+"""
+struct CircuitMatrixWorkspace{TC,TR,TL,TM}
+    capacitance::StampWorkspace{TC}
+    conductance::StampWorkspace{TR}
+    invinductance::StampWorkspace{TL}
+    mutual::StampWorkspace{TM}
+    inductor_seen::Vector{Bool}
+    junction_seen::Vector{Bool}
+    invL::Vector{TL}
+    mutualvalues::Vector{TM}
+end
+
+function CircuitMatrixWorkspace(plan::CircuitMatrixPlan, nm::CircuitMatrices)
+    return CircuitMatrixWorkspace(
+        StampWorkspace(eltype(nm.Cnm), length(plan.capacitance.rowval)),
+        StampWorkspace(eltype(nm.Gnm), length(plan.conductance.rowval)),
+        StampWorkspace(eltype(nm.invLnm), length(plan.invinductance.stamp.rowval)),
+        StampWorkspace(eltype(nm.Mb), length(plan.mutual.stamp.rowval)),
+        Vector{Bool}(undef, length(plan.inductance.nzind)),
+        Vector{Bool}(undef, length(plan.junction.nzind)),
+        Vector{eltype(nm.invLnm)}(undef, length(plan.invinductance.positions)),
+        Vector{eltype(nm.Mb)}(undef, length(plan.mutual.components)))
+end
+
+function refillnodal!(A, plan::NodalStampPlan, values, work::StampWorkspace, Nmodes)
+    assemblenodal!(work.values, work.seen, plan, values)
+    Nmodes == 1 ? copyto!(nonzeros(A), work.values) :
+        repeatvalues!(nonzeros(A), work.values, plan.colptr, Nmodes)
+    return A
+end
+
+function refillbranch!(v, vm, plan::BranchStampPlan, values, seen, combine, Nmodes)
+    assemblebranch!(v.nzval, seen, plan, values, combine)
+    Nmodes == 1 ? copyto!(vm.nzval, v.nzval) :
+        repeatvalues!(vm.nzval, v.nzval, Nmodes)
+    return v
+end
+
 """
     assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
-        b::BoundCircuit)
+        b::BoundCircuit, work = CircuitMatrixWorkspace(plan, nm))
 
 The matrices of `nm` at the values of `b`, written into the storage `nm`
 already has. The patterns are the plan's and do not move, so only the
 stored values are rewritten: the nodal matrices through their stamp plans
 into a scratch the size of one mode and then repeated, and the branch
-vectors directly. The mutual inductance matrix, the value table and the
-scalars are rebuilt, and the returned [`CircuitMatrices`](@ref) shares every
-array with `nm`.
+vectors directly. The mutual inductance values are also refilled in place
+when their numeric
+type is unchanged, otherwise that matrix is rebuilt. Pass a
+`CircuitMatrixWorkspace(plan, nm)` to reuse scratch across calls; the default
+allocates scratch for this call. The returned [`CircuitMatrices`](@ref)
+shares its matrix storage with `nm`; value-dependent metadata is rebuilt.
 
 This is the sweep's assembly: [`hbsolve!`](@ref) calls it at every point.
 """
 function assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
-        b::BoundCircuit)
+        b::BoundCircuit, work::CircuitMatrixWorkspace = CircuitMatrixWorkspace(plan, nm))
     c = plan.circuit
-    cg = plan.graph
     vvn = b.values
     Nmodes = plan.Nmodes
-    ct, ni = c.componenttypes, c.nodeindices
-
-    nodal!(A, sp, values) = begin
-        base = Vector{eltype(nonzeros(A))}(undef, length(sp.rowval))
-        assemblenodal!(base, Vector{Bool}(undef, length(base)), sp, values)
-        Nmodes == 1 ? copyto!(nonzeros(A), base) :
-            repeatvalues!(nonzeros(A), base, sp.colptr, Nmodes)
-        return A
+    refillnodal!(nm.Cnm, plan.capacitance, b.capacitors, work.capacitance, Nmodes)
+    refillnodal!(nm.Gnm, plan.conductance, b.resistors, work.conductance, Nmodes)
+    refillbranch!(nm.Lb, nm.Lbm, plan.inductance, b.inductors,
+        work.inductor_seen, combine_reciprocal_sum, Nmodes)
+    refillbranch!(nm.Ljb, nm.Ljbm, plan.junction, b.junctions,
+        work.junction_seen, combine_error, Nmodes)
+    TM = promote_type(eltype(b.inductors), eltype(b.mutualinductors))
+    Mb = if TM === eltype(nm.Mb) && TM === eltype(work.mutualvalues)
+        mutualvalues!(work.mutualvalues, plan.mutual, vvn)
+        refillnodal!(nm.Mb, plan.mutual.stamp, work.mutualvalues, work.mutual, 1)
+    else
+        # a coupling value may promote the mutual matrix without promoting
+        # the inductances, and the matrix is rebuilt at its new type
+        assemblemutual(TM, plan.mutual, vvn)
     end
-    branch!(v, vm, bp, values, combine) = begin
-        seen = Vector{Bool}(undef, length(bp.nzind))
-        assemblebranch!(v.nzval, seen, bp, values, combine)
-        # a separate vector even at one mode, so it is written either way
-        Nmodes == 1 ? copyto!(vm.nzval, v.nzval) :
-            repeatvalues!(vm.nzval, v.nzval, Nmodes)
-        return v
+    checkmutualbranches(c, plan.mutual, Mb)
+    for (k, p) in enumerate(plan.invinductance.positions)
+        work.invL[k] = 1/nm.Lb.nzval[p]
     end
-
-    nodal!(nm.Cnm, plan.capacitance, b.capacitors)
-    nodal!(nm.Gnm, plan.conductance, b.resistors)
-    branch!(nm.Lb, nm.Lbm, plan.inductance, b.inductors,
-        combine_reciprocal_sum)
-    branch!(nm.Ljb, nm.Ljbm, plan.junction, b.junctions, combine_error)
-
-    Mb = calcMb(ct, ni, vvn, c.componentnamedict,
-        c.mutualinductorbranchnames, cg.edge2indexdict,
-        plan.mutualorientations, 1, cg.Nbranches)
-    checkcoupledbranchinductors(c.componentnames, ct, ni, cg.edge2indexdict,
-        Mb)
-    if !isempty(plan.invinductance.positions)
-        TL = eltype(nm.Lb.nzval)
-        invL = TL[1/nm.Lb.nzval[p] for p in plan.invinductance.positions]
-        nodal!(nm.invLnm, plan.invinductance.stamp, invL)
-    end
-
-    Lmean = calcLmean(ct, vvn)
+    refillnodal!(nm.invLnm, plan.invinductance.stamp, work.invL,
+        work.invinductance, Nmodes)
+    Lmean = inductancemean(b)
     return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Lbm, nm.Ljb, nm.Ljbm,
         Mb, nm.invLnm, nm.Rbnm, nm.portindices, nm.portnumbers,
-        portreferenceimpedances(c, vvn), nm.portenvironmentindices,
-        noiseindices(c, vvn), Lmean, vvn)
+        portreferenceimpedances(plan.ports, vvn), nm.portenvironmentindices,
+        noiseindices(c, vvn, plan.noisecandidates), Lmean, vvn)
 end
 
-# === the solver front end ===
-
-"""
-    preparecircuit(circuit, circuitdefs; sorting = :name, Nmodes = 1)
-
-Everything the solvers need from a circuit: the compiled circuit, its graph,
-and its numeric matrices.
-
-Every circuit takes this path. A netlist of tuples becomes a typed circuit
-first, which parses to the same thing at the same sorting and refuses the
-same inputs for the same reasons.
-"""
-function preparecircuit(circuit, circuitdefs; sorting::Symbol = :name,
-        Nmodes::Int = 1)
-    c = compile(circuit; sorting = sorting)
-    # nothing here reads the loops of the circuit graph
-    cg = calccircuitgraph(c; loops = false)
-    b = bind(c, circuitdefs)
-    nm = assemblematrices(circuitmatrixplan(c, cg, b; Nmodes = Nmodes), b)
-    return c, cg, nm
-end
-
-"""
-    assemblegrid(c::CompiledCircuit, cg::CircuitGraph, circuitdefs, Nmodes)
-
-The numeric matrices of a compiled circuit at a different mode count.
-
-The pump and the signal sweep of one analysis use different mode grids, so
-each assembles its own; the topology and the values behind them are the
-same.
-"""
-function assemblegrid(c::CompiledCircuit, cg::CircuitGraph, circuitdefs,
-        Nmodes::Integer)
-    b = circuitdefs isa AbstractVector ? bindvalues(c, circuitdefs) :
-        bind(c, circuitdefs)
-    return assemblematrices(circuitmatrixplan(c, cg, b; Nmodes = Nmodes), b)
-end
+# === the scattering blocks of a compiled circuit ===
 
 """
     scatteringstampsystem(blocks::Vector{CompiledScatteringBlock}, Nmodes;

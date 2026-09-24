@@ -736,6 +736,166 @@ using Test
     @test sb.outgoing ≈ se.outgoing rtol=1e-8
 end
 
+# A delay is not a rational function, so a cable fitted whole spends its
+# poles on the phase of the delay and still answers throughout it. Taken
+# out before the fit and put back as a line in cascade, the delay is
+# exact and only what is left of the cable is fitted.
+@testset "a delay taken out before the fit" begin
+    JC = JosephsonCircuits
+    tau, wc, len = 1e-9, 2pi*8e9, 0.15
+    vp = 2*len/tau                      # a line of tau/2 at each port
+    cable(w) = (g = exp(-im*w*tau)/(1 + im*w/wc); ComplexF64[0 g; g 0])
+    block = ScatteringParameters(cable; nports = 2, zref = 50.0)
+    fs = collect(range(0.0, 10e9; length = 200))
+    taus = (tau/2, tau/2)
+    fitted = RationalScattering(block, 4; frequencies = fs, delays = taus)
+    # what is left of the cable is the one pole it really is
+    @test size(fitted.provider.A, 1) == 2
+    # and putting the delay back reproduces the cable: the entry from
+    # port q to port p carries the delay of both
+    F = zeros(ComplexF64, 2, 2, length(fs))
+    JC.evaluateprovider!(F, fitted.provider, 2pi .* fs)
+    @test maximum(abs(F[p, q, i]*cis(-2pi*fs[i]*(taus[p] + taus[q])) - cable(2pi*fs[i])[p, q])
+        for i in eachindex(fs), q in 1:2, p in 1:2) < 1e-12
+    # the same cable fitted whole cannot be done at this order at all
+    @test_throws ArgumentError RationalScattering(block, 4; frequencies = fs)
+    # the line of the delay in cascade with the fit is the cable
+    cascade = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:la, 1, 2, TransmissionLine(50.0, len; vp = vp)),
+        (:b, 2, 3, fitted), (:lb, 3, 4, TransmissionLine(50.0, len; vp = vp)),
+        (:p2, 4, 0, Port(2; Z0 = 50.0))])
+    check = collect(range(1e9, 9e9; length = 12))
+    S = hblinsolve(2pi .* check, cascade; keyedarrays = false).S
+    @test maximum(abs(S[2, 1, i] - cable(2pi*check[i])[2, 1]) for i in eachindex(check)) < 1e-9
+    # the order search takes them too, and reports the order of what is
+    # left rather than of the delay
+    searched = RationalScattering(block; tol = 1e-8, minpoles = 1, frequencies = fs, delays = taus)
+    @test size(searched.provider.A, 1) == 2
+    # no delay and every delay zero are the same fit, on the cable's
+    # tail, which needs no delay taken out to be fitted at all
+    tail(w) = (g = 1/(1 + im*w/wc); ComplexF64[0 g; g 0])
+    tailblock = ScatteringParameters(tail; nports = 2, zref = 50.0)
+    plain = RationalScattering(tailblock, 4; frequencies = fs, delays = (0.0, 0.0))
+    bare = RationalScattering(tailblock, 4; frequencies = fs, delays = nothing)
+    @test plain.provider.A == bare.provider.A && plain.provider.C == bare.provider.C
+    # three ports at reference impedances of their own, with
+    # reflections, a zero frequency statement and delays which are all
+    # different: what is fitted is the core the delays came off, at
+    # signed frequencies and at zero, and the delays put back are the
+    # data
+    let taus3 = [0.125e-9, 0.3e-9, 0.75e-9], M = [0.15 0.2 0.1; 0.2 0.1 0.05; 0.1 0.05 0.2],
+            w3 = 2pi*3e9, fs3 = collect(range(0.0, 5e9; length = 100)),
+            ws3 = 2pi .* [-4.71e9, -1.11e9, 0.0, 0.31e9, 2.72e9, 4.9e9]
+        core(w) = M/(1 + im*w/w3)
+        turn(w) = Diagonal(cis.(-w .* taus3))
+        data(w) = turn(w)*core(w)*turn(w)
+        multi = ScatteringParameters((2pi .* fs3, cat(data.(2pi .* fs3)...; dims = 3));
+            zref = [40.0, 50.0, 60.0], dcmodel = ScatteringDC(M))
+        for fit in (RationalScattering(multi, 4; delays = taus3),
+                RationalScattering(multi; tol = 1e-9, minpoles = 1, delays = taus3))
+            F = zeros(ComplexF64, 3, 3, length(ws3))
+            JC.evaluatescattering!(F, fit, ws3)
+            @test all(isapprox(F[:, :, i], core(w); rtol = 1e-10) for (i, w) in enumerate(ws3))
+            @test all(isapprox(turn(w)*F[:, :, i]*turn(w), data(w); rtol = 1e-10) for (i, w) in enumerate(ws3))
+            @test fit.zref == [40.0, 50.0, 60.0] && isapprox(F[:, :, 3], M; atol = 1e-12)
+        end
+        # a covariance of uncorrelated ports is what it was, however
+        # unequal the delays
+        uncorrelated = RationalScattering(ScatteringParameters(data; nports = 3, zref = 50.0,
+            noise = NoiseCovariance(Diagonal(fill(2.0, 3)))), 4; frequencies = fs3, delays = taus3)
+        V3 = zeros(ComplexF64, 3, 3, 2)
+        JC.evaluatecovariance!(V3, uncorrelated, ws3[end - 1:end])
+        @test all(V3[:, :, i] ≈ 2I for i in 1:2)
+    end
+    @test_throws ArgumentError RationalScattering(block, 4; frequencies = fs, delays = (tau,))
+    @test_throws ArgumentError RationalScattering(block, 4; frequencies = fs, delays = (tau, -1.0))
+    # a covariance the delays rotate is rotated; one they do not is not.
+    # The cable's gain reaches one at zero frequency, so a covariance
+    # which is to be one the block can emit over the whole band needs
+    # its diagonal above what the commutator asks there
+    C = [2.0 0.5; 0.5 2.0]
+    stated = ScatteringParameters(cable; nports = 2, zref = 50.0,
+        noise = NoiseCovariance((2pi .* fs, repeat(complex(C), 1, 1, length(fs)))))
+    even = RationalScattering(stated, 4; frequencies = fs, delays = taus, passivity = false)
+    V = zeros(ComplexF64, 2, 2, 2)
+    JC.evaluateprovider!(V, even.noise.provider, 2pi .* fs[2:3])
+    @test maximum(abs.(V .- repeat(complex(C), 1, 1, 2))) < 1e-14
+    uneven = RationalScattering(stated, 4; frequencies = fs, delays = (tau, 0.0), passivity = false)
+    JC.evaluateprovider!(V, uneven.noise.provider, 2pi .* fs[2:3])
+    @test all(abs(V[1, 2, i] - C[1, 2]*cis(2pi*fs[i + 1]*tau)) < 1e-14 for i in 1:2)
+    @test all(abs(V[1, 1, i] - C[1, 1]) < 1e-14 for i in 1:2)
+    # the covariance is turned at the frequency it is read at and not at
+    # the samples it stores, so between them it is the stated one turned
+    # and not the turned samples interpolated
+    between = 2pi .* [(fs[2] + fs[3])/2, (fs[40] + fs[41])/2]
+    JC.evaluateprovider!(V, uneven.noise.provider, between)
+    @test all(abs(V[1, 2, i] - C[1, 2]*cis(between[i]*tau)) < 1e-14 for i in 1:2)
+    @test all(abs(V[1, 1, i] - C[1, 1]) < 1e-14 for i in 1:2)
+    # and the fitted block behind the line of its delay is the block it
+    # was fitted to, in the noise it emits as well as in what it
+    # scatters, between the covariance's samples as well as on them
+    off = 2pi*(fs[40] + fs[41])/2
+    whole = hblinsolve([off], Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:b, 1, 2, stated),
+        (:p2, 2, 0, Port(2; Z0 = 50.0))]); keyedarrays = false, returnCnoise = true)
+    behind = hblinsolve([off], Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+        (:la, 1, 2, TransmissionLine(50.0, len; vp = len/tau)), (:b, 2, 3, uneven),
+        (:p2, 3, 0, Port(2; Z0 = 50.0))]); keyedarrays = false, returnCnoise = true)
+    @test maximum(abs.(whole.S .- behind.S)) < 1e-9
+    @test maximum(abs.(whole.Cnoise .- behind.Cnoise)) < 1e-9
+    # the covariance a block states is turned whatever provider holds
+    # it: a table of reals, which the turned entries are not, and a
+    # callable, which has no samples to turn
+    realtable = ScatteringParameters(cable; nports = 2, zref = 50.0,
+        noise = NoiseCovariance(JC.TabulatedMatrixProvider(2pi .* fs, repeat(C, 1, 1, length(fs)))))
+    called = ScatteringParameters(cable; nports = 2, zref = 50.0,
+        noise = NoiseCovariance(w -> complex(C)))
+    for held in (realtable, called)
+        fit = RationalScattering(held, 4; frequencies = fs, delays = (tau, 0.0), passivity = false)
+        JC.evaluateprovider!(V, fit.noise.provider, between)
+        @test all(abs(V[1, 2, i] - C[1, 2]*cis(between[i]*tau)) < 1e-14 for i in 1:2)
+    end
+    # and beyond a table it keeps turning with the frequency, being a
+    # phase on the covariance the extrapolation states there
+    narrow = ScatteringParameters(cable; nports = 2, zref = 50.0,
+        noise = NoiseCovariance((2pi .* fs[1:20], repeat(complex(C), 1, 1, 20)); extrapolation = :constant))
+    beyond = RationalScattering(narrow, 4; frequencies = fs, delays = (tau, 0.0), passivity = false)
+    out = 2pi .* [fs[60], fs[80]]
+    JC.evaluateprovider!(V, beyond.noise.provider, out)
+    @test all(abs(V[1, 2, i] - C[1, 2]*cis(out[i]*tau)) < 1e-14 for i in 1:2)
+    # a turned covariance is still data the commutation relations can be
+    # checked against: this block has a power gain of four and emits the
+    # fitted block's noise, which is far less than it must
+    @test_throws ArgumentError ScatteringParameters(ComplexF64[0 2; 2 0]; zref = 50.0,
+        noise = uneven.noise)
+    # and it is checked on the covariance the rotation returns, not on
+    # the one it turns: a phase which is not real turns a Hermitian
+    # covariance into one which is not, and one which is not into one
+    # which is
+    phased(A) = NoiseCovariance(JC.RotatedMatrixProvider(JC.ConstantMatrixProvider(A), [0.0, 0.0]; phase = cis(pi/3)))
+    @test_throws ArgumentError ScatteringParameters([0.5 0.0; 0.0 0.5]; zref = 50.0, noise = phased(complex(C)))
+    @test ScatteringParameters([0.5 0.0; 0.0 0.5]; zref = 50.0, noise = phased(cis(-pi/3)*C)) isa ScatteringParameters
+    # the same provider carries the rotation a pumped fit makes, the
+    # emitting side read a harmonic above the frequency asked for and a
+    # constant factor for the pump phase, and it carries the conjugate
+    # ladder relation of a pumped covariance exactly
+    let taus4 = [0.4e-9, 0.1e-9], off = 2pi*3e9, ph = cis(0.7), nu = 2pi*1.3e9
+        inner = JC.TabulatedMatrixProvider(2pi .* fs, repeat(complex(C), 1, 1, length(fs));
+            interpolation = :linear)
+        turned = JC.RotatedMatrixProvider(inner, taus4; offset = off, phase = ph)
+        ws = 2pi .* [(fs[2] + fs[3])/2, fs[40]]
+        A, B = zeros(ComplexF64, 2, 2, 2), zeros(ComplexF64, 2, 2, 2)
+        JC.evaluateprovider!(A, inner, ws)
+        JC.evaluateprovider!(B, turned, ws)
+        @test all(abs(B[p, q, i] - ph*cis((ws[i] + off)*taus4[p] - ws[i]*taus4[q])*A[p, q, i]) < 1e-14
+            for i in 1:2, q in 1:2, p in 1:2)
+        symmetric = JC.RotatedMatrixProvider(JC.ConstantMatrixProvider(complex(C)), taus4;
+            offset = off, phase = ph)
+        at, image = zeros(ComplexF64, 2, 2, 1), zeros(ComplexF64, 2, 2, 1)
+        JC.evaluateprovider!(at, symmetric, [nu])
+        JC.evaluateprovider!(image, symmetric, [-nu - off])
+        @test maximum(abs.(image[:, :, 1] .- transpose(at[:, :, 1]))) < 1e-14
+    end
+end
+
 @testset "a pumped block fitted with its zero frequency statement" begin
     wp = 2pi*1e9
     zero1 = zeros(ComplexF64, 1, 1)

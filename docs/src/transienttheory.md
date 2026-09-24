@@ -365,7 +365,9 @@ drift out of the band or settle on one another and are dropped, so ask
 for as many as the data might need; too few settle on a poor fit. A
 delay is not a rational function, so a cable is a
 [`TransmissionLine`](@ref) of its delay in cascade with a fit of the
-data with that delay removed.
+data with that delay removed, which a `delays` of one delay per port
+in seconds does, moving a stated covariance to the same reference
+planes.
 
 ```julia
 data = ScatteringParameters((2pi .* frequencies, S); nports = 2, zref = 50.0,

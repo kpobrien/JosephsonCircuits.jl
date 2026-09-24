@@ -1008,24 +1008,25 @@ plot!(
 ![lumped-element snake amplifier (LESA) with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/lesa.png)
 
 ## Design parameter sensitivities
-The derivative of the scattering parameters with respect to the design parameters of a circuit builder, computed with the adjoint method from a single solve rather than by re-solving per parameter. The builder is an ordinary function from named parameters to a circuit; every component value which depends on a parameter contributes through the chain rule, including derived values.
+The derivative of the scattering parameters with respect to the design parameters a circuit's values are written in terms of, computed with the adjoint method from a single solve rather than by re-solving per parameter. Every component value which depends on a parameter contributes through the chain rule with its exact derivative, including derived values such as `Capacitor(Cj/4)`.
 
 ```julia
 using JosephsonCircuits
 using Plots
 
-makejpa(; Lj, Cc, Cj) = Circuit(
+Lj, Cc, Cj = JosephsonCircuits.@params Lj Cc Cj
+jpa = Circuit(
     [(:p1, 1, 0, Port(1)),
      (:cc, 1, 2, Capacitor(Cc)),
      (:jj, 2, 0, JosephsonJunction(Lj)),
      (:cj, 2, 0, Capacitor(Cj))])
 
-p = (Lj = 1000.0e-12, Cc = 100.0e-15, Cj = 1000.0e-15)
+p = Dict(Lj => 1000.0e-12, Cc => 100.0e-15, Cj => 1000.0e-15)
 ws = 2*pi*(4.5:0.001:5.0)*1e9
-wp = (2*pi*4.75001*1e9,)
+wp = 2*pi*4.75001*1e9
 sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-@time r = designsensitivities(makejpa, p, ws, wp, sources, (8,), (16,))
+@time r = designsensitivities(jpa, p, ws, (wp,), sources, (8,), (16,))
 
 # the derivative of the gain in dB with respect to each parameter,
 # dG/dp = (20/log(10))*real(conj(S)*dS/dp)/abs2(S), scaled by the
@@ -1033,49 +1034,50 @@ sources = [(mode=(1,),port=1,current=0.00565e-6)]
 # fractional change of the parameter
 S = r.out.linearized.S((0,),1,(0,),1,:)
 plot(ws/(2*pi*1e9),
-    [getproperty(p, q).*(20/log(10)).*
-     real.(conj.(S).*r.dSdp((0,),1,(0,),1,q,:))./abs2.(S)
-     for q in keys(p)],
+    [p[q].*(20/log(10)).*
+     real.(conj.(S).*r.dSdp((0,),1,(0,),1,q.name,:))./abs2.(S)
+     for q in (Lj, Cc, Cj)],
     label=["Lj" "Cc" "Cj"],
     xlabel="Frequency (GHz)",
     ylabel="dG/dln(p) (dB)")
 ```
 
 ## Sensitivity to frequency dependent scattering parameters
-A [`ScatteringParameters`](https://josephsoncircuits.org/stable/reference/) constructed inside the builder is differentiated like any component value: here a matched transmission line section in front of the amplifier, with the derivative of the gain with respect to the line length. The default is central finite differences through the block's scattering function; this example supplies the analytic derivative through the `derivatives` keyword instead. A block hoisted out of the builder (measured Touchstone data, say) is treated as parameter independent and costs nothing.
+A [`ScatteringParameters`](https://josephsoncircuits.org/stable/reference/) block depends on a design parameter through the analytic derivative its `derivatives` keyword states: here a matched transmission line section in front of the amplifier, with the derivative of the gain with respect to the line length. A block which states no derivative (measured Touchstone data, say) is parameter independent and costs nothing.
 
 ```julia
 using JosephsonCircuits
 using Plots
 
 vphase = 1.2e8 # the phase velocity of the line in m/s
-function maketline(; len, Lj)
-    # a matched, lossless transmission line: S21 = exp(-im*w*len/vphase)
-    tlineS(w) = (t = exp(-im*w*len/vphase); [0 t; t 0])
-    # the analytic derivative of S with respect to the length
-    dSdlen(w) = (d = -im*w/vphase*exp(-im*w*len/vphase); [0 d; d 0])
-    line = ScatteringParameters(tlineS; nports = 2, noise = Lossless(),
-        derivatives = (len = dSdlen,))
-    return Circuit(
-        [(:p1, 1, 0, Port(1)),
-         (:tl, 1, 2, line),
-         (:cc, 2, 3, Capacitor(100.0e-15)),
-         (:jj, 3, 0, JosephsonJunction(Lj)),
-         (:c2, 3, 0, Capacitor(1000.0e-15))])
-end
+len = 2.0e-3   # its length in m
+# a matched, lossless transmission line: S21 = exp(-im*w*len/vphase)
+tlineS(w) = (t = exp(-im*w*len/vphase); [0 t; t 0])
+# the analytic derivative of S with respect to the length
+dSdlen(w) = (d = -im*w/vphase*exp(-im*w*len/vphase); [0 d; d 0])
+line = ScatteringParameters(tlineS; nports = 2, noise = Lossless(),
+    derivatives = (len = dSdlen,))
+circuit = Circuit(
+    [(:p1, 1, 0, Port(1)),
+     (:tl, 1, 2, line),
+     (:cc, 2, 3, Capacitor(100.0e-15)),
+     (:jj, 3, 0, JosephsonJunction(:Lj)),
+     (:c2, 3, 0, Capacitor(1000.0e-15))])
 
-p = (len = 2.0e-3, Lj = 1000.0e-12)
+p = Dict(:Lj => 1000.0e-12)
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
 sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-@time r = designsensitivities(maketline, p, ws, wp, sources, (8,), (16,))
+# the parameters: the line length the block states a derivative for, and Lj
+@time r = designsensitivities(circuit, p, ws, wp, sources, (8,), (16,))
 
 S = r.out.linearized.S((0,),1,(0,),1,:)
+scale = Dict(:len => len, :Lj => p[:Lj])
 plot(ws/(2*pi*1e9),
-    [getproperty(p, q).*(20/log(10)).*
+    [scale[q].*(20/log(10)).*
      real.(conj.(S).*r.dSdp((0,),1,(0,),1,q,:))./abs2.(S)
-     for q in keys(p)],
+     for q in (:len, :Lj)],
     label=["line length" "Lj"],
     xlabel="Frequency (GHz)",
     ylabel="dG/dln(p) (dB)")

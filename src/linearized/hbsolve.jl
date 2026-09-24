@@ -131,9 +131,10 @@ with those axis names when `keyedarrays = true`).
 - `nodenames`: the node names, ground first.
 - `nodeindices`: the 2 by `Ncomponents` matrix of component node indices
     from the [`CompiledCircuit`](@ref).
-- `componentnames`, `componenttypes`, `componentnamedict`,
-    `mutualinductorbranchnames`: the corresponding fields of the
-    [`CompiledCircuit`](@ref).
+- `componentnames`, `componenttypes`, `componentnamedict`: the
+    corresponding fields of the [`CompiledCircuit`](@ref).
+- `mutualinductorbranchnames`: the names of the two inductors each mutual
+    inductor couples, see [`coupledinductornames`](@ref).
 - `portnumbers`: the port numbers, in the order the port axes use.
 - `portindices`: the flat component index of each port.
 - `portimpedances`: the reference impedance of each port, which the
@@ -234,8 +235,9 @@ const _DOC_NLKWARGS = """
     its own stages and ignores them.
 - `keyedarrays = true`: return `nodeflux` and `S` as keyed arrays with named
     axes rather than plain arrays.
-- `sensitivitynames::Vector{String} = String[]`: the components whose
-    indices are recorded for the sensitivity calculation.
+- `sensitivitynames = String[]`: the components, named by their
+    identifiers as symbols or strings, whose indices are recorded for the
+    sensitivity calculation.
 - `returnoperatingpoint = false`: assemble and return the exact real
     Jacobian at the converged solution in the `operatingpoint` field, for
     sensitivities which include the shift of the operating point.
@@ -283,17 +285,17 @@ const _DOC_TEMPERATURE = """
     itself. Raising it lowers the quantum efficiency and changes `Cnoise`
     but leaves `Snoise` and the commutation relations alone, since those
     describe the transformation rather than the state. The ports are
-    vacuum by definition. A component may state its own temperature in
-    the typed format (`Resistor(R; temperature = T)`, or a
-    [`ScatteringParameters`](@ref) with `noise = ThermalEquilibrium(T)`);
-    a tuple netlist cannot, and takes this default throughout. A block
+    vacuum by definition. A component may state its own temperature
+    (`Resistor(R; temperature = T)`, or a [`ScatteringParameters`](@ref)
+    with `noise = ThermalEquilibrium(T)`), and takes this default
+    otherwise. A block
     which states its noise with a [`NoiseCovariance`](@ref), as an
     amplifier given by its scattering parameters does, adds that
     covariance whatever the temperature."""
 
 const _DOC_SENSNAMES = """
-- `sensitivitynames::Vector{String} = String[]`: the names of the
-    components to take sensitivities with respect to. Supported types are
+- `sensitivitynames = String[]`: the components to take sensitivities
+    with respect to, named by their identifiers as symbols or strings. Supported types are
     `C`, `L`, `R` and `Lj` with numeric values. A
     [`ScatteringParameters`](@ref) block has no scalar value to perturb and
     cannot be named; see [`designsensitivities`](@ref) for sensitivities
@@ -336,21 +338,13 @@ const _DOC_LINBACKEND = """
     batched dense block factorization, whose batch is sized by the free
     memory of the device. The adjoint (transposed) solve, the noise
     scattering parameters and the sensitivities of `S` run on the device
-    too. The sweep falls back to the host when the component values
-    depend on the symbolic frequency variable (see
-    [`cansweepondevice`](@ref)) or when sensitivities with respect to
+    too. The sweep falls back to the host when a component value is
+    frequency dependent (see [`cansweepondevice`](@ref)) or when
+    sensitivities with respect to
     scattering block parameters are requested, whose stamps are rebuilt
     per frequency on the host; a scattering block whose parameters cannot
     be evaluated on the device forms its noise channels on the host from
     the whole adjoint solution copied back."""
-
-const _DOC_SORTING = """
-- `sorting = :number`: how the nodes are ordered, with ground always first.
-    `:number` parses the node names as integers and sorts numerically
-    (an error if a name is not an integer); `:name` sorts the names as
-    strings, so that "101" comes before "11"; `:none` keeps the order of
-    first appearance. The methods taking a typed [`Circuit`](@ref) default
-    to `:name`, since hierarchical net names are not integers."""
 
 """
     SolverInfo(stages, initialresidual, finalresidual, converged,
@@ -394,13 +388,13 @@ end
         maxmodulationharmonics = Nmodulationharmonics,
         iterations = 1000, atol = 1e-8, method = NewtonKrylov(),
         x0 = nothing,
-        symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
-        sorting = :number, returnS = true, returnSnoise = false,
+        nbatches = Base.Threads.nthreads(),
+        returnS = true, returnSnoise = false,
         returnQE = true, returnCM = true, returnnodeflux = false,
         returnvoltage = false, returnnodefluxadjoint = false,
         returnvoltageadjoint = false, keyedarrays = true,
         temperature = 0.0, returnCnoise = false,
-        sensitivitynames::Vector{String} = String[],
+        sensitivitynames::AbstractVector = String[],
         sensitivityoperatingpoint = true, sensitivitymode = :auto,
         returnSsensitivity = false, factorization = nothing,
         backend = CPU())
@@ -449,8 +443,9 @@ nonzero frequencies instead.
     retain as unknowns in the nonlinear solve. Its length is the number of
     non-commensurate pumps. The nonlinearity is evaluated on the larger
     `Nevaluationharmonics` grid.
-- `circuit`: a typed [`Circuit`](@ref), a legacy netlist of
-    `(name, node1, node2, value)` tuples, or a [`CompiledCircuit`](@ref).
+- `circuit`: a typed [`Circuit`](@ref) or a [`CompiledCircuit`](@ref). A
+    `Circuit` is compiled with the default node ordering; for another one,
+    pass `compile(circuit; sorting = ...)`.
 - `circuitdefs`: a dictionary from the symbols or symbolic variables used
     as component values to their numerical values. Optional when every
     component value is numeric.
@@ -490,10 +485,7 @@ $(_DOC_METHOD)
 - `x0 = nothing`: an initial value for the node fluxes of the nonlinear
     solve, used by the direct and Krylov methods; a `Staged` method builds
     its own warm starts and ignores it.
-- `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
-    when component values are expressions in the frequency.
 $(_DOC_NBATCHES)
-$(_DOC_SORTING)
 $(_DOC_RETURNS)
 $(_DOC_TEMPERATURE)
 $(_DOC_SENSNAMES)
@@ -532,6 +524,9 @@ $(_DOC_SSENS)
     back to the host for what it cannot serve (see [`hblinsolve`](@ref)).
 - `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
     warning.
+- `symfreqvar = nothing`: deprecated, the parameter a frequency dependent
+    value was written as an expression in. Write the value as a
+    [`FrequencyDependent`](@ref) closure of the frequency instead.
 - `returnZ`, `returnZadjoint`, `returnZsensitivity`,
     `returnZsensitivityadjoint`: removed; passing any of them warns.
     Compute impedances from the scattering parameters instead.
@@ -542,33 +537,33 @@ $(_DOC_SSENS)
 """
 function hbsolve(ws, wp::NTuple{N,Number}, sources,
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-    circuit, circuitdefs; sorting = :number, kwargs...) where {N,M}
+    circuit::CompilableCircuit, circuitdefs::AbstractDict = Dict{Symbol,Any}();
+    kwargs...) where {N,M}
     # the circuit compiled and the inputs in their canonical forms, so that
     # the solve is compiled once for every way of writing them
-    psc = compile(circuit; sorting = sorting)
-    # nothing here reads the loops of the circuit graph
-    cg = calccircuitgraph(psc; loops = false)
+    psc = compile(circuit)
     return hbsolve(sweepfrequencies(ws), tonefrequencies(wp),
         sourcetable(sources, wp), Nmodulationharmonics, Npumpharmonics,
-        psc, cg, definitiontable(circuitdefs); kwargs...)
+        psc, definitiontable(circuitdefs); kwargs...)
 end
 
 """
     hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
         sources::Vector{SourceTuple{N}}, Nmodulationharmonics::NTuple{M,Int},
         Npumpharmonics::NTuple{N,Int}, psc::CompiledCircuit,
-        cg::CircuitGraph, circuitdefs::Dict{Any,Any}; kwargs...)
+        circuitdefs::Dict{Any,Any}; kwargs...)
 
-The general method on a compiled circuit `psc` with its graph `cg`, with
+The general method on a compiled circuit `psc`, with
 the inputs in their canonical forms ([`sweepfrequencies`](@ref),
 [`tonefrequencies`](@ref), [`sourcetable`](@ref),
-[`definitiontable`](@ref)). It takes every keyword of the general method
-except `sorting`, which the compilation consumed.
+[`definitiontable`](@ref)). It takes every keyword of the general
+method.
 """
 function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     sources::Vector{SourceTuple{N}},
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-    psc::CompiledCircuit, cg::CircuitGraph, circuitdefs::Dict{Any,Any};
+    psc::CompiledCircuit, circuitdefs::Dict{Any,Any};
+    symfreqvar = nothing,
     dc::Bool = false, threewavemixing::Bool = false,
     fourwavemixing::Bool = true, maxpumpintermodorder=Inf,
     maxmodulationintermodorder=Inf,
@@ -578,13 +573,13 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
     iterations = 1000, atol = 1e-8, ftol = nothing, switchofflinesearchtol = nothing,
     alphamin = nothing, method::AbstractHBNonlinearSolver = NewtonKrylov(),
-    x0 = nothing, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+    x0 = nothing, nbatches = Base.Threads.nthreads(),
     returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
     returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
     temperature = 0.0, returnCnoise::Bool = false,
-    sensitivitynames::Vector{String} = String[],
+    sensitivitynames::AbstractVector = String[],
     sensitivitypairs::AbstractVector =
         Tuple{String,Int,Complex{Float64}}[],
     sensitivityblockpairs::AbstractVector = Tuple{String,Int,Any}[],
@@ -596,6 +591,10 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
     factorization = nothing, backend = CPU()) where {N,M}
+
+    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
+        circuitdefs, symfreqvar, :hbsolve))
 
     # deprecation warning for maxpumpharmonics, whose role `Npumpharmonics`
     # took when the sampling grid became `Nevaluationharmonics`.
@@ -629,7 +628,7 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     Nmodes = length(freq.modes)
 
     # the matrices at the pump mode count
-    nm = assemblegrid(psc, cg, circuitdefs, Nmodes)
+    nm = numericmatrices(psc, circuitdefs; Nmodes = Nmodes)
 
 
     # The nonlinear solve. `:staged` runs the source continuation driver,
@@ -639,14 +638,13 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     # `factorization` is the linearized solve's; the nonlinear solve's is
     # an option of its method
     nonlinear = if method isa Staged
-        stagedhbnlsolve(method, wp, Npumpharmonics, sources, psc, cg,
+        stagedhbnlsolve(method, wp, Npumpharmonics, sources, psc,
             circuitdefs;
             iterations = iterations, atol = atol,
             Nevaluationharmonics = Nevaluationharmonics,
             maxintermodorder = maxpumpintermodorder,
             frequencywindow = frequencywindow,
             dc = dc, odd = fourwavemixing, even = threewavemixing,
-            symfreqvar = symfreqvar,
             keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
             # the operating point, with its assembled Jacobian, only when
             # there is a sensitivity to take through it
@@ -656,11 +654,11 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
                  !isempty(sensitivityblockpairs)),
             backend = backend)
     else
-        hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
+        hbnlsolve(wp, sources, freq, indices, psc, nm;
             iterations = iterations, x0 = initialguess(x0), atol = atol,
             switchofflinesearchtol = switchofflinesearchtol,
             alphamin = alphamin, method = method,
-            symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+            keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
             returnoperatingpoint = sensitivityoperatingpoint &&
                 returnSsensitivity && !isempty(nm.Ljb.nzind),
@@ -680,16 +678,15 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
              !isempty(sensitivityblockpairs)) &&
             !isempty(nm.Ljb.nzind)
         cols = if isempty(sensitivitypairs) && isempty(sensitivityblockpairs)
-            calcresidualsensitivity(nonlinear.operatingpoint, psc, cg, nm,
-                [psc.componentnamedict[name] for name in sensitivitynames])
+            calcresidualsensitivity(nonlinear.operatingpoint, psc, nm,
+                Int[componentindex(psc, n) for n in sensitivitynames])
         elseif isempty(sensitivitypairs)
             nothing
         else
             # one column per (component, parameter) pair with the direction
             # alpha folded in; hblinsolve merges them per parameter
-            calcresidualsensitivity(nonlinear.operatingpoint, psc, cg, nm,
-                [psc.componentnamedict[String(t[1])]
-                 for t in sensitivitypairs],
+            calcresidualsensitivity(nonlinear.operatingpoint, psc, nm,
+                Int[componentindex(psc, t[1]) for t in sensitivitypairs],
                 [Complex{Float64}(t[3]) for t in sensitivitypairs])
         end
         # the scattering block pairs add their columns after the lumped
@@ -715,8 +712,8 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     # The linearized solve. The component values were resolved for the
     # nonlinear solve, so the signal side matrices are built from `nm.vvn`
     # rather than resolving the values again at the signal mode count.
-    linearized = hblinsolve(ws, psc, cg, nm.vvn, signalfreq;
-        nonlinear = nonlinear, symfreqvar = symfreqvar, nbatches = nbatches,
+    linearized = hblinsolve(ws, psc, nm.vvn, signalfreq;
+        nonlinear = nonlinear, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
@@ -740,31 +737,4 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
         factorization = factorization, backend = backend)
 
     return HB(nonlinear, linearized)
-end
-
-# A fully numeric circuit needs no component definitions.
-function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
-    Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-    circuit; kwargs...) where {N,M}
-    return hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
-        circuit, Dict{Any,Any}(); kwargs...)
-end
-
-"""
-    hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
-        circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
-        sorting = :name, kwargs...)
-
-Solve a typed [`Circuit`](@ref). The circuit is elaborated and lowered
-with [`compile`](@ref) and every keyword of the general method applies.
-`circuitdefs` is needed only when component values are symbolic. The
-default `sorting` is `:name` because hierarchical net names are not
-integers.
-"""
-function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
-        Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-        circuit::Circuit, circuitdefs::AbstractDict = Dict{Symbol,Number}();
-        sorting::Symbol = :name, kwargs...) where {N,M}
-    return hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
-        elaborate(circuit), circuitdefs; sorting = sorting, kwargs...)
 end

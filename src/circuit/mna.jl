@@ -77,8 +77,10 @@ Pad the sparse matrix `A` with `Naux` empty rows and columns, returning a
 square matrix suitable for the augmented modified nodal analysis system.
 """
 function mnapad(A::SparseMatrixCSC, Naux::Int)
-    I, J, V = findnz(A)
-    return sparse(I, J, V, size(A,1)+Naux, size(A,2)+Naux)
+    colptr = vcat(SparseArrays.getcolptr(A),
+        fill(SparseArrays.getcolptr(A)[end], Naux))
+    return SparseMatrixCSC(size(A, 1) + Naux, size(A, 2) + Naux,
+        colptr, copy(rowvals(A)), copy(nonzeros(A)))
 end
 
 """
@@ -424,9 +426,15 @@ where the inverse inductance entries of the nodal formulation diverge as
 `1/(1-k^2)`.
 """
 function mnacoupledbranches(Mb::SparseMatrixCSC)
-    I, J, V = findnz(Mb)
-    for k in eachindex(I)
-        if I[k] == J[k] && !iszero(V[k])
+    checkcoupleddiagonal(Mb)
+    I, J, _ = findnz(Mb)
+    return sort(unique(vcat(I, J)))
+end
+
+function checkcoupleddiagonal(Mb::SparseMatrixCSC)
+    nnz(Mb) == 0 && return nothing
+    for j in axes(Mb, 2), k in nzrange(Mb, j)
+        if rowvals(Mb)[k] == j && !iszero(nonzeros(Mb)[k])
             throw(ArgumentError("Mutual coupling between inductors which "*
                 "share the same branch (the same pair of nodes) is not "*
                 "supported: the parallel inductors are combined into a "*
@@ -436,19 +444,7 @@ function mnacoupledbranches(Mb::SparseMatrixCSC)
                 "the two inductors occupy distinct branches."))
         end
     end
-    return sort(unique(vcat(I, J)))
-end
-
-"""
-    mnadropbranches(Lb::SparseVector, branches::Vector{Int})
-
-Return a copy of the branch inductance vector `Lb` with the entries at
-`branches` removed, so the nodal inverse inductance matrix can be computed
-from the remaining, uncoupled inductors only.
-"""
-function mnadropbranches(Lb::SparseVector, branches::Vector{Int})
-    keep = [i for i in eachindex(Lb.nzind) if !(Lb.nzind[i] in branches)]
-    return SparseArrays.sparsevec(Lb.nzind[keep], Lb.nzval[keep], length(Lb))
+    return nothing
 end
 
 """
@@ -593,63 +589,15 @@ function mnainitialauxind!(x::AbstractVector, coupledbranches::Vector{Int},
     return x
 end
 
-"""
-    checkcoupledbranchinductors(componentnames::Vector,
-        componenttypes::Vector{Symbol}, nodeindices::Matrix,
-        edge2indexdict::Dict, Mb::SparseMatrixCSC)
-
-Check that no branch which participates in mutual inductive coupling hosts
-more than one inductor. Inductors which share a branch (the same pair of
-nodes) are combined into a single branch inductance by reciprocal sum
-before the mutual coupling is applied - exact for uncoupled parallel
-inductors, which share the same branch flux, but a misrepresentation as
-soon as any inductor on the branch is mutually coupled: the correct
-effective mutual coupling of the merged branch differs from the stamped
-one (for an uncoupled `L2` sharing a branch with a coupled `L1`, by the
-current division factor `L2/(L1+L2)`). An informative `ArgumentError`
-naming the inductors is thrown, directing the user to route the inductors
-through intermediate nodes so each mutually coupled inductor occupies its
-own branch. Called by [`numericmatrices`](@ref) so both solvers and direct
-users of the circuit matrices are protected; see also
-[`mnacoupledbranches`](@ref), which rejects coupling between two inductors
-on the same branch (a diagonal mutual inductance entry).
-"""
-function checkcoupledbranchinductors(componentnames::Vector,
-    componenttypes::Vector{Symbol}, nodeindices::Matrix,
-    edge2indexdict::Dict, Mb::SparseMatrixCSC)
-
-    I, J, V = findnz(Mb)
-    coupled = Set{Int}()
-    for k in eachindex(I)
-        if !iszero(V[k])
-            push!(coupled, I[k])
-            push!(coupled, J[k])
-        end
-    end
-    isempty(coupled) && return nothing
-    counts = Dict{Int,Int}()
-    for i in eachindex(componenttypes)
-        if componenttypes[i] == :L
-            b = edge2indexdict[(nodeindices[1,i], nodeindices[2,i])]
-            if b in coupled
-                counts[b] = get(counts, b, 0) + 1
-            end
-        end
-    end
-    for (b, c) in counts
-        if c > 1
-            offending = [componentnames[i] for i in eachindex(componenttypes)
-                if componenttypes[i] == :L &&
-                edge2indexdict[(nodeindices[1,i], nodeindices[2,i])] == b]
-            throw(ArgumentError("The inductors "*join(offending, ", ")*
-                " share the same branch (the same pair of nodes), and at "*
-                "least one inductor on that branch participates in mutual "*
-                "coupling. Inductors on a shared branch are combined into "*
-                "a single branch inductance before the mutual coupling is "*
-                "applied, which misrepresents the coupled system. Route "*
-                "the inductors through intermediate nodes so each "*
-                "mutually coupled inductor occupies its own branch."))
-        end
-    end
-    return nothing
+# the error for inductors which share the branch of a coupling, raised
+# where the mutual stamps are checked
+function throwsharedinductors(offending)
+    throw(ArgumentError("The inductors "*join(offending, ", ")*
+        " share the same branch (the same pair of nodes), and at "*
+        "least one inductor on that branch participates in mutual "*
+        "coupling. Inductors on a shared branch are combined into "*
+        "a single branch inductance before the mutual coupling is "*
+        "applied, which misrepresents the coupled system. Route "*
+        "the inductors through intermediate nodes so each "*
+        "mutually coupled inductor occupies its own branch."))
 end

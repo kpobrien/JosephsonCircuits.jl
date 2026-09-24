@@ -197,15 +197,17 @@ adjoint method, at a fixed operating point or, with
 `sensitivityoperatingpoint = true`, including the shift of the pump
 operating point through the exact real Jacobian; near the gain peak of a
 strongly pumped amplifier the shift is the larger term.
-[`designsensitivities`](@ref) differentiates with respect to the
-parameters of a circuit builder by the chain rule through the
-components, with the exact direction of every dependent value, which is
-what a gradient based optimizer wants.
+[`designsensitivities`](@ref) differentiates with respect to the design
+parameters a circuit's values are written in terms of, by the chain
+rule through the components with the exact derivative of every value,
+which is what a gradient based optimizer wants.
 
 ```julia
 sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; sensitivitynames = ["Lj", "Cc"], returnSsensitivity = true)
 sol.linearized.Ssensitivity
-out, dSdp = designsensitivities(make, (Lj = 1e-9, Cc = 100e-15), ws, wp, sources, (2,), (8,))
+parameterized = Circuit([(:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(:Cc)),
+    (:jj, 2, 0, JosephsonJunction(:Lj)), (:cj, 2, 0, Capacitor(1000e-15))])
+out, dSdp = designsensitivities(parameterized, Dict(:Lj => 1e-9, :Cc => 100e-15), ws, wp, sources, (2,), (8,))
 ```
 
 ## Direct current and flux pumping
@@ -236,12 +238,27 @@ its transforms through the device FFT, its preconditioner through cuDSS
 or the batched block factorization; the linearized sweep assembles the
 system matrices of a batch of frequencies with one kernel and factorizes
 and solves them as a uniform batch, falling back to the host for what it
-cannot serve, a symbolic frequency variable in the component values.
+cannot serve, a frequency dependent component value.
 
 ## Reuse across a sweep of values
 
 A sweep over component values builds the structure once and moves
 values: [`hbcache`](@ref) holds what a solve built and
 [`hbsolve!`](@ref) reuses it, so a parameter sweep pays the compile, the
-symbolic analysis and the plans once. The [other solvers](interop.md)
-page shows the problem object every external solver can drive.
+symbolic analysis and the plans once. The cache takes a typed circuit
+whose values are written in terms of parameters, with a dictionary of
+their definitions, and each solve names the parameters it moves:
+
+```julia
+circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(:Cc)),
+    (:Lj1, 2, 0, JosephsonJunction(:Lj)), (:C2, 2, 0, Capacitor(1000e-15))])
+cache = hbcache((2*pi*4.75e9,), (8,), [(mode = (1,), port = 1, current = 1e-8)],
+    circuit, Dict(:Lj => 1000e-12, :Cc => 100e-15))
+for Lj in (900:25:1100)*1e-12
+    sol = hbsolve!(cache, (Lj = Lj,))
+    cache.converged || break
+end
+```
+
+The [other solvers](interop.md) page shows the problem object every
+external solver can drive.

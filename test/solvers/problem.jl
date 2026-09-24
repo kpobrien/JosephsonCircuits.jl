@@ -27,6 +27,19 @@ function hbnlp_testproblems(; padded::Bool = true)
         ("2 tone", JC.hbnonlinearproblem((2*pi*4.65e9, 2*pi*4.85e9), (3,3),
             [(mode=(1,0),port=1,current=1e-8),(mode=(0,1),port=1,current=1e-8)],
             circuit, defs; Nevaluationharmonics = grid((3,3)))),
+        # An asymmetric three tone grid with direct current and both mixing
+        # orders: the harmonic counts differ per tone, so the strides of the
+        # layout differ in every dimension, and its signal modes include ones
+        # at negative physical frequency. The end to end design sensitivities
+        # cover such a grid; these are the operators underneath them, whose
+        # transposes and second and third derivatives nothing else samples
+        # on more than two tones.
+        ("3 tone asymmetric dc", JC.hbnonlinearproblem(
+            2*pi .* (4.75001e9, 1.17003e9, 0.63007e9), (2,1,1),
+            [(mode=(1,0,0),port=1,current=1e-8),(mode=(0,1,0),port=1,current=5e-9),
+             (mode=(0,0,1),port=1,current=3e-9),(mode=(0,0,0),port=1,current=1e-9)],
+            circuit, defs; dc=true, even=true,
+            Nevaluationharmonics = grid((2,1,1)))),
     ]
 end
 
@@ -118,8 +131,8 @@ end
     # no slots, an empty Josephson output: the transposed product must
     # not launch the junction kernel (which read past its pointer array
     # under bounds checking) and must still carry the linear term
-    circuit = [("P1","1","0",1), ("R1","1","0",50.0), ("C1","1","2",1e-13),
-        ("L1","2","0",1e-9), ("C2","2","0",1e-12)]
+    circuit = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(1e-13)),
+        ("L1", "2", "0", Inductor(1e-9)), ("C2", "2", "0", Capacitor(1e-12))])
     prob = JC.hbnonlinearproblem((2*pi*1e9,), (2,),
         [(mode=(1,),port=1,current=1e-8)], circuit, Dict())
     n = length(prob)

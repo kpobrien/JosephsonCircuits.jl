@@ -510,15 +510,14 @@ end
 
     # the whole path, on a driven Josephson chain
     function chain(Ncell, Lj)
-        c = Tuple{String,String,String,Any}[]
-        push!(c, ("P1", "1", "0", 1)); push!(c, ("R1", "1", "0", 50.0))
+        c = Any[(:P1, 1, 0, Port(1; Z0 = 50.0))]
         for i in 1:Ncell
-            push!(c, ("Lj$(i)", "$(i)", "$(i+1)", Lj))
-            push!(c, ("C$(i)", "$(i)", "0", 40e-15))
+            push!(c, (Symbol(:Lj, i), i, i + 1, JosephsonJunction(Lj)))
+            push!(c, (Symbol(:C, i), i, 0, Capacitor(40e-15)))
         end
-        push!(c, ("C$(Ncell+1)", "$(Ncell+1)", "0", 40e-15))
-        push!(c, ("R2", "$(Ncell+1)", "0", 50.0))
-        return c
+        push!(c, (Symbol(:C, Ncell + 1), Ncell + 1, 0, Capacitor(40e-15)))
+        push!(c, (:R2, Ncell + 1, 0, Resistor(50.0)))
+        return Circuit(c)
     end
 
     @testset "the floquet form converges and harvests on a circuit" begin
@@ -557,9 +556,10 @@ end
         w = (2*pi*8e9,); Nh = (6,)
         src = [(mode = (1,), port = 1, current = 2.5e-6)]
         Ljs = range(100e-12, 102e-12; length = 3)
-        builder = (; Lj) -> chain(12, Lj)
+        # the junction inductance as a parameter of the circuit
+        circ = chain(12, :Lj)
 
-        cache = JC.hbcache(w, Nh, src, builder, (; Lj = Ljs[1]);
+        cache = JC.hbcache(w, Nh, src, circ, Dict(:Lj => Ljs[1]);
             method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3),
                 escalate = false))
         first = Int[]

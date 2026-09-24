@@ -8,26 +8,26 @@ using Test
 @testset verbose=true "nonlinearterm" begin
 
     JosephsonCircuits.@params Rleft Cc Lj Cj
-    circuitjpa = Tuple{String,String,String,Any}[]
-    push!(circuitjpa,("P1","1","0",1))
-    push!(circuitjpa,("R1","1","0",Rleft))
-    push!(circuitjpa,("C1","1","2",Cc))
-    push!(circuitjpa,("Lj1","2","0",Lj))
-    push!(circuitjpa,("C2","2","0",Cj))
+    circuitjpa = Any[]
+    push!(circuitjpa,("P1", "1", "0", Port(1; Z0 = Rleft)))
+    push!(circuitjpa,("C1", "1", "2", Capacitor(Cc)))
+    push!(circuitjpa,("Lj1", "2", "0", JosephsonJunction(Lj)))
+    push!(circuitjpa,("C2", "2", "0", Capacitor(Cj)))
+    circuitjpa = Circuit(circuitjpa)
     circuitdefsjpa = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
         Rleft=>50.0)
 
     JosephsonCircuits.@params Ljx Cg Cjx Rl
     Ncells = 4
-    circuitchain = Tuple{String,String,String,Any}[]
-    push!(circuitchain, ("P1","1","0",1))
-    push!(circuitchain, ("R1","1","0",Rl))
+    circuitchain = Any[]
+    push!(circuitchain, ("P1", "1", "0", Port(1; Z0 = Rl)))
     for i in 1:Ncells
-        push!(circuitchain, ("Lj$(i)","$(i)","$(i+1)",Ljx))
-        push!(circuitchain, ("C$(i)","$(i+1)","0",Cg))
-        push!(circuitchain, ("Cj$(i)","$(i)","$(i+1)",Cjx))
+        push!(circuitchain, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(Ljx)))
+        push!(circuitchain, ("C$(i)", "$(i+1)", "0", Capacitor(Cg)))
+        push!(circuitchain, ("Cj$(i)", "$(i)", "$(i+1)", Capacitor(Cjx)))
     end
-    push!(circuitchain, ("R2","$(Ncells+1)","0",Rl))
+    push!(circuitchain, ("R2", "$(Ncells+1)", "0", Resistor(Rl)))
+    circuitchain = Circuit(circuitchain)
     circuitdefschain = Dict(Ljx=>200.0e-12, Cg=>50.0e-15, Cjx=>100.0e-15,
         Rl=>50.0)
 
@@ -35,17 +35,16 @@ using Test
     # auxiliary branch currents by the modified nodal analysis formulation,
     # so the incidence matrix gains structurally empty columns
     JosephsonCircuits.@params Lla Llb Kab Rl2
-    circuitmutual = Tuple{String,String,String,Any}[]
-    push!(circuitmutual, ("P1","1","0",1))
-    push!(circuitmutual, ("R1","1","0",Rl2))
-    push!(circuitmutual, ("C1","1","2",Cc))
-    push!(circuitmutual, ("Lj1","2","0",Lj))
-    push!(circuitmutual, ("C2","2","0",Cj))
-    push!(circuitmutual, ("L1","2","0",Lla))
-    push!(circuitmutual, ("L2","3","0",Llb))
-    push!(circuitmutual, ("P2","3","0",2))
-    push!(circuitmutual, ("R2","3","0",Rl2))
-    push!(circuitmutual, ("K1","L1","L2",Kab))
+    circuitmutual = Any[]
+    push!(circuitmutual, ("P1", "1", "0", Port(1; Z0 = Rl2)))
+    push!(circuitmutual, ("C1", "1", "2", Capacitor(Cc)))
+    push!(circuitmutual, ("Lj1", "2", "0", JosephsonJunction(Lj)))
+    push!(circuitmutual, ("C2", "2", "0", Capacitor(Cj)))
+    push!(circuitmutual, ("L1", "2", "0", Inductor(Lla)))
+    push!(circuitmutual, ("L2", "3", "0", Inductor(Llb)))
+    push!(circuitmutual, ("P2", "3", "0", Port(2; Z0 = Rl2)))
+    push!(circuitmutual, ("K1", "L1", "L2", MutualInductor(Kab)))
+    circuitmutual = Circuit(circuitmutual)
     circuitdefsmutual = Dict(Lj=>500.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
         Lla=>300.0e-12, Llb=>300.0e-12, Rl2=>50.0, Kab=>0.99)
 

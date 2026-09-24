@@ -388,7 +388,7 @@ function mergestamps(stamps::AbstractVector{SensitivityStamp}, grouping)
     return out
 end
 """
-    calcsensitivitystamps(sensitivityindices, psc, cg, nm, lsys, phimatrix,
+    calcsensitivitystamps(sensitivityindices, psc, nm, lsys, phimatrix,
         coupledbranches, Nnodalmna, Nmodes, Nnodes)
 
 Build the [`SensitivityStamp`](@ref) of each component in
@@ -403,7 +403,7 @@ junction alone, obtained by scattering the Fourier coefficients of
 coupling and its truncation agree exactly.
 """
 function calcsensitivitystamps(sensitivityindices, psc::CompiledCircuit,
-    cg::CircuitGraph, nm::CircuitMatrices, lsys,
+    nm::CircuitMatrices, lsys,
     phimatrix, coupledbranches, Nnodalmna, Nmodes, Nnodes)
 
     Ntot = size(lsys.Asparse, 1)
@@ -417,7 +417,7 @@ function calcsensitivitystamps(sensitivityindices, psc::CompiledCircuit,
 
     for (k, idx) in enumerate(sensitivityindices)
         portindex = get(portordinal, idx, 0)
-        kind, info = componentstamp(idx, psc, cg, nm, lookups,
+        kind, info = componentstamp(idx, psc, nm, lookups,
             Nmodes, Nnodes)
         if kind == :C
             stamps[k] = tripletstamp(:C, mnapadto(info, Ntot), portindex)
@@ -531,7 +531,7 @@ function calcsensitivityscaling!(gamma, beta, inputwave, bnm,
         for j in 1:Nmodes
             row = (i-1)*Nmodes + j
             portimpedance = calcimpedance(portimpedances[i],
-                componenttypes[portindices[i]], wmodes[j], nothing)
+                componenttypes[portindices[i]], wmodes[j])
             kval = portwavescale(portimpedance, wmodes[j])
             # the orientation of the port branch relative to the node order
             # of the port component, from the source current of the port's
@@ -551,7 +551,7 @@ end
 
 """
     calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
-        phinadjoint, S, gamma, beta, contraction, wmodes, Nmodes, symfreqvar)
+        phinadjoint, S, gamma, beta, contraction, wmodes, Nmodes)
 
 Calculate the derivative of the scattering matrix with respect to a relative
 (logarithmic) perturbation of each component value, `p -> r*p` evaluated at
@@ -584,7 +584,7 @@ design parameter form carries `(dZport/dp)/Zport`), which is exact for
 constant real port impedances.
 """
 function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
-    phinadjoint, S, gamma, beta, contraction, wmodes, Nmodes, symfreqvar)
+    phinadjoint, S, gamma, beta, contraction, wmodes, Nmodes)
 
     NPM = size(phin, 2)
     fill!(Ssensitivity, 0)

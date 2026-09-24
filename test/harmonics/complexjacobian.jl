@@ -34,12 +34,12 @@ end
     @testset "plan assembled Jx matches the holomorphic derivative" begin
 
         JosephsonCircuits.@params Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",Rleft))
-        push!(circuit,("C1","1","2",Cc))
-        push!(circuit,("Lj1","2","0",Lj))
-        push!(circuit,("C2","2","0",Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
+        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(
             Lj =>1000.0e-12,
             Cc => 100.0e-15,
@@ -119,12 +119,12 @@ end
         # assembly against the reference construction from the branch
         # matrices, the incidence matrix products, and the MNA stamps.
         JosephsonCircuits.@params Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",Rleft))
-        push!(circuit,("C1","1","2",Cc))
-        push!(circuit,("Lj1","2","0",Lj))
-        push!(circuit,("C2","2","0",Cj))
+        circuit = Any[]
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
+        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
+        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
+        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
             Rleft=>50.0)
         wp = (2*pi*4.75001*1e9,)
@@ -135,12 +135,11 @@ end
 
         # replicate the hblinsolve setup on the signal grid
         psc = JosephsonCircuits.compile(circuit)
-        cg = JosephsonCircuits.calccircuitgraph(psc)
         signalfreq = JosephsonCircuits.truncfreqs(
             JosephsonCircuits.calcfreqsdft((6,)); dc=true, odd=false,
             even=true, maxintermodorder=Inf)
         Nsignalmodes = length(signalfreq.modes)
-        signalnm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs,
+        signalnm = JosephsonCircuits.numericmatrices(psc, circuitdefs,
             Nmodes = Nsignalmodes)
 
         pumpfreq = nonlinear.frequencies
@@ -173,15 +172,15 @@ end
 
         # the test-local oracle construction
         AoLjbm = testAoLjbm(phimatrix, Amatrixindices,
-            signalnm.Ljb, 1, Nsignalmodes, cg.Nbranches)
+            signalnm.Ljb, 1, Nsignalmodes, psc.topology.Nbranches)
         Rbnmt = sparse(transpose(Rbnmmna))
         AoLjnm = Rbnmt*AoLjbm*Rbnmmna
         wpumpmodes = JosephsonCircuits.calcmodefreqs(nonlinear.w,
             signalfreq.modes)
         wmodes1 = 2*pi*5.0e9 .+ wpumpmodes
-        Cnmcopy = JosephsonCircuits.freqsubst(Cnmp, wmodes1, nothing)
-        Gnmcopy = JosephsonCircuits.freqsubst(Gnmsub, wmodes1, nothing)
-        invLnmcopy = JosephsonCircuits.freqsubst(invLnmp, wmodes1, nothing)
+        Cnmcopy = JosephsonCircuits.freqsubst(Cnmp, wmodes1)
+        Gnmcopy = JosephsonCircuits.freqsubst(Gnmsub, wmodes1)
+        invLnmcopy = JosephsonCircuits.freqsubst(invLnmp, wmodes1)
         Asparseref = JosephsonCircuits.spaddkeepzeros(
             JosephsonCircuits.spaddkeepzeros(
                 JosephsonCircuits.spaddkeepzeros(
@@ -191,9 +190,9 @@ end
 
         # the plan construction, as used by hblinsolve
         lsys = JosephsonCircuits.HBLinearizedSystem(Amatrixindices,
-            signalnm.Ljb, Rbnmmna, Nsignalmodes, cg.Nbranches, phimatrix,
+            signalnm.Ljb, Rbnmmna, Nsignalmodes, psc.topology.Nbranches, phimatrix,
             invLnmcopy, Gnmcopy, Cnmcopy, invLnmp, Gnmsub, Cnmp,
-            false, Amna0, nothing, wpumpmodes, psc.Nnodes)
+            false, Amna0, wpumpmodes, psc.Nnodes)
         Asparse = lsys.Asparse
 
         # identical sparsity structure, including stored zeros
@@ -236,15 +235,15 @@ end
                     JosephsonCircuits.sparseaddmap(Aref, AoLjnmuse))
                 JosephsonCircuits.sparseaddconjsubst!(Aref, -1, Cnmp,
                     wmodes2m, JosephsonCircuits.sparseaddmap(Aref, Cnmp),
-                    real.(wmodesm) .< 0, wmodesm, nothing)
+                    real.(wmodesm) .< 0, wmodesm)
                 JosephsonCircuits.sparseaddconjsubst!(Aref, im, Gnmsub,
                     wmodesm, JosephsonCircuits.sparseaddmap(Aref, Gnmsub),
-                    real.(wmodesm) .< 0, wmodesm, nothing)
+                    real.(wmodesm) .< 0, wmodesm)
                 JosephsonCircuits.sparseaddconjsubst!(Aref, 1, invLnmp,
                     JosephsonCircuits.LinearAlgebra.Diagonal(
                         ones(size(invLnmp, 1))),
                     JosephsonCircuits.sparseaddmap(Aref, invLnmp),
-                    real.(wmodesm) .< 0, wmodesm, nothing)
+                    real.(wmodesm) .< 0, wmodesm)
                 JosephsonCircuits.sparseadd!(Aref, 1, Amna0,
                     JosephsonCircuits.sparseaddmap(Aref, Amna0))
 
@@ -270,15 +269,15 @@ end
         # four incidence matrix scatter targets of the direct assembly.
         JosephsonCircuits.@params Ljx Cg Cjx Rl
         Ncells = 5
-        circuit = Tuple{String,String,String,Any}[]
-        push!(circuit, ("P1","1","0",1))
-        push!(circuit, ("R1","1","0",Rl))
+        circuit = Any[]
+        push!(circuit, ("P1", "1", "0", Port(1; Z0 = Rl)))
         for i in 1:Ncells
-            push!(circuit, ("Lj$(i)","$(i)","$(i+1)",Ljx))
-            push!(circuit, ("C$(i)","$(i+1)","0",Cg))
-            push!(circuit, ("Cj$(i)","$(i)","$(i+1)",Cjx))
+            push!(circuit, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(Ljx)))
+            push!(circuit, ("C$(i)", "$(i+1)", "0", Capacitor(Cg)))
+            push!(circuit, ("Cj$(i)", "$(i)", "$(i+1)", Capacitor(Cjx)))
         end
-        push!(circuit, ("R2","$(Ncells+1)","0",Rl))
+        push!(circuit, ("R2", "$(Ncells+1)", "0", Resistor(Rl)))
+        circuit = Circuit(circuit)
         circuitdefs = Dict(Ljx=>200.0e-12, Cg=>50.0e-15, Cjx=>100.0e-15,
             Rl=>50.0)
         sources = [(mode=(1,),port=1,current=1.0e-6)]

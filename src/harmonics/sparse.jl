@@ -694,24 +694,24 @@ end
 
 """
     sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
-        indexmap, wmodes::AbstractVector, power::Integer, symfreqvar)
+        indexmap, wmodes::AbstractVector, power::Integer)
 
 Perform `A += c*As*Ad` with `Ad` the implicit diagonal whose entry in column
 `i` is the signed mode frequency of that column raised to `power`,
 `wmodes[(i-1) % length(wmodes) + 1]^power`, with the mode index fastest over
 the nodes and any auxiliary variables. The stored value of `As` is complex
-conjugated in every column whose mode frequency is negative, and
-`symfreqvar` is substituted by the mode frequency in any symbolic entries.
+conjugated in every column whose mode frequency is negative, and a
+frequency dependent entry is resolved at the mode frequency of its
+column.
 
 This is the operation of the `Diagonal` based method below with the
-frequency, conjugation flag, and substitution diagonals computed from the
+frequency and conjugation flag diagonals computed from the
 column index instead of materialized, which would be three system sized
 allocations at every call, at every signal frequency, in the assembly loop
 of [`hblinsolve`](@ref).
 """
 function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
-    As::SparseMatrixCSC, indexmap, wmodes::AbstractVector, power::Integer,
-    symfreqvar)
+    As::SparseMatrixCSC, indexmap, wmodes::AbstractVector, power::Integer)
 
     if nnz(A) < nnz(As)
         throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
@@ -730,7 +730,7 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
         wm = wmodes[(i-1) % Nmodes + 1]
         Ad = power == 0 ? one(wm) : power == 1 ? wm : wm^power
         for j in As.colptr[i]:(As.colptr[i+1]-1)
-            tmp = substitutefreq(As.nzval[j], symfreqvar, wm)
+            tmp = substitutefreq(As.nzval[j], wm)
             A.nzval[indexmap[j]] += c*Ad*modevalue(tmp, wm)
         end
     end
@@ -739,13 +739,12 @@ end
 
 """
     sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
-        Ad::Diagonal, indexmap, conjflag::Diagonal, wmodesm::Diagonal,
-        symfreqvar)
+        Ad::Diagonal, indexmap, conjflag::Diagonal, wmodesm::Diagonal)
 
 Perform the operation `A+c*As*Ad` and return the result in `A`. Take the
 complex conjugate of `As` for any column where `conjflag = true`, and
-substitute the mode frequency of the column for `symfreqvar` in every
-entry through [`substitutefreq`](@ref).
+resolve every entry at the mode frequency of its column through
+[`substitutefreq`](@ref).
 
 The sparse matrix `As` must have nonzero elements only in a subset of the 
 positions in `A` which has nonzero lements.
@@ -757,7 +756,7 @@ Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
 As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
 wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
-JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,wmodesm,nothing)
+JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,wmodesm)
 A
 
 # output
@@ -768,7 +767,7 @@ A
 """
 function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
     As::SparseMatrixCSC, Ad::Diagonal, indexmap, conjflag::Diagonal,
-    wmodesm::Diagonal, symfreqvar)
+    wmodesm::Diagonal)
 
     if nnz(A) < nnz(As)
         throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
@@ -801,7 +800,7 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
 
             # substitute the mode frequency of this column into a frequency
             # dependent entry; every entry goes through `substitutefreq`
-            tmp = substitutefreq(As.nzval[j], symfreqvar, wmodesm[i,i])
+            tmp = substitutefreq(As.nzval[j], wmodesm[i,i])
 
             if conjflag[i,i]
                 A.nzval[indexmap[j]] += c*Ad[i,i]*conj(tmp)
@@ -1008,8 +1007,8 @@ end
 
 Check if `a` is a symbolic variable. Define a function to do this because
 the test depends on which representation the value came from: the core
-answers for `CircuitValue` and `FrequencyDependent`, and the Symbolics
-extension adds the methods for its own wrappers.
+answer for `CircuitValue`, which a frequency dependent closure is a leaf
+of, and the Symbolics extension adds the methods for its own wrappers.
 
 # Examples
 ```jldoctest
@@ -1021,7 +1020,7 @@ false
 ```
 """
 function checkissymbolic(a)
-    return a isa CircuitValue || a isa FrequencyDependent
+    return a isa CircuitValue
 end
 
 """
@@ -1035,22 +1034,21 @@ method for `Num`.
 circuitvariables(a) = Symbol[]
 
 """
-    substitutefreq(value, symfreqvar, w)
+    substitutefreq(value, w)
 
 Resolve a component value at the mode frequency `w`: the identity for a
-plain number, the provider evaluation for a [`CircuitValue`](@ref),
-`value.f(w)` for a `FrequencyDependent`, and the substitution of
-`symfreqvar` when one is given. The Symbolics extension adds the `Num`
-method.
+plain number, and for a [`CircuitValue`](@ref) the evaluation of its
+frequency dependent leaves (see [`FrequencyDependent`](@ref)) followed by
+the constant folding of the expression around them. A value which does not
+resolve to a number is returned as it is, for the caller to diagnose. The
+Symbolics extension adds the `Num` method.
 """
-substitutefreq(value, symfreqvar, w) = value
-function substitutefreq(value::CircuitValue, symfreqvar, w)
+substitutefreq(value, w) = value
+function substitutefreq(value::CircuitValue, w)
     v = CircuitValues.evalproviders(value, w)
-    isnothing(symfreqvar) && return v isa CircuitValues.Constant ?
+    return v isa CircuitValues.Constant ?
         (iszero(imag(v.val)) ? real(v.val) : v.val) : v
-    return valuetonumber(v, Dict(symfreqvar => w))
 end
-substitutefreq(value::FrequencyDependent, symfreqvar, w) = value.f(w)
 
 """
     substitutedefs(value, circuitdefs)
@@ -1066,43 +1064,37 @@ substitutedefs(value, circuitdefs) = value
 substitutedefs(value::CircuitValue, circuitdefs) =
     valuetonumber(value, circuitdefs)
 # the parameters as `Parameter` objects rather than bare symbols, so that
-# a comparison against `symfreqvar`, which the user passes as a
-# `Parameter`, succeeds
+# they print and compare as the user wrote them
 circuitvariables(a::CircuitValue) =
     [CircuitValues.Parameter(n) for n in sort!(collect(CircuitValues.parameters(a)))]
 
 """
-    checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
-        symfreqvar)
+    checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector)
 
-Check that every circuit component value is numeric, or symbolic only
-through the symbolic frequency variable `symfreqvar`. A value which is
-symbolic in any other variable indicates a variable which was not assigned
-a numerical value in the circuit definitions dictionary `circuitdefs`, and
-an informative `ArgumentError` is thrown naming the components and the
-undefined variables. Values which depend only on `symfreqvar` describe
-frequency dependent components and are resolved per frequency by
-[`freqsubst`](@ref), so they are accepted; a value which mixes `symfreqvar`
-with undefined variables is still rejected. Called by [`hbnlsolve`](@ref)
-and [`hblinsolve`](@ref) before any computation, so a forgotten entry in
+Check that no circuit component value still depends on a free parameter.
+One which does indicates a parameter which was not assigned a numerical
+value in the circuit definitions dictionary `circuitdefs`, and an
+informative `ArgumentError` is thrown naming the components and the
+undefined parameters. A frequency dependent value carries a closure of
+the frequency rather than a parameter and is resolved per frequency by
+[`freqsubst`](@ref), so it passes. Called by [`hbnlsolve`](@ref) and
+[`hblinsolve`](@ref) before any computation, so a forgotten entry in
 `circuitdefs` fails immediately with the actual cause instead of a
-downstream error about the symbolic frequency variable.
+downstream error about a symbolic value in a matrix.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.@params w;JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, 1/(w*50.0)], w)
+julia> JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, FrequencyDependent(w -> 1/(w*50.0))])
 
-julia> R2, w = JosephsonCircuits.@params R2 w;try JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, R2], w) catch e; occursin("R1 has the value", sprint(showerror, e)) end
+julia> JosephsonCircuits.@params R2;try JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, R2]) catch e; occursin("R1 has the value", sprint(showerror, e)) end
 true
 ```
 """
-function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
-    symfreqvar)
+function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector)
     messages = String[]
     for i in eachindex(vvn)
         if checkissymbolic(vvn[i])
-            undefined = [v for v in circuitvariables(vvn[i])
-                if isnothing(symfreqvar) || !isequal(v, symfreqvar)]
+            undefined = circuitvariables(vvn[i])
             if !isempty(undefined)
                 push!(messages, string("The component ", componentnames[i],
                     " has the value ", vvn[i],
@@ -1116,8 +1108,8 @@ function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
         throw(ArgumentError(join(messages, " ")*" Add the missing "*
             "variables to the circuit definitions dictionary "*
             "circuitdefs. If a variable represents the frequency of a "*
-            "frequency dependent component, pass it as the symfreqvar "*
-            "keyword argument instead."))
+            "frequency dependent component, write the value as a "*
+            "FrequencyDependent closure of the frequency instead."))
     end
     return nothing
 end
@@ -1125,18 +1117,18 @@ end
 # the `Num` method is defined in the Symbolics extension
 
 """
-    freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
+    freqsubst(A::SparseMatrixCSC, wmodes::Vector)
 
-Substitute the frequency dependent elements of `A` using the vector of mode
-frequencies `wmodes` and the symbolic frequency variable `symfreqvar`. Returns
-a sparse matrix with type `Complex{Float64}`.
+Resolve the frequency dependent elements of `A` at the vector of mode
+frequencies `wmodes`. Returns a sparse matrix with type
+`Complex{Float64}`.
 
 # Examples
 ```jldoctest
-JosephsonCircuits.@params w
 wmodes = [-1,2];
-A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
-JosephsonCircuits.freqsubst(A,wmodes,w)
+f = JosephsonCircuits.FrequencyDependent;
+A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [f(w->w),f(w->2*w),f(w->3*w)],2,2),2);
+JosephsonCircuits.freqsubst(A,wmodes)
 
 # output
 4×4 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
@@ -1148,7 +1140,7 @@ JosephsonCircuits.freqsubst(A,wmodes,w)
 ```jldoctest
 wmodes = [-1,2];
 A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,3],2,2),2);
-JosephsonCircuits.freqsubst(A,wmodes,nothing)
+JosephsonCircuits.freqsubst(A,wmodes)
 
 # output
 4×4 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
@@ -1158,17 +1150,11 @@ JosephsonCircuits.freqsubst(A,wmodes,nothing)
      ⋅          ⋅          ⋅      2.0+0.0im
 ```
 """
-function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
+function freqsubst(A::SparseMatrixCSC, wmodes::Vector)
 
     for i in size(A)
         if i % length(wmodes) != 0
             throw(DimensionMismatch(lazy"The dimensions of A must be integer multiples of the length of wmodes."))
-        end
-    end
-
-    if !isnothing(symfreqvar)
-        if !checkissymbolic(symfreqvar)
-            error(lazy"symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
         end
     end
 
@@ -1179,17 +1165,12 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
     @inbounds for i in 1:length(A.colptr)-1
         for j in A.colptr[i]:(A.colptr[i+1]-1)
             if checkissymbolic(A.nzval[j])
-                # `substitutefreq` evaluates FrequencyDependent provider
-                # leaves at the mode frequency whether or not a symbolic
-                # frequency variable is in use, and substitutes
-                # `symfreqvar` when one is.
-                substituted = substitutefreq(A.nzval[j], symfreqvar,
+                # `substitutefreq` evaluates the frequency dependent
+                # provider leaves at the mode frequency
+                substituted = substitutefreq(A.nzval[j],
                     wmodes[((i-1) % length(wmodes)) + 1])
                 if checkissymbolic(substituted)
-                    if isnothing(symfreqvar)
-                        error(lazy"The matrix contains the symbolic value $(A.nzval[j]). If this represents a frequency dependent component, use FrequencyDependent (or set symfreqvar to the symbolic frequency variable). If it contains variables which should have numerical values, add them to the circuit definitions dictionary circuitdefs.")
-                    end
-                    error(lazy"The matrix entry $(A.nzval[j]) is still symbolic ($(substituted)) after substituting the symbolic frequency variable $(symfreqvar). Add the remaining variables to the circuit definitions dictionary circuitdefs.")
+                    error(lazy"The matrix contains the symbolic value $(A.nzval[j]). If this represents a frequency dependent component, write it as a FrequencyDependent closure of the frequency. If it contains variables which should have numerical values, add them to the circuit definitions dictionary circuitdefs.")
                 end
                 nzval[j] = substituted
             else

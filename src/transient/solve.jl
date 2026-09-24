@@ -132,7 +132,7 @@ struct TransientSystem{B, M, MJ, V, VC, J, P, F, G, RM, RB}
     # product with each or with its transpose by the size of what it
     # multiplies: a product cancels along an algebraic direction, and its
     # result then understates the rounding in it, so a convergence test
-    # that stops at roundoff reads these
+    # that stops at roundoff reads these.
     rowsums::NTuple{4, Float64}
     # the junction incidence, its transpose and the coefficients Lscale/Lj
     RJ::MJ
@@ -141,13 +141,9 @@ struct TransientSystem{B, M, MJ, V, VC, J, P, F, G, RM, RB}
     # the drive injection, scaled, and the constant current
     injection::M
     constant::V
-    # the rational blocks: the gather of the port rates and the port
-    # currents of every block, `(2 nports, n)`, and the scatter of a
-    # wave source on their rows, scaled
-    blockgather::M
+    # the rational blocks: the scatter of a wave source on the rows of
+    # the port rates and port currents of every block, scaled
     blockscatter::M
-    blockgathert::M
-    blockscattert::M
     # the lines: the injection of the currents their arriving waves force,
     # scaled, and the gather of the rates across their ports
     lineinjection::M
@@ -274,7 +270,7 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     # the scale of the equations is the problem's, so that a state means
     # the same at every step
     Lscale = p.Lscale
-    C, G, L, lineE = transientlinearmatrices(nm, p.coupledbranches, p.graph.Rbn, p.gaugeindices, p.blocks, p.lines,
+    C, G, L, lineE = transientlinearmatrices(nm, p.coupledbranches, p.circuit.topology.Rbn, p.gaugeindices, p.blocks, p.lines,
         Lscale, Nnodal, Naux)
     symmetric = isempty(p.blocks)
     for l in p.lines
@@ -330,7 +326,7 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     amc = zeros(Int, 1, 1)
     layout = ModeLayout([true], Ntot)
     Z = spzeros(Float64, Ntot, Ntot)
-    Nbranches = p.graph.Nbranches
+    Nbranches = p.circuit.topology.Nbranches
     Jrs, _ = realjacobianstructure(ami, amc, Ljb, Rbnm, 1, Nbranches, K, Z, Z,
         layout, layout, Float64; transposed = devicej, backend)
     junctions = junctionstructure(Float64, ami, amc, Ljb, Lscale, Rbnm, 1,
@@ -368,8 +364,8 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     return TransientSystem{typeof(backend), typeof(Cd), typeof(RJd), typeof(lmoljd), typeof(cosphi), typeof(jacobian),
             typeof(plan), typeof(factorization), typeof(gauss), RM, RB}(p, backend, method, Float64(h), Lscale, alpha, beta,
         Cd, d(G), d(L), d(K), d(A), d(B), d(sparse(transpose(G))), d(sparse(transpose(L))), symmetric, rowsums,
-        RJd, d(RJt), lmoljd, d(injection), v(constant), d(blockgather), d(blockscatter),
-        d(sparse(transpose(blockgather))), d(sparse(transpose(blockscatter))), d(lineinjection), d(linegather), d(lineE),
+        RJd, d(RJt), lmoljd, d(injection), v(constant), d(blockscatter),
+        d(lineinjection), d(linegather), d(lineE),
         d(ports), d(portst), d(portdrives), v(p.portimpedances), v(p.portconductances), plan, jacobian,
         factorization, cosphi, relations,
         v(zeros(length(Ljb.nzval))),
@@ -498,15 +494,6 @@ function junctioncurrent!(y, sys::TransientSystem, phi, work)
         work .= sys.lmolj .* sys.relationwork
     end
     stepmul!(y, sys.RJt, work)
-    return y
-end
-
-# the drift `G*v + L*x + J(x)` at a state, the part of the equations that
-# is not the inertia, with the junction current given
-function transientdrift!(y, sys::TransientSystem, x, v, junction, work)
-    stepmul!(y, sys.G, v)
-    stepmul!(work, sys.L, x)
-    y .+= work .+ junction
     return y
 end
 
@@ -1145,8 +1132,11 @@ scalecolumns(steps, a::AbstractArray{<:Any,3}) = reshape(steps, 1, :, 1) .* a
 
 function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidual!,
         trialresidual!, refresh!, solve!, tol::AbstractVector, iterations, stalefailed, nonlinear, iterative,
-        work::NewtonWork; simplified::Bool = false, accept! = nothing)
+        work::NewtonWork; simplified::Bool = false, accept! = nothing, roundoff = nothing)
     norms, trialnorms, previous, steps = work.norms, work.trialnorms, work.previous, work.steps
+    # The residual callbacks may supply a floor for each column. A trial's
+    # floor belongs to that trial alone and is adopted only with its point.
+    basefloor, trialfloor = isnothing(roundoff) ? (nothing, nothing) : roundoff
     converged = false
     fresh = false
     corrections, factorizations, retries, krylov = 0, 0, 0, 0
@@ -1156,13 +1146,13 @@ function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidua
     for iteration in 0:iterations
         adopted || baseresidual!(norms, residual, x)
         adopted = false
-        if all(j -> isfinite(norms[j]) && norms[j] <= tol[j], eachindex(norms))
+        if all(j -> isfinite(norms[j]) && norms[j] <= newtontolerance(tol, basefloor, j), eachindex(norms))
             converged = true
             break
         end
         iteration == iterations && break
         refreshnow = if simplified
-            stalefailed || any(j -> norms[j] > tol[j] && norms[j] > 0.25*previous[j], eachindex(norms))
+            stalefailed || any(j -> norms[j] > newtontolerance(tol, basefloor, j) && norms[j] > 0.25*previous[j], eachindex(norms))
         else
             stalefailed || (!iterative && iteration >= 1)
         end
@@ -1190,9 +1180,9 @@ function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidua
             for j in eachindex(norms)
                 accepted[j] && continue
                 # a column already converged is accepted as it is
-                if norms[j] <= tol[j]
+                if norms[j] <= newtontolerance(tol, basefloor, j)
                     accepted[j] = true
-                elseif isfinite(trialnorms[j]) && (trialnorms[j] <= tol[j] || trialnorms[j] < (1 - 1e-4*steps[j])*norms[j])
+                elseif isfinite(trialnorms[j]) && (trialnorms[j] <= newtontolerance(tol, trialfloor, j) || trialnorms[j] < (1 - 1e-4*steps[j])*norms[j])
                     accepted[j] = true
                     newly[j] = true
                 end
@@ -1204,7 +1194,10 @@ function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidua
                 maskcolumns!(residual, trialresidual, work.mask)
                 accept!(work.mask)
                 for j in eachindex(norms)
-                    newly[j] && (norms[j] = trialnorms[j])
+                    if newly[j]
+                        norms[j] = trialnorms[j]
+                        isnothing(basefloor) || (basefloor[j] = trialfloor[j])
+                    end
                 end
                 adopted = true
             end
@@ -1234,6 +1227,9 @@ function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidua
     end
     return converged, fresh, corrections, factorizations, retries, krylov, laststale
 end
+
+newtontolerance(tol, ::Nothing, j) = tol[j]
+newtontolerance(tol, floor, j) = max(tol[j], isfinite(floor[j]) ? floor[j] : 0.0)
 
 """
     transientdemodulate(solution, port, frequency; quantity = :outgoing,

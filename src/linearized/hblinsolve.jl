@@ -4,15 +4,15 @@
 
 """
     hblinsolve(w, circuit, circuitdefs; Nmodulationharmonics = (0,),
-        nonlinear = nothing, symfreqvar = nothing, threewavemixing = false,
+        nonlinear = nothing, threewavemixing = false,
         fourwavemixing = true, maxharmonics = Nmodulationharmonics,
         maxintermodorder = Inf, nbatches = Base.Threads.nthreads(),
-        sorting = :number, returnS = true, returnSnoise = false,
+        returnS = true, returnSnoise = false,
         returnCnoise = false, returnQE = true, returnCM = true,
         returnnodeflux = false, returnnodefluxadjoint = false,
         returnvoltage = false, returnvoltageadjoint = false,
         keyedarrays = true, temperature = 0.0,
-        sensitivitynames::Vector{String} = String[],
+        sensitivitynames::AbstractVector = String[],
         sensitivitynodeflux = nothing, sensitivityresidual = nothing,
         sensitivitymode = :auto, returnSsensitivity = false,
         factorization = nothing, backend = CPU())
@@ -33,8 +33,9 @@ sequence of decreasing nonzero frequencies instead.
 # Arguments
 - `w`: the signal angular frequency or frequencies in radians per second,
     a real number or any iterable of them.
-- `circuit`: a typed [`Circuit`](@ref), a legacy netlist of
-    `(name, node1, node2, value)` tuples, or a [`CompiledCircuit`](@ref).
+- `circuit`: a typed [`Circuit`](@ref) or a [`CompiledCircuit`](@ref). A
+    `Circuit` is compiled with the default node ordering; for another one,
+    pass `compile(circuit; sorting = ...)`.
 - `circuitdefs`: a dictionary from the symbols or symbolic variables used
     as component values to their numerical values. Optional when every
     component value is numeric.
@@ -45,8 +46,6 @@ sequence of decreasing nonzero frequencies instead.
     the signal alone.
 - `nonlinear = nothing`: the [`NonlinearHB`](@ref) operating point to
     linearize about, or `nothing` for a linear circuit.
-- `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
-    when component values are expressions in the frequency.
 - `threewavemixing = false`: retain the odd pump harmonics around the
     signal, through which three wave mixing couples the modes.
 - `fourwavemixing = true`: retain the even pump harmonics around the
@@ -56,7 +55,6 @@ sequence of decreasing nonzero frequencies instead.
 - `maxintermodorder = Inf`: keep only the modes whose harmonic indices
     have an absolute sum of at most this order.
 $(_DOC_NBATCHES)
-$(_DOC_SORTING)
 $(_DOC_RETURNS)
 $(_DOC_TEMPERATURE)
 $(_DOC_SENSNAMES)
@@ -93,6 +91,9 @@ $(_DOC_SSENS)
     [`BlockFactorization`](@ref) for the measured accuracy); the outputs
     are returned in double either way.
 $(_DOC_LINBACKEND)
+- `symfreqvar = nothing`: deprecated, the parameter a frequency dependent
+    value was written as an expression in. Write the value as a
+    [`FrequencyDependent`](@ref) closure of the frequency instead.
 - `returnZ`, `returnZadjoint`, `returnZsensitivity`,
     `returnZsensitivityadjoint`: removed; passing any of them warns.
     Compute impedances from the scattering parameters instead.
@@ -130,8 +131,6 @@ Idc = 1e-6*0
 Ip=5.0e-6
 wp=2*pi*5e9
 ws=2*pi*5.2e9
-symfreqvar = nothing
-
 # modulation settings
 Npumpharmonics = (16,)
 Nmodulationharmonics = (2,)
@@ -149,7 +148,7 @@ nonlinear=hbnlsolve(
 
 linearized = JosephsonCircuits.hblinsolve(ws,
     circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics,
-    nonlinear = nonlinear, symfreqvar=nothing, threewavemixing=false,
+    nonlinear = nonlinear, threewavemixing=false,
     fourwavemixing=true, returnnodeflux=true, keyedarrays = false)
 isapprox(linearized.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
@@ -159,29 +158,31 @@ isapprox(linearized.nodeflux,
 true
 ```
 """
-function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
-    nonlinear = nothing, symfreqvar = nothing, threewavemixing::Bool = false,
+function hblinsolve(w, circuit::CompilableCircuit,
+    circuitdefs::AbstractDict = Dict{Symbol,Any}(); Nmodulationharmonics = (0,),
+    nonlinear = nothing, threewavemixing::Bool = false,
     fourwavemixing::Bool = true,
     maxharmonics = Nmodulationharmonics, maxintermodorder = Inf,
-    nbatches::Integer = Base.Threads.nthreads(), sorting = :number,
+    nbatches::Integer = Base.Threads.nthreads(),
     returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
     returnCM::Bool = true, returnnodeflux::Bool = false,
     returnnodefluxadjoint::Bool = false, returnvoltage::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
     temperature = 0.0, returnCnoise::Bool = false,
-    sensitivitynames::Vector{String} = String[],
+    sensitivitynames::AbstractVector = String[],
     sensitivitynodeflux = nothing, sensitivityresidual = nothing,
     sensitivitymode::Symbol = :auto,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = nothing, backend = CPU())
+    factorization = nothing, backend = CPU(), symfreqvar = nothing)
 
-    # compile the circuit and build its graph; the matrices are assembled
-    # by the method below at the signal mode count
-    psc = compile(circuit; sorting = sorting)
-    # nothing here reads the loops of the circuit graph
-    cg = calccircuitgraph(psc; loops = false)
+    # compile the circuit; the matrices are assembled by the method below
+    # at the signal mode count
+    psc = compile(circuit)
+    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
+        circuitdefs, symfreqvar, :hblinsolve))
 
     # the signal modes: the signal and the idlers offset from it by pump
     # harmonics
@@ -191,9 +192,9 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
         maxharmonics = maxharmonics,
     )
 
-return hblinsolve(w, psc, cg, circuitdefs, signalfreq;
+return hblinsolve(w, psc, circuitdefs, signalfreq;
         nonlinear = nonlinear,
-        symfreqvar = symfreqvar, nbatches = nbatches,
+        nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
@@ -211,25 +212,21 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq;
         factorization = factorization, backend = backend)
 end
 
-# A fully numeric circuit needs no component definitions.
-function hblinsolve(w, circuit; kwargs...)
-    return hblinsolve(w, circuit, Dict{Any,Any}(); kwargs...)
-end
 
 """
-    hblinsolve(w, psc::CompiledCircuit, cg::CircuitGraph, circuitdefs,
+    hblinsolve(w, psc::CompiledCircuit, circuitdefs,
         signalfreq::Frequencies; nonlinear = nothing, kwargs...)
 
-The linearized sweep on an already compiled circuit `psc` with its graph
-`cg`, at the signal mode set `signalfreq`. `circuitdefs` may be the usual
-dictionary, or the vector of resolved component values `nm.vvn` of a
-[`CircuitMatrices`](@ref) already built for the circuit, which is what
-[`hbsolve`](@ref) passes so that the values are resolved once; the sweep
+The linearized sweep on an already compiled circuit `psc`, at the signal
+mode set `signalfreq`. `circuitdefs` is the usual
+dictionary; in its place the vector of resolved component values `nm.vvn` of
+a [`CircuitMatrices`](@ref) already built for the circuit is accepted, which
+is what [`hbsolve`](@ref) passes so that the values are resolved once; the sweep
 `w` is a real number or any iterable of them ([`sweepfrequencies`](@ref)).
 This is what the other methods call after building those; it takes every keyword
 of the general method except the ones which describe the mode set
 (`Nmodulationharmonics`, `threewavemixing`, `fourwavemixing`,
-`maxharmonics`, `maxintermodorder`, `sorting`), plus the design parameter
+`maxharmonics`, `maxintermodorder`), plus the design parameter
 sensitivity keywords described under [`hbsolve`](@ref) (`sensitivitypairs`,
 `sensitivityblockpairs`, `nsensitivityparameters`, `sensitivitylabels`,
 which only this method accepts) and `debuglsys = false`, which returns
@@ -280,21 +277,20 @@ frequencies = JosephsonCircuits.removeconjfreqs(
 fi = JosephsonCircuits.fourierindices(frequencies)
 Nmodes = length(frequencies.modes)
 psc = JosephsonCircuits.compile(circuit)
-cg = JosephsonCircuits.calccircuitgraph(psc)
-nm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+nm = JosephsonCircuits.numericmatrices(psc, circuitdefs, Nmodes = Nmodes)
 nonlinear = hbnlsolve(
     (wp,),
     [
         (mode=(0,),port=1,current=Idc),
         (mode=(1,),port=1,current=Ip),
     ],
-    frequencies, fi, psc, cg, nm)
+    frequencies, fi, psc, nm)
 signalfreq =JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsdft(Nmodulationharmonics),
     dc = true, odd = threewavemixing, even = fourwavemixing,
     maxintermodorder = Inf,
 )
-linearized = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
+linearized = JosephsonCircuits.hblinsolve(ws, psc, circuitdefs,
     signalfreq;nonlinear = nonlinear, returnnodeflux=true, keyedarrays = false)
 isapprox(linearized.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
@@ -304,31 +300,43 @@ isapprox(linearized.nodeflux,
 true
 ```
 """
-function hblinsolve(w, psc::CompiledCircuit, cg::CircuitGraph, circuitdefs,
-        signalfreq::Frequencies; sensitivitypairs = Tuple{String,Int,ComplexF64}[],
-        sensitivityblockpairs = Tuple{String,Int,Any}[], kwargs...)
-    # the resolved value table, from the dictionary or given directly, and
-    # the sweep as a vector, so that the sweep below is compiled once for
-    # every way of writing them
-    values = circuitdefs isa AbstractDict ?
-        componentvaluestonumber(psc.componentvalues,
-            definitiontable(circuitdefs)) : Vector{Any}(circuitdefs)
-    return hblinsolve(sweepfrequencies(w), psc, cg, values, signalfreq;
-        sensitivitypairs = sensitivitypairtable(sensitivitypairs),
+function hblinsolve(w, psc::CompiledCircuit,
+        circuitdefs::Union{AbstractDict,AbstractVector}, signalfreq::Frequencies;
+        sensitivitypairs = Tuple{String,Int,ComplexF64}[],
+        sensitivityblockpairs = Tuple{String,Int,Any}[],
+        symfreqvar = nothing, kwargs...)
+    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    if !isnothing(symfreqvar)
+        circuitdefs isa AbstractDict || throw(ArgumentError(
+            "symfreqvar needs the circuit definitions, not a resolved value table."))
+        psc = frequencydependentcircuit(psc, circuitdefs, symfreqvar,
+            :hblinsolve)
+    end
+    # the resolved value table, the sweep and the sensitivity pairs in their
+    # canonical forms, so that the sweep below is compiled once for every
+    # way of writing them
+    return hblinsolve(sweepfrequencies(w), psc, resolvedvalues(psc, circuitdefs),
+        signalfreq; sensitivitypairs = sensitivitypairtable(sensitivitypairs),
         sensitivityblockpairs = sensitivityblockpairtable(sensitivityblockpairs),
         kwargs...)
 end
 
+# the flat value table of a compiled circuit, resolved from the definitions
+# or given already resolved
+resolvedvalues(psc::CompiledCircuit, circuitdefs::AbstractDict) =
+    componentvaluestonumber(psc.componentvalues, definitiontable(circuitdefs))
+resolvedvalues(psc::CompiledCircuit, vvn::AbstractVector) = Vector{Any}(vvn)
+
 function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
-    cg::CircuitGraph, circuitdefs::Vector{Any}, signalfreq::Frequencies;
+    vvn::Vector{Any}, signalfreq::Frequencies;
     nonlinear = nothing,
-    symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
+    nbatches::Integer = Base.Threads.nthreads(),
     returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
     returnCM::Bool = true, returnnodeflux::Bool = false,
     returnnodefluxadjoint::Bool = false, returnvoltage::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
     temperature = 0.0, returnCnoise::Bool = false,
-    sensitivitynames::Vector{String} = String[],
+    sensitivitynames::AbstractVector = String[],
     sensitivitypairs::Vector{Tuple{String,Int,ComplexF64}} =
         Tuple{String,Int,ComplexF64}[],
     sensitivityblockpairs::Vector{Tuple{String,Int,Any}} =
@@ -356,21 +364,21 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
     # when what it depends on changes, and the operating point, the
     # sensitivity arrays and the requested outputs each reach one stage.
     wantsnoise = returnSnoise || returnQE || returnCM || returnCnoise
-    s = linearizedsetup(w, psc, cg, circuitdefs, signalfreq, nonlinear,
-        symfreqvar, factorization, backend, temperature, sensitivitynames,
+    s = linearizedsetup(w, psc, vvn, signalfreq, nonlinear,
+        factorization, backend, temperature,
+        String[String(n) for n in sensitivitynames],
         sensitivitypairs, sensitivityblockpairs; nbatches = nbatches,
         nsensitivityparameters = nsensitivityparameters,
         wantsnoise = wantsnoise)
     (; Nsignalmodes, signalnm, phimatrix, wpumpmodes, wmodes, Nnodes,
-        nodenames, nodeindices, componentnames, componentnamedict,
-        componenttypes, mutualinductorbranchnames, Nbranches, edge2indexdict,
+        nodeindices, componenttypes, Nbranches, edge2indexdict,
         coupledbranches, Nauxmna, Nnodalmna, portindices, portnumbers,
         portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames,
         sensitivityindices, stampgrouping, stampslots, Nports, bnm,
         noiseportimpedanceindices, ssys, lsys, factorization, refine,
         noiseplan, Nnoisechannels, channeltemperatures, channelsigns,
         noiseportimpedances, pumpfactorization) = s
-    sens = linearizedsensitivity(; psc, cg, nonlinear, sensitivitynodeflux,
+    sens = linearizedsensitivity(; psc, nonlinear, sensitivitynodeflux,
         sensitivityresidual, sensitivitypairs, sensitivityblockpairs,
         Nsignalmodes, signalnm, phimatrix, Nnodes, coupledbranches,
         Nnodalmna, Nlumpedpairs, sensitivitynames, sensitivityindices,
@@ -387,7 +395,7 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
             portindices=portindices, portimpedances=portimpedances,
             noiseportimpedanceindices=noiseportimpedanceindices,
             nodeindices=nodeindices, componenttypes=componenttypes,
-            symfreqvar=symfreqvar)
+            )
     end
 
 
@@ -395,7 +403,7 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
     # array, which signals that it is not to be computed. The sensitivities
     # are scaled by the input waves and depend on S itself, so S is computed
     # whenever they are requested even if it is not returned.
-    outputarrays = linearizedsweep!(; w, symfreqvar, backend, nbatches,
+    outputarrays = linearizedsweep!(; w, backend, nbatches,
         nsensitivityparameters, sensitivitypairs, sensitivityblockpairs,
         Nsignalmodes, wpumpmodes, Nnodes, nodeindices, componenttypes,
         portindices, portimpedances, sensitivitynames, Nports, bnm,
@@ -406,10 +414,9 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
         returnCnoise, returnSsensitivity, returnQE, returnCM, returnnodeflux,
         returnnodefluxadjoint, returnvoltage, returnvoltageadjoint)
 
-    return linearizedoutputs(; outputarrays, w, keyedarrays,
-        sensitivitylabels, Nsignalmodes, Nnodes, nodenames, nodeindices,
-        componentnames, componentnamedict, componenttypes,
-        mutualinductorbranchnames, Nbranches, portindices, portnumbers,
+    return linearizedoutputs(; psc, outputarrays, w, keyedarrays,
+        sensitivitylabels, Nsignalmodes, Nnodes, nodeindices,
+        componenttypes, Nbranches, portindices, portnumbers,
         portimpedances, modes, sensitivitynames, sensitivityindices, Nports,
         noiseportimpedanceindices, ssys, noiseplan, returnS, returnSnoise,
         returnCnoise, returnSsensitivity, returnQE, returnCM, returnnodeflux,
@@ -417,8 +424,8 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
 end
 
 """
-    linearizedsetup(w, psc, cg, circuitdefs, signalfreq, nonlinear,
-        symfreqvar, factorization, backend, temperature, sensitivitynames,
+    linearizedsetup(w, psc, vvn, signalfreq, nonlinear,
+        factorization, backend, temperature, sensitivitynames,
         sensitivitypairs, sensitivityblockpairs; nbatches,
         nsensitivityparameters, wantsnoise)
 
@@ -432,8 +439,8 @@ assembled, and the factorization the sweep uses. Returned as a named
 tuple whose fields the later stages read by name.
 """
 function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
-    cg::CircuitGraph, circuitdefs::Vector{Any}, signalfreq::Frequencies,
-    nonlinear, symfreqvar, factorization, backend, temperature,
+    vvn::Vector{Any}, signalfreq::Frequencies,
+    nonlinear, factorization, backend, temperature,
     sensitivitynames::Vector{String},
     sensitivitypairs::Vector{Tuple{String,Int,ComplexF64}},
     sensitivityblockpairs::Vector{Tuple{String,Int,Any}};
@@ -441,7 +448,8 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     Nsignalmodes = length(signalfreq.modes)
     # the numeric matrices at the signal mode count, which differs from the
     # pump's
-    signalnm = assemblegrid(psc, cg, circuitdefs, Nsignalmodes)
+    topology = psc.topology
+    signalnm = numericmatrices(psc, vvn; Nmodes = Nsignalmodes)
 
     if isnothing(nonlinear)
 
@@ -484,7 +492,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         # relation at the pump, `cos(phi(t))` for the Josephson relation,
         # which is what modulates the linearized system.
         relations = calcjunctionrelations(psc.componenttypes, psc.nodeindices,
-            psc.junctioncprs, cg.edge2indexdict, nonlinear.Ljb)
+            psc.junctioncprs, topology.edge2indexdict, nonlinear.Ljb)
         if isnothing(relations)
             applynl!(
                 phimatrix,
@@ -546,24 +554,20 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
-    nodenames = psc.nodenames
     nodeindices = psc.nodeindices
-    componentnames = psc.componentnames
     componentnamedict = psc.componentnamedict
     componenttypes = psc.componenttypes
-    mutualinductorbranchnames = psc.mutualinductorbranchnames
-    Nbranches = cg.Nbranches
-    edge2indexdict = cg.edge2indexdict
+    Nbranches = topology.Nbranches
+    edge2indexdict = topology.edge2indexdict
     Ljb = signalnm.Ljb
     Rbnm = signalnm.Rbnm
     Cnm = signalnm.Cnm
     Gnm = signalnm.Gnm
     invLnm = signalnm.invLnm
 
-    # fail now if a component value contains a symbolic variable which was
-    # not defined (a value depending only on the frequency variable is fine)
-    checkcomponentvaluesdefined(psc.componentnames, signalnm.vvn,
-        symfreqvar)
+    # fail now if a component value still depends on a parameter which was
+    # not defined (a frequency dependent value carries a closure and is fine)
+    checkcomponentvaluesdefined(psc.componentnames, signalnm.vvn)
 
     # The modified nodal analysis augmentation: auxiliary branch current
     # variables for the mutually coupled inductor branches, whose inverse
@@ -587,7 +591,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         # as the auxiliary variables (Lscale = 1) to match the unscaled
         # matrices of this solver
         AmnaL = calcAmnaind(coupledbranches, signalnm.Lb, signalnm.Mb,
-            cg.Rbn, Nsignalmodes, Nnodalmna, Nnodalmna + Nauxmna, 1)
+            topology.Rbn, Nsignalmodes, Nnodalmna, Nnodalmna + Nauxmna, 1)
         Amna0 = spaddkeepzeros(Amna0, AmnaL)
     end
     if Nauxmna > 0
@@ -610,41 +614,42 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     # alpha) with alpha = (dv/dp)/v the direction of the component value
     # under the parameter. The stamps of one parameter merge into one
     # contraction.
+    # A component is named by its identifier or given by its flat index; a
+    # scattering block has no table entry and is named by its instance
+    # path, so a block pair resolves to the block's ordinal instead, which
+    # only the block stamps read. The names are kept beside the indices to
+    # label the sensitivity axis.
     Nlumpedpairs = length(sensitivitypairs)
+    sensitivityindices = Int[]
     if !isempty(sensitivitypairs) || !isempty(sensitivityblockpairs)
         isempty(sensitivitynames) || throw(ArgumentError(
             "pass either sensitivitynames or sensitivitypairs, not both"))
         nsensitivityparameters > 0 || throw(ArgumentError(
             "sensitivitypairs requires nsensitivityparameters"))
-        # pairs are keyed by component name, since positional indices would
-        # not survive the sorting of the compiled circuit
+        for t in sensitivitypairs
+            push!(sensitivityindices, componentindex(psc, t[1]))
+        end
+        for t in sensitivityblockpairs
+            b = scatteringblockindex(psc, t[1])
+            iszero(b) && throw(ArgumentError(lazy"The block pair component $(t[1]) is not a scattering block of this circuit."))
+            push!(sensitivityindices, b)
+        end
         sensitivitynames = vcat(
-            String[String(t[1]) for t in sensitivitypairs],
-            String[String(t[1]) for t in sensitivityblockpairs])
-    end
-
-    # The flat table indices of the sensitivity components. A scattering
-    # block has no table entry and is named by its instance path, so a block
-    # pair resolves to the block's ordinal instead, which only the block
-    # paths read.
-    sensitivityindices = zeros(Int,length(sensitivitynames))
-    for i in eachindex(sensitivitynames)
-        # entries past the lumped pairs are block pairs; with
-        # `sensitivitynames` there are none
-        blocktail = !isempty(sensitivityblockpairs) && i > Nlumpedpairs
-        if blocktail
-            b = scatteringblockindex(psc, sensitivitynames[i])
-            iszero(b) && throw(ArgumentError(lazy"The block pair component $(sensitivitynames[i]) is not a scattering block of this circuit."))
-            sensitivityindices[i] = b
-            continue
+            String[psc.componentnames[i]
+                for i in view(sensitivityindices, 1:Nlumpedpairs)],
+            String[psc.scatteringblocks[i].path
+                for i in view(sensitivityindices,
+                    (Nlumpedpairs+1):length(sensitivityindices))])
+    else
+        for name in sensitivitynames
+            idx = get(componentnamedict, String(name), 0)
+            if iszero(idx)
+                iszero(scatteringblockindex(psc, name)) &&
+                    throw(ArgumentError(lazy"The component $(name) is not in this circuit."))
+                throw(ArgumentError(lazy"Sensitivities with respect to scattering blocks require a block derivative; got $(name) as a plain component."))
+            end
+            push!(sensitivityindices, idx)
         end
-        idx = get(componentnamedict, sensitivitynames[i], 0)
-        if iszero(idx)
-            iszero(scatteringblockindex(psc, sensitivitynames[i])) &&
-                throw(ArgumentError(lazy"The component $(sensitivitynames[i]) is not in this circuit."))
-            throw(ArgumentError(lazy"Sensitivities with respect to scattering blocks require a block derivative; got $(sensitivitynames[i]) as a plain component."))
-        end
-        sensitivityindices[i] = idx
     end
 
     # The grouping of the pairs into merged stamps and the design parameter
@@ -686,16 +691,16 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     if Nauxmna > 0
         bnm = vcat(bnm, zeros(eltype(bnm), Nauxmna, size(bnm, 2)))
     end
-    # A lossy capacitor or inductor is a noise channel only if its value has
-    # a nonzero imaginary part, which a symbolic expression cannot tell, so
-    # with a symbolic frequency variable the channels are found on the
-    # values substituted at the first mode frequency. Which resistor is a
+    # A lossy capacitor or inductor is a noise channel only if its value
+    # has a nonzero imaginary part, which a value still carrying a
+    # frequency cannot tell. Whenever one does, the channels are found on
+    # the values resolved at the first mode frequency. Which resistor is a
     # port's termination is a role, not a value, so that part does not
-    # depend on the substitution.
-    noiseportimpedanceindices = if isnothing(symfreqvar)
-        signalnm.noiseportimpedanceindices
+    # depend on the resolution.
+    noiseportimpedanceindices = if any(checkissymbolic, vvn)
+        noiseindices(psc, substitutefreq.(vvn, wmodes[1]))
     else
-        noiseindices(psc, substitutefreq.(vvn, symfreqvar, wmodes[1]))
+        signalnm.noiseportimpedanceindices
     end
 
     # whether any entry holds a symbolic value, in which case the stored
@@ -705,9 +710,9 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         !isempty(symbolicindices(Gnm)) || !isempty(symbolicindices(invLnm))
 
 
-    Cnmcopy = freqsubst(Cnm,wmodes,symfreqvar)
-    Gnmcopy = freqsubst(Gnm,wmodes,symfreqvar)
-    invLnmcopy = freqsubst(invLnm,wmodes,symfreqvar)
+    Cnmcopy = freqsubst(Cnm,wmodes)
+    Gnmcopy = freqsubst(Gnm,wmodes)
+    invLnmcopy = freqsubst(invLnm,wmodes)
 
     # The linearized system object: the sparsity structure of the system
     # matrix Asparse = AoLjnm + invLnm + Gnm + Cnm with stored zeros, a
@@ -730,8 +735,8 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         Amna0 = spaddkeepzeros(Amna0, ssys.kcl)
     end
     lsys = HBLinearizedSystem(Amatrixindices, signalnm.Ljb, Rbnmmna,
-        Nsignalmodes, cg.Nbranches, phimatrix, invLnmcopy, Gnmcopy, Cnmcopy,
-        invLnm, Gnm, Cnm, symbolicvalues, Amna0, symfreqvar, wpumpmodes,
+        Nsignalmodes, topology.Nbranches, phimatrix, invLnmcopy, Gnmcopy, Cnmcopy,
+        invLnm, Gnm, Cnm, symbolicvalues, Amna0, wpumpmodes,
         Nnodes; scattering = ssys)
     Asparse = lsys.Asparse
 
@@ -788,7 +793,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         KLUfactorization() : factorization
     # the derivative of the system matrix with respect to a relative
     # perturbation of each sensitivity component, at a fixed operating point
-    return (; Nsignalmodes, signalnm, phimatrix, wpumpmodes, wmodes, Nnodes, nodenames, nodeindices, componentnames, componentnamedict, componenttypes, mutualinductorbranchnames, Nbranches, edge2indexdict, coupledbranches, Nauxmna, Nnodalmna, portindices, portnumbers, portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames, sensitivityindices, stampgrouping, stampslots, Nports, bnm, noiseportimpedanceindices, ssys, lsys, factorization, refine, noiseplan, Nnoisechannels, channeltemperatures, channelsigns, noiseportimpedances, pumpfactorization)
+    return (; Nsignalmodes, signalnm, phimatrix, wpumpmodes, wmodes, Nnodes, nodeindices, componenttypes, Nbranches, edge2indexdict, coupledbranches, Nauxmna, Nnodalmna, portindices, portnumbers, portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames, sensitivityindices, stampgrouping, stampslots, Nports, bnm, noiseportimpedanceindices, ssys, lsys, factorization, refine, noiseplan, Nnoisechannels, channeltemperatures, channelsigns, noiseportimpedances, pumpfactorization)
 end
 
 """
@@ -803,7 +808,7 @@ sensitivity was asked for. The keywords are the fields of
 sensitivity arrays.
 """
 function linearizedsensitivity(;
-        psc, cg, nonlinear, sensitivitynodeflux, sensitivityresidual,
+        psc, nonlinear, sensitivitynodeflux, sensitivityresidual,
         sensitivitypairs, sensitivityblockpairs, Nsignalmodes, signalnm,
         phimatrix, Nnodes, coupledbranches, Nnodalmna, Nlumpedpairs,
         sensitivitynames, sensitivityindices, stampgrouping, stampslots,
@@ -813,7 +818,7 @@ function linearizedsensitivity(;
         st = calcsensitivitystamps(
             sensitivityindices[1:(isempty(sensitivityblockpairs) ?
                 end : Nlumpedpairs)],
-            psc, cg, signalnm, lsys, phimatrix, coupledbranches, Nnodalmna,
+            psc, signalnm, lsys, phimatrix, coupledbranches, Nnodalmna,
             Nsignalmodes, Nnodes)
         if !isempty(sensitivitypairs)
             st = [reparameterize(st[k], sensitivitypairs[k][3],
@@ -973,7 +978,7 @@ into the [`LinearizedArrays`](@ref) returned. The keywords are the fields
 of the two stages before which this one reads, and the requested outputs.
 """
 function linearizedsweep!(;
-        w, symfreqvar, backend, nbatches, nsensitivityparameters,
+        w, backend, nbatches, nsensitivityparameters,
         sensitivitypairs, sensitivityblockpairs, Nsignalmodes, wpumpmodes,
         Nnodes, nodeindices, componenttypes, portindices, portimpedances,
         sensitivitynames, Nports, bnm, noiseportimpedanceindices, ssys, lsys,
@@ -1013,9 +1018,9 @@ function linearizedsweep!(;
     # instead: the matrices of a batch share one sparsity pattern, so they
     # are assembled by one kernel and factorized and solved as a uniform
     # batch, while the frequency loop and every output it computes stay the
-    # host ones. The device path is not used when the component values
-    # depend on the symbolic frequency variable, since the assembly is then
-    # not a constant quadratic in the frequency.
+    # host ones. The device path is not used when a component value is
+    # frequency dependent, since the assembly is then not a constant
+    # quadratic in the frequency.
     sensitivitytuple = (stamps = sensitivitystamps, dAop = sensitivitydAop,
         reverse = sensitivityreverse,
         blockentries = sensitivityblockentries,
@@ -1111,7 +1116,7 @@ function linearizedsweep!(;
             portindices, noiseportimpedanceindices,
             portimpedances, noiseportimpedances, nodeindices,
             componenttypes, w, wpumpmodes, Nsignalmodes, Nnodes,
-            symfreqvar, batch, factorization;
+            batch, factorization;
             presolved = (i, phin) -> forwardsolution!(phin, solutions, i),
             presolvedadjoint = isnothing(solutions.adj) ? nothing :
                 (i, phin) -> adjointsolution!(phin, solutions, i),
@@ -1152,7 +1157,7 @@ function linearizedsweep!(;
                     lsys, bnm,
                     portindices, noiseportimpedanceindices,
                     portimpedances, noiseportimpedances, nodeindices, componenttypes,
-                    w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch,
+                    w, wpumpmodes, Nsignalmodes, Nnodes, batch,
                     factorization; noiseplan = noiseplan,
                     channeltemperatures = channeltemperatures,
                     channelsigns = channelsigns, refine = refine)
@@ -1169,17 +1174,24 @@ end
     linearizedoutputs(; ...)
 
 The last stage of [`hblinsolve`](@ref): the [`LinearizedHB`](@ref) of the
-sweep, its arrays keyed by mode, port, node and frequency when asked.
+sweep, its arrays keyed by mode, port, node and frequency when asked. It
+takes the compiled circuit for the names it records, which no stage
+before it reads.
 """
-function linearizedoutputs(;
+function linearizedoutputs(; psc,
         outputarrays, w, keyedarrays, sensitivitylabels, Nsignalmodes,
-        Nnodes, nodenames, nodeindices, componentnames, componentnamedict,
-        componenttypes, mutualinductorbranchnames, Nbranches, portindices,
+        Nnodes, nodeindices,
+        componenttypes, Nbranches, portindices,
         portnumbers, portimpedances, modes, sensitivitynames,
         sensitivityindices, Nports, noiseportimpedanceindices, ssys,
         noiseplan, returnS, returnSnoise, returnCnoise, returnSsensitivity,
         returnQE, returnCM, returnnodeflux, returnnodefluxadjoint,
         returnvoltage, returnvoltageadjoint)
+    # the names the result records are the compiled circuit's own
+    nodenames = psc.nodenames
+    componentnames = psc.componentnames
+    componentnamedict = psc.componentnamedict
+    mutualinductorbranchnames = coupledinductornames(psc)
     signalindex = 1
     # the quantum efficiency of an ideal two mode amplifier with the same
     # gain
@@ -1448,7 +1460,7 @@ end
     hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
         sensitivity, lsys, bnm, portindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
-        w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
+        w, wpumpmodes, Nmodes, Nnodes, wi, factorization;
         noiseplan = nothing, channeltemperatures = nothing,
         channelsigns = nothing, presolved = nothing,
         presolvedadjoint = nothing, presolvednoise = nothing, refine = true)
@@ -1482,7 +1494,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     sensitivity, lsys, bnm,
     portindices, noiseportimpedanceindices,
     portimpedances, noiseportimpedances, nodeindices,
-    componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
+    componenttypes, w, wpumpmodes, Nmodes, Nnodes, wi, factorization;
     noiseplan = nothing, channeltemperatures = nothing,
     channelsigns = nothing, presolved = nothing, presolvedadjoint = nothing,
     presolvednoise = nothing, refine::Bool = true)
@@ -1543,7 +1555,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
         # assemble the system matrix at this frequency,
         # Asparsecopy = AoLjnm + invLnm + im*Gnm*w - Cnm*w^2 with the per
         # column mode frequency, conjugating the negative frequency mode
-        # entries and substituting the symbolic frequency variable
+        # entries and resolving the frequency dependent ones
         if isnothing(presolved)
             assemblesystemmatrix!(Asparsecopy, lsys, wmodes;
                 scatteringwork = scatteringwork)
@@ -1585,7 +1597,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                 !isempty(arrays.CM) || !isempty(arrays.Ssensitivity)
             calcinputoutput!(inputwave, outputwave, phin, bnm,
                 portindices, portindices, portimpedances,
-                portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
+                portimpedances, nodeindices, componenttypes, wmodes)
             calcscatteringmatrix!(Sview, inputwave, outputwave)
 
             # the scalars which convert the adjoint contraction into the
@@ -1651,7 +1663,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                     calcinputoutputnoise!(inputwave, noiseoutputwave, phin, bnm,
                         portindices, noiseportimpedanceindices,
                         portimpedances, noiseportimpedances, nodeindices,
-                        componenttypes, wmodes, symfreqvar)
+                        componenttypes, wmodes)
                     # the channels of the dissipative scattering blocks
                     # follow the lumped ones
                     if !isnothing(noiseplan)
@@ -1682,7 +1694,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                     stamps, sensitivity.dAop, dAsparse, dAphin,
                     phinforward, phin, Sview, sensitivitygamma,
                     sensitivitybeta, sensitivitycontraction, wmodes,
-                    Nmodes, symfreqvar)
+                    Nmodes)
                 if !isnothing(sensitivity.reverse)
                     calcSsensitivityreverse!(view(arrays.Ssensitivity,:,:,:,i),
                         sensitivity.reverse, lsys, phinforward, phin,
@@ -1733,20 +1745,4 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
         end
     end
     return nothing
-end
-
-"""
-    hblinsolve(w, circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
-        sorting = :name, kwargs...)
-
-The linearized sweep of a typed [`Circuit`](@ref), with every keyword of
-the general method. `circuitdefs` is needed only when component values are
-symbolic, and `sorting` defaults to `:name` because hierarchical net names
-are not integers.
-"""
-function hblinsolve(w, circuit::Circuit,
-        circuitdefs::AbstractDict = Dict{Symbol,Number}();
-        sorting::Symbol = :name, kwargs...)
-    return hblinsolve(w, compile(circuit; sorting = sorting), circuitdefs;
-        kwargs...)
 end

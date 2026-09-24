@@ -93,9 +93,9 @@ end
 
 # Promotion. The node types are parametric in their operator, so the
 # promotion of `Binary{typeof(*)}` with `Binary{typeof(+)}` would be the
-# UnionAll `Binary`, which is not a `DataType`. `calcvaluetype` in
-# circuit/matrices.jl keys its type table by `DataType`, so every promotion is
-# collapsed to the abstract `CircuitValue` instead, which is one.
+# UnionAll `Binary`, which is not a `DataType`. Every promotion is collapsed
+# to the abstract `CircuitValue` instead, which is one, so that a group of
+# values (`grouptype` in circuit/bind.jl) has a `DataType` element type.
 Base.promote_rule(::Type{<:CircuitValue}, ::Type{<:CircuitValue}) = CircuitValue
 Base.promote_rule(::Type{<:CircuitValue}, ::Type{<:Number}) = CircuitValue
 Base.convert(::Type{CircuitValue}, x::Number) = Constant(x)
@@ -103,8 +103,8 @@ Base.convert(::Type{CircuitValue}, x::CircuitValue) = x
 
 # Scalar semantics. A `CircuitValue` stands for one component value, so it
 # must broadcast as a scalar the way a number does. Without this a
-# broadcast such as `substitutefreq.(vvn, symfreqvar, w)` would try to
-# iterate the frequency variable.
+# broadcast such as `substitutefreq.(vvn, w)` would try to iterate the
+# value.
 Base.length(::CircuitValue) = 1
 Base.size(::CircuitValue) = ()
 Base.ndims(::Type{<:CircuitValue}) = 0
@@ -143,9 +143,10 @@ _p!(s,u::Unary)=_p!(s,u.a); _p!(s,b::Binary)=(_p!(s,b.a);_p!(s,b.b);s)
 # Replace the parameters named in the dictionary `d` by their values and
 # leave the rest free. Because the constructors fold constants, an
 # expression whose parameters are all defined collapses to a `Constant`,
-# while one which still depends on an undefined parameter (typically the
-# symbolic frequency variable, which `freqsubst` in harmonics/sparse.jl resolves
-# once per mode) comes back as a tree.
+# while one which still depends on an undefined parameter comes back as a
+# tree. A frequency dependent leaf is a `Provider` rather than a
+# parameter and passes through, for `freqsubst` in harmonics/sparse.jl to
+# resolve once per mode.
 substituteparams(c::Constant, d) = c
 substituteparams(p::Provider, d) = p
 substituteparams(q::Parameter, d) =
@@ -164,6 +165,46 @@ evalproviders(q::Parameter, w) = q
 evalproviders(p::Provider, w) = Constant(ComplexF64(p.f(w)))
 evalproviders(u::Unary, w) = mk(u.f, evalproviders(u.a, w))
 evalproviders(b::Binary, w) = mk(b.f, evalproviders(b.a, w), evalproviders(b.b, w))
+
+#     derivative(expr, name)
+#
+# The derivative of an expression with respect to the parameter `name`, as
+# an expression, for the design sensitivities. The constructors fold the
+# constants, so the derivative of an expression which does not depend on
+# the parameter collapses to `Constant(0)`. A design parameter is real, so
+# `conj`, `real` and `imag` commute with the derivative.
+derivative(p::Parameter, name::Symbol) = Constant(p.name === name ? 1 : 0)
+derivative(::Constant, name::Symbol) = Constant(0)
+derivative(::Provider, name::Symbol) = throw(ArgumentError("a frequency dependent value has no derivative with respect to a design parameter."))
+function derivative(u::Unary, name::Symbol)
+    a = u.a
+    da = derivative(a, name)
+    f = u.f
+    f === (-) && return mk(-, da)
+    f === inv && return mk(-, mk(/, da, mk(*, a, a)))
+    f === sqrt && return mk(/, da, mk(*, Constant(2), mk(sqrt, a)))
+    f === exp && return mk(*, mk(exp, a), da)
+    f === log && return mk(/, da, a)
+    (f === conj || f === real || f === imag) && return mk(f, da)
+    throw(ArgumentError(lazy"no derivative for $(f)."))
+end
+function derivative(b::Binary, name::Symbol)
+    a, c = b.a, b.b
+    da, dc = derivative(a, name), derivative(c, name)
+    f = b.f
+    f === (+) && return mk(+, da, dc)
+    f === (-) && return mk(-, da, dc)
+    f === (*) && return mk(+, mk(*, da, c), mk(*, a, dc))
+    f === (/) && return mk(/, mk(-, mk(*, da, c), mk(*, a, dc)), mk(*, c, c))
+    if f === (^)
+        # c a^(c-1) da, and a^c log(a) dc when the exponent depends on the
+        # parameter
+        t = mk(*, mk(*, c, mk(^, a, mk(-, c, Constant(1)))), da)
+        _z(dc) && return t
+        return mk(+, t, mk(*, mk(*, mk(^, a, c), mk(log, a)), dc))
+    end
+    throw(ArgumentError(lazy"no derivative for $(f)."))
+end
 
 # === parsing a component value from an expression ===
 #
@@ -217,42 +258,20 @@ parameters, a special function, an interpolation of tabulated data.
 
 ```julia
 R0 = 50.0; wc = 2*pi*10e9
-("R1", "1", "0", FrequencyDependent(w -> R0*(1 + im*w/wc)))
+Resistor(FrequencyDependent(w -> R0*(1 + im*w/wc)))
 ```
 
-`f` receives signed frequencies, as a symbolic frequency variable does, so
-a law defined only for positive frequencies should apply its own conjugate
-rule for negative ones inside the closure.
+`f` receives signed frequencies, so a law defined only for positive
+frequencies should apply its own conjugate rule for negative ones inside
+the closure. `FrequencyDependent(identity)` is the frequency itself, which
+may be written into an expression like any other value.
 
-The value may be combined with numbers and other component values using
-`+ - * / ^` and the unary `- inv sqrt exp log conj real imag`. For anything
-richer, put the whole expression inside the closure.
+The value is a [`CircuitValue`](@ref) whose leaf is the closure, so it
+combines with numbers and other component values using the operators of
+that type, `+ - * / ^` and the unary `- inv sqrt exp log conj real imag`.
+For anything richer, put the whole expression inside the closure.
 """
-struct FrequencyDependent{F}
-    f::F
-end
-
-# A `FrequencyDependent` lowers to a `Provider` leaf so that the expression
-# arithmetic of `CircuitValues` applies to it.
-CircuitValues.tocv(x::FrequencyDependent) = CircuitValues.Provider(x.f)
-Base.convert(::Type{CircuitValues.CircuitValue}, x::FrequencyDependent) =
-    CircuitValues.Provider(x.f)
-Base.promote_rule(::Type{<:FrequencyDependent}, ::Type{<:Number}) = CircuitValue
-Base.promote_rule(::Type{<:FrequencyDependent}, ::Type{<:CircuitValues.CircuitValue}) = CircuitValue
-for op in (:+, :-, :*, :/, :^)
-    @eval begin
-        Base.$op(a::FrequencyDependent, b::FrequencyDependent) =
-            CircuitValues.mk($op, CircuitValues.tocv(a), CircuitValues.tocv(b))
-        Base.$op(a::FrequencyDependent, b::Union{Number,CircuitValues.CircuitValue}) =
-            CircuitValues.mk($op, CircuitValues.tocv(a), CircuitValues.tocv(b))
-        Base.$op(a::Union{Number,CircuitValues.CircuitValue}, b::FrequencyDependent) =
-            CircuitValues.mk($op, CircuitValues.tocv(a), CircuitValues.tocv(b))
-    end
-end
-for op in (:-, :inv, :sqrt, :exp, :log, :conj, :real, :imag)
-    @eval Base.$op(a::FrequencyDependent) =
-        CircuitValues.mk($op, CircuitValues.tocv(a))
-end
+FrequencyDependent(f) = CircuitValues.Provider(f)
 
 # === resolving a written value to a number ===
 #
@@ -331,17 +350,6 @@ _definitionpairs(d::AbstractDict) = pairs(d)
 _definitionpairs(d) = d
 
 """
-    valuetonumber(value::FrequencyDependent, circuitdefs)
-
-A frequency dependent value has no number to resolve to yet. It is lowered
-to a `Provider` leaf, which passes through the definitions unchanged and is
-evaluated at each mode frequency later by [`freqsubst`](@ref).
-"""
-function valuetonumber(value::FrequencyDependent, circuitdefs)
-    return CircuitValues.Provider(value.f)
-end
-
-"""
     valuetonumber(value::CircuitValue, circuitdefs)
 
 Substitute the definitions in `circuitdefs`, which may be keyed by `Symbol`,
@@ -384,6 +392,25 @@ function normalizedefinitions(circuitdefs)
     end
     return d
 end
+
+"""
+    definitiontable(circuitdefs)
+
+The component definitions as a `Dict{Any,Any}`, whatever the key and value
+types of the dictionary given.
+"""
+definitiontable(circuitdefs::Dict{Any,Any}) = circuitdefs
+definitiontable(circuitdefs::AbstractDict) = Dict{Any,Any}(circuitdefs)
+
+# The name of the design parameter a definition key names, and nothing for
+# a key which names no parameter: a parameter may be defined under its
+# parameter object, under its symbol or under its string, and the solver
+# cache and the design sensitivities both ask which parameter a key is for.
+# The Symbolics extension adds the method for a `Num`.
+definitionname(k::CircuitValues.Parameter) = k.name
+definitionname(k::Symbol) = k
+definitionname(k::AbstractString) = Symbol(k)
+definitionname(k) = nothing
 
 # The methods for Symbolics `Num` and `BasicSymbolic` values are defined in
 # ext/JosephsonCircuitsSymbolicsExt.jl.

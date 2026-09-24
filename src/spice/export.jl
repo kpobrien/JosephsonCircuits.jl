@@ -1,110 +1,6 @@
 
 
 """
-    export_netlist(filename, circuit, circuitdefs)
-
-Export the netlist in `circuit` to the file with name and path `filename`.
-"""
-function export_netlist(filename, circuit, circuitdefs)
-    open(filename, "w") do io
-        export_netlist!(io, circuit, circuitdefs)
-    end
-    return nothing
-end
-
-"""
-    export_netlist(filename, circuit)
-
-Export the netlist in `circuit` to the file with name and path `filename`.
-"""
-function export_netlist(filename, circuit)
-    return export_netlist(filename, circuit, Dict())
-end
-
-"""
-    export_netlist!(io::IO, circuit, circuitdefs)
-
-Export the netlist in `circuit` to the IOBuffer or IOStream `io`.
-
-# Examples
-```jldoctest
-julia> io = IOBuffer();JosephsonCircuits.export_netlist!(io, [("P","1","0",1),("R","1","0",50.0)],Dict());println(String(take!(io)))
-P 1 0 1
-R 1 0 50.0
-```
-"""
-function export_netlist!(io::IO, circuit::AbstractVector, circuitdefs::Dict)
-    for i in eachindex(circuit)
-        c = circuit[i]
-        for j in eachindex(c)
-            cj = c[j]
-            if j > 1
-                write(io," ")
-            end
-            write(io,string(substitutedefs(cj,circuitdefs)))
-        end
-        write(io,"\n")
-    end
-end
-
-"""
-    import_netlist(filename)
-
-Import the netlist from the file with name and path `filename` and return
-it as a vector of `(name, node1, node2, value)` tuples. The value field is
-`Any`: a number for a literal and a `CircuitValue` for an expression.
-"""
-function import_netlist(filename)
-    # the value field is a number when the netlist holds a literal and a
-    # `CircuitValue` when it holds an expression, so the tuple is
-    # heterogeneous. Pass your own vector to `import_netlist!` to pin a
-    # narrower element type.
-    circuit = Tuple{String,String,String,Any}[]
-    open(filename, "r") do io
-        import_netlist!(io, circuit)
-    end
-    return circuit
-end
-
-"""
-    import_netlist!(io::IO, circuit)
-
-Import the netlist from the IOBuffer or IOStream `io` to the vector of tuples
-`circuit`.
-
-# Examples
-```jldoctest
-julia> io = IOBuffer();circuit1=[("P","1","0",1),("R","1","0",50.0)];JosephsonCircuits.export_netlist!(io,circuit1,Dict());circuit2 = Tuple{String,String,String,Any}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
-2-element Vector{Tuple{String, String, String, Any}}:
- ("P", "1", "0", 1.0)
- ("R", "1", "0", 50.0)
-```
-"""
-function import_netlist!(io::IO, circuit::AbstractVector)
-    seekstart(io)
-    for line in eachline(io)
-        split_line = split(strip(line),r"\s+")
-        if length(split_line) != 4
-            error(lazy"each line should have component name, node1, node2, component value")
-        end
-        value = try
-            parse(Float64,split_line[4])
-        catch
-            # https://docs.sciml.ai/Symbolics/stable/manual/parsing/
-            # Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),Main)
-            parsecomponentvalue(split_line[4])
-        end
-        push!(circuit,(split_line[1],split_line[2],split_line[3],value))
-    end
-    return nothing
-end
-
-
-
-# export_netlist("test1.net", circuit,circuitdefs)
-
-
-"""
     sumvalues(type::Symbol, value1, value2)
 
 Sum together two values in different ways depending on the circuit component
@@ -138,7 +34,7 @@ end
 """
     calcnodes(nodeindex::Int, mutualinductorindex::Int,
         componenttypes::Vector{Symbol}, nodeindexarray::Matrix,
-        componentnamedict::Dict, mutualinductorbranchnames::Vector{String})
+        couplings::Vector{NTuple{3,Int}})
 
 Calculate the two nodes (or mutual inductor indices) given the index in the
 typvector and the component type. For component types where order matters,
@@ -162,8 +58,8 @@ circuit = Circuit(
      [(:p1, 2), (:i1, 2), (:l1, 2), (:l2, 2), (:c2, 2), (:c3, 2),
       (:gnd, 1)]])
 psc = JosephsonCircuits.compile(circuit)
-println(JosephsonCircuits.calcnodes(1,1,psc.componenttypes,psc.nodeindices, psc.componentnamedict,psc.mutualinductorbranchnames))
-println(JosephsonCircuits.calcnodes(5,1,psc.componenttypes,psc.nodeindices, psc.componentnamedict,psc.mutualinductorbranchnames))
+println(JosephsonCircuits.calcnodes(1,1,psc.componenttypes,psc.nodeindices,psc.couplings))
+println(JosephsonCircuits.calcnodes(5,1,psc.componenttypes,psc.nodeindices,psc.couplings))
 
 # output
 (1, 2)
@@ -172,20 +68,16 @@ println(JosephsonCircuits.calcnodes(5,1,psc.componenttypes,psc.nodeindices, psc.
 """
 function calcnodes(nodeindex::Int, mutualinductorindex::Int,
     componenttypes::Vector{Symbol}, nodeindexarray::Matrix,
-    componentnamedict::Dict, mutualinductorbranchnames::Vector{String})
+    couplings::Vector{NTuple{3,Int}})
 
     # calculate the nodes
     if componenttypes[nodeindex] == :K
         # don't sort these because the mutual inductance changes sign
         # if the nodes are changed. this is OK because only values with
-        # the same inductor ordering will be summed. 
-
-        # names of inductors
-        inductor1name = mutualinductorbranchnames[2*mutualinductorindex-1]
-        inductor2name = mutualinductorbranchnames[2*mutualinductorindex]
-
-        # indices of inductors
-        return componentnamedict[inductor1name], componentnamedict[inductor2name]
+        # the same inductor ordering will be summed. the compiled circuit
+        # already resolved which two inductors each coupling joins
+        _, inductor1, inductor2 = couplings[mutualinductorindex]
+        return inductor1, inductor2
 
     else
         if nodeindexarray[1,nodeindex] < nodeindexarray[2,nodeindex]
@@ -198,12 +90,10 @@ end
 
 """
     componentdictionaries(componenttypes::Vector{Symbol},
-        nodeindexarray::Matrix{Int}, componentnamedict::Dict,
-        mutualinductorbranchnames::Vector)
+        nodeindexarray::Matrix{Int}, couplings::Vector{NTuple{3,Int}})
 """
 function componentdictionaries(componenttypes::Vector{Symbol},
-    nodeindexarray::Matrix{Int}, componentnamedict::Dict,
-    mutualinductorbranchnames::Vector{String})
+    nodeindexarray::Matrix{Int}, couplings::Vector{NTuple{3,Int}})
 
     if  length(componenttypes) != size(nodeindexarray,2)
         throw(DimensionMismatch(lazy"Input arrays must have the same length"))
@@ -229,7 +119,7 @@ function componentdictionaries(componenttypes::Vector{Symbol},
         end
 
         node1, node2 = calcnodes(i, mutualinductorindex, componenttypes,
-            nodeindexarray, componentnamedict, mutualinductorbranchnames)
+            nodeindexarray, couplings)
 
         countkey = (componenttypes[i], node1, node2)
         if haskey(countdict,countkey)
@@ -293,9 +183,8 @@ end
 
 """
     calcCjIcmean(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-        componentvalues::Vector, componentnamedict::Dict,
-        mutualinductorbranchnames::Vector{String}, countdict::Dict,
-        indexdict::Dict)
+        componentvalues::Vector, couplings::Vector{NTuple{3,Int}},
+        countdict::Dict, indexdict::Dict)
 
 Calculate the junction properties including the max and min critical currents
 and ratios of critical current to junction capacitance. This is necessary in
@@ -306,12 +195,11 @@ order to set the junction properties of the JJ model in WRSPICE.
 componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
 nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
 componentvalues = Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
-componentnamedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
-mutualinductorbranchnames = String[]
+couplings = NTuple{3,Int}[]
 countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
 indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
 Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
-    componentvalues, componentnamedict,mutualinductorbranchnames, countdict, indexdict)
+    componentvalues, couplings, countdict, indexdict)
 
 # output
 (3.1100514732000003e-13, 3.1414661345454545e-7)
@@ -320,12 +208,11 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
 componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
 nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
 componentvalues = Real[1, 50.0, 1.0e-13, 2.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
-componentnamedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
-mutualinductorbranchnames = String[]
+couplings = NTuple{3,Int}[]
 countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
 indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
 Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
-    componentvalues, componentnamedict,mutualinductorbranchnames, countdict, indexdict)
+    componentvalues, couplings, countdict, indexdict)
 
 # output
 (2.2955141825999997e-13, 2.3187011945454544e-7)
@@ -333,8 +220,7 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
 """
 function calcCjIcmean(componenttypes::Vector{Symbol},
     nodeindexarray::Matrix{Int}, componentvalues::Vector,
-    componentnamedict::Dict, mutualinductorbranchnames::Vector{String},
-    countdict::Dict, indexdict::Dict)
+    couplings::Vector{NTuple{3,Int}}, countdict::Dict, indexdict::Dict)
 
     # make a copy of these dictionaries so that i don't modify them
     countdictcopy = copy(countdict)
@@ -357,7 +243,7 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
         end
 
         node1, node2 = calcnodes(i, mutualinductorindex, componenttypes,
-            nodeindexarray, componentnamedict, mutualinductorbranchnames)
+            nodeindexarray, couplings)
 
         # sum the values on the branch
         flag, value, index = sumbranchvalues!(componenttypes[i], node1, node2, componentvalues, countdictcopy, indexdictcopy)
@@ -627,10 +513,9 @@ K1 L2 L1 0.1
 C2 2 0 2000.0f
 ```
 """
-function exportnetlist(circuit,circuitdefs::Dict;port::Int = 1,
-        jj::Bool = true)
-    return exportnetlist(compile(circuit; sorting = defaultsorting(circuit)),
-        circuitdefs; port = port, jj = jj)
+function exportnetlist(circuit::CompilableCircuit, circuitdefs::Dict;
+        port::Int = 1, jj::Bool = true)
+    return exportnetlist(compile(circuit), circuitdefs; port = port, jj = jj)
 end
 
 function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
@@ -660,14 +545,10 @@ function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
     portnodes = 1
     portcurrent = 1
 
-    # nothing here reads the loops of the circuit graph
-    cg = calccircuitgraph(psc; loops = false)
-
     countdict, indexdict = componentdictionaries(
         psc.componenttypes,
         psc.nodeindices,
-        psc.componentnamedict,
-        psc.mutualinductorbranchnames,
+        psc.couplings,
         )
 
     Nnodes = length(psc.nodenames)
@@ -675,12 +556,12 @@ function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
     componentnames = psc.componentnames
     nodeindexarray = psc.nodeindices
     uniquenodevector = psc.nodenames
-    mutualinductorbranchnames = psc.mutualinductorbranchnames
-    componentnamedict = psc.componentnamedict
+    mutualinductorbranchnames = coupledinductornames(psc)
+    couplings = psc.couplings
 
     # calculate the junction properties
-    Cj, Icmean = calcCjIcmean(componenttypes, nodeindexarray, componentvalues, componentnamedict,
-        mutualinductorbranchnames, countdict, indexdict)
+    Cj, Icmean = calcCjIcmean(componenttypes, nodeindexarray, componentvalues,
+        couplings, countdict, indexdict)
 
     CjoIc = Cj/Icmean
 
@@ -721,7 +602,7 @@ function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
         end
 
         node1, node2 = calcnodes(i, mutualinductorindex, componenttypes,
-            nodeindexarray, componentnamedict, mutualinductorbranchnames)
+            nodeindexarray, couplings)
 
         # sum up the values on the branch
         flag, value, index = sumbranchvalues!(componenttypes[i], node1, node2, componentvalues, countdictcopy, indexdictcopy)
@@ -784,19 +665,4 @@ end
 # component definitions, so `circuitdefs` is optional.
 function exportnetlist(circuit; kwargs...)
     return exportnetlist(circuit, Dict(); kwargs...)
-end
-
-# Reading a component value back out of a SPICE line. Only
-# `import_netlist!` above uses it.
-"""
-    parsecomponentvalue(s::AbstractString)
-
-Parse a SPICE netlist component value into a number or a `CircuitValue`.
-Replaces `Symbolics.parse_expr_to_symbolic`; unlike it, this does not
-evaluate into a module, so a netlist cannot introduce arbitrary code.
-"""
-function parsecomponentvalue(s::AbstractString)
-    v = tryparse(Float64, s)
-    isnothing(v) || return v
-    return CircuitValues.fromexpr(Meta.parse(s))
 end

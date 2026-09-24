@@ -1,0 +1,100 @@
+# The solver paths which divide work between threads, run by compare.jl in
+# a process of a stated thread count. The results are written to the path
+# given as the first argument, and compare.jl checks that the run with one
+# thread and the run with four wrote the same numbers.
+using JosephsonCircuits
+using LinearAlgebra
+using Serialization
+using Test
+
+const JC = JosephsonCircuits
+BLAS.set_num_threads(1)
+
+@test Threads.nthreads() == parse(Int, ARGS[2])
+# the threads are really there: a static loop over one index per thread
+# runs on that many distinct threads
+ids = zeros(Int, Threads.nthreads())
+Threads.@threads :static for i in eachindex(ids)
+    ids[i] = Threads.threadid()
+end
+@test length(unique(ids)) == Threads.nthreads()
+
+@testset "the threaded solver paths" begin
+    c = compile(Circuit([(:p1, 1, 0, Port(1)),
+        (:cc, 1, 2, Capacitor(100e-15)),
+        (:jj, 2, 0, JosephsonJunction(:Lj)),
+        (:cj, 2, 0, Capacitor(1e-12)),
+        (:loss, 2, 0, Resistor(2000.0)),
+        (:p2, 2, 0, Port(2))]))
+    defs = Dict(:Lj => 1e-9)
+    ws = 2*pi*collect(range(4.3e9, 4.9e9; length = 7))
+
+    # the linearized sweep divides its frequencies between batches: every
+    # output is the output of the sweep run in one batch, including the
+    # noise of the lossy resistor and the sensitivity of the junction
+    batched = hblinsolve(ws, c, defs; nbatches = Threads.nthreads(),
+        keyedarrays = false, sensitivitynames = [:jj],
+        returnSsensitivity = true, returnSnoise = true)
+    serial = hblinsolve(ws, c, defs; nbatches = 1, keyedarrays = false,
+        sensitivitynames = [:jj], returnSsensitivity = true,
+        returnSnoise = true)
+    @test batched.S ≈ serial.S
+    @test batched.Ssensitivity ≈ serial.Ssensitivity
+    @test batched.Snoise ≈ serial.Snoise
+    @test !isempty(batched.Snoise) && norm(batched.Snoise) > 0
+
+    # caches over one compiled circuit solve at the same time: the
+    # compilation is shared and every other piece of state is the cache's
+    src = [(mode = (1,), port = 1, current = 2e-9)]
+    caches = [hbcache((2*pi*4.75e9,), (4,), src, c, defs) for _ in 1:7]
+    @test all(cache -> cache.compiled === c, caches)
+    fluxes = Vector{Any}(undef, length(caches))
+    @sync for j in eachindex(caches)
+        Threads.@spawn fluxes[j] =
+            copy(hbsolve!(caches[j], (Lj = (1 + 0.01*j)*1e-9,)).nodeflux)
+    end
+    @test all(cache -> cache.converged, caches)
+    @test caches[1].reuse.sys !== caches[2].reuse.sys
+    @test caches[1].nm.Cnm !== caches[2].nm.Cnm
+
+    # the transient batches its problems over the threads, and the
+    # tangent, the adjoint, the noise and the gain share one reuse object
+    # between them
+    nsteps, T, fp = 128, 0.5e-9, 4.75e9
+    base = transientproblem(c, defs; sources = [TransientSource(1, t -> 0.0)])
+    problems = [transientproblem(base; sources = [TransientSource(1,
+        let ip = j*1e-10; t -> t <= 0 ? 0.0 : 2*ip*sinpi(2*fp*t) end)])
+        for j in 1:7]
+    chunks = JC.batchchunks(JC.CPU(), length(problems))
+    @test length(chunks) == min(Threads.nthreads(), length(problems))
+    @test vcat(chunks...) == collect(eachindex(problems))
+    sol = transientsolve(problems, (0.0, T*(nsteps-1)/nsteps);
+        dt = T/nsteps, method = GaussLegendre(), record = :checkpoints,
+        checkpointevery = 16)
+    currents = [sinpi(2*4.6e9*t) for _ in 1:2, t in sol.times]
+    weights = [cospi(2*4.4e9*t) for _ in 1:2, t in sol.times]
+    reuse = TransientReuse()
+    tangent = transienttangent(sol, currents; reuse)
+    adjoint = transientadjoint(sol, weights; reuse)
+    plan = transientquantumplan(sol, sol.times, [2/T]; ports = [2])
+    noise = transientnoise(sol, plan; frequencies = [1/T, 2/T, 3/T],
+        weights = fill(1/T, 3), inputs = plan, reuse)
+    gain = transientgain(sol, plan, plan; reuse)
+    # one workspace per chunk, so a threaded run keeps more than one
+    @test length([reuse; reuse.children]) >= (Threads.nthreads() > 1 ? 2 : 1)
+    @test transientnoise(sol, plan; frequencies = [1/T, 2/T, 3/T],
+        weights = fill(1/T, 3), inputs = plan, reuse).covariance ≈
+        noise.covariance
+    # a batched problem's sensitivities are the single problem's
+    for j in (1, 4, 7)
+        @test tangent.outgoing[:, :, j] ≈
+            transienttangent(sol[j], currents).outgoing rtol = 1e-8
+        @test adjoint.currents[:, :, j] ≈
+            transientadjoint(sol[j], weights).currents rtol = 1e-8
+    end
+
+    serialize(ARGS[1], (; S = batched.S, Ssensitivity = batched.Ssensitivity,
+        Snoise = batched.Snoise, fluxes, finalflux = sol.finalflux,
+        tangent = tangent.outgoing, adjoint = adjoint.currents,
+        covariance = noise.covariance, gain))
+end

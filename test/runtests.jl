@@ -36,11 +36,11 @@ const SEED = haskey(ENV, "JULIA_TEST_SEED") ?
 # not a fixture the jobs include themselves
 function uncoveredtests(listed)
     fixtures = ("runtests.jl", "testcircuits.jl", "docstringcheck.jl",
-        "harmonics/layoutreference.jl")
+        "harmonics/layoutreference.jl", "solvers/recoveryfixture.jl")
     found = String[]
     for (root, _, names) in walkdir(TESTDIR)
         rel = relpath(root, TESTDIR)
-        first(splitpath(rel)) in ("gpu", "interop") && continue
+        first(splitpath(rel)) in ("gpu", "interop", "threaded") && continue
         for n in names
             endswith(n, ".jl") || continue
             push!(found, replace(rel == "." ? n : joinpath(rel, n), '\\' => '/'))
@@ -81,7 +81,7 @@ function testjobs()
     files = ("hbsolve.jl", "transient/solve.jl",
             "harmonics/directcurrent.jl", "transient/noise.jl",
             "networks/quantumoptics.jl", "transientpumped.jl",
-            "linearized/scatteringblocks.jl", "transient/system.jl",
+            "linearized/scatteringblocks.jl", "transient/system.jl", "transient/roundoff.jl",
             "crosscheck.jl", "solvers/modecoupling.jl", "solvers/problem.jl",
             "networks/parameters.jl", "circuit/mna.jl",
             "circuit/vectorfit.jl", "solvers/floquetdeflation.jl",
@@ -97,7 +97,8 @@ function testjobs()
             "circuit/values.jl", "spice/transient.jl",
             "harmonics/frequencies.jl", "transient/iq.jl", "deprecated.jl",
             "spice/export.jl", "circuit/legacy.jl", "linearized/outputs.jl",
-            "circuit/bind.jl", "circuit/graph.jl", "harmonics/sparse.jl",
+            "circuit/bind.jl", "circuit/oracles.jl", "circuit/graph.jl",
+            "harmonics/sparse.jl",
             "solvers/factorizations.jl", "JosephsonCircuits.jl",
             "spice/raw.jl", "spice/wrapper.jl", "solvers/newton.jl",
             "docstringchecktests.jl", "spice/utils.jl", "networks/unwrap.jl",
@@ -107,7 +108,8 @@ function testjobs()
         push!(jobs, file(f))
     end
     # a file in neither the list above nor `fixtures` is a file nobody
-    # runs; the jobs of `gpu` and `interop` have their own runners
+    # runs; the jobs of `gpu`, `interop` and `threaded` have their own
+    # runners
     push!(jobs, "the job list covers the test tree" =>
         "@test $(repr(uncoveredtests(files))) == String[]")
 

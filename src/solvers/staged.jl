@@ -89,13 +89,13 @@ end
 """
     stagedhbnlsolve(m::Staged, w::NTuple{N,Float64}, Nharmonics,
         sources::Vector{SourceTuple{N}}, psc::CompiledCircuit,
-        cg::CircuitGraph, circuitdefs::Dict{Any,Any}; kwargs...)
+        circuitdefs::Dict{Any,Any}; kwargs...)
 
 Source continuation on an adaptively grown harmonic grid, reached through
 `hbnlsolve(...; method = Staged(...))`; the schedule is the [`Staged`](@ref)
 value `m`, validated at its construction. `kwargs` are the keywords of
 [`hbnlsolve`](@ref) (`iterations`, `atol`, `Nevaluationharmonics`,
-`frequencywindow`, `maxintermodorder`, `dc`, `odd`, `even`, `symfreqvar`,
+`frequencywindow`, `maxintermodorder`, `dc`, `odd`, `even`,
 `keyedarrays`, `sensitivitynames`, `returnoperatingpoint`,
 `backend`), which are forwarded to every stage.
 
@@ -106,7 +106,12 @@ as unknowns, and each larger retained set is warm started from the last by
 matching mode tuples. The nonlinearity is always evaluated on the full
 `Nevaluationharmonics` transform grid, so that every stage sees the same
 aliasing of the nonlinear products; the ladder only controls the modes
-retained as unknowns, so it is the linear solves which shrink.
+retained as unknowns, so it is the linear solves which shrink. The mode
+set, the circuit matrices, the system with its transforms, the
+preconditioner's symbolic factorization and the Krylov workspace of a
+grid are built once and rebound to each drive step on it
+([`HBReuse`](@ref)), so a step costs its Newton iterations and little
+else.
 
 The schedule adapts in both directions, because each truncation has its
 own solvability boundary and the boundaries are not monotone in the grid:
@@ -160,7 +165,7 @@ converged, and records the whole walk in `solverinfo.stages`.
 """
 function stagedhbnlsolve(m::Staged, w::NTuple{N,Float64},
     Nharmonics::NTuple{N,Int}, sources::Vector{SourceTuple{N}},
-    psc::CompiledCircuit, cg::CircuitGraph, circuitdefs::Dict{Any,Any};
+    psc::CompiledCircuit, circuitdefs::Dict{Any,Any};
     kwargs...) where {N}
     # a barrier on the inner method: the schedule holds it as an abstract
     # field, and the stage solves below must see its concrete type, or
@@ -171,20 +176,20 @@ function stagedhbnlsolve(m::Staged, w::NTuple{N,Float64},
     # compiled circuit solve behind it, for an instance which never runs,
     # took longer than compiling the one which does.
     return Base.invokelatest(stagedhbnlsolve, m.inner, m, w, Nharmonics,
-        sources, psc, cg, circuitdefs; kwargs...)
+        sources, psc, circuitdefs; kwargs...)
 end
 
 function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
-    sources::Vector{SourceTuple{N}}, psc::CompiledCircuit, cg::CircuitGraph,
+    sources::Vector{SourceTuple{N}}, psc::CompiledCircuit,
     circuitdefs::Dict{Any,Any};
     iterations = 1000,
     Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
     frequencywindow = (0, Inf),
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
-    even::Bool = false, atol = 1e-8, symfreqvar = nothing,
+    even::Bool = false, atol = 1e-8,
     keyedarrays::Bool = true,
-    sensitivitynames::Vector{String} = String[],
+    sensitivitynames::AbstractVector = String[],
     returnoperatingpoint::Bool = false, backend = CPU(),
     warnnotconverged::Bool = true) where {N}
 
@@ -203,19 +208,30 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     # Every stage uses the full transform grid `Nevaluationharmonics`, so
     # the aliasing of the nonlinear products is the same on every stage;
     # the ladder only sets the modes retained as unknowns.
-    modesof(grid) = removeconjfreqs(truncfreqs(
-        calcfreqsrdft(Nevaluationharmonics);
-        dc = dc, odd = odd, even = even,
-        maxintermodorder = maxintermodorder,
-        maxharmonics = map(min, Nharmonics, grid),
-        w = w, frequencywindow = frequencywindow)).modes
-    scaled(s) = [(mode = t.mode, port = t.port, current = s*t.current)
-        for t in sources]
-    solve(grid, s, x0, final) = hbnlsolve(w, map(min, Nharmonics, grid),
-        scaled(s), psc, cg, circuitdefs; dc = dc, odd = odd, even = even,
-        maxintermodorder = maxintermodorder,
-        Nevaluationharmonics = Nevaluationharmonics,
-        frequencywindow = frequencywindow,
+    #
+    # What the stages of one grid share is built once per grid: its mode
+    # set with the Fourier indices, the circuit matrices at its mode count,
+    # and a reuse object holding the system, the preconditioner's symbolic
+    # factorization and the Krylov workspace, which each drive step rebinds
+    # to its sources rather than rebuilds (see `HBReuse`). The component
+    # values are resolved once for every grid.
+    vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
+    function gridstate(grid)
+        freq = removeconjfreqs(truncfreqs(
+            calcfreqsrdft(Nevaluationharmonics);
+            dc = dc, odd = odd, even = even,
+            maxintermodorder = maxintermodorder,
+            maxharmonics = map(min, Nharmonics, grid),
+            w = w, frequencywindow = frequencywindow))
+        return (freq = freq, indices = fourierindices(freq),
+            nm = numericmatrices(psc, vvn; Nmodes = length(freq.modes)),
+            reuse = HBReuse())
+    end
+    scaled(s) = SourceTuple{N}[(mode = t.mode, port = t.port,
+        current = s*t.current) for t in sources]
+    solve(state, s, x0, final) = hbnlsolve(w, scaled(s), state.freq,
+        state.indices, psc, state.nm;
+        reuse = state.reuse,
         method = (final || interiorescalation) ? inner :
             withescalation(inner, false),
         # a stage solve which does not converge is how the continuation
@@ -224,7 +240,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         warnnotconverged = false,
         # typed here, whatever the loop below inferred for its carried point,
         # so the stage solve is called with keywords of known type
-        x0 = initialguess(x0), symfreqvar = symfreqvar,
+        x0 = initialguess(x0),
         keyedarrays = final ? keyedarrays : false,
         sensitivitynames = final ? sensitivitynames : String[],
         returnoperatingpoint = final ? returnoperatingpoint : false,
@@ -233,6 +249,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         iterations = final ? iterations : interioriterations)
 
     gi = 1
+    state = gridstate(grids[gi])   # what the stages of the current grid share
     s = 0.0             # last converged drive fraction on the current grid
     ds = s0
     x = nothing         # its solution, in the raw nodeflux layout
@@ -261,7 +278,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         starget = min(1.0, s + ds)
         final = gi == length(grids) && starget >= 1.0
         t0 = time_ns()
-        cand = solve(grids[gi], starget, x, final)
+        cand = solve(state, starget, x, final)
         last = cand
         ok = cand.solverinfo.converged
         # the first solve after carrying a full drive point to a larger
@@ -283,7 +300,8 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             final && break
             if s >= 1.0
                 # full drive reached on a coarse grid: grow the grid
-                x = stagedembed(out, modesof(grids[gi+1]))
+                state = gridstate(grids[gi+1])
+                x = stagedembed(out, state.freq.modes)
                 gi += 1
                 pendinggrow = true
             else
@@ -303,13 +321,13 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
                 gaveup = true
                 break
             end
-            bigmodes = modesof(grids[gi+1])
-            bigx = stagedembed(out, bigmodes)
+            state = gridstate(grids[gi+1])
+            bigx = stagedembed(out, state.freq.modes)
             gi += 1
             reconverged = false
             for f in (1.0, 0.9, 0.8, 0.65, 0.5)
                 t0 = time_ns()
-                re = solve(grids[gi], f*s, bigx, false)
+                re = solve(state, f*s, bigx, false)
                 last = re
                 record(re, grids[gi], s, f*s, :grow,
                     re.solverinfo.converged, (time_ns() - t0)/1e9)
@@ -342,7 +360,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             reconverged = false
             for f in (0.9, 0.8, 0.65, 0.5)
                 t0 = time_ns()
-                re = solve(grids[gi], f*s, x, false)
+                re = solve(state, f*s, x, false)
                 last = re
                 record(re, grids[gi], s, f*s, :grow,
                     re.solverinfo.converged, (time_ns() - t0)/1e9)
@@ -373,7 +391,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             # may reach one. One bounded attempt, recorded either way.
             if starget < 1.0 && !isnothing(x)
                 t0 = time_ns()
-                jump = solve(grids[gi], 1.0, x, true)
+                jump = solve(state, 1.0, x, true)
                 last = jump
                 record(jump, grids[gi], s, 1.0, :final,
                     jump.solverinfo.converged, (time_ns() - t0)/1e9)

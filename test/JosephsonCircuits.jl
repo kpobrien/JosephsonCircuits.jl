@@ -73,8 +73,8 @@ end
         @test out.nodenames == ["0", "1", "2"]
         @test out.nodeindices == [2 2 2 3 3; 1 1 3 1 1]
         @test out.Nnodes == 3
-        # the port owns the reference impedance the legacy netlist wrote as a
-        # separate resistor, so the node layout is the legacy netlist's
+        # the port owns its reference impedance through the termination
+        # generated for it
         @test out.componentnames[only(out.ports).environment] ==
             "P1/termination"
     end

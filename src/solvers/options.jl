@@ -241,10 +241,7 @@ without sizing them first, since they grow with the square of the mode
 count and one tone keeps it low, and a problem too large for them wants
 an explicit [`BlockDiagonal`](@ref). See [`resolveautomatic`](@ref).
 """
-struct Automatic <: AbstractModeCoupling
-    factorization::Nothing
-end
-Automatic() = Automatic(nothing)
+struct Automatic <: AbstractModeCoupling end
 
 """
     CoupledModes(indices; factorization = nothing)
@@ -326,17 +323,14 @@ end
 """
     withfactorization(s, f)
 
-The preconditioner spec `s` with its factorization replaced by `f` where it
-had none; a deflation applies this to what it wraps. An [`Automatic`](@ref)
-is returned unchanged: it carries no factorization, and the member it
-resolves to takes the backend's default (`resolveautomatic`).
+The mode coupling set `s` with its factorization replaced by `f` where it
+had none. An [`Automatic`](@ref) is returned unchanged: it carries no
+factorization, and the member it resolves to takes the backend's default
+(`resolveautomatic`).
 """
 withfactorization(s::AbstractModeCoupling, f) =
     isnothing(s.factorization) ? setfactorization(s, f) : s
 withfactorization(s::Automatic, f) = s
-withfactorization(s::Floquet, f) = Floquet(withfactorization(s.inner, f),
-    s.size, s.harvest, s.ritz, s.candidates, s.ranktol, s.benefittol,
-    s.cycleharvest)
 
 """
     setfactorization(s::AbstractModeCoupling, f)
@@ -344,13 +338,13 @@ withfactorization(s::Floquet, f) = Floquet(withfactorization(s.inner, f),
 The mode coupling set `s` with its factorization replaced by `f`, whatever
 it carried: what a preconditioner applies to its coupling set when it
 changes the factorization it is built with, so that the set always
-carries the factorization of its factors.
+carries the factorization of its factors. Defined for the sets a
+preconditioner holds; `MeasuredBand` and `Clusters` are rewritten into
+one of them when it is built.
 """
 setfactorization(s::BlockDiagonal, f) = BlockDiagonal(f)
 setfactorization(s::FullJacobian, f) = FullJacobian(f)
 setfactorization(s::HarmonicBand, f) = HarmonicBand(s.p, f)
-setfactorization(s::MeasuredBand, f) = MeasuredBand(s.tol, s.budget, f)
-setfactorization(s::Clusters, f) = Clusters(f)
 setfactorization(s::CoupledModes, f) = CoupledModes(s.indices, f)
 setfactorization(s::CouplingMask, f) = CouplingMask(s.mask, f)
 
@@ -819,15 +813,6 @@ function sourcetable(sources, ::NTuple{N,Number}) where {N}
     end
     return table
 end
-
-"""
-    definitiontable(circuitdefs)
-
-The component definitions as a `Dict{Any,Any}`, whatever the key and value
-types of the dictionary given.
-"""
-definitiontable(circuitdefs::Dict{Any,Any}) = circuitdefs
-definitiontable(circuitdefs::AbstractDict) = Dict{Any,Any}(circuitdefs)
 
 """
     initialguess(x0)

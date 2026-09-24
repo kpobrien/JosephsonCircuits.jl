@@ -1,5 +1,5 @@
-# The interoperability test suite. Deliberately NOT part of Pkg.test:
-# Krylov.jl and SciMLBase live in this directory's own environment so the
+# The extension test suite. Deliberately NOT part of Pkg.test: Krylov.jl,
+# SciMLBase and Symbolics live in this directory's own environment so the
 # main test suite carries no resolve or precompile cost for them. Run it
 # directly:
 #
@@ -25,6 +25,12 @@ let pkgpath = normpath(joinpath(@__DIR__, "..", ".."))
     Pkg.instantiate()
 end
 
+# An extension is loaded when its trigger package is, whichever order the
+# two are loaded in. The suite loads the package first and does not run
+# the reverse order: each of these three extensions is method and type
+# definitions alone, with no `__init__` and nothing written at load time,
+# so the order only decides when the methods reach the dispatch tables and
+# not what they do once they are there.
 using JosephsonCircuits
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 using Krylov
@@ -175,5 +181,8 @@ end
     @test !out.converged
     @test 0 < out.residual < norm(F)
 end
+
+
+include(joinpath(@__DIR__, "symbolics.jl"))
 
 end

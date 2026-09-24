@@ -8,12 +8,12 @@ using Test
 
 @testset verbose=true "the mode coupling preconditioner" begin
 
-    circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-    push!(circuit,("P1","1","0",1))
-    push!(circuit,("R1","1","0",:Rleft))
-    push!(circuit,("C1","1","2",:Cc))
-    push!(circuit,("Lj1","2","0",:Lj))
-    push!(circuit,("C2","2","0",:Cj))
+    circuit = Any[]
+    push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+    push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
+    push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
+    push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
+    circuit = Circuit(circuit)
     circuitdefs = Dict{Symbol,Complex{Float64}}(
         :Lj => 1000e-12, :Cc => 100.0e-15, :Cj => 1000e-15, :Rleft => 50.0)
     wp = 2*pi*5e9
@@ -160,15 +160,16 @@ using Test
         # needs help, solved with escalation disabled so the recycled
         # subspace is what has to carry the solve, in both forms and with
         # the base refreshed eagerly or frozen across the Newton path
-        chain = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(chain, ("P1","1","0",1)); push!(chain, ("R1","1","0",:R))
+        chain = Any[]
+        push!(chain, ("P1", "1", "0", Port(1; Z0 = :R)))
         Ncell = 12
         for i in 1:Ncell
-            push!(chain, ("Lj$(i)","$(i)","$(i+1)",:Lj))
-            push!(chain, ("C$(i)","$(i)","0",:Cg))
+            push!(chain, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Lj)))
+            push!(chain, ("C$(i)", "$(i)", "0", Capacitor(:Cg)))
         end
-        push!(chain, ("C$(Ncell+1)","$(Ncell+1)","0",:Cg))
-        push!(chain, ("R2","$(Ncell+1)","0",:R))
+        push!(chain, ("C$(Ncell+1)", "$(Ncell+1)", "0", Capacitor(:Cg)))
+        push!(chain, ("R2", "$(Ncell+1)", "0", Resistor(:R)))
+        chain = Circuit(chain)
         chaindefs = Dict{Symbol,Complex{Float64}}(
             :Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
         wc = 2*pi*8e9
@@ -203,16 +204,16 @@ using Test
         # the real representation collapses self-conjugate modes to a single
         # slot, which the layout handling and the restricted assembly must
         # both survive
-        dccircuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(dccircuit,("P1","1","0",1))
-        push!(dccircuit,("R1","1","0",:Rleft))
-        push!(dccircuit,("L1","1","0",:Lm))
-        push!(dccircuit,("K1","L1","L2",:K1))
-        push!(dccircuit,("C1","1","2",:Cc))
-        push!(dccircuit,("L2","2","3",:Lm))
-        push!(dccircuit,("Lj3","3","0",:Lj))
-        push!(dccircuit,("Lj4","2","0",:Lj))
-        push!(dccircuit,("C2","2","0",:Cj))
+        dccircuit = Any[]
+        push!(dccircuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
+        push!(dccircuit,("L1", "1", "0", Inductor(:Lm)))
+        push!(dccircuit,("K1", "L1", "L2", MutualInductor(:K1)))
+        push!(dccircuit,("C1", "1", "2", Capacitor(:Cc)))
+        push!(dccircuit,("L2", "2", "3", Inductor(:Lm)))
+        push!(dccircuit,("Lj3", "3", "0", JosephsonJunction(:Lj)))
+        push!(dccircuit,("Lj4", "2", "0", JosephsonJunction(:Lj)))
+        push!(dccircuit,("C2", "2", "0", Capacitor(:Cj)))
+        dccircuit = Circuit(dccircuit)
         dcdefs = Dict{Symbol,Complex{Float64}}(
             :Lj => 2000e-12, :Lm => 10e-12, :Cc => 200.0e-15,
             :Cj => 900e-15, :Rleft => 50.0, :Rright => 50.0, :K1 => 0.9)
@@ -286,11 +287,11 @@ using Test
         # a parameter sweep through hbcache rebinds the system and the
         # preconditioner rather than rebuilding them; the recycled subspace
         # of the previous point is what the next solve should start from
-        builder(; Lj) = [("P1","1","0",1), ("R1","1","0",50.0),
-            ("C1","1","2",100.0e-15), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
+        jpa = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(100.0e-15)),
+            (:Lj1, 2, 0, JosephsonJunction(:Lj)), (:C2, 2, 0, Capacitor(1000e-15))])
         let
-            cache = JosephsonCircuits.hbcache((wp,), (8,), sources, builder,
-                (; Lj = 1000e-12); method = NewtonKrylov(preconditioner =
+            cache = JosephsonCircuits.hbcache((wp,), (8,), sources, jpa,
+                Dict(:Lj => 1000e-12); method = NewtonKrylov(preconditioner =
                     Floquet(size = 6, harvest = 2), escalate = false))
             first = JosephsonCircuits.hbsolve!(cache, (; Lj = 1000e-12))
             @test first.solverinfo.converged
@@ -308,7 +309,7 @@ using Test
             @test cache.reuse.recycling isa JosephsonCircuits.FloquetState
             # and the answer is the answer
             on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources,
-                builder(; Lj = 1010e-12), Dict{Symbol,Complex{Float64}}();
+                jpa, Dict(:Lj => 1010e-12);
                 method = Newton(), keyedarrays = false)
             @test isapprox(second.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
@@ -319,10 +320,10 @@ using Test
         # the reuse object commits the candidates of a converged solve only:
         # a solve cut off after one Newton step leaves the previous state in
         # place, and the next converged solve starts from that state
-        builder(; Lj) = [("P1","1","0",1), ("R1","1","0",50.0),
-            ("C1","1","2",100.0e-15), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
-        cache = JosephsonCircuits.hbcache((wp,), (8,), sources, builder,
-            (; Lj = 1000e-12); method = NewtonKrylov(preconditioner =
+        jpa = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(100.0e-15)),
+            (:Lj1, 2, 0, JosephsonJunction(:Lj)), (:C2, 2, 0, Capacitor(1000e-15))])
+        cache = JosephsonCircuits.hbcache((wp,), (8,), sources, jpa,
+            Dict(:Lj => 1000e-12); method = NewtonKrylov(preconditioner =
                 Floquet(size = 6, harvest = 2), escalate = false))
         first = JosephsonCircuits.hbsolve!(cache, (; Lj = 1000e-12))
         @test first.solverinfo.converged
@@ -334,7 +335,7 @@ using Test
         # it says
         failed = @test_logs (:warn, r"did not converge: the Newton iteration budget") match_mode=:any JosephsonCircuits.hbnlsolve(
             cache.w, cache.sources,
-            cache.frequencies, cache.indices, cache.compiled, cache.cg,
+            cache.frequencies, cache.indices, cache.compiled,
             cache.nm; keyedarrays = false, reuse = cache.reuse,
             iterations = 1, cache.kwargs...)
         @test !failed.solverinfo.converged
@@ -706,7 +707,8 @@ using Test
         @test eltype(z32) === Float64          # the iteration keeps its own
         @test d.Jr*z32 ≈ r32 rtol=1e-4         # single precision accuracy
 
-        @test Automatic().factorization === nothing
+        # an Automatic carries no factorization of its own: the member it
+        # resolves to takes the backend's default
         @test JosephsonCircuits.withfactorization(Automatic(),
             KLUfactorization()) === Automatic()
         # and the solve through it agrees with the assembled Newton solve

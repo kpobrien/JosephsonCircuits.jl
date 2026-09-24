@@ -15,18 +15,18 @@ operating point and swept over weak signal frequencies with
 the linearized solution the package computes scattering parameters, noise
 scattering parameters, quantum efficiency, commutation relations, and
 adjoint-method sensitivities with respect to component values or, through
-[`designsensitivities`](@ref), to the design parameters of a circuit
-builder.
+[`designsensitivities`](@ref), to the design parameters a circuit's
+values are written in terms of.
 
 The same compiled circuit, on the same node flux unknowns, can also be
 integrated directly in physical time with [`transientsolve`](@ref), for
 pulsed drives and for drives with more tones than a harmonic grid can
 hold, with the exact tangent and adjoint of the recorded time steps.
 
-A circuit is written as a [`Circuit`](@ref) of typed component models, or
-as a legacy netlist of `(name, node1, node2, value)` tuples. The stages a
-circuit passes through, and the files that implement them, are listed
-next to the `include` statements below.
+A circuit is written as a [`Circuit`](@ref) of typed component models;
+the netlist of `(name, node1, node2, value)` tuples is deprecated and is
+converted to one. The stages a circuit passes through, and the files that
+implement them, are listed next to the `include` statements below.
 """
 module JosephsonCircuits
 
@@ -45,7 +45,6 @@ import AxisKeys
 import PrecompileTools
 import OrderedCollections
 import StaticArrays
-import Statistics
 import FastInterpolations
 import FunctionWrappers: FunctionWrapper
 
@@ -134,11 +133,9 @@ include("circuit/parse.jl")
 # indexed tables the matrix builders read (`compile`).
 include("circuit/compile.jl")
 # Stamps of multiport scattering blocks into the harmonic balance system:
-# a linearized/ concern, included here because `compile` and the legacy
-# adapter need its block types.
+# a linearized/ concern, included here because `compile` needs its block
+# types.
 include("linearized/scatteringblocks.jl")
-# The legacy tuple netlist, adapted into a `Circuit`.
-include("circuit/legacy.jl")
 include("circuit/graph.jl")      # incidence matrix, spanning tree, loops
 include("circuit/matrices.jl")   # capacitance and inverse inductance matrices
 include("harmonics/sparse.jl")   # sparse matrix helpers shared by the solvers
@@ -237,6 +234,9 @@ include("spice/transient.jl") # the transient run through WRspice
 # Deprecated entry points, kept so that older scripts keep running with a
 # warning.
 include("deprecated.jl")
+# The deprecated tuple netlist: its conversion to a `Circuit`, the tuple
+# forms of the entry points and the netlist file reader and writer.
+include("circuit/legacy.jl")
 
 # Helpers the test suite uses to print and compare solver output.
 include("testutils.jl")
@@ -286,9 +286,7 @@ end
 
 # The circuit every warmup shares: a single junction parametric amplifier,
 # capacitively coupled to a port which owns its own matched termination.
-# It is written in the typed format because that is the input path worth
-# precompiling; a legacy tuple netlist is adapted into a `Circuit` first
-# and then takes the same path.
+# It is written in the typed format, which is the input path.
 function warmupcircuit(Rleft, Cc, Lj, Cj)
     return Circuit(
         ["P1" => Port(1; Z0 = Rleft), "C1" => Capacitor(Cc),

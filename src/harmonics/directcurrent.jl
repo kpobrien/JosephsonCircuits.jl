@@ -78,53 +78,18 @@ function calcstaticfluxcomponents(componenttypes::Vector{Symbol},
     nodeindices::Matrix{Int}, vvn::Vector, Nnodes::Int)
 
 
-    # a union-find over the nodes (ground is node 1), with path halving
-    parent = collect(1:Nnodes)
-    function findroot(i::Int)
-        while parent[i] != i
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        end
-        return i
-    end
+    # an edge for every component which provides static flux stiffness. an
+    # infinite numeric inductance provides none: it is an open circuit at
+    # zero frequency. zero and NaN values are rejected by
+    # checkstaticstiffnessvalues before this function is called. symbolic
+    # values are assumed to provide finite, nonzero static stiffness.
+    stiff(i) = (v = vvn[i];
+        checkissymbolic(v) || !(v isa Number) || isfinite(abs(v)))
+    edges = [(nodeindices[1, i], nodeindices[2, i])
+        for i in eachindex(componenttypes)
+        if (componenttypes[i] == :L || componenttypes[i] == :Lj) && stiff(i)]
 
-    # add an edge for every component which provides static flux stiffness
-    for i in eachindex(componenttypes)
-        if componenttypes[i] == :L || componenttypes[i] == :Lj
-            # an infinite numeric inductance provides no static stiffness.
-            # it is an open circuit at zero frequency. zero and NaN values
-            # are rejected by checkstaticstiffnessvalues before this
-            # function is called. symbolic values are assumed to provide
-            # finite, nonzero static stiffness.
-            v = vvn[i]
-            if !checkissymbolic(v) && v isa Number && !isfinite(abs(v))
-                continue
-            end
-            r1 = findroot(nodeindices[1, i])
-            r2 = findroot(nodeindices[2, i])
-            if r1 != r2
-                parent[r1] = r2
-            end
-        end
-    end
-
-    # collect the components which do not contain the ground node
-    groundroot = findroot(1)
-    components = Dict{Int,Vector{Int}}()
-    for p in 2:Nnodes
-        r = findroot(p)
-        if r != groundroot
-            push!(get!(components, r, Int[]), p)
-        end
-    end
-
-    floatingcomponents = collect(values(components))
-    for component in floatingcomponents
-        sort!(component)
-    end
-    sort!(floatingcomponents, by = first)
-
-    return floatingcomponents
+    return nodecomponents(Nnodes, edges)
 end
 
 """
@@ -219,7 +184,7 @@ a floating component only enters the equations through differences of node
 fluxes within the component, so exactly one constraint per component and
 zero-frequency mode removes the gauge degree of freedom without
 overconstraining the system. The DC node flux reported as zero depends on the
-node ordering (the `sorting` keyword of the solvers): the reference is the
+node ordering (the `sorting` keyword of [`compile`](@ref)): the reference is the
 lowest-numbered node of each component after sorting. All physical quantities
 are gauge independent and unaffected by this choice.
 
