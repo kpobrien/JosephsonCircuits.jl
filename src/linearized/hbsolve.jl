@@ -79,11 +79,12 @@ struct NonlinearHB
 end
 
 """
-    LinearizedHB(w, modes, S, Snoise, Cnoise, Ssensitivity, QE, QEideal,
-        CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames,
-        nodeindices, componentnames, componenttypes, componentnamedict,
-        mutualinductorbranchnames, portnumbers, portindices,
-        portimpedances, noiseportimpedanceindices, sensitivitynames,
+    LinearizedHB(w, modes, S, Snoise, Cnoise, Vout, Ssensitivity, QE,
+        QEideal, CM, nbar, nodeflux, nodefluxadjoint, voltage,
+        voltageadjoint, nodenames, nodeindices, componentnames,
+        componenttypes, componentnamedict, mutualinductorbranchnames,
+        portnumbers, portindices, portimpedances, porttemperatures,
+        noiseportimpedanceindices, channeltemperatures, sensitivitynames,
         sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex)
 
 The solution of the linearized harmonic balance problem returned by
@@ -93,8 +94,9 @@ efficiencies are indexed `[output, input, frequency]` and the
 sensitivities `[output, input, component, frequency]`, with the mode and
 the port of each flattened (mode fastest); with `keyedarrays = true` they
 are keyed arrays with the axes `outputmode`, `outputport`, `inputmode`,
-`inputport`, `component` and `freqindex`. `CM`, `Snoise`, `Cnoise` and the
-node outputs have axes of their own, named in their keys.
+`inputport`, `component` and `freqindex`. `CM`, `nbar`, `Snoise`,
+`Cnoise`, `Vout` and the node outputs have axes of their own, named in
+their keys.
 
 # Fields
 - `w`: the signal angular frequencies in radians per second.
@@ -111,29 +113,46 @@ node outputs have axes of their own, named in their keys.
     one per port of each dissipative [`ScatteringParameters`](@ref). Being
     a scattering matrix it describes a transformation and does not depend
     on temperature.
-- `Cnoise`: the added noise covariance at the output ports,
-    `sum_c occupation[c]*Snoise[c,i]*conj(Snoise[c,j])`, when
-    `returnCnoise = true`. Together with `S` this is the Gaussian channel
-    the circuit implements, taking an input covariance to
-    `S*sigma*S' + Cnoise`; the temperature of each channel enters here
-    through the occupation. At zero temperature its diagonal is the noise
-    term in the denominator of the quantum efficiency. Both of its port
+- `Cnoise`: the symmetrized noise covariance the circuit adds at the
+    output ports, in quanta,
+    `sum_c (nbar_c + 1/2)*Snoise[c,i]*conj(Snoise[c,j])` over its noise
+    channels `c`, when `returnCnoise = true`. A vacuum channel counts as
+    `1/2`, the vacuum's half photon, and a channel at temperature `T` as
+    `nbar + 1/2`, `nbar` its [`thermaloccupation`](@ref). Together with `S`
+    this is the Gaussian channel the circuit implements, taking the
+    symmetrized covariance of the inputs `sigma`, `I/2` for the vacuum, to
+    `S*sigma*S' + Cnoise`; the temperature of each channel enters here.
+    It is the noise the circuit adds and never that of its ports, so
+    `NoiseCovariance(Cnoise)` embeds the circuit as a block. Both of its port
     mode indices are outputs: keyed, its axes are `outputmode` and
     `outputport` for `i`, `conjoutputmode` and `conjoutputport` for `j`,
     and `freqindex` (see [`Cnoisetokeyed`](@ref)).
+- `Vout`: the symmetrized covariance of the waves leaving the ports,
+    `S*Diagonal(sigma)*S' + Cnoise` with `sigma` the noise every input
+    brings, `nbar + 1/2` at the temperature of its port's termination (see
+    [`MatchedTermination`](@ref)), when `returnVout = true`. Its axes are
+    those of `Cnoise`, and its diagonal is `nbar + 1/2`.
 - `Ssensitivity`: the derivative of `S` with respect to a relative
     (logarithmic) perturbation of each component in `sensitivitynames`, or
     of each design parameter when the sensitivity pair interface is used,
     at a fixed pump operating point or including the shift of the operating
     point when `sensitivityoperatingpoint = true`.
 - `QE`: the quantum efficiency at each combination of port, mode and
-    frequency.
+    frequency: `abs2(S[i,j])/(2*Vout[i,i])`, the photon gain over twice the
+    noise at the output, with every input in its state, the input `j`
+    included, so a warm source lowers the efficiency of a measurement of
+    its signal.
 - `QEideal`: the quantum efficiency of an ideal amplifier with the same
     gain.
 - `CM`: the bosonic commutation relations of each output, `sum_j
     |S[i,j]|^2 sign(w_j)` over the input modes, which equal `+1` for an
     output at positive frequency and `-1` for one at negative frequency
     when the scattering matrix is complete.
+- `nbar`: the occupation of each output port mode, the mean number of
+    photons per mode of the wave leaving the port, `Vout[i,i] - 1/2`: zero
+    in the vacuum, and the photons an amplifier emits from the vacuum it
+    amplifies included. At an input port it is what the circuit sends
+    back toward the device there. Its axes are those of `CM`.
 - `nodeflux`: the node fluxes resulting from a unit current source at each
     port and mode.
 - `nodefluxadjoint`: the node fluxes of the adjoint (time reversed
@@ -152,9 +171,16 @@ node outputs have axes of their own, named in their keys.
 - `portindices`: the flat component index of each port.
 - `portimpedances`: the reference impedance of each port, which the
     scattering parameters are normalized to.
+- `porttemperatures`: the physical temperature in kelvin of each port's
+    termination, in the order of `portnumbers`.
 - `noiseportimpedanceindices`: the flat component indices of the internal
     dissipative components, in the order of the noise channel axis of
     `Snoise`.
+- `channeltemperatures`: the physical temperature in kelvin of each noise
+    channel, in the order of the channel axis of `Snoise`: with `Snoise` it
+    gives each channel's share of the noise at an output,
+    `(thermaloccupation(w, T) + 1/2)*abs2(Snoise[c, i])`; a channel of a
+    block which states its noise is at zero.
 - `sensitivitynames`: the component names the sensitivities were taken
     with respect to.
 - `sensitivityindices`: their flat component indices.
@@ -171,10 +197,12 @@ struct LinearizedHB
     S
     Snoise
     Cnoise
+    Vout
     Ssensitivity
     QE
     QEideal
     CM
+    nbar
     nodeflux
     nodefluxadjoint
     voltage
@@ -188,7 +216,9 @@ struct LinearizedHB
     portnumbers
     portindices
     portimpedances
+    porttemperatures
     noiseportimpedanceindices
+    channeltemperatures
     sensitivitynames
     sensitivityindices
     Nmodes
@@ -251,6 +281,11 @@ const _DOC_RETURNS = """
 - `returnSnoise = false`: return the noise scattering parameters.
 - `returnCnoise = false`: return the added noise covariance at the output
     ports; see [`LinearizedHB`](@ref).
+- `returnVout = false`: return the covariance of the waves leaving the
+    ports, the inputs' noise at the temperatures of their terminations
+    included.
+- `returnnbar = true`: return the occupation of each output port mode,
+    the photons of the wave leaving it.
 - `returnQE = true`: return the quantum efficiency.
 - `returnCM = true`: return the commutation relations.
 - `returnnodeflux = false`, `returnvoltage = false`: return the node fluxes
@@ -262,14 +297,17 @@ const _DOC_RETURNS = """
     labeled axes rather than plain arrays."""
 
 const _DOC_TEMPERATURE = """
-- `temperature = 0.0`: the physical temperature in Kelvin of every
+- `temperature = 0.0`: the physical temperature in kelvin of every
     dissipative element which does not state its own, and so of the noise
-    it adds. A channel at temperature `T` carries `coth(hbar*w/(2*k*T))`
-    times its vacuum noise, which at zero temperature is the vacuum noise
-    itself. Raising it lowers the quantum efficiency and changes `Cnoise`
+    it adds. A channel at temperature `T` carries the symmetrized noise
+    `nbar + 1/2`, `nbar` its [`thermaloccupation`](@ref), which at zero
+    temperature is the vacuum's half photon. Raising it lowers the quantum
+    efficiency and changes `Cnoise`
     but leaves `Snoise` and the commutation relations alone, since those
-    describe the transformation rather than the state. The ports are
-    vacuum by definition. A component may state its own temperature
+    describe the transformation rather than the state. It does not warm
+    the ports: a port's termination states its own temperature,
+    `Port(n; termination = MatchedTermination(temperature = T))`, zero
+    unless given. A component may state its own temperature
     (`Resistor(R; temperature = T)`, or a [`ScatteringParameters`](@ref)
     with `noise = ThermalEquilibrium(T)`), and takes this default
     otherwise. A block
@@ -390,8 +428,8 @@ end
         returnQE = true, returnCM = true, returnnodeflux = false,
         returnvoltage = false, returnnodefluxadjoint = false,
         returnvoltageadjoint = false, keyedarrays = true,
-        temperature = 0.0, returnCnoise = false,
-        sensitivitynames::AbstractVector = String[],
+        temperature = 0.0, returnCnoise = false, returnVout = false,
+        returnnbar = true, sensitivitynames::AbstractVector = String[],
         sensitivityoperatingpoint = true, sensitivitymode = :auto,
         returnSsensitivity = false, factorization = nothing,
         backend = CPU())
@@ -585,6 +623,7 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
     temperature = 0.0, returnCnoise::Bool = false,
+    returnVout::Bool = false, returnnbar::Bool = true,
     sensitivitynames::AbstractVector = String[],
     sensitivitypairs::AbstractVector =
         Tuple{String,Int,Complex{Float64}}[],
@@ -713,7 +752,8 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
         returnvoltage = returnvoltage,
         returnvoltageadjoint = returnvoltageadjoint, 
         keyedarrays = keyedarrays, temperature = temperature,
-        returnCnoise = returnCnoise, sensitivitynames = sensitivitynames,
+        returnCnoise = returnCnoise, returnVout = returnVout,
+        returnnbar = returnnbar, sensitivitynames = sensitivitynames,
         sensitivitypairs = sensitivitypairtable(sensitivitypairs),
         sensitivityblockpairs = sensitivityblockpairtable(sensitivityblockpairs),
         nsensitivityparameters = nsensitivityparameters,

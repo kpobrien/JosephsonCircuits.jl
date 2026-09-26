@@ -1,26 +1,39 @@
 # Using other solvers
 
-The nonlinear system this package solves is available as an object, so a
-solver it has never heard of can drive it. The problem object needs no
-package extension: its interface is `mul!`, `ldiv!` and a handful of
-in-place functions. Two of the calls below do: [`KrylovJL`](@ref) needs
-Krylov.jl loaded, and `SciMLBase.NonlinearProblem(prob)` SciMLBase.
+The harmonic-balance problem exposes residuals, derivatives, and linear
+operators for external numerical solvers. The core interface requires no
+extension. `KrylovJL` is enabled by loading Krylov.jl, and
+`SciMLBase.NonlinearProblem(prob)` by loading SciMLBase.
+
+This page first constructs a complete problem. The optional examples below
+continue that setup and identify the extra packages they need.
 
 ## The problem object
 
-```julia
-prob = hbnonlinearproblem(wp, Nharmonics, sources, circuit, circuitdefs)
+```@example problem
+using JosephsonCircuits, LinearAlgebra
+circuit = Circuit([
+    (:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(100e-15)),
+    (:jj, 2, 0, JosephsonJunction(1e-9)), (:cj, 2, 0, Capacitor(1e-12)),
+])
+wp, Nharmonics = (2pi*4.75001e9,), (8,)
+sources = [(mode = (1,), port = 1, current = 0.002e-6)]
+prob = hbnonlinearproblem(wp, Nharmonics, sources, circuit;
+    assemblejacobian = false)
+u = zeros(length(prob))
+F = similar(u)
+hbresidual!(F, prob, u)
+@assert all(isfinite, F)
+nothing # hide
 ```
 
-builds the harmonic balance system without solving it. Pass
-`assemblejacobian = false` for a matrix-free solver, which skips building
-the real Jacobian plan. That plan holds the structure of the whole real
-Jacobian, every pair of coupled modes at every junction, which on a long
-line or a multi-tone grid is the largest object of the solve.
+`assemblejacobian=false` skips the full real-Jacobian assembly plan.
+This avoids its storage on a long circuit or a multi-tone grid. Omit it
+when the external method needs an assembled Jacobian.
 
 Everything a solver asks for is a method on `prob`:
 
-| | |
+| Interface | Operation |
 |---|---|
 | `hbresidual!(F, prob, u)` | `F(u)` |
 | `hbjvp!(Jv, prob, u, v)` | `J(u)*v`, matrix free |
@@ -31,27 +44,24 @@ Everything a solver asks for is a method on `prob`:
 | `JacobianOperator(prob, u)` | the Jacobian as a `mul!`-able operator |
 | `preconditioner(prob, u)` | the mode coupling preconditioner |
 
-The state is the **equivalent real representation**. The harmonic balance
-residual is not complex differentiable, so the implicit function theorem
-does not hold with the holomorphic Jacobian; anything relying on a Jacobian
-needs the real form. It holds the real and imaginary parts of each complex
-mode amplitude side by side, and only the real part of a self conjugate
+The state uses the **equivalent real representation**. The residual
+depends on complex coefficients and their conjugates, so exact derivatives
+use this real form. It stores the real and imaginary parts of each complex
+mode amplitude side by side, and only the real part of a self-conjugate
 mode; `JosephsonCircuits.real_to_complex(u, prob.modelayout.isreal)` and
 `JosephsonCircuits.complex_to_real(x, prob.modelayout.isreal)` convert.
-When the circuit injects direct current the unknowns are the canonical
-state instead, which carries the average node voltages as well, and
-`JosephsonCircuits.isaugmented(prob)` says so.
+A DC drive augments this state with average node voltages. Check
+`JosephsonCircuits.isaugmented(prob)` before applying the complex/real
+conversion helpers to a problem state.
 
 ## A linear solver
 
 `JacobianOperator` implements `size`, `eltype`, `mul!`, `adjoint` and
 `transpose`; the preconditioner implements `ldiv!`, `mul!` and `\`. A
-`JacobianOperator` freezes its evaluation point at construction -- one
-forward transform -- and its `mul!` pays only the product, so inside a
-Krylov loop nothing is recomputed per iteration; construct a new operator
-after moving `u` (construction is the point update). Between
-them that covers Krylov.jl, IterativeSolvers.jl, KrylovKit.jl,
-LinearSolve.jl and LinearMaps.jl.
+`JacobianOperator` freezes its evaluation point at construction. Its
+`mul!` reuses the transformed junction derivative. Construct a new operator
+after moving `u`. The following example uses Krylov.jl, which must be
+installed separately:
 
 ```julia
 using Krylov
@@ -78,8 +88,8 @@ solver, rather than writing the loop yourself:
 
 ```julia
 using Krylov
-hbsolve(ws, wp, sources, Nmod, Npump, circuit, circuitdefs;
-        method = NewtonKrylov(linearsolver = KrylovJL(:fgmres)))
+hbnlsolve(wp, Nharmonics, sources, circuit;
+    method = NewtonKrylov(linearsolver = KrylovJL(:fgmres)))
 ```
 
 `GMRES()` is the default. Only the linear solve changes: the
@@ -92,6 +102,10 @@ Pass a solver object as `method`. `NewtonKrylov()`, `Newton()` and
 `QuasiNewton()` are the built-ins; `ExternalSolver(f)` takes a root finder
 of your own, which receives the problem and the initial value and returns
 `(u, converged)`.
+
+This minimal Newton loop uses the `Krylov` and `LinearAlgebra` imports
+above. It has no line search or continuation, so it is an interface
+example rather than a robust replacement for the built-in methods.
 
 ```julia
 mysolver = ExternalSolver() do prob, u0
@@ -111,33 +125,46 @@ mysolver = ExternalSolver() do prob, u0
     return (u, norm(F) <= prob.atol)
 end
 
-hbnlsolve(wp, Nharmonics, sources, circuit, circuitdefs; method = mysolver)
+hbnlsolve(wp, Nharmonics, sources, circuit; method = mysolver)
 ```
 
 `prob.atol` is the tolerance of the solve, which the root is held to
 whatever the solver reports.
 
-With NonlinearSolve.jl, `SciMLBase.NonlinearProblem(prob)` builds a
-`NonlinearFunction` carrying the matrix-free product as `jvp` and the
-assembled Jacobian as `jac`.
+To use NonlinearSolve.jl, install and load `SciMLBase` and
+`NonlinearSolve`. Rebuild the same problem with an assembled Jacobian plan
+for a method that uses it:
+
+```julia
+using SciMLBase, NonlinearSolve
+assembled = hbnonlinearproblem(wp, Nharmonics, sources, circuit)
+external_problem = SciMLBase.NonlinearProblem(assembled)
+external_solution = NonlinearSolve.solve(external_problem)
+```
+
+The adapter provides a Jacobian-vector product and an assembled Jacobian.
+Check the external solver's termination status and the residual before
+using its root.
 
 ## Continuation
 
-`setdrive!(prob, s)` scales the drive in place. The residual is
-`B(sin(A*u)) + K*u - b` and the drive enters only through `b`, so this is
-the one parameter that can be varied without touching sparsity, plans or
-the preconditioner, and `dF/ds = -b` is exact.
+`setdrive!(prob, s)` scales the drive in place. If `b0` is the unscaled
+source vector, the residual has source term `-s*b0`, so `dF/ds=-b0`.
+Changing `s` retains the structural plans, though a preconditioner may
+need updating as the state moves.
 
-Stepping `s` from zero and carrying the converged state forward walks onto
-the driven branch, which is the reliable way to reach an operating point a
-cold solve cannot find. With BifurcationKit:
+Increase `s` from zero and carry the converged state to each new drive.
+This continuation can reach an operating point that a cold solve misses,
+but does not guarantee reaching every branch. The following BifurcationKit
+setup also requires Accessors for `@optic`:
 
 ```julia
-F(u, p) = (Fv = similar(u); drivenresidual!(Fv, prob, u, p.s); Fv)
+using BifurcationKit, Accessors
+branch_residual(u, p) = (Fv = similar(u); drivenresidual!(Fv, prob, u, p.s); Fv)
 Jmf(u, p)  = (setdrive!(prob, p.s); dx -> hbjvp!(similar(dx), prob, u, dx))
 Jadj(u, p) = (setdrive!(prob, p.s); dw -> hbvjp!(similar(dw), prob, u, dw))
 
-bp = BifurcationProblem(F, zeros(length(prob)), (s = 0.0,), (@optic _.s);
+bp = BifurcationProblem(branch_residual, zeros(length(prob)), (s = 0.0,), (@optic _.s);
     J = Jmf, Jᵗ = Jadj,
     d2F = (u,p,v,w)   -> hbd2F!(similar(u), prob, u, v, w),
     d3F = (u,p,v,w,z) -> hbd3F!(similar(u), prob, u, v, w, z))
@@ -150,47 +177,39 @@ bp = BifurcationProblem(F, zeros(length(prob)), (s = 0.0,), (@optic _.s);
     `DimensionMismatch`. `BorderingBLS` decomposes it into two `n`
     dimensional solves, where the preconditioner fits.
 
-    This matters at scale: on a travelling wave amplifier with no Jacobian
-    assembled, preconditioned matrix-free continuation reaches full drive,
-    and without a preconditioner it fails to compute even the initial
-    tangent.
+    On a large circuit, include a compatible preconditioner when comparing
+    continuation methods; an unpreconditioned failure can reflect the
+    linear solve rather than the nonlinear branch.
 
-!!! danger "Eigenvalues of the harmonic balance Jacobian are not stability"
-    `∂F/∂u` is the derivative of an *algebraic* residual, not a linearized
-    flow, so its eigenvalues have no direct physical meaning.
+!!! warning "The HB Jacobian does not determine physical stability"
+    `∂F/∂u` differentiates an algebraic residual, not the time evolution.
+    Its eigenvalues alone do not give growth or decay rates of physical
+    perturbations. Do not interpret a continuation library's dynamical
+    bifurcation labels as classifications of the pumped circuit.
 
-    Folds are real and useful: `∂F/∂u` becoming singular is exactly the
-    turning point where the solution branch loses existence, which is the
-    bistability and hysteresis of a driven parametric amplifier.
+A singular Jacobian can mark a branch degeneracy, but identifying a fold
+requires the relevant continuation conditions. Failure to converge is even
+weaker evidence: it can reflect resolution, initialization, or numerical
+work limits. `Staged()` reports its search history and possible fold
+brackets without proving nonexistence.
 
-    Anything a continuation library labels a Hopf bifurcation here is a
-    numerical artifact. The physical instability of a pumped operating
-    point is a Neimark-Sacker bifurcation of the underlying periodic orbit,
-    a Floquet question which the linearized system of [`hblinsolve`](@ref)
-    answers in a different form: it appears as a signal frequency at which
-    the linearized system matrix becomes singular, which is the parametric
-    oscillation threshold.
+Physical stability requires an analysis of perturbation dynamics, such as
+Floquet multipliers for a periodic orbit. A singular small-signal operator
+can indicate a resonant or threshold condition, but a finite real-frequency
+sweep of `hblinsolve` is not a complete stability certificate.
 
 ## Sensitivities
 
-[`designsensitivities`](@ref) differentiates the scattering parameters
-with respect to the design parameters a circuit's values are written in
-terms of, rather than with respect to its components. Every component
-whose value depends on a parameter contributes to that parameter's
-derivative, with the exact derivative of its value, and the result has
-one slot per parameter.
+[`designsensitivities`](@ref) returns derivatives with respect to named
+design parameters, combining all dependent component values by the chain
+rule. See the complete [parameter-sensitivity recipe](recipes/sensitivities.md).
 
-```julia
-out, dSdp = designsensitivities(circuit, circuitdefs, ws, wp, sources,
-    Nmodulationharmonics, Npumpharmonics; parameters = [:Ic, :Cg])
-dSdp    # (outputmode, outputport, inputmode, inputport, parameter, freqindex)
-```
-
-A scattering block has no component value to differentiate, so it states
-its derivative with respect to a parameter itself, through the
-`derivatives` keyword of [`ScatteringParameters`](@ref), and its
-contribution lands in the same slot as the lumped components of that
-parameter.
+For a scattering block, supply derivatives through the `derivatives`
+keyword of [`ScatteringParameters`](@ref). These describe the block at
+one design point; changing parameters in a circuit dictionary does not
+update numbers captured by a block's closure. Rebuild the block's data
+and derivative at a new point. The
+[line-length example](recipes/scattering-sensitivities.md) shows this interface.
 
 ## Testing
 

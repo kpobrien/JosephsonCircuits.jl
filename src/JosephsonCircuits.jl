@@ -100,7 +100,8 @@ const reduced_planck_constant = planck_constant/(2*pi)
 
 The Boltzmann constant `k_B`, 1.380649e-23 J/K, used with
 [`reduced_planck_constant`](@ref) to convert a physical temperature into
-the thermal occupation of a noise channel.
+the thermal occupation of a mode (see [`thermaloccupation`](@ref)) and a
+noise in quanta into a noise temperature (see [`noisetemperature`](@ref)).
 """
 const boltzmann_constant = 1.380649e-23
 
@@ -456,6 +457,8 @@ end
 export hbsolve, hbnlsolve, hblinsolve, compile,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     connectS, solveS
+export thermaloccupation, effectivetemperature, noisetemperature,
+    noisequanta
 
 # The `CircuitValues` expression type is internal: it is what the
 # parameters of `@params` build and what a parameterized netlist file
@@ -482,7 +485,7 @@ export FrequencyDependent, designsensitivities, designjacobian,
 
 # the typed circuit representation and its component models
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
-    Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
+    Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port, MatchedTermination,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
     ScatteringParameters, GaussianChannel, TransmissionLine, RationalScattering, VectorFitting,
     PassivityEnforcement, LinearizedScattering, Passive, Lossless,

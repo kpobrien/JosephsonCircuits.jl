@@ -956,7 +956,7 @@ import StaticArrays
         @test !isapprox(S1a,S1b)
         @test !isapprox(S2a,S2b)
 
-        # with noise, the passive covariances I - S*S' of networks given
+        # with noise, the passive covariances (I - S*S')/2 of networks given
         # without covariances follow the update: the result is the passive
         # covariance of the connected network
         passive(n) = stack([0.8 .* (X ./ opnorm(X)) for X in
@@ -973,9 +973,9 @@ import StaticArrays
         s = JosephsonCircuits.solveS!(init2...)
         for f in 1:10
             Sc, Cc = c.S[1][:, :, f], c.C[1][:, :, f]
-            @test isapprox(Cc, I - Sc*Sc'; atol = 1e-14)
+            @test isapprox(Cc, (I - Sc*Sc')/2; atol = 1e-14)
             Ss, Cs = s.S[:, :, f], s.C[:, :, f]
-            @test isapprox(Cs, I - Ss*Ss'; atol = 1e-13)
+            @test isapprox(Cs, (I - Ss*Ss')/2; atol = 1e-13)
         end
     end
 

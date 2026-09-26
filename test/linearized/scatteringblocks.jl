@@ -1602,12 +1602,14 @@ end
     # falls by exactly the occupation of the channels
     for T in (0.1, 1.0, 4.0)
         warm = run(plain; temperature = T)
-        f = JosephsonCircuits.thermaloccupation(w0, T)
+        f = 2thermaloccupation(w0, T) + 1
         @test warm.Snoise == cold.Snoise
         @test isapprox(warm.CM[1,1], 1.0; atol = 1e-12)
         @test warm.QE[1,1,1] < cold.QE[1,1,1]
-        # the quantum efficiency is the signal over the signal plus the
-        # noise, and only the noise term carries the occupation
+        # the quantum efficiency is the signal over twice the noise at the
+        # output: half a photon from every input, and `nbar + 1/2` from
+        # every channel, `f/2`, which is the only term the temperature
+        # moves
         sig = sum(abs2, cold.S[1,:,1])
         nz = sum(abs2, cold.Snoise[:,1,1])
         @test isapprox(warm.QE[1,1,1],
@@ -1657,9 +1659,10 @@ end
 
 @testset "the added noise covariance" begin
     # `Cnoise` is the `Y` of the Gaussian channel whose `X` is `S`: the
-    # circuit takes an input covariance to `S sigma S' + Cnoise`. It is
-    # where the temperature enters, `Snoise` supplying the transformation
-    # and the occupation of each channel the state.
+    # circuit takes an input covariance to `S sigma S' + Cnoise`, the
+    # vacuum being `sigma = I/2`. It is where the temperature enters,
+    # `Snoise` supplying the transformation and the symmetrized noise
+    # `nbar + 1/2` of each channel the state.
     Z0 = 50.0
     w0 = 2*pi*5.0e9
     wsc = [w0]
@@ -1681,7 +1684,7 @@ end
         o = run(temperature = T)
         C = o.Cnoise[:,:,1]
         Sn = o.Snoise[:,:,1]
-        f = JosephsonCircuits.thermaloccupation(w0, T)
+        f = thermaloccupation(w0, T) + 1/2
         # the definition
         want = [sum(f*Sn[c,i]*conj(Sn[c,j]) for c in axes(Sn,1))
             for i in axes(Sn,2), j in axes(Sn,2)]
@@ -1695,20 +1698,22 @@ end
                 rtol = 1e-12)
         end
         # with one mode at a positive frequency the commutation relations
-        # are the signal plus that diagonal, at zero temperature
+        # are the signal plus twice that diagonal, at zero temperature,
+        # where each channel carries the vacuum's half photon
         if iszero(T)
             for i in axes(C, 1)
                 @test isapprox(o.CM[i,1],
-                    sum(abs2, o.S[i,:,1]) + real(C[i,i]); rtol = 1e-10)
+                    sum(abs2, o.S[i,:,1]) + 2real(C[i,i]); rtol = 1e-10)
             end
         end
     end
-    # the covariance scales with the occupation while Snoise does not
+    # the covariance scales with the channels' noise, `2nbar + 1` times
+    # the vacuum's, while Snoise does not
     cold = run()
     warm = run(temperature = 1.0)
     @test warm.Snoise == cold.Snoise
     @test isapprox(warm.Cnoise,
-        JosephsonCircuits.thermaloccupation(w0, 1.0)*cold.Cnoise;
+        (2thermaloccupation(w0, 1.0) + 1)*cold.Cnoise;
         rtol = 1e-12)
     # a block states its own temperature and only its channels warm
     stated = hblinsolve(wsc, mkc(4.0); keyedarrays = false,
@@ -1721,7 +1726,8 @@ end
     # asked for on its own it is the same covariance: the adjoint solve
     # it needs runs whether or not another output also needs it
     alone = hblinsolve(wsc, mkc(nothing); keyedarrays = false,
-        returnCnoise = true, returnQE = false, returnCM = false)
+        returnCnoise = true, returnQE = false, returnCM = false,
+        returnnbar = false)
     @test isapprox(alone.Cnoise, cold.Cnoise; rtol = 1e-12)
     # and keyed, it carries the frequency axis like S
     two = hblinsolve(vcat(wsc, 1.05 .* wsc), mkc(nothing);
@@ -1735,12 +1741,13 @@ end
     # An active block, an amplifier given by its scattering parameters,
     # states the noise it adds with a NoiseCovariance V, in the units of
     # Cnoise. With K = I - S S' the noise has the commutator K, so V is
-    # realizable only when V - K and V + K are positive semidefinite,
-    # and the block carries the channels of both kinds: (V + K)/2 of
-    # those which emit like modes and (V - K)/2 of those which emit like
-    # their conjugates, which enter the commutation relations with the
-    # opposite sign. Their sum is the noise the block states and their
-    # difference K, so the commutation relations come back to one.
+    # realizable only when V - K/2 and V + K/2 are positive semidefinite,
+    # and the block carries the channels of both kinds: V + K/2 of those
+    # which emit like modes and V - K/2 of those which emit like their
+    # conjugates, which enter the commutation relations with the
+    # opposite sign. Each carries the vacuum's half photon, so the block
+    # adds half their sum, the noise it states, and their difference is
+    # K, so the commutation relations come back to one.
     Z0 = 50.0
     w0 = 2*pi*[5.0e9]
     two(x) = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:x, 1, 2, x),
@@ -1749,19 +1756,20 @@ end
         returnSnoise = true, returnCnoise = true, returnQE = true,
         returnCM = true, kw...)
     # a quantum limited amplifier of power gain G: its output port has
-    # K[2,2] = 1 - G, so it must emit at least G - 1 there, and its
+    # K[2,2] = 1 - G, so it must emit at least (G - 1)/2 there, and its
     # input, a perfect absorber, emits the vacuum backward
     for G in (2.0, 100.0, 1.0e4)
         S = [0.0 0.0; sqrt(G) 0.0]
         amp = ScatteringParameters(S; zref = Z0,
-            noise = NoiseCovariance([1.0 0.0; 0.0 G - 1]), dcmodel = OpenDC())
+            noise = NoiseCovariance([0.5 0.0; 0.0 (G - 1)/2]), dcmodel = OpenDC())
         o = run(two(amp))
         @test isapprox(abs2(o.S[2, 1, 1]), G; rtol = 1e-12)
         @test isapprox(o.CM, [1.0, 1.0]; atol = 1e-12*G)
-        # the total noise at the output is 2G - 1 vacua, half a photon
-        # referred to the input, which is the ideal quantum efficiency
-        Nout = sum(abs2, o.S[2, :, 1]) + real(o.Cnoise[2, 2, 1])
-        @test isapprox(Nout, 2G - 1; rtol = 1e-12)
+        # the noise at the output is G - 1/2 quanta, the signal's vacuum
+        # amplified and the amplifier's (G - 1)/2, half a photon referred
+        # to the input, which is the ideal quantum efficiency
+        vout = sum(abs2, o.S[2, :, 1])/2 + real(o.Cnoise[2, 2, 1])
+        @test isapprox(vout, G - 1/2; rtol = 1e-12)
         @test isapprox(o.QE[2, 1, 1], G/(2G - 1); rtol = 1e-12)
         @test isapprox(o.QE[2, 1, 1],
             JosephsonCircuits.calcqeideal(o.S[:, :, 1])[2, 1]; rtol = 1e-12)
@@ -1769,42 +1777,43 @@ end
         @test size(o.Snoise, 1) == 4
     end
     keyed = hblinsolve(w0, two(ScatteringParameters([0.0 0.0; 3.0 0.0];
-        zref = Z0, noise = NoiseCovariance([1.0 0.0; 0.0 8.0]))); returnSnoise = true)
+        zref = Z0, noise = NoiseCovariance([0.5 0.0; 0.0 4.0]))); returnSnoise = true)
     @test collect(JosephsonCircuits.AxisKeys.axiskeys(keyed.Snoise, 2)) ==
         ["x/port1#1", "x/port1#2", "x/port1#1'", "x/port1#2'"]
 
     # an amplifier with an input referred added noise of nadd photons
-    # states V[2,2] = 2 G nadd, and behind a cold attenuator of
+    # states V[2,2] = G nadd, and behind a cold attenuator of
     # transmission eta the noise referred to the attenuator's input is
     # the Friis cascade, nadd/eta plus the attenuator's own
     # (1 - eta)/(2 eta)
     G, nadd, eta = 400.0, 7.0, 0.5
     hemt = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = Z0,
-        noise = NoiseCovariance([1.0 0.0; 0.0 2G*nadd]), dcmodel = OpenDC())
+        noise = NoiseCovariance([0.5 0.0; 0.0 G*nadd]), dcmodel = OpenDC())
     att = ScatteringParameters([0.0 sqrt(eta); sqrt(eta) 0.0]; zref = Z0)
     chain = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:att, 1, 2, att),
         (:hemt, 2, 3, hemt), (:p2, 3, 0, Port(2; Z0 = Z0))])
     o = run(chain)
     Gtot = abs2(o.S[2, 1, 1])
     @test isapprox(Gtot, eta*G; rtol = 1e-12)
-    Nout = sum(abs2, o.S[2, :, 1]) + real(o.Cnoise[2, 2, 1])
-    @test isapprox((Nout/Gtot - 1)/2, nadd/eta + (1 - eta)/(2eta); rtol = 1e-12)
+    vout = sum(abs2, o.S[2, :, 1])/2 + real(o.Cnoise[2, 2, 1])
+    @test isapprox(vout/Gtot - 1/2, nadd/eta + (1 - eta)/(2eta); rtol = 1e-12)
     @test isapprox(o.CM, [1.0, 1.0]; atol = 1e-10)
     # the amplifier's channels carry no temperature: the analysis
-    # temperature warms the attenuator and nothing else
+    # temperature warms the attenuator and nothing else, whose loss adds
+    # its nbar photons amplified
     warm = run(chain; temperature = 1.0)
-    f = JosephsonCircuits.thermaloccupation(w0[1], 1.0)
-    Nwarm = sum(abs2, warm.S[2, :, 1]) + real(warm.Cnoise[2, 2, 1])
-    @test isapprox(Nwarm - Nout, (1 - eta)*G*(f - 1); rtol = 1e-10)
+    n = thermaloccupation(w0[1], 1.0)
+    vwarm = sum(abs2, warm.S[2, :, 1])/2 + real(warm.Cnoise[2, 2, 1])
+    @test isapprox(vwarm - vout, (1 - eta)*G*n; rtol = 1e-10)
     @test isapprox(warm.CM, [1.0, 1.0]; atol = 1e-10)
 
     # a passive block in equilibrium is the stated covariance
-    # V = coth(hbar w/2kT) K, whether V is given as a callable, as a
-    # table, or as a constant at one frequency
+    # V = (nbar + 1/2) K, whether V is given as a callable, as a table,
+    # or as a constant at one frequency
     T = 0.3
     Sp = ComplexF64[0.2 0.5im; 0.6 0.1]
     Kp = I - Sp*Sp'
-    Vf(w) = JosephsonCircuits.thermaloccupation(w, T) .* Kp
+    Vf(w) = (thermaloccupation(w, T) + 1/2) .* Kp
     ws2 = 2*pi*[3.0e9, 5.0e9, 8.0e9]
     run2(c) = hblinsolve(ws2, c; keyedarrays = false, returnSnoise = true,
         returnCnoise = true, returnQE = true, returnCM = true)
@@ -1822,7 +1831,7 @@ end
         # occupation, so they vanish in the vacuum and not otherwise
         @test sum(abs2, o.Snoise[3:4, :, :]) > 0
     end
-    cold = run2(two(ScatteringParameters(Sp; zref = Z0, noise = NoiseCovariance(Matrix(Kp)))))
+    cold = run2(two(ScatteringParameters(Sp; zref = Z0, noise = NoiseCovariance(Matrix(Kp)/2))))
     @test isapprox(cold.Cnoise,
         run2(two(ScatteringParameters(Sp; zref = Z0))).Cnoise; rtol = 1e-12)
     @test sum(abs2, cold.Snoise[3:4, :, :]) < 1e-24
@@ -1837,12 +1846,13 @@ end
     @test ScatteringParameters(Sp; zref = Z0,
         noise = NoiseCovariance((ftab, 0.5 .* Vtab), atol = 1.0)) isa ScatteringParameters
     starved = ScatteringParameters([0.0 0.0; 10.0 0.0]; zref = Z0,
-        noise = NoiseCovariance(constS(ComplexF64[1 0; 0 98])))
+        noise = NoiseCovariance(constS(ComplexF64[0.5 0; 0 49])))
     @test_throws ArgumentError run(two(starved))
     # and without noise outputs too: a block is refused on what it
     # declares, not on the outputs asked of the solve
     @test_throws ArgumentError hblinsolve(w0, two(starved);
-        keyedarrays = false, returnQE = false, returnCM = false)
+        keyedarrays = false, returnQE = false, returnCM = false,
+        returnnbar = false)
 
     # a pumped amplifier read out through a circulator by such a block:
     # every output mode obeys the commutation relations, signed by its
@@ -1863,14 +1873,15 @@ end
     @test all(x -> isapprox(abs(x), 1.0; atol = 1e-8), both.linearized.CM)
     Ga = abs2(alone.linearized.S((0,), 1, (0,), 1, 1))
     # the noise leaving the signal mode of a port: every input mode of
-    # every port in its vacuum, plus what the circuit adds there
-    Na = sum(abs2(alone.linearized.S((0,), 1, (m,), 1, 1)) for m in -8:2:8) +
+    # every port in its vacuum, half a photon each, plus what the circuit
+    # adds there
+    va = sum(abs2(alone.linearized.S((0,), 1, (m,), 1, 1)) for m in -8:2:8)/2 +
         real(alone.linearized.Cnoise((0,), 1, (0,), 1, 1))
     Gb = abs2(both.linearized.S((0,), 2, (0,), 1, 1))
-    Nb = sum(abs2(both.linearized.S((0,), 2, (m,), p, 1)) for m in -8:2:8, p in 1:2) +
+    vb = sum(abs2(both.linearized.S((0,), 2, (m,), p, 1)) for m in -8:2:8, p in 1:2)/2 +
         real(both.linearized.Cnoise((0,), 2, (0,), 2, 1))
     @test isapprox(Gb, G*Ga; rtol = 1e-8)
-    @test isapprox((Nb/Gb - 1)/2, (Na/Ga - 1)/2 + nadd/Ga; rtol = 1e-8)
+    @test isapprox(vb/Gb - 1/2, va/Ga - 1/2 + nadd/Ga; rtol = 1e-8)
 end
 
 @testset "unsupported cases still error clearly" begin
@@ -2310,7 +2321,7 @@ end
         jpa = [(:cc, 2, 3, Capacitor(100.0e-15)), (:jj, 3, 0, JosephsonJunction(1000.0e-12)),
             (:cj, 3, 0, Capacitor(1000.0e-15))]
         pad = LinearizedScattering([Sp], 2pi*fp; harmonics = [0], nports = 2, zref = Z0,
-            noise = NoiseCovariance([Matrix{ComplexF64}((1 - g^2)*I, 2, 2)]))
+            noise = NoiseCovariance([Matrix{ComplexF64}((1 - g^2)/2*I, 2, 2)]))
         solve(c) = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,),
             Circuit(vcat([(:p1, 1, 0, Port(1; Z0 = Z0))], c, jpa)); returnCnoise = true, keyedarrays = false)
         block = solve([(:pad, 1, 2, pad)])
@@ -2420,7 +2431,7 @@ end
     # a short, an attenuator stating the noise of its loss, and an
     # amplifier stating its noise, against the same as scattering
     # parameters
-    for (H0, V) in ((fill(-1.0, 1, 1), nothing), (fill(0.5, 1, 1), fill(0.75, 1, 1)), (fill(2.0, 1, 1), fill(3.0, 1, 1)))
+    for (H0, V) in ((fill(-1.0, 1, 1), nothing), (fill(0.5, 1, 1), fill(0.375, 1, 1)), (fill(2.0, 1, 1), fill(1.5, 1, 1)))
         b = LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
             noise = isnothing(V) ? Lossless() : NoiseCovariance([V]))
         r = ScatteringParameters(H0; zref = Z0, noise = isnothing(V) ? Lossless() : NoiseCovariance(V))
@@ -2432,14 +2443,15 @@ end
     # a block with very little loss emits very little noise, not none
     delta = 1e-9
     b = LinearizedScattering([fill(sqrt(1 - delta), 1, 1), zero1], wp; harmonics = [0, 1], nports = 1, zref = Z0,
-        noise = NoiseCovariance([fill(delta, 1, 1), zero1]))
+        noise = NoiseCovariance([fill(delta/2, 1, 1), zero1]))
     o = hbsolve([2pi*0.4e9], (wp,), [], (2,), (4,), one(b); keyedarrays = false, returnCnoise = true, threewavemixing = true)
-    @test all(m -> abs(o.linearized.Cnoise[m, m, 1] - delta) < 1e-3*delta, axes(o.linearized.Cnoise, 1))
-    # the factors of a stated covariance reconstruct it and the commutator
+    @test all(m -> abs(o.linearized.Cnoise[m, m, 1] - delta/2) < 1e-3*delta/2, axes(o.linearized.Cnoise, 1))
+    # the factors of a stated covariance, each channel carrying the
+    # vacuum's half photon, reconstruct it and the commutator
     V = [3.0 0.5im; -0.5im 2.0]
     K = [1.0 0.2; 0.2 -1.5]
-    L, M = JC.psdfactor((V + K)/2), JC.psdfactor((V - K)/2)
-    @test L*L' + M*M' ≈ V atol = 1e-12
+    L, M = JC.psdfactor(V + K/2), JC.psdfactor(V - K/2)
+    @test (L*L' + M*M')/2 ≈ V atol = 1e-12
     @test L*L' - M*M' ≈ K atol = 1e-12
     # a declared lossless block is checked over the modes of the solve,
     # whatever outputs the solve is asked for
@@ -2449,7 +2461,7 @@ end
     # itself, so that the refusal is the declaration's and not the
     # harmonic map's
     gain = LinearizedScattering([constS(fill(2.0 + 0im, 1, 1))], wp; harmonics = [0], nports = 1, zref = Z0)
-    @test_throws ArgumentError hblinsolve([0.4wp], one(gain); returnQE = false, returnCM = false, returnCnoise = false, returnSnoise = false)
+    @test_throws ArgumentError hblinsolve([0.4wp], one(gain); returnQE = false, returnCM = false, returnnbar = false, returnCnoise = false, returnSnoise = false)
     # a completed covariance is checked for finite, Hermitian entries
     # where it is stated: the completion repairs a covariance and does
     # not stand in for one
@@ -2503,13 +2515,13 @@ end
         @test_throws ArgumentError RationalScattering(LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0, noise), 2; frequencies = fsfit)
     end
     valid = RationalScattering(LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
-        noise = NoiseCovariance([fill(3.0, 1, 1)])), 2; frequencies = fsfit)
+        noise = NoiseCovariance([fill(1.5, 1, 1)])), 2; frequencies = fsfit)
     @test valid.atol == 1e-6
     ov = hblinsolve([0.4wp], one(valid); keyedarrays = false, returnCnoise = true)
-    @test abs(ov.Cnoise[1, 1, 1] - 3) < 1e-9 && abs(abs(ov.CM[1, 1]) - 1) < 1e-9
+    @test abs(ov.Cnoise[1, 1, 1] - 1.5) < 1e-9 && abs(abs(ov.CM[1, 1]) - 1) < 1e-9
     # a covariance's own tolerance admits the data as the solve does
     close = LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
-        noise = NoiseCovariance([fill(3.0 - 1e-4, 1, 1)]; atol = 1e-3))
+        noise = NoiseCovariance([fill(1.5 - 1e-4, 1, 1)]; atol = 1e-3))
     @test RationalScattering(close, 2; frequencies = fsfit).noise.atol == 1e-3
     # a sample at which the response is zero is data, a notch, and a
     # notch is not lossless
@@ -2530,7 +2542,7 @@ end
     @test coarse.atol == 1e-6 && coarse.noise isa NoiseCovariance && coarse.noise.completed
     oc = hblinsolve([0.4wp], one(coarse); keyedarrays = false, returnCnoise = true)
     @test abs(abs(oc.CM[1, 1]) - 1) < 1e-9
-    @test real(oc.Cnoise[1, 1, 1]) ≈ 1 - abs2(oc.S[1, 1, 1]) atol = 1e-9
+    @test real(oc.Cnoise[1, 1, 1]) ≈ (1 - abs2(oc.S[1, 1, 1]))/2 atol = 1e-9
     fine = RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 3; frequencies = fswide)
     of = hblinsolve([0.4wp], one(fine); keyedarrays = false, returnCnoise = true)
     @test abs(abs(of.CM[1, 1]) - 1) < 1e-9 && abs(of.Cnoise[1, 1, 1]) < 1e-2
@@ -2655,7 +2667,7 @@ end
     # requires: a tabulated export solved with more sidebands than its
     # data holds, and one whose modes lie wholly outside it
     exported = LinearizedScattering(sidebands, wp; noise = NoiseCovariance(sidebands.Cnoise; completed = true))
-    for (w, keep, expected) in ((0.4wp, 2, [1.0, 10.0, 10.0, 10.0, 1.0]), (7.4wp, 1, [1.0, 1.0, 1.0]))
+    for (w, keep, expected) in ((0.4wp, 2, [0.5, 10.0, 10.0, 10.0, 0.5]), (7.4wp, 1, [0.5, 0.5, 0.5]))
         hw = hbsolve([w], (wp,), [], (keep,), (2,), one(exported); threewavemixing = true, returnCnoise = true).linearized
         @test all(x -> abs(abs(x) - 1) < 1e-8, Array(hw.CM))
         @test [real(hw.Cnoise((k,), 1, (k,), 1, 1)) for k in -keep:keep] ≈ expected atol = 1e-8

@@ -614,9 +614,9 @@ using Test
         zref = 50.0, dcmodel = JC.ScatteringDC([1.4 0.0; 0.0 1.4]))
     @test_throws ArgumentError RationalScattering(zeros(0, 0), zeros(0, 2), zeros(2, 0), [0.0 0.0; 3.0 0.0]; zref = 50.0)
     @test RationalScattering(zeros(0, 0), zeros(0, 2), zeros(2, 0), [0.0 0.0; 3.0 0.0]; zref = 50.0,
-        noise = JC.NoiseCovariance([1.0 0.0; 0.0 8.0])) isa ScatteringParameters
+        noise = JC.NoiseCovariance([0.5 0.0; 0.0 4.0])) isa ScatteringParameters
     # An amplifier whose gain rolls off, stating the noise a quantum
-    # limited one has, |I - S S'|, and its active value at zero
+    # limited one has, |I - S S'|/2, and its active value at zero
     # frequency, is fitted as it is, without the passivity enforcement,
     # which could not meet the statement, and without the validation:
     # the fit is stable, meets the statement exactly, has the gain of
@@ -624,7 +624,7 @@ using Test
     # asked for.
     w0, g0 = 2pi*8e9, 10.0
     amp(w) = [0.0 0.0; g0*w0/(w0 + im*w) 0.0]
-    ampnoise(w) = (K = I - amp(w)*amp(w)'; [abs(K[1, 1]) 0.0; 0.0 abs(K[2, 2])])
+    ampnoise(w) = (K = I - amp(w)*amp(w)'; [abs(K[1, 1])/2 0.0; 0.0 abs(K[2, 2])/2])
     ampdata = ScatteringParameters(amp; nports = 2, zref = 50.0, noise = JC.NoiseCovariance(ampnoise),
         dcmodel = JC.ScatteringDC([0.0 0.0; g0 0.0]))
     ampfs = collect(range(0.1e9, 40e9; length = 300))
@@ -844,7 +844,7 @@ end
     # The cable's gain reaches one at zero frequency, so a covariance
     # which is to be one the block can emit over the whole band needs
     # its diagonal above what the commutator asks there
-    C = [2.0 0.5; 0.5 2.0]
+    C = [1.0 0.25; 0.25 1.0]
     stated = ScatteringParameters(cable; nports = 2, zref = 50.0,
         noise = NoiseCovariance((2pi .* fs, repeat(complex(C), 1, 1, length(fs)))))
     even = RationalScattering(stated, 4; frequencies = fs, delays = taus, passivity = nothing)

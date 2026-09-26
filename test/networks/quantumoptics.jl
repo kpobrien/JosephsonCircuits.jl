@@ -122,24 +122,39 @@ using Test
         @test all(JosephsonCircuits.is_cptp_ladder_block(
             JosephsonCircuits.rand_bogoliubov_block(n), complex(Z)) for trial in 1:20)
 
-        # a phase-insensitive amplifier of gain G, X = sqrt(G)*I, is CPTP
-        # when it adds at least the noise Y = (G-1)*I of the Caves limit,
-        # the same in the quadrature and the ladder bases
-        G = 3.0
-        X = sqrt(G) * Matrix(1.0I, 2n, 2n)
-        for is_cptp_form in (JosephsonCircuits.is_cptp_quadrature_pair,
-                JosephsonCircuits.is_cptp_quadrature_block,
-                JosephsonCircuits.is_cptp_ladder_pair,
-                JosephsonCircuits.is_cptp_ladder_block)
-            @test is_cptp_form(X, (G - 1) * Matrix(1.0I, 2n, 2n))
-            @test !is_cptp_form(X, (G - 1) / 2 * Matrix(1.0I, 2n, 2n))
+        # pure loss of transmission η, X = sqrt(η)*I, and the quantum limited
+        # phase preserving amplifier of gain G, X = sqrt(G)*I, are CPTP with
+        # the noise (1 - η)*(hbar/2)*I and (G - 1)*(hbar/2)*I (the Caves
+        # limit) and not below it, in either order and at either hbar, and
+        # in the ladder basis at its vacuum I/2; Ymin_from_X is that noise
+        η, G = 0.3, 3.0
+        Id = Matrix(1.0I, 2n, 2n)
+        for (X, N) in ((sqrt(η) * Id, (1 - η) * Id), (sqrt(G) * Id, (G - 1) * Id))
+            for hbar in (1, 2)
+                Y = (hbar / 2) * N
+                for is_cptp_form in (JosephsonCircuits.is_cptp_quadrature_pair,
+                        JosephsonCircuits.is_cptp_quadrature_block)
+                    @test is_cptp_form(X, Y; hbar = hbar)
+                    @test !is_cptp_form(X, 0.99 * Y; hbar = hbar)
+                end
+                @test JosephsonCircuits.Ymin_from_X_quadrature_pair(X; hbar = hbar) ≈ Y
+                @test JosephsonCircuits.Ymin_from_X_quadrature_block(X; hbar = hbar) ≈ Y
+            end
+            for is_cptp_form in (JosephsonCircuits.is_cptp_ladder_pair,
+                    JosephsonCircuits.is_cptp_ladder_block)
+                @test is_cptp_form(X, N / 2)
+                @test !is_cptp_form(X, 0.99 * N / 2)
+            end
         end
 
         # the tolerances can be given: a violation of 1e-6 is refused at an
         # absolute tolerance below it and accepted at one above it
-        Y = (G - 1 - 1e-6) * Matrix(1.0I, 2n, 2n)
+        X = sqrt(G) * Id
+        Y = ((G - 1) / 2 - 1e-6) * Id
         @test !JosephsonCircuits.is_cptp_quadrature_pair(X, Y; atol = 1e-8)
         @test JosephsonCircuits.is_cptp_quadrature_pair(X, Y; atol = 1e-4)
+
+        @test_throws ArgumentError JosephsonCircuits.is_cptp_quadrature_pair(X, Y; hbar = 0)
 
     end
 
@@ -990,8 +1005,9 @@ using Test
         A = S0[1:2*nsys, 1:2*nsys]
         B = S0[1:2*nsys, 2*nsys+1:end]
 
+        # the noise of the environment in the vacuum, I/2 at hbar = 1
         X = A
-        Y = B * B'
+        Y = B * B' / 2
         B1 = JosephsonCircuits.B_from_X_Y_quadrature_pair(X, Y)
         S1 = JosephsonCircuits.A_B_to_symplectic_pair(A, B1)
         @test JosephsonCircuits.is_symplectic_pair(S1)
@@ -1004,30 +1020,56 @@ using Test
     @testset "B_from_X_Y_quadrature_block" begin
 
         @test_throws(
-            ErrorException,
+            ArgumentError,
             JosephsonCircuits.B_from_X_Y_quadrature_block([1.0 0;0 1],[1.0 0;0 -1]),
         )
+
+        # rounding about a noiseless map is judged to one tolerance by the
+        # check and by the dilation: within it the map is the identity with
+        # no noise, beyond it the map is refused by both
+        X = Matrix(1.0I, 2, 2)
+        for hbar in (1, 2)
+            @test JosephsonCircuits.is_cptp_quadrature_block(X, -1e-12 * X; hbar, atol = 1e-10)
+            @test iszero(JosephsonCircuits.B_from_X_Y_quadrature_block(X, -1e-12 * X; hbar, atol = 1e-10))
+            @test JosephsonCircuits.X_Y_to_symplectic_block(X, -1e-12 * X; hbar, atol = 1e-10)[[1, 4], [1, 4]] ≈ X
+            @test !JosephsonCircuits.is_cptp_quadrature_block(X, -1e-8 * X; hbar, atol = 1e-10)
+            @test_throws(ArgumentError,
+                JosephsonCircuits.B_from_X_Y_quadrature_block(X, -1e-8 * X; hbar, atol = 1e-10))
+        end
+
+        # an amplifier of gain G with less noise than the Caves limit
+        # (G - 1)*(hbar/2)*I is not CPTP, and no B realizes it
+        G = 3.0
+        X = sqrt(G) * Matrix(1.0I, 2, 2)
+        for hbar in (1, 2)
+            @test_throws(ArgumentError,
+                JosephsonCircuits.B_from_X_Y_quadrature_block(X,
+                    0.9 * (G - 1) * (hbar / 2) * Matrix(1.0I, 2, 2); hbar = hbar))
+        end
     end
 
     # the matrix S of the system and its environment realizes the map: its
     # block on the system is X, and the environment in the vacuum, whose
-    # covariance is the identity, adds the noise B*B' = Y through its block
-    # B from the environment to the system
+    # covariance is (hbar/2)*I, adds the noise (hbar/2)*B*B' = Y through its
+    # block B from the environment to the system; in the ladder basis the
+    # vacuum is I/2
 
     @testset "X_Y_to_symplectic_pair" begin
 
-        X = rand(Float64,4,4)
-        Y = JosephsonCircuits.Ymin_from_X_quadrature_pair(X)
-        S = JosephsonCircuits.X_Y_to_symplectic_pair(X,Y)
-        @test JosephsonCircuits.is_symplectic_pair(S)
-        @test S[1:4, 1:4] == X
-        @test isapprox(S[1:4, 5:end] * S[1:4, 5:end]', Y)
+        for hbar in (1, 2)
+            X = rand(Float64,4,4)
+            Y = JosephsonCircuits.Ymin_from_X_quadrature_pair(X; hbar = hbar)
+            S = JosephsonCircuits.X_Y_to_symplectic_pair(X, Y; hbar = hbar)
+            @test JosephsonCircuits.is_symplectic_pair(S)
+            @test S[1:4, 1:4] == X
+            @test isapprox((hbar / 2) * S[1:4, 5:end] * S[1:4, 5:end]', Y)
 
-        X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(2)
-        S = JosephsonCircuits.X_Y_to_symplectic_pair(X,Y)
-        @test JosephsonCircuits.is_symplectic_pair(S)
-        @test S[1:4, 1:4] == X
-        @test isapprox(S[1:4, 5:end] * S[1:4, 5:end]', Y)
+            X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(2; hbar = hbar)
+            S = JosephsonCircuits.X_Y_to_symplectic_pair(X, Y; hbar = hbar)
+            @test JosephsonCircuits.is_symplectic_pair(S)
+            @test S[1:4, 1:4] == X
+            @test isapprox((hbar / 2) * S[1:4, 5:end] * S[1:4, 5:end]', Y)
+        end
 
     end
 
@@ -1037,18 +1079,20 @@ using Test
         sys = [1:2; 7:8]
         env = setdiff(1:12, sys)
 
-        X = rand(Float64,4,4)
-        Y = JosephsonCircuits.Ymin_from_X_quadrature_block(X)
-        S = JosephsonCircuits.X_Y_to_symplectic_block(X,Y)
-        @test JosephsonCircuits.is_symplectic_block(S)
-        @test S[sys, sys] == X
-        @test isapprox(S[sys, env] * S[sys, env]', Y)
+        for hbar in (1, 2)
+            X = rand(Float64,4,4)
+            Y = JosephsonCircuits.Ymin_from_X_quadrature_block(X; hbar = hbar)
+            S = JosephsonCircuits.X_Y_to_symplectic_block(X, Y; hbar = hbar)
+            @test JosephsonCircuits.is_symplectic_block(S)
+            @test S[sys, sys] == X
+            @test isapprox((hbar / 2) * S[sys, env] * S[sys, env]', Y)
 
-        X, Y = JosephsonCircuits.rand_cptp_quadrature_block(2)
-        S = JosephsonCircuits.X_Y_to_symplectic_block(X,Y)
-        @test JosephsonCircuits.is_symplectic_block(S)
-        @test S[sys, sys] == X
-        @test isapprox(S[sys, env] * S[sys, env]', Y)
+            X, Y = JosephsonCircuits.rand_cptp_quadrature_block(2; hbar = hbar)
+            S = JosephsonCircuits.X_Y_to_symplectic_block(X, Y; hbar = hbar)
+            @test JosephsonCircuits.is_symplectic_block(S)
+            @test S[sys, sys] == X
+            @test isapprox((hbar / 2) * S[sys, env] * S[sys, env]', Y)
+        end
 
     end
 
@@ -1058,7 +1102,7 @@ using Test
         S = JosephsonCircuits.X_Y_to_bogoliubov_pair(X,Y)
         @test JosephsonCircuits.is_bogoliubov_pair(S)
         @test isapprox(S[1:4, 1:4], X)
-        @test isapprox(S[1:4, 5:end] * S[1:4, 5:end]', Y)
+        @test isapprox(S[1:4, 5:end] * S[1:4, 5:end]' / 2, Y)
 
     end
 
@@ -1070,7 +1114,7 @@ using Test
         S = JosephsonCircuits.X_Y_to_bogoliubov_block(X,Y)
         @test JosephsonCircuits.is_bogoliubov_block(S)
         @test isapprox(S[sys, sys], X)
-        @test isapprox(S[sys, env] * S[sys, env]', Y)
+        @test isapprox(S[sys, env] * S[sys, env]' / 2, Y)
 
     end
 

@@ -8,7 +8,8 @@
         fourwavemixing = true, maxharmonics = Nmodulationharmonics,
         maxintermodorder = Inf, nbatches = Base.Threads.nthreads(),
         returnS = true, returnSnoise = false,
-        returnCnoise = false, returnQE = true, returnCM = true,
+        returnCnoise = false, returnVout = false, returnQE = true,
+        returnCM = true, returnnbar = true,
         returnnodeflux = false, returnnodefluxadjoint = false,
         returnvoltage = false, returnvoltageadjoint = false,
         keyedarrays = true, temperature = 0.0,
@@ -326,6 +327,7 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
     returnnodefluxadjoint::Bool = false, returnvoltage::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
     temperature = 0.0, returnCnoise::Bool = false,
+    returnVout::Bool = false, returnnbar::Bool = true,
     sensitivitynames::AbstractVector = String[],
     sensitivitypairs::Vector{Tuple{String,Int,ComplexF64}} =
         Tuple{String,Int,ComplexF64}[],
@@ -353,7 +355,8 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
     # over the frequencies, and the outputs. A stage is compiled again only
     # when what it depends on changes, and the operating point, the
     # sensitivity arrays and the requested outputs each reach one stage.
-    wantsnoise = returnSnoise || returnQE || returnCM || returnCnoise
+    wantsnoise = returnSnoise || returnQE || returnCM || returnCnoise ||
+        returnnbar || returnVout
     s = linearizedsetup(w, psc, vvn, signalfreq, nonlinear,
         factorization, backend, temperature,
         String[String(n) for n in sensitivitynames],
@@ -367,7 +370,8 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
         sensitivityindices, stampgrouping, stampslots, Nports, bnm,
         noiseportimpedanceindices, ssys, lsys, factorization, refine,
         noiseplan, Nnoisechannels, channeltemperatures, channelsigns,
-        noiseportimpedances, pumpfactorization, ondevice) = s
+        noiseportimpedances, pumpfactorization, ondevice,
+        porttemperatures) = s
     sens = linearizedsensitivity(; psc, nonlinear, sensitivitynodeflux,
         sensitivityresidual, sensitivitypairs, sensitivityblockpairs,
         Nsignalmodes, signalnm, phimatrix, coupledbranches,
@@ -401,16 +405,18 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
         noiseplan, Nnoisechannels, channeltemperatures, channelsigns,
         noiseportimpedances, sensitivitystamps, sensitivityblockentries,
         sensitivitydAop, sensitivityreverse, ondevice, returnS, returnSnoise,
-        returnCnoise, returnSsensitivity, returnQE, returnCM, returnnodeflux,
-        returnnodefluxadjoint, returnvoltage, returnvoltageadjoint)
+        returnCnoise, returnVout, returnSsensitivity, returnQE, returnCM,
+        returnnbar, returnnodeflux, returnnodefluxadjoint, returnvoltage,
+        returnvoltageadjoint, porttemperatures)
 
     return linearizedoutputs(; psc, outputarrays, w, keyedarrays,
         sensitivitylabels, Nsignalmodes, Nnodes, nodeindices,
         componenttypes, Nbranches, portindices, portnumbers,
         portimpedances, modes, sensitivitynames, sensitivityindices, Nports,
         noiseportimpedanceindices, ssys, noiseplan, returnS, returnSnoise,
-        returnCnoise, returnSsensitivity, returnQE, returnCM, returnnodeflux,
-        returnnodefluxadjoint, returnvoltage, returnvoltageadjoint)
+        returnCnoise, returnVout, returnSsensitivity, returnQE, returnCM,
+        returnnbar, returnnodeflux, returnnodefluxadjoint, returnvoltage,
+        returnvoltageadjoint, porttemperatures, channeltemperatures)
 end
 
 # the signal modes: the signal and the idlers offset from it by pump
@@ -470,7 +476,7 @@ function checkcoupledloss(psc::CompiledCircuit, vvn)
     for (k, i1, i2) in psc.couplings, i in (k, i1, i2)
         v = vvn[i]
         kind = i == k ? "mutual inductor" : "coupled inductor"
-        v isa Complex && !iszero(imag(v)) && throw(ArgumentError(lazy"the $kind $(psc.componentnames[i]) has the lossy value $(v), and the noise of a lossy coupled inductance is not modeled; ask for the scattering parameters alone, with `returnQE = false` and `returnCM = false` and without `returnSnoise` or `returnCnoise`."))
+        v isa Complex && !iszero(imag(v)) && throw(ArgumentError(lazy"the $kind $(psc.componentnames[i]) has the lossy value $(v), and the noise of a lossy coupled inductance is not modeled; ask for the scattering parameters alone, with `returnQE = false`, `returnCM = false` and `returnnbar = false` and without `returnSnoise`, `returnCnoise` or `returnVout`."))
     end
     return nothing
 end
@@ -659,6 +665,9 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     portindices = signalnm.portindices
     portnumbers = signalnm.portnumbers
     portimpedances = signalnm.portimpedances
+    # the physical temperature of each port's termination, in the order of
+    # the port axes
+    porttemperatures = terminationtemperatures(psc, portnumbers)
     vvn = signalnm.vvn
     modes = signalfreq.modes
 
@@ -827,7 +836,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     # factorization's choice, and moot for any other factorization
     refine = !(factorization isa BlockFactorization) || factorization.refine
 
-    # the vacuum noise channels of the dissipative scattering blocks, which
+    # the noise channels of the dissipative scattering blocks, which
     # follow the lumped noise channels in the rows of the noise scattering
     # matrix; a block declared lossless has none. What a block declares,
     # its passivity, its losslessness or its stated covariance, is checked
@@ -852,14 +861,27 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     channelsigns = noisechannelsigns(noiseportimpedanceindices, noiseplan,
         ssys)
 
+    # the values of the noise ports, a real vector whenever they are all
+    # real, the empty one of a lossless circuit included: the sweep is
+    # compiled for the type of this vector, so a lossy circuit then reuses
+    # what a lossless one compiled
     noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
+    all(z -> z isa Real, noiseportimpedances) &&
+        (noiseportimpedances = Float64[z for z in noiseportimpedances])
 
     # assemble the system matrix at the first frequency for the symbolic
     # analysis of the factorization
     assemblesystemmatrix!(Asparse, lsys, wmodes)
 
     pumpfactorization = pumpjacobianfactorization(factorization)
-    return (; Nsignalmodes, signalnm, phimatrix, wpumpmodes, Nnodes, nodeindices, componenttypes, Nbranches, coupledbranches, Nauxmna, Nnodalmna, portindices, portnumbers, portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames, sensitivityindices, stampgrouping, stampslots, Nports, bnm, noiseportimpedanceindices, ssys, lsys, factorization, refine, noiseplan, Nnoisechannels, channeltemperatures, channelsigns, noiseportimpedances, pumpfactorization, ondevice)
+    return (; Nsignalmodes, signalnm, phimatrix, wpumpmodes, Nnodes, nodeindices, componenttypes, Nbranches, coupledbranches, Nauxmna, Nnodalmna, portindices, portnumbers, portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames, sensitivityindices, stampgrouping, stampslots, Nports, bnm, noiseportimpedanceindices, ssys, lsys, factorization, refine, noiseplan, Nnoisechannels, channeltemperatures, channelsigns, noiseportimpedances, pumpfactorization, ondevice, porttemperatures)
+end
+
+# the physical temperature of the termination of each port of `portnumbers`
+# (see `MatchedTermination`), zero for a port which owns none
+function terminationtemperatures(psc::CompiledCircuit, portnumbers)
+    byport = Dict(p.number => p.temperature for p in psc.ports)
+    return Float64[byport[n] for n in portnumbers]
 end
 
 """
@@ -1097,14 +1119,17 @@ function linearizedsweep!(;
         channeltemperatures, channelsigns, noiseportimpedances,
         sensitivitystamps, sensitivityblockentries, sensitivitydAop,
         sensitivityreverse, ondevice, returnS, returnSnoise, returnCnoise,
-        returnSsensitivity, returnQE, returnCM, returnnodeflux,
-        returnnodefluxadjoint, returnvoltage, returnvoltageadjoint)
+        returnVout, returnSsensitivity, returnQE, returnCM, returnnbar,
+        returnnodeflux, returnnodefluxadjoint, returnvoltage,
+        returnvoltageadjoint, porttemperatures)
     outputarrays = LinearizedArrays(;
         requestS = returnS,
         requestSnoise = returnSnoise,
         requestCnoise = returnCnoise,
+        requestVout = returnVout,
         requestSsensitivity = returnSsensitivity,
         requestQE = returnQE, requestCM = returnCM,
+        requestnbar = returnnbar,
         requestnodeflux = returnnodeflux,
         requestnodefluxadjoint = returnnodefluxadjoint,
         requestvoltage = returnvoltage,
@@ -1163,9 +1188,7 @@ function linearizedsweep!(;
         # the kernels do not form, so its circuit's channels stay on the host
         blocknoiseondevice = isnothing(noiseplan) ||
             (candeviceevaluate(lsys.scattering) && isnothing(channelsigns))
-        wantsnoise = !isempty(outputarrays.Snoise) ||
-            !isempty(outputarrays.QE) || !isempty(outputarrays.CM) ||
-            !isempty(outputarrays.Cnoise)
+        wantsnoise = readsnoise(outputarrays)
         if wantsnoise && !blocknoiseondevice
             if !isnothing(channelsigns)
                 @warn "A scattering block of this circuit states its noise with a NoiseCovariance, whose channels are formed on the host, so the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep." maxlog=1
@@ -1237,7 +1260,7 @@ function linearizedsweep!(;
             presolvednoise = isnothing(noisecbs) ? nothing : noisecbs[t],
             noiseplan = noiseplan,
             channeltemperatures = channeltemperatures,
-            channelsigns = channelsigns)
+            channelsigns = channelsigns, porttemperatures = porttemperatures)
         for lo in 1:nb:length(w)
             hi = min(lo + nb - 1, length(w))
             # only this touches the device, serially; the outputs of the
@@ -1266,7 +1289,8 @@ function linearizedsweep!(;
                 w, wpumpmodes, Nsignalmodes, batch,
                 factorization; noiseplan = noiseplan,
                 channeltemperatures = channeltemperatures,
-                channelsigns = channelsigns, refine = refine)
+                channelsigns = channelsigns, porttemperatures = porttemperatures,
+                refine = refine)
         end
         # a block factorization's dense products would each spawn BLAS
         # threads; with several batches the batches are the parallelism, so
@@ -1295,9 +1319,10 @@ function linearizedoutputs(; psc,
         componenttypes, Nbranches, portindices,
         portnumbers, portimpedances, modes, sensitivitynames,
         sensitivityindices, Nports, noiseportimpedanceindices, ssys,
-        noiseplan, returnS, returnSnoise, returnCnoise, returnSsensitivity,
-        returnQE, returnCM, returnnodeflux, returnnodefluxadjoint,
-        returnvoltage, returnvoltageadjoint)
+        noiseplan, returnS, returnSnoise, returnCnoise, returnVout,
+        returnSsensitivity, returnQE, returnCM, returnnbar, returnnodeflux,
+        returnnodefluxadjoint, returnvoltage, returnvoltageadjoint,
+        porttemperatures, channeltemperatures)
     # the names the result records are the compiled circuit's own
     nodenames = psc.nodenames
     componentnames = psc.componentnames
@@ -1326,6 +1351,10 @@ function linearizedoutputs(; psc,
     # sides, the second conjugated
     Cnoiseout = keyed(a -> Cnoisetokeyed(a, modes, portnumbers, w),
         returnCnoise, outputarrays.Cnoise)
+    # the output covariance has the axes of the added one, and the
+    # occupation those of the commutation relations
+    Voutout = keyed(a -> Cnoisetokeyed(a, modes, portnumbers, w),
+        returnVout, outputarrays.Vout)
     Ssensitivityout = keyed(returnSsensitivity, outputarrays.Ssensitivity) do a
         Ssensitivitytokeyed(a, modes, portnumbers, modes, portnumbers,
             isnothing(sensitivitylabels) ? sensitivitynames :
@@ -1335,6 +1364,8 @@ function linearizedoutputs(; psc,
     QEidealout = keyed(byports, returnQE, QEideal)
     CMout = keyed(a -> CMtokeyed(a, modes, portnumbers, w), returnCM,
         outputarrays.CM)
+    nbarout = keyed(a -> CMtokeyed(a, modes, portnumbers, w), returnnbar,
+        outputarrays.nbar)
     nodefluxout = keyed(bynodes, returnnodeflux, outputarrays.nodeflux)
     nodefluxadjointout = keyed(bynodes, returnnodefluxadjoint,
         outputarrays.nodefluxadjoint)
@@ -1342,19 +1373,21 @@ function linearizedoutputs(; psc,
     voltageadjointout = keyed(bynodes, returnvoltageadjoint,
         outputarrays.voltageadjoint)
 
-    return LinearizedHB(w, modes, Sout, Snoiseout, Cnoiseout, Ssensitivityout,
-        QEout,
-        QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
-        voltageadjointout, nodenames, nodeindices, componentnames,
+    return LinearizedHB(w, modes, Sout, Snoiseout, Cnoiseout, Voutout,
+        Ssensitivityout, QEout,
+        QEidealout, CMout, nbarout, nodefluxout, nodefluxadjointout,
+        voltageout, voltageadjointout, nodenames, nodeindices, componentnames,
         componenttypes, componentnamedict, mutualinductorbranchnames,
-        portnumbers, portindices, portimpedances,
-        noiseportimpedanceindices, sensitivitynames, sensitivityindices,
+        portnumbers, portindices, portimpedances, porttemperatures,
+        noiseportimpedanceindices,
+        isnothing(channeltemperatures) ? Float64[] : channeltemperatures,
+        sensitivitynames, sensitivityindices,
         Nsignalmodes, Nnodes, Nbranches, Nports, signalindex)
 end
 
 """
-    LinearizedArrays(; requestS, requestSnoise, requestCnoise,
-        requestSsensitivity, requestQE, requestCM, requestnodeflux,
+    LinearizedArrays(; requestS, requestSnoise, requestCnoise, requestVout,
+        requestSsensitivity, requestQE, requestCM, requestnbar, requestnodeflux,
         requestnodefluxadjoint, requestvoltage, requestvoltageadjoint,
         Nports, Nmodes,
         Nnoisechannels, Ncomponents, Nnodes, Nfrequencies)
@@ -1369,12 +1402,15 @@ struct LinearizedArrays
     S::Array{Complex{Float64},3}
     Snoise::Array{Complex{Float64},3}
     # the added noise covariance at the output ports, `Y` of the Gaussian
-    # channel whose `X` is `S`
+    # channel whose `X` is `S`, and the whole output covariance
     Cnoise::Array{Complex{Float64},3}
+    Vout::Array{Complex{Float64},3}
     Ssensitivity::Array{Complex{Float64},4}
     QE::Array{Float64,3}
     QEideal::Array{Float64,3}
     CM::Array{Float64,2}
+    # the occupation of each output port mode
+    nbar::Array{Float64,2}
     nodeflux::Array{Complex{Float64},3}
     nodefluxadjoint::Array{Complex{Float64},3}
     voltage::Array{Complex{Float64},3}
@@ -1382,8 +1418,9 @@ struct LinearizedArrays
 end
 
 function LinearizedArrays(; requestS::Bool, requestSnoise::Bool,
-    requestCnoise::Bool = false,
+    requestCnoise::Bool = false, requestVout::Bool = false,
     requestSsensitivity::Bool, requestQE::Bool, requestCM::Bool,
+    requestnbar::Bool = false,
     requestnodeflux::Bool, requestnodefluxadjoint::Bool,
     requestvoltage::Bool, requestvoltageadjoint::Bool, Nports::Integer,
     Nmodes::Integer, Nnoisechannels::Integer, Ncomponents::Integer,
@@ -1398,11 +1435,13 @@ function LinearizedArrays(; requestS::Bool, requestSnoise::Bool,
         za(requestSnoise, Complex{Float64}, Nnoisechannels*Nmodes, NPM,
             Nfrequencies),
         za(requestCnoise, Complex{Float64}, NPM, NPM, Nfrequencies),
+        za(requestVout, Complex{Float64}, NPM, NPM, Nfrequencies),
         za(requestSsensitivity, Complex{Float64}, NPM, NPM, Ncomponents,
             Nfrequencies),
         za(requestQE, Float64, NPM, NPM, Nfrequencies),
         za(requestQE, Float64, NPM, NPM, Nfrequencies),
         za(requestCM, Float64, NPM, Nfrequencies),
+        za(requestnbar, Float64, NPM, Nfrequencies),
         za(requestnodeflux, Complex{Float64}, Nnodal, NPM, Nfrequencies),
         za(requestnodefluxadjoint, Complex{Float64}, Nnodal, NPM,
             Nfrequencies),
@@ -1440,14 +1479,21 @@ struct LinearizedWorkspace{TA,TC,TR}
     cache::FactorizationCache
     Sworking::Matrix{Complex{Float64}}
     Snoiseworking::Matrix{Complex{Float64}}
-    # the scratch of the scattering block vacuum noise channels, and of
+    # the scratch of the scattering block noise channels, and of
     # the block evaluation at each frequency of the assembly
     scatteringnoisework::ScatteringNoiseWorkspace
     scatteringwork::ScatteringWorkspace
-    # the occupation of each noise channel mode, rebuilt per frequency
-    occupation::Vector{Float64}
-    # the occupation scaled conjugate of the noise scattering matrix, the
-    # second factor of the added noise covariance, when that is asked for
+    # the symmetrized noise nbar + 1/2 of each noise channel mode and of
+    # each port mode, rebuilt per frequency
+    channelnoise::Vector{Float64}
+    portnoise::Vector{Float64}
+    # the scattering matrix weighted by the noise of each input and the
+    # added noise covariance when only the output covariance asks for it,
+    # both empty unless the output covariance is asked for
+    Sweighted::Matrix{Complex{Float64}}
+    Cscratch::Matrix{Complex{Float64}}
+    # the noise scaled conjugate of the noise scattering matrix, the second
+    # factor of the added noise covariance, when that is asked for
     noiseweighted::Matrix{Complex{Float64}}
     # the reduction of the noise scattering matrix the quantum efficiency
     # and the commutation relations read, formed per frequency, and the
@@ -1518,8 +1564,12 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
         zeros(Float64, Nwpumpmodes),
         A, cache, cplx(np, np), cplx(Nnoisechannels*Nmodes, np),
         ScatteringNoiseWorkspace(), ScatteringWorkspace(),
-        zeros(Float64, Nnoisechannels*Nmodes),
-        isempty(arrays.Cnoise) ? cplx(0, 0) : cplx(Nnoisechannels*Nmodes, np),
+        zeros(Float64, Nnoisechannels*Nmodes), zeros(Float64, np),
+        isempty(arrays.Vout) ? cplx(0, 0) : cplx(np, np),
+        (isempty(arrays.Vout) || !isempty(arrays.Cnoise)) ? cplx(0, 0) :
+            cplx(np, np),
+        (isempty(arrays.Cnoise) && isempty(arrays.Vout)) ? cplx(0, 0) :
+            cplx(Nnoisechannels*Nmodes, np),
         NoiseReduction(zeros(Float64, np), zeros(Float64, np)),
         zeros(Float64, np), zeros(Float64, np),
         isempty(sensitivity.blockentries) ? nothing :
@@ -1533,8 +1583,9 @@ end
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
         w, wpumpmodes, Nmodes, wi, factorization;
         noiseplan = nothing, channeltemperatures = nothing,
-        channelsigns = nothing, presolved = nothing,
-        presolvedadjoint = nothing, presolvednoise = nothing, refine = true)
+        channelsigns = nothing, porttemperatures = nothing,
+        presolved = nothing, presolvedadjoint = nothing,
+        presolvednoise = nothing, refine = true)
 
 Solve the linearized problem at the frequencies `w[wi]`, using the
 workspace `ws`, assembling each system matrix from the
@@ -1550,8 +1601,10 @@ the [`ReverseSensitivity`](@ref) of the reverse order, or `nothing`.
 `noiseplan`, `channeltemperatures` and `channelsigns` describe the noise
 channels of the scattering blocks, the temperature of every channel and
 the sign of each in the commutation relations (see
-[`noisechannelsigns`](@ref)). `presolved`,
-`presolvedadjoint` and `presolvednoise` are callbacks which replace the
+[`noisechannelsigns`](@ref)). `porttemperatures` is the temperature of
+each port's termination, in the order of the port axes, or `nothing` for
+the vacuum at every port. `presolved`, `presolvedadjoint` and
+`presolvednoise` are callbacks which replace the
 assemble, factorize and solve of a frequency, the transposed solve, and
 the noise scattering calculation with solutions computed elsewhere, which
 is how the device sweep hands back its batches (see
@@ -1567,8 +1620,8 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     portimpedances, noiseportimpedances, nodeindices,
     componenttypes, w, wpumpmodes, Nmodes, wi, factorization;
     noiseplan = nothing, channeltemperatures = nothing,
-    channelsigns = nothing, presolved = nothing, presolvedadjoint = nothing,
-    presolvednoise = nothing, refine::Bool = true)
+    channelsigns = nothing, porttemperatures = nothing, presolved = nothing,
+    presolvedadjoint = nothing, presolvednoise = nothing, refine::Bool = true)
 
     # everything downstream of the solve is the same whether the solution
     # came from the callbacks or from the factorization here
@@ -1598,7 +1651,8 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     Snoiseworking = ws.Snoiseworking
     scatteringnoisework = ws.scatteringnoisework
     scatteringwork = ws.scatteringwork
-    occupation = ws.occupation
+    channelnoise = ws.channelnoise
+    portnoise = ws.portnoise
     rowsum = ws.rowsum
     rowcomp = ws.rowcomp
 
@@ -1621,15 +1675,29 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     portdrives = Diagonal(portsources)
     wantsS = !isempty(arrays.S) || !isempty(arrays.QE) ||
         !isempty(arrays.QEideal) || !isempty(arrays.CM) ||
+        !isempty(arrays.nbar) || !isempty(arrays.Vout) ||
         !isempty(arrays.Ssensitivity)
     # the scattering parameters and the noise scattering parameters both
     # divide by the incident waves of the port drives
     wantswaves = wantsS || !isempty(arrays.Snoise) || !isempty(arrays.Cnoise)
+    # the noise outputs: the output's symmetrized noise, which the quantum
+    # efficiency and the occupation read, the whole output covariance,
+    # which needs the covariance the circuit adds whether or not that is
+    # returned, and the reduction of the noise channels
+    wantsoutputnoise = !isempty(arrays.QE) || !isempty(arrays.nbar)
+    wantsVout = !isempty(arrays.Vout)
+    wantscnoise = !isempty(arrays.Cnoise) || wantsVout
+    wantsreduction = wantsoutputnoise || !isempty(arrays.CM)
 
     for i in wi
 
         Sview = isempty(arrays.S) ? Sworking : view(arrays.S, :, :, i)
         Snoiseview = isempty(arrays.Snoise) ? Snoiseworking : view(arrays.Snoise, :, :, i)
+        Cview = isempty(arrays.Cnoise) ? ws.Cscratch : view(arrays.Cnoise, :, :, i)
+        # the reduction of the noise channels, zero when the circuit has
+        # none: the workspace's, which only the channels write, so that the
+        # outputs below see one type
+        reduction = ws.noise
 
         # the signal plus pump mode frequencies
         wsi = w[i]
@@ -1724,10 +1792,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
             # two numbers per port mode rather than a row per noise channel;
             # the host forms the same reduction from its matrix below
             noise = ws.noise
-            wantscnoise = !isempty(arrays.Cnoise)
-            wantsreduction = !isempty(arrays.QE) || !isempty(arrays.CM)
-            if !isempty(arrays.Snoise) || wantscnoise ||
-                    !isempty(arrays.QE) || !isempty(arrays.CM)
+            if !isempty(arrays.Snoise) || wantscnoise || wantsreduction
                 if isnothing(presolvednoise)
                     # the noise ports carry no source
                     calcoutputwaves!(noiseoutputwave, phin, nothing,
@@ -1744,7 +1809,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                     adjointnoisesigns!(Snoiseview, wmodes, Nmodes)
                 else
                     noise = presolvednoise(i, inputwave, Snoiseview,
-                        wantscnoise ? view(arrays.Cnoise,:,:,i) : nothing)
+                        wantscnoise ? Cview : nothing)
                 end
             end
 
@@ -1772,46 +1837,90 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                 end
             end
 
-            # the occupation of each channel, which is where the temperature
-            # enters; the noise scattering parameters carry none
+            # the state of each channel, its symmetrized noise, which is
+            # where the temperature enters; the noise scattering parameters
+            # carry none
             if wantsreduction || wantscnoise
-                noiseoccupation!(occupation, channeltemperatures, wmodes,
+                thermalnoise!(channelnoise, channeltemperatures, wmodes,
                     Nmodes)
             end
             if wantscnoise && isnothing(presolvednoise)
-                calcnoisecovariance!(view(arrays.Cnoise,:,:,i), Snoiseview,
-                    occupation, ws.noiseweighted)
+                calcnoisecovariance!(Cview, Snoiseview, channelnoise,
+                    ws.noiseweighted)
             end
             if wantsreduction && isnothing(presolvednoise)
-                noisereduction!(noise, Snoiseview, wmodes, occupation,
+                noisereduction!(noise, Snoiseview, wmodes, channelnoise,
                     channelsigns)
             end
-            if !isempty(arrays.QE)
-                calcqe!(view(arrays.QE,:,:,i), Sview, noise;
-                    denom = rowsum, comp = rowcomp)
-            end
-
-            # the commutation relations
-            if !isempty(arrays.CM)
-                calccm!(view(arrays.CM,:,i), Sview, wmodes, noise;
-                    comp = rowcomp)
-            end
-        else
-            # the quantum efficiency and the commutation relations without
-            # noise channels
-            if !isempty(arrays.QE)
-                calcqe!(view(arrays.QE,:,:,i), Sview;
-                    denom = rowsum, comp = rowcomp)
-            end
-            if !isempty(arrays.CM)
-                calccm!(view(arrays.CM,:,i), Sview, wmodes; comp = rowcomp)
-            end
+            wantsreduction && (reduction = noise)
+        elseif wantscnoise
+            # no noise channels, so the circuit adds nothing
+            fill!(Cview, zero(eltype(Cview)))
         end
 
-        # the quantum efficiency of an ideal amplifier with the same gain
-        if !isempty(arrays.QEideal)
-            calcqeideal!(view(arrays.QEideal,:,:,i), Sview)
-        end
+        # the outputs the noise at the ports enters, a stage of its own so
+        # that it compiles once rather than with every specialization of
+        # this function
+        sweepoutputs!(arrays.QE, arrays.nbar, arrays.Vout, arrays.CM,
+            arrays.QEideal, i, Sview, Cview, reduction, portnoise,
+            porttemperatures, wmodes, Nmodes, rowsum, rowcomp, ws.Sweighted)
+    end
+    return nothing
+end
+
+"""
+    sweepoutputs!(QE, nbar, Vout, CM, QEideal, i, S, Cnoise, reduction,
+        portnoise, porttemperatures, wmodes, Nmodes, vout, comp, Sweighted)
+
+Write the outputs of the sweep at its `i`-th frequency which the noise at
+the ports enters, from the scattering matrix `S`, the noise the circuit
+adds `Cnoise` and its [`NoiseReduction`](@ref) `reduction` (zero for a
+circuit without noise channels): the quantum efficiency `QE`, the
+occupations `nbar`, the output covariance `Vout`, the commutation
+relations `CM` and the ideal amplifier's quantum efficiency `QEideal`,
+each skipped when its array is empty. `portnoise` receives the symmetrized
+noise of every input mode, at the temperature `porttemperatures` of its
+port's termination and the mode frequencies `wmodes`; `vout` the
+symmetrized noise at each output and `comp` its compensation; and
+`Sweighted` the scattering matrix weighted by the input noise.
+
+[`hblinsolve_inner!`](@ref) calls it with a few argument types whatever
+the circuit, so it is compiled once rather than with every specialization
+of the sweep.
+"""
+function sweepoutputs!(QE, nbar, Vout, CM, QEideal, i, S, Cnoise, reduction,
+    portnoise, porttemperatures, wmodes, Nmodes, vout, comp, Sweighted)
+
+    # the noise the ports bring in: every input mode in the state of its
+    # port's termination
+    if !isempty(QE) || !isempty(nbar) || !isempty(Vout)
+        thermalnoise!(portnoise, porttemperatures, wmodes, Nmodes)
+    end
+    # the quantum efficiency and the occupation of each output, from the
+    # output's symmetrized noise, which `calcqe!` leaves in `vout`
+    if !isempty(QE)
+        calcqe!(view(QE, :, :, i), S, reduction; inputnoise = portnoise,
+            vout = vout, comp = comp)
+    elseif !isempty(nbar)
+        outputnoise!(vout, comp, S, portnoise, reduction)
+    end
+    if !isempty(nbar)
+        view(nbar, :, i) .= vout .- 1/2
+    end
+    # the output covariance, S*Diagonal(portnoise)*S' + Cnoise
+    if !isempty(Vout)
+        V = view(Vout, :, :, i)
+        Sweighted .= S .* transpose(portnoise)
+        mul!(V, Sweighted, S')
+        V .+= Cnoise
+    end
+    # the commutation relations
+    if !isempty(CM)
+        calccm!(view(CM, :, i), S, wmodes, reduction; comp = comp)
+    end
+    # the quantum efficiency of an ideal amplifier with the same gain
+    if !isempty(QEideal)
+        calcqeideal!(view(QEideal, :, :, i), S)
     end
     return nothing
 end

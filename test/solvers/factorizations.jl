@@ -83,7 +83,8 @@ using Test
         append!(c, [("Ca", "4", "1", Capacitor(Ca)), ("Cb", "4", "2", Capacitor(Cb)),
             ("L4", "4", "0", Inductor(L4)), ("C4", "4", "0", Capacitor(C4))])
         circuit = Circuit(c)
-        kw = (keyedarrays = false, returnQE = false, returnCM = false)
+        kw = (keyedarrays = false, returnQE = false, returnCM = false,
+            returnnbar = false)
         atw0(S) = selectdim(S, ndims(S), size(S, ndims(S)))
         sweep = hblinsolve([2pi*4.0e9, w0], circuit, Dict{Symbol,Any}(); kw...)
         alone = hblinsolve([w0], circuit, Dict{Symbol,Any}(); kw...)

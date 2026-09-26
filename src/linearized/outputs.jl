@@ -206,61 +206,140 @@ end
 """
     thermaloccupation(w, temperature)
 
-The factor `2*nbar + 1 = coth(hbar*abs(w)/(2*k*T))` by which a mode at
-angular frequency `w` in thermal equilibrium at `temperature` in Kelvin
-exceeds its vacuum noise, and `1` at zero temperature or zero frequency.
+The occupation `nbar = 1/(exp(hbar*abs(w)/(k*T)) - 1)` of a mode at angular
+frequency `w` in thermal equilibrium at the physical `temperature` in
+kelvin: its mean number of photons, zero at zero temperature. The noise the
+mode carries is `nbar + 1/2`, the vacuum's half photon included.
+[`effectivetemperature`](@ref) is the inverse.
 
-This is the whole of the temperature dependence of the noise. A dissipative
-element adds noise whose covariance is its vacuum covariance times this,
-which in the Gaussian channel picture scales the `Y` of the map without
-touching its `X`.
-
-Zero frequency returns one rather than diverging: the wave normalization of
-a noise channel is already zero there (see [`portwavescale`](@ref)), so the
-factor multiplies nothing.
+The occupation diverges at zero frequency, where it is `Inf` for a
+positive temperature. A negative or NaN temperature throws an
+`ArgumentError`.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.thermaloccupation(2*pi*5e9, 0.0)
-1.0
+julia> thermaloccupation(2pi*5e9, 0.0)
+0.0
 
-julia> round(JosephsonCircuits.thermaloccupation(2*pi*5e9, 0.1), digits=5)
-1.19962
+julia> round(thermaloccupation(2pi*5e9, 0.05), sigdigits = 4)
+0.008304
 
-julia> round(JosephsonCircuits.thermaloccupation(2*pi*5e9, 1.0), digits=4)
-8.3746
+julia> round(thermaloccupation(2pi*5e9, 1.0), sigdigits = 4)
+3.687
 ```
 """
 function thermaloccupation(w, temperature)
-    (iszero(temperature) || iszero(w)) && return one(Float64)
-    x = reduced_planck_constant*abs(w)/(2*boltzmann_constant*temperature)
-    return coth(x)
+    temperature >= 0 || throw(ArgumentError(lazy"the temperature is $(temperature) K; a temperature must be nonnegative."))
+    iszero(temperature) && return zero(Float64)
+    return 1/expm1(reduced_planck_constant*abs(w)/(boltzmann_constant*temperature))
+end
+
+# The symmetrized noise `nbar + 1/2` of a mode at the angular frequency `w`
+# in equilibrium at `temperature`, in quanta: the weight of a noise channel
+# in the covariances, `1/2` for the vacuum and at zero frequency, where the
+# wave normalization vanishes. Formed as `coth/2` so that a cold channel
+# weighs exactly one half.
+function thermalnoise(w, temperature)
+    (iszero(temperature) || iszero(w)) && return 0.5
+    return coth(reduced_planck_constant*abs(w)/(2*boltzmann_constant*temperature))/2
 end
 
 """
-    calcnoisecovariance!(Cnoise, Snoise, occupation = nothing,
+    effectivetemperature(w, nbar)
+
+The thermal-equivalent temperature in kelvin of the occupation `nbar` at
+the angular frequency `w`: the temperature at which a mode at that
+frequency in thermal equilibrium has that occupation, the inverse of
+[`thermaloccupation`](@ref), `hbar*abs(w)/(k*log(1 + 1/nbar))`, zero for
+`nbar = 0`. This is the temperature of the bath a qubit or a resonator at
+that frequency sees, and the temperature to give a port's termination for
+an incident field of that occupation. It is not a noise temperature (see
+[`noisetemperature`](@ref)). An occupation does not make a state thermal:
+the output of a pumped circuit has correlations between its modes which
+the temperature does not describe. A mode at zero frequency has no
+temperature for a positive occupation, which throws an `ArgumentError`.
+
+# Examples
+```jldoctest
+julia> effectivetemperature(2pi*5e9, 0.0)
+0.0
+
+julia> round(effectivetemperature(2pi*5e9, thermaloccupation(2pi*5e9, 0.05)), digits = 12)
+0.05
+```
+"""
+function effectivetemperature(w, nbar)
+    nbar >= 0 || throw(ArgumentError(lazy"the occupation $(nbar) is negative; a thermal state has none below zero."))
+    iszero(nbar) && return zero(Float64)
+    iszero(w) && throw(ArgumentError(lazy"a mode at zero frequency has no temperature for the occupation $(nbar), which is zero at zero temperature and infinite at any other."))
+    return reduced_planck_constant*abs(w)/(boltzmann_constant*log1p(1/nbar))
+end
+
+"""
+    noisetemperature(w, N)
+
+The noise temperature in kelvin of the noise `N` in quanta at angular
+frequency `w`, `hbar*abs(w)*N/k`: a noise spectral density in units of
+temperature, not the temperature of anything. What it includes is what `N`
+includes:
+
+- `nbar + 1/2`, the symmetrized noise of a mode, gives the symmetrized
+  noise temperature, `hbar*abs(w)/(2k)` for the vacuum;
+- `nbar` alone gives the Rayleigh-Jeans temperature, zero for the vacuum;
+- `1/(2*QE)`, the noise at an output referred to the input the quantum
+  efficiency is taken from, gives the system noise temperature, the
+  vacuum at that input included.
+
+[`noisequanta`](@ref) is the inverse.
+
+# Examples
+```jldoctest
+julia> round(noisetemperature(2pi*5e9, 1/2), digits = 5)
+0.11998
+
+julia> round(noisetemperature(2pi*5e9, thermaloccupation(2pi*5e9, 0.05) + 1/2), digits = 5)
+0.12197
+```
+"""
+noisetemperature(w, N) = reduced_planck_constant*abs(w)*N/boltzmann_constant
+
+"""
+    noisequanta(w, T)
+
+The noise in quanta at angular frequency `w` of the noise temperature `T`
+in kelvin, `k*T/(hbar*abs(w))`, the inverse of
+[`noisetemperature`](@ref). An amplifier with the input referred noise
+temperature `T` adds `noisequanta(w, T)` photons referred to its input,
+the `nadd` of its [`NoiseCovariance`](@ref).
+
+# Examples
+```jldoctest
+julia> round(noisequanta(2pi*5e9, 2.0), digits = 3)
+8.335
+```
+"""
+noisequanta(w, T) = boltzmann_constant*T/(reduced_planck_constant*abs(w))
+
+"""
+    calcnoisecovariance!(Cnoise, Snoise, channelnoise = nothing,
         work = similar(Snoise))
 
 The added noise covariance at the output ports,
 
-    Cnoise[i,i'] = sum_c occupation[c] Snoise[c,i] conj(Snoise[c,i'])
+    Cnoise[i,i'] = sum_c channelnoise[c] Snoise[c,i] conj(Snoise[c,i'])
 
 which is the `Y` of the Gaussian channel whose `X` is the scattering matrix:
 the map takes an input covariance to `X sigma X' + Y`. `Snoise` describes the
-transformation and `occupation` the state of each channel, so this is where
-the two meet and where a temperature shows up.
-
-In the normalization of the rest of these outputs a vacuum channel counts as
-one, so at zero temperature the diagonal is `sum(abs2, Snoise[:,i])`, which
-is exactly the noise term in the denominator of [`calcqe!`](@ref).
+transformation and `channelnoise` the state of each channel, its symmetrized
+noise `nbar + 1/2` in quanta, so this is where the two meet and where a
+temperature shows up. `nothing` is the vacuum, `1/2` for every channel.
 
 Formed as one matrix product, `transpose(Snoise)*work` with `work` the
-occupation scaled conjugate of `Snoise`, as the device sweep forms it;
-`work` is scratch of the size of `Snoise`, which a sweep holds in its
-workspace.
+noise scaled conjugate of `Snoise`, as the device sweep forms it; `work` is
+scratch of the size of `Snoise`, which a sweep holds in its workspace.
 """
 function calcnoisecovariance!(Cnoise::AbstractMatrix, Snoise::AbstractMatrix,
-    occupation = nothing, work::AbstractMatrix = similar(Snoise))
+    channelnoise = nothing, work::AbstractMatrix = similar(Snoise))
     np = size(Snoise, 2)
     if size(Cnoise) != (np, np)
         throw(DimensionMismatch(lazy"`Cnoise` has size $(size(Cnoise)) but the $(np) output port modes need ($(np), $(np))."))
@@ -268,46 +347,48 @@ function calcnoisecovariance!(Cnoise::AbstractMatrix, Snoise::AbstractMatrix,
     if size(work) != size(Snoise)
         throw(DimensionMismatch(lazy"`work` has size $(size(work)) but `Snoise` has size $(size(Snoise))."))
     end
-    if isnothing(occupation)
-        work .= conj.(Snoise)
+    if isnothing(channelnoise)
+        work .= conj.(Snoise) ./ 2
     else
-        work .= occupation .* conj.(Snoise)
+        work .= channelnoise .* conj.(Snoise)
     end
     return mul!(Cnoise, transpose(Snoise), work)
 end
 
 """
-    noiseoccupation!(occupation, temperatures::AbstractVector, wmodes, Nmodes)
+    thermalnoise!(channelnoise, temperatures::AbstractVector, wmodes, Nmodes)
 
-Fill `occupation` with `2*nbar + 1` for each row of the noise scattering
-matrix, whose rows run over the noise channels with the modes innermost.
+Fill `channelnoise` with the symmetrized noise `nbar + 1/2` of each row of
+the noise scattering matrix, whose rows run over the noise channels with
+the modes innermost, or of each port mode's input, whose rows run over the
+ports the same way.
 
-This is what a channel's vacuum share of the noise is multiplied by to get
-the noise it actually carries. It is applied where the noise power is asked
-for, by [`calcqe!`](@ref) and by the noise covariance, and never to
-`Snoise` itself, which is a scattering matrix and does not depend on
-temperature. The commutation relations, which are a statement about the
-transformation rather than about the state of anything, therefore do not see
-it at all.
+This is the state of each channel. It weighs a channel's contribution where
+the noise is asked for, by [`calcqe!`](@ref) and by the noise covariance,
+and never enters `Snoise` itself, which is a scattering matrix and does not
+depend on temperature. The commutation relations, which are a statement
+about the transformation rather than about the state of anything, therefore
+do not see it at all.
 
 `temperatures` is one temperature per noise channel, in the order
-[`noisechannelnames`](@ref) gives them. `nothing`, and every temperature
-being zero, both give all ones.
+[`noisechannelnames`](@ref) gives them, or one per port for the port
+modes. `nothing`, and every temperature being zero, both give the vacuum,
+`1/2` everywhere.
 """
-noiseoccupation!(occupation::AbstractVector, ::Nothing, wmodes,
-    Nmodes::Integer) = fill!(occupation, 1.0)
-function noiseoccupation!(occupation::AbstractVector, temperatures, wmodes,
+thermalnoise!(channelnoise::AbstractVector, ::Nothing, wmodes,
+    Nmodes::Integer) = fill!(channelnoise, 0.5)
+function thermalnoise!(channelnoise::AbstractVector, temperatures, wmodes,
     Nmodes::Integer)
-    if length(occupation) != length(temperatures)*Nmodes
-        throw(DimensionMismatch(lazy"`occupation` has length $(length(occupation)) but $(length(temperatures)) channels of $(Nmodes) modes need $(length(temperatures)*Nmodes)."))
+    if length(channelnoise) != length(temperatures)*Nmodes
+        throw(DimensionMismatch(lazy"`channelnoise` has length $(length(channelnoise)) but $(length(temperatures)) channels of $(Nmodes) modes need $(length(temperatures)*Nmodes)."))
     end
     @inbounds for c in eachindex(temperatures)
         for m in 1:Nmodes
-            occupation[(c-1)*Nmodes + m] =
-                thermaloccupation(wmodes[m], temperatures[c])
+            channelnoise[(c-1)*Nmodes + m] =
+                thermalnoise(wmodes[m], temperatures[c])
         end
     end
-    return occupation
+    return channelnoise
 end
 
 """
@@ -577,15 +658,16 @@ commutation relations read of it: two numbers per output port mode.
 
 Both consume `Snoise`, a row per noise channel mode `c` and a column per
 output port mode `i`, only through a sum over the noise index. The quantum
-efficiency reads `sum_c occupation[c]*abs2(Snoise[c,i])`, the noise power at
-output `i` with each channel's occupation (`2*nbar + 1`); the commutation
-relations read `sum_c sign(w_c)*abs2(Snoise[c,i])`, the same power weighted
-by the sign of the channel's mode frequency and without the occupation,
-which is why the commutation relations do not depend on temperature. A
-channel of the conjugate kind, one of a block which states its noise
-(see [`noisechannelsigns`](@ref)), enters the second sum with its sign
-reversed. The first is also the diagonal of the noise covariance matrix
-of [`calcnoisecovariance!`](@ref).
+efficiency reads `sum_c channelnoise[c]*abs2(Snoise[c,i])`, the symmetrized
+noise the channels put at output `i`, each weighted by its own
+`nbar + 1/2`; the commutation relations read
+`sum_c sign(w_c)*abs2(Snoise[c,i])`, the same power weighted by the sign of
+the channel's mode frequency and without the state of the channel, which is
+why the commutation relations do not depend on temperature. A channel of
+the conjugate kind, one of a block which states its noise (see
+[`noisechannelsigns`](@ref)), enters the second sum with its sign reversed.
+The first is also the diagonal of the noise covariance matrix of
+[`calcnoisecovariance!`](@ref).
 
 On a circuit whose loss is spread along the line that is a reduction of
 thousands of rows to one number per port mode, so when the noise scattering
@@ -596,73 +678,74 @@ the host loop forms it from its matrix with [`noisereduction!`](@ref)
 to [`calcqe!`](@ref) and [`calccm!`](@ref).
 
 # Fields
-- `denom`: `sum_c occupation[c]*abs2(Snoise[c, i])` per output mode `i`.
-- `signed`: `sum_c sign(w_c)*abs2(Snoise[c, i])`, with no occupation.
+- `symmetrized`: `sum_c channelnoise[c]*abs2(Snoise[c, i])` per output
+    mode `i`.
+- `signed`: `sum_c sign(w_c)*abs2(Snoise[c, i])`, with no channel state.
 """
 struct NoiseReduction{V}
-    denom::V
+    symmetrized::V
     signed::V
 end
 
 function noisereduction(Snoise::AbstractMatrix{T}, w,
-    occupation = nothing, channelsigns = nothing) where {T}
+    channelnoise = nothing, channelsigns = nothing) where {T}
     np = size(Snoise, 2)
     R = float(real(T))
     return noisereduction!(NoiseReduction(zeros(R, np), zeros(R, np)),
-        Snoise, w, occupation, channelsigns)
+        Snoise, w, channelnoise, channelsigns)
 end
 
 """
-    noisereduction(Snoise::AbstractMatrix, w, occupation = nothing,
+    noisereduction(Snoise::AbstractMatrix, w, channelnoise = nothing,
         channelsigns = nothing)
-    noisereduction!(noise::NoiseReduction, Snoise, w, occupation = nothing,
+    noisereduction!(noise::NoiseReduction, Snoise, w, channelnoise = nothing,
         channelsigns = nothing)
 
 Reduce the noise scattering matrix `Snoise`, a row per noise channel mode
 and a column per output port mode, to the two sums the quantum efficiency
 and the commutation relations read; see [`NoiseReduction`](@ref). `w` holds
 the mode frequencies, the mode of row `c` being `(c-1) % length(w) + 1`,
-`occupation` the occupation of each row, one everywhere when `nothing`,
-and `channelsigns` the sign kind of each channel, the channel of row `c`
-being `(c-1) ÷ length(w) + 1`, in the second sum, one everywhere when
-`nothing`: `1` and `-1` multiply the sign of the row's mode frequency,
-`2` and `-2` are the fixed signs `1` and `-1` (see
+`channelnoise` the symmetrized noise `nbar + 1/2` of each row, the vacuum
+`1/2` everywhere when `nothing`, and `channelsigns` the sign kind of each
+channel, the channel of row `c` being `(c-1) ÷ length(w) + 1`, in the second
+sum, one everywhere when `nothing`: `1` and `-1` multiply the sign of the
+row's mode frequency, `2` and `-2` are the fixed signs `1` and `-1` (see
 [`noisechannelsigns`](@ref)). Each sum is compensated
 (Kahan-Babuska-Neumaier).
 
 # Examples
 ```jldoctest
-julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1]); (n.denom, n.signed)
-([84.0, 120.0], [-32.0, -40.0])
+julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1]); (n.symmetrized, n.signed)
+([42.0, 60.0], [-32.0, -40.0])
 
-julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1], nothing, [1.0, -1.0]); (n.denom, n.signed)
-([84.0, 120.0], [16.0, 16.0])
+julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1], nothing, [1.0, -1.0]); (n.symmetrized, n.signed)
+([42.0, 60.0], [16.0, 16.0])
 ```
 """
 function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
-    occupation = nothing, channelsigns = nothing)
+    channelnoise = nothing, channelsigns = nothing)
     m = length(w)
     np = size(Snoise, 2)
     if mod(size(Snoise, 1), m) != 0
         throw(DimensionMismatch(lazy"Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."))
     end
-    if length(noise.denom) != np || length(noise.signed) != np
-        throw(DimensionMismatch(lazy"The noise reduction has $(length(noise.denom)) entries but the noise scattering matrix has $(np) output port modes."))
+    if length(noise.symmetrized) != np || length(noise.signed) != np
+        throw(DimensionMismatch(lazy"The noise reduction has $(length(noise.symmetrized)) entries but the noise scattering matrix has $(np) output port modes."))
     end
-    if !isnothing(occupation) && length(occupation) != size(Snoise, 1)
-        throw(DimensionMismatch(lazy"The occupation has $(length(occupation)) entries but the noise scattering matrix has $(size(Snoise, 1)) noise channel modes."))
+    if !isnothing(channelnoise) && length(channelnoise) != size(Snoise, 1)
+        throw(DimensionMismatch(lazy"The channel noise has $(length(channelnoise)) entries but the noise scattering matrix has $(size(Snoise, 1)) noise channel modes."))
     end
     if !isnothing(channelsigns) && length(channelsigns)*m != size(Snoise, 1)
         throw(DimensionMismatch(lazy"The channel signs have $(length(channelsigns)) entries but the noise scattering matrix has $(size(Snoise, 1) ÷ m) noise channels."))
     end
-    R = eltype(noise.denom)
+    R = eltype(noise.symmetrized)
     # the sum over the noise index runs down each column, in memory order,
     # so each output mode's two sums are scalars compensated on their own
     @inbounds for i in 1:np
         d = zero(R); dc = zero(R); s = zero(R); sc = zero(R)
         for c in axes(Snoise, 1)
             a = abs2(Snoise[c, i])
-            f = isnothing(occupation) ? R(a) : R(occupation[c]*a)
+            f = isnothing(channelnoise) ? R(a/2) : R(channelnoise[c]*a)
             t = d + f
             dc += ifelse(abs(d) >= abs(f), (d - t) + f, (f - t) + d)
             d = t
@@ -675,7 +758,7 @@ function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
             sc += ifelse(abs(s) >= abs(g), (s - t) + g, (g - t) + s)
             s = t
         end
-        noise.denom[i] = d + dc
+        noise.symmetrized[i] = d + dc
         noise.signed[i] = s + sc
     end
     return noise
@@ -788,16 +871,75 @@ function calccm(S::AbstractMatrix{T}, w, noise = nothing) where {T}
 end
 
 """
-    calcqe(S::AbstractMatrix, noise = nothing)
-    calcqe!(qe, S, noise = nothing; denom = similar(qe, size(S, 1)),
-        comp = similar(denom))
+    outputnoise!(vout, comp, S, inputnoise = nothing, noise = nothing)
+
+The symmetrized noise at each output `i` of the scattering matrix `S`, the
+diagonal of the output covariance `S*Diagonal(inputnoise)*S' + Cnoise`:
+`sum_j inputnoise[j]*abs2(S[i,j])`, each input carrying its own
+`nbar + 1/2` (the vacuum's `1/2` for every input when `nothing`), plus what
+the noise channels of the [`NoiseReduction`](@ref) `noise` put there. The
+sum is compensated (Kahan-Babuska-Neumaier), its corrections in `comp`,
+one entry per row. The occupation of output `i` is `vout[i] - 1/2` and the
+quantum efficiency `abs2(S[i,j])/(2*vout[i])`.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.outputnoise!(zeros(2), zeros(2), [3/5 4/5; 4/5 3/5])
+2-element Vector{Float64}:
+ 0.5
+ 0.5
+```
+"""
+function outputnoise!(vout::AbstractVector, comp::AbstractVector,
+    S::AbstractMatrix, inputnoise = nothing, noise = nothing)
+    if length(vout) != size(S, 1) || length(comp) != size(S, 1)
+        throw(DimensionMismatch(lazy"The output noise and its compensation need one entry per row of the scattering matrix, $(size(S, 1))."))
+    end
+    if !isnothing(inputnoise) && length(inputnoise) != size(S, 2)
+        throw(DimensionMismatch(lazy"The input noise has $(length(inputnoise)) entries but the scattering matrix has $(size(S, 2)) input modes."))
+    end
+    R = eltype(vout)
+    fill!(vout, zero(R))
+    fill!(comp, zero(R))
+    @inbounds for j in axes(S, 2)
+        d = isnothing(inputnoise) ? R(1/2) : R(inputnoise[j])
+        for i in axes(S, 1)
+            v = d*abs2(S[i, j])
+            t = vout[i] + v
+            comp[i] += ifelse(abs(vout[i]) >= abs(v), (vout[i] - t) + v,
+                (v - t) + vout[i])
+            vout[i] = t
+        end
+    end
+    @inbounds for i in eachindex(vout)
+        vout[i] += comp[i]
+    end
+    if !isnothing(noise)
+        if length(noise.symmetrized) != size(S, 1)
+            throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
+        end
+        @inbounds for i in eachindex(vout)
+            vout[i] += noise.symmetrized[i]
+        end
+    end
+    return vout
+end
+
+"""
+    calcqe(S::AbstractMatrix, noise = nothing; inputnoise = nothing)
+    calcqe!(qe, S, noise = nothing; inputnoise = nothing,
+        vout = similar(qe, size(S, 1)), comp = similar(vout))
 
 Calculate the quantum efficiency matrix for a scattering matrix `S` in the
-field ladder operator basis: `abs2(S[i,j])` over the total power at output
-`i`, `sum(abs2, S[i,:])`, plus, with the [`NoiseReduction`](@ref) `noise` of
-the noise scattering matrix of the dissipative elements, the occupied
-noise power `noise.denom` at that output. `denom` and `comp` are the
-scratch of the row sums, one entry per row. `calcqe!` overwrites `qe`.
+field ladder operator basis: `abs2(S[i,j])` over twice the symmetrized
+noise at output `i` (see [`outputnoise!`](@ref)), which every input brings
+in its own state, `inputnoise[j]`, its `nbar + 1/2`, the vacuum's half
+photon at every input when `nothing`, and the noise channels of the
+[`NoiseReduction`](@ref) `noise` add. The input `j` counts in its own
+state too, so a warm source lowers the efficiency of a measurement of its
+signal even through a lossless circuit. `vout` and `comp` are the scratch
+of that noise and its compensated sum, one entry per row; `vout` holds the
+noise on return. `calcqe!` overwrites `qe`.
 
 # Examples
 ```jldoctest
@@ -815,38 +957,35 @@ julia> qe=Float64[1 2;3 4];JosephsonCircuits.calcqe!(qe,[1 2;3 4],JosephsonCircu
 2×2 Matrix{Float64}:
  0.0526316  0.210526
  0.0882353  0.156863
+
+julia> JosephsonCircuits.calcqe([1.0 0.0; 0.0 1.0]; inputnoise = [1.5, 0.5])
+2×2 Matrix{Float64}:
+ 0.333333  0.0
+ 0.0       1.0
 ```
 """
 function calcqe!(qe::AbstractMatrix, S::AbstractMatrix, noise = nothing;
-    denom = similar(qe, size(S, 1)), comp = similar(denom))
+    inputnoise = nothing, vout = similar(qe, size(S, 1)), comp = similar(vout))
 
     if size(qe) != size(S)
         throw(DimensionMismatch(lazy"Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
     end
 
-    weightedrowpower!(denom, comp, S, nothing)
-
-    if !isnothing(noise)
-        if length(noise.denom) != size(S, 1)
-            throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
-        end
-        @inbounds for i in eachindex(denom)
-            denom[i] += noise.denom[i]
-        end
-    end
+    outputnoise!(vout, comp, S, inputnoise, noise)
 
     @inbounds for j in axes(S, 2)
         for i in axes(S, 1)
-            qe[i, j] = abs2(S[i, j]) / denom[i]
+            qe[i, j] = abs2(S[i, j]) / (2*vout[i])
         end
     end
 
     return qe
 end
 
-function calcqe(S::AbstractMatrix{T}, noise = nothing) where {T}
+function calcqe(S::AbstractMatrix{T}, noise = nothing;
+    inputnoise = nothing) where {T}
     # the quantum efficiency is real, whatever the matrix is
-    return calcqe!(zeros(float(real(T)), size(S)), S, noise)
+    return calcqe!(zeros(float(real(T)), size(S)), S, noise; inputnoise)
 end
 
 
@@ -902,12 +1041,12 @@ end
 """
     calcCnoise(S::AbstractMatrix{T}) where {T}
 
-Return the noise wave covariance matrix computed using Bosma's theorem for a
-passive linear network with scattering parameter matrix `S`. The network can
-be lossy and non-reciprocal.
-
-This function assumes vacuum fluctuations as input to the ports, but could be
-extended to allow arbitrary noise temperatures.
+Return the symmetrized noise covariance a passive linear network with the
+scattering parameter matrix `S` emits in its vacuum, `(I - S S')/2` by
+Bosma's theorem, in quanta: the half photon of the vacuum times the
+commutator `I - S S'`. The network can be lossy and non-reciprocal; in
+equilibrium at a temperature where a mode's occupation is `nbar` it emits
+`(nbar + 1/2)(I - S S')`.
 
 # Examples
 ```jldoctest
@@ -916,20 +1055,21 @@ julia> JosephsonCircuits.calcCnoise(JosephsonCircuits.S_splitter!(zeros(Complex{
  0.0+0.0im  0.0+0.0im
  0.0+0.0im  0.0+0.0im
 
-julia> S = rand(Complex{Float64},3,3);isapprox(JosephsonCircuits.calcCnoise(S),[1.0 0 0;0 1 0;0 0 1].-S*S')
+julia> S = rand(Complex{Float64},3,3);isapprox(JosephsonCircuits.calcCnoise(S),([1.0 0 0;0 1 0;0 0 1].-S*S')./2)
 true
 ```
 """
 function calcCnoise(S::AbstractMatrix{T}) where {T}
-    Cnoise = zeros(T,size(S))
+    Cnoise = zeros(typeof(one(T)/2),size(S))
     return calcCnoise!(Cnoise,S)
 end
 
 """
     calcCnoise!(Cnoise, S)
 
-Calculate the noise wave covariance matrix for a scattering matrix in the field
-ladder operator basis. Overwrites `Cnoise` with output.
+Calculate the symmetrized noise covariance `(I - S S')/2` a passive network
+emits in its vacuum, for a scattering matrix in the field ladder operator
+basis. Overwrites `Cnoise` with output.
 """
 function calcCnoise!(Cnoise::AbstractMatrix, S)
 
@@ -941,7 +1081,7 @@ function calcCnoise!(Cnoise::AbstractMatrix, S)
         throw(DimensionMismatch(lazy"The scattering parameter and noise wave covariance matrices must be square."))
     end
 
-    # compute C = I - S*S' from Bosma's theorem
+    # compute C = (I - S*S')/2 from Bosma's theorem
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
             Cnoise[i,j] = zero(eltype(Cnoise))
@@ -957,16 +1097,21 @@ function calcCnoise!(Cnoise::AbstractMatrix, S)
         Cnoise[k,k] += one(eltype(Cnoise))
     end
 
+    @inbounds for j in 1:size(S,2), i in 1:size(S,1)
+        Cnoise[i,j] /= 2
+    end
+
     return Cnoise
 end
 
 """
     calcCnoise(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}
 
-Calculate the noise wave covariance matrix for a scattering matrix in the
-field ladder operator basis. `Snoise` is ports by noise channels:
-`Snoise[i, k]` scatters channel `k` to port `i`, the transpose of the
-`Snoise` of a [`LinearizedHB`](@ref) at one frequency.
+Calculate the symmetrized noise covariance that the noise channels of
+`Snoise`, each in its vacuum, put at the ports, `Snoise Snoise'/2`, for a
+scattering matrix in the field ladder operator basis. `Snoise` is ports by
+noise channels: `Snoise[i, k]` scatters channel `k` to port `i`, the
+transpose of the `Snoise` of a [`LinearizedHB`](@ref) at one frequency.
 
 # Examples
 ```jldoctest
@@ -982,15 +1127,16 @@ julia> JosephsonCircuits.calcCnoise(Complex{Float64}[3/5 4/5;4/5 3/5],Complex{Fl
 ```
 """
 function calcCnoise(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}
-    Cnoise = zeros(T,size(S))
+    Cnoise = zeros(typeof(one(T)/2),size(S))
     return calcCnoise!(Cnoise,S,Snoise)
 end
 
 """
     calcCnoise!(Cnoise, S, Snoise)
 
-Calculate the noise wave covariance matrix for a scattering matrix in the
-field ladder operator basis. Overwrites `Cnoise` with output.
+Calculate the symmetrized noise covariance `Snoise Snoise'/2` of vacuum
+noise channels at the ports, for a scattering matrix in the field ladder
+operator basis. Overwrites `Cnoise` with output.
 
 # Examples
 ```jldoctest
@@ -1011,7 +1157,7 @@ function calcCnoise!(Cnoise, S, Snoise)
     end
 
     # add the noise covariance from the noise ports to the
-    # physical ports
+    # physical ports, each noise port in its vacuum
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
             Cnoise[i,j] = zero(eltype(Cnoise))
@@ -1020,6 +1166,7 @@ function calcCnoise!(Cnoise, S, Snoise)
                 # symbolic math with real variables.
                 Cnoise[i,j] += ifelse(i==j,abs2(Snoise[i,k]),Snoise[i,k]*conj(Snoise[j,k]))
             end
+            Cnoise[i,j] /= 2
         end
     end
 
@@ -1027,11 +1174,15 @@ function calcCnoise!(Cnoise, S, Snoise)
 end
 
 """
-    calcqe_S_Cnoise(S::AbstractArray, Cnoise::AbstractArray)
+    calcqe_S_Cnoise(S::AbstractArray, Cnoise::AbstractArray; inputnoise = nothing)
 
 Calculate the quantum efficiency of each output from the scattering
-parameter matrix and the noise wave covariance matrix, both in the field
-ladder operator (sqrt photon number) basis.
+parameter matrix and the symmetrized noise covariance the network adds,
+both in the field ladder operator (sqrt photon number) basis:
+`abs2(S[i,j])` over twice the symmetrized noise at output `i`,
+`sum(abs2.(S[i,:]) .* inputnoise) + Cnoise[i,i]`, with every input in its
+own state, `inputnoise[j]` its `nbar + 1/2`, the vacuum's half photon at
+every input when `nothing`, as for [`calcqe!`](@ref).
 
 # Examples
 ```jldoctest
@@ -1042,28 +1193,30 @@ julia> S = JosephsonCircuits.ABCDtoS(JosephsonCircuits.ABCD_attenuator_T(50,10).
 true
 ```
 """
-function calcqe_S_Cnoise(S::AbstractArray{T}, Cnoise::AbstractArray{T}) where {T}
+function calcqe_S_Cnoise(S::AbstractArray{T}, Cnoise::AbstractArray{T};
+    inputnoise = nothing) where {T}
     qe = zeros(T,size(S))
-    return calcqe_S_Cnoise!(qe,S,Cnoise)
+    return calcqe_S_Cnoise!(qe,S,Cnoise; inputnoise)
 end
 
 function calcqe_S_Cnoise(S::AbstractArray{Complex{T}},
-    Cnoise::AbstractArray{Complex{T}}) where {T}
+    Cnoise::AbstractArray{Complex{T}}; inputnoise = nothing) where {T}
     # QE is real so if the type is complex, use this
     # parametric method to define a real matrix.
     qe = zeros(T,size(S))
-    return calcqe_S_Cnoise!(qe,S,Cnoise)
+    return calcqe_S_Cnoise!(qe,S,Cnoise; inputnoise)
 end
 
 """
-    calcqe_S_Cnoise!(qe, S, Cnoise)
+    calcqe_S_Cnoise!(qe, S, Cnoise; inputnoise = nothing)
 
 Calculate the quantum efficiency matrix from the scattering parameter matrix
-and the noise wave covariance matrix, both in the field ladder operator (sqrt
-photon number) basis. Overwrites qe with output.
+and the symmetrized noise covariance the network adds, both in the field
+ladder operator (sqrt photon number) basis, with the inputs in the states
+`inputnoise` of [`calcqe_S_Cnoise`](@ref). Overwrites qe with output.
 
 """
-function calcqe_S_Cnoise!(qe, S, Cnoise)
+function calcqe_S_Cnoise!(qe, S, Cnoise; inputnoise = nothing)
 
     if size(qe) != size(S)
         throw(DimensionMismatch(lazy"The dimensions of the quantum efficiency and scattering parameter matrices must be equal."))
@@ -1073,17 +1226,18 @@ function calcqe_S_Cnoise!(qe, S, Cnoise)
         throw(DimensionMismatch(lazy"The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
     end
 
-    # the diagonal of the covariance is the occupied noise power at each
-    # output, what a `NoiseReduction` carries as `denom`
-    denom = zeros(eltype(qe), size(S, 1))
-    weightedrowpower!(denom, similar(denom), S, nothing)
+    # the symmetrized noise at each output: every input's in its state and
+    # the diagonal of the added covariance, what a `NoiseReduction`
+    # carries as `symmetrized`
+    vout = zeros(eltype(qe), size(S, 1))
+    outputnoise!(vout, similar(vout), S, inputnoise)
     @inbounds for i in axes(Cnoise, 1)
-        denom[i] += real(Cnoise[i, i])
+        vout[i] += real(Cnoise[i, i])
     end
 
     @inbounds for j in axes(S, 2)
         for i in axes(S, 1)
-            qe[i, j] = abs2(S[i, j]) / denom[i]
+            qe[i, j] = abs2(S[i, j]) / (2*vout[i])
         end
     end
 

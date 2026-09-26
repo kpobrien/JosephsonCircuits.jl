@@ -21,10 +21,12 @@ end
 # The pumped amplifier `c`, its pump ramped on at port 1 over 2 ns,
 # settled for 60 ns and measured over 20 ns at the signal frequency
 # under Gauss-Legendre at 2.5 ps, the bath the stationary Floquet
-# frequencies of the signal: the noise, its scalar metrics, and the gain
-# and the quantum efficiency harmonic balance gives the same circuit
+# frequencies of the signal: the noise, its scalar metrics, and the gain,
+# the quantum efficiency and the added noise of the signal's output that
+# harmonic balance gives the same circuit
 function pumpednoise(c; fp = 4.75e9, fs = 4.7e9, ip = 0.00565e-6)
-    hb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), c; atol = 1e-14)
+    hb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), c; atol = 1e-14,
+        returnCnoise = true)
     ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
     settle, record, dt = 60e-9, 20e-9, 2.5e-12
     sol = transientsolve(transientproblem(c; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))]),
@@ -34,7 +36,8 @@ function pumpednoise(c; fp = 4.75e9, fs = 4.7e9, ip = 0.00565e-6)
     frequencies = sort!(abs.([fs + 2k*fp for k in -2:2]))
     noise = transientnoise(sol, plan; frequencies, weights = fill(1/record, 5), inputs = plan, commutationrtol = 3e-3)
     metrics = transientquantumefficiency(noise.gain, noise.covariance; rtol = 3e-3)
-    return (; noise, metrics, gain = abs2(hb.linearized.S((0,), 1, (0,), 1, 1)), QE = hb.linearized.QE((0,), 1, (0,), 1, 1))
+    return (; noise, metrics, gain = abs2(hb.linearized.S((0,), 1, (0,), 1, 1)), QE = hb.linearized.QE((0,), 1, (0,), 1, 1),
+        Cnoise = hb.linearized.Cnoise((0,), 1, (0,), 1, 1))
 end
 
 # The quantum noise of a transient against harmonic balance: a passive two
@@ -169,7 +172,7 @@ end
         hbhot = hblinsolve(2pi*[3e9], hot; keyedarrays = false, returnSnoise = true, returnCnoise = true)
         @test warm.commutator ≈ adjoint.commutator rtol=1e-10
         @test warm.diagnostics.passed
-        excess = (hbhot.Cnoise[:, :, 1] - hb.Cnoise[:, :, 1])/2
+        excess = hbhot.Cnoise[:, :, 1] - hb.Cnoise[:, :, 1]
         expectedexcess = zeros(4, 4)
         for j in 1:2, k in 1:2
             z = excess[j, k]
@@ -177,17 +180,36 @@ end
         end
         @test warm.covariance - adjoint.covariance ≈ expectedexcess rtol=1e-4 atol=1e-5
         # the analysis temperature warms the internal resistor and leaves
-        # the port terminations at the vacuum, as the linearized solver's
-        # ports are, so the two solvers agree at that temperature
+        # the port terminations at their own temperature, the vacuum here,
+        # as the linearized solver does, so the two solvers agree at that
+        # temperature
         atemp = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], baths = transientnoisebaths(prob; temperature = 0.3))
         hbtemp = hblinsolve(2pi*[3e9], c; keyedarrays = false, returnCnoise = true, temperature = 0.3)
-        total = (S*S' + hbtemp.Cnoise[:, :, 1])/2
+        total = S*S'/2 + hbtemp.Cnoise[:, :, 1]
         expectedtotal = zeros(4, 4)
         for j in 1:2, k in 1:2
             z = total[j, k]
             expectedtotal[(2j - 1):2j, (2k - 1):2k] .= [real(z) imag(z); -imag(z) real(z)]
         end
         @test atemp.covariance ≈ expectedtotal rtol=1e-6
+        # warm terminations: each port's bath is at its termination's
+        # temperature, and the covariance of the waves leaving the ports
+        # is the linearized solver's output covariance, in quanta in both;
+        # the part the circuit adds, from the loss alone, is its Cnoise
+        warmports = Circuit([:p1 => Port(1; termination = MatchedTermination(temperature = 0.05)),
+                :p2 => Port(2; termination = MatchedTermination(temperature = 0.3)),
+                :c1 => Capacitor(0.3e-12), :c2 => Capacitor(0.5e-12), :loss => Resistor(30.0)],
+            [((:p1, 1), (:c1, 1), (:loss, 1)), ((:p2, 1), (:c2, 1), (:loss, 2)),
+                ((:p1, 2), (:p2, 2), (:c1, 2), (:c2, 2), Ground)])
+        wprob = transientproblem(warmports)
+        @test [b.temperature for b in transientnoisebaths(wprob).channels] == [0.05, 0.3, 0.0]
+        wsol = transientsolve(wprob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
+        wplan = transientquantumplan(wsol, wsol.times, [3e9, 3e9]; ports = [1, 2])
+        wnoise = transientnoise(wsol, wplan; frequencies = [3e9], weights = [1/T])
+        hbwarmports = hblinsolve(2pi*[3e9], warmports; keyedarrays = false, returnVout = true, returnCnoise = true)
+        @test wnoise.diagnostics.passed
+        @test wnoise.covariance ≈ quadratures(hbwarmports.Vout[:, :, 1]) rtol=1e-6
+        @test wnoise.addedcovariance ≈ quadratures(hbwarmports.Cnoise[:, :, 1]) rtol=1e-6
         # the contracts: a state whose drift balances a constant drive with
         # a resistor while the junction phase moves is not an equilibrium
         moving = transientproblem(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12)),
@@ -237,7 +259,7 @@ end
         @test warm.covariance ≈ network.covariance rtol=1e-10
         @test warm.commutator ≈ cold.commutator rtol=1e-10
         hbw = hblinsolve(2pi*[3e9], mk(ScatteringParameters(S; zref = 50.0, noise = ThermalEquilibrium(0.3))); keyedarrays = false, returnCnoise = true)
-        @test warm.covariance - cold.covariance ≈ quadratures((hbw.Cnoise[:, :, 1] - hb.Cnoise[:, :, 1])/2) rtol=1e-6
+        @test warm.covariance - cold.covariance ≈ quadratures(hbw.Cnoise[:, :, 1] - hb.Cnoise[:, :, 1]) rtol=1e-6
         cascade(t1, t2) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.3e-12)),
             (:a1, 1, 2, ScatteringParameters(S; zref = 50.0, noise = ThermalEquilibrium(t1))), (:c2, 2, 0, Capacitor(0.2e-12)),
             (:a2, 2, 3, ScatteringParameters(S; zref = 50.0, noise = ThermalEquilibrium(t2))), (:c3, 3, 0, Capacitor(0.5e-12)),
@@ -247,22 +269,26 @@ end
         hbc = hblinsolve(2pi*[3e9], cascade(0.3, 4.0); keyedarrays = false, returnCnoise = true)
         hbc0 = hblinsolve(2pi*[3e9], cascade(0.0, 0.0); keyedarrays = false, returnCnoise = true)
         @test cc.covariance ≈ plan.vacuum rtol=1e-6
-        @test cw.covariance - cc.covariance ≈ quadratures((hbc.Cnoise[:, :, 1] - hbc0.Cnoise[:, :, 1])/2) rtol=1e-6
+        @test cw.covariance - cc.covariance ≈ quadratures(hbc.Cnoise[:, :, 1] - hbc0.Cnoise[:, :, 1]) rtol=1e-6
         Sc = [0.0 0.0 1.0; 1.0 0.0 0.0; 0.0 1.0 0.0]
         circ = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.3e-12)),
             (:circ, 1, 2, 3, ScatteringParameters(Sc; zref = 50.0)), (:c2, 2, 0, Capacitor(1e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0)),
             (:c3, 3, 0, Capacitor(0.2e-12)), (:p3, 3, 0, Port(3; Z0 = 50.0))])
         @test length(transientnoisebaths(transientproblem(circ))) == 3
         @test_throws ArgumentError transientnoisebaths(transientproblem(mk(ScatteringParameters(S; zref = 50.0, noise = Lossless()))))
-        # the pumped amplifier behind a cold 3 dB pad: its gain and its
-        # quantum efficiency against the linearized solver
+        # the pumped amplifier behind a cold 3 dB pad, its port at 0.1 K:
+        # its gain, its quantum efficiency and the noise the pad adds
+        # against the linearized solver, the signal's and the idler's
+        # occupations at the port differing
         ga = 10^(-3/20)
-        jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:pad, 1, 2, ScatteringParameters([0.0 ga; ga 0.0]; zref = 50.0)),
+        jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0, termination = MatchedTermination(temperature = 0.1))),
+            (:pad, 1, 2, ScatteringParameters([0.0 ga; ga 0.0]; zref = 50.0)),
             (:cc, 2, 3, Capacitor(100e-15)), (:jj, 3, 0, JosephsonJunction(1000e-12)), (:cj, 3, 0, Capacitor(1000e-15))])
         j = pumpednoise(jpa)
         @test j.noise.diagnostics.passed
         @test j.metrics.gain ≈ j.gain rtol=1e-3
         @test j.metrics.QE ≈ j.QE rtol=1e-3
+        @test j.noise.addedcovariance ≈ quadratures(fill(j.Cnoise, 1, 1)) rtol=1e-3
     end
 
     @testset "transmission lines carry the baths' prehistory" begin
@@ -358,6 +384,16 @@ end
         c = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)),
             (:line, 1, 2, TransmissionLine(60.0, 0.09)), (:jj, 2, 0, JosephsonJunction(1000e-12)), (:cj, 2, 0, Capacitor(1000e-15)),
             (:p2, 2, 0, Port(2; Z0 = 50.0))])
+        # the tiles within a budget, two baths, two objectives and two
+        # frequencies on four workers: a condition's accumulator and
+        # initial terms take 128 bytes a frequency on the host, and each
+        # worker's scratch as much; the largest tile of conditions which
+        # holds every frequency on its workers, else one condition with
+        # the frequencies that fit
+        tiles(budget) = JC.noisetiling(budget, 2, 2, 64, 2, 4, true, c -> min(c, 4), false)
+        @test (tiles(512).ctile, tiles(512).nft, tiles(512).workers, tiles(512).bytes) == (1, 2, 1, 512)
+        @test (tiles(1024).ctile, tiles(1024).nft, tiles(1024).workers) == (2, 2, 2)
+        @test (tiles(511).ctile, tiles(511).nft) == (1, 1)
         n, T, fp = 256, 1e-9, 4.75e9
         base = transientproblem(c; sources = [TransientSource(1, t -> 0.0)])
         ramp(t) = t <= 0 ? 0.0 : t >= 0.4e-9 ? 1.0 : (1 - cospi(t/0.4e-9))/2
@@ -440,7 +476,7 @@ end
         @test nf.gain ≈ nl.gain rtol=1e-10
         nw, _ = twoportnoise(mk(lossy(ThermalEquilibrium(0.3))))
         hbw = hblinsolve(2pi*[3e9], mk(lossy(ThermalEquilibrium(0.3))); keyedarrays = false, returnCnoise = true)
-        @test nw.covariance - nl.covariance ≈ quadratures((hbw.Cnoise[:, :, 1] - hb.Cnoise[:, :, 1])/2) rtol=1e-6
+        @test nw.covariance - nl.covariance ≈ quadratures(hbw.Cnoise[:, :, 1] - hb.Cnoise[:, :, 1]) rtol=1e-6
         # the loss matrix `I - S S'` of that block is a scalar, which hides
         # the sign of the sine quadrature in the group's correction; a
         # feedthrough of opposite signs at the two ports gives a loss
@@ -454,7 +490,7 @@ end
         nmw, _ = twoportnoise(mk(mixed(ThermalEquilibrium(0.3))))
         hbm = hblinsolve(2pi*[3e9], mk(mixed(Passive())); keyedarrays = false, returnCnoise = true)
         hbmw = hblinsolve(2pi*[3e9], mk(mixed(ThermalEquilibrium(0.3))); keyedarrays = false, returnCnoise = true)
-        @test nmw.covariance - nm.covariance ≈ quadratures((hbmw.Cnoise[:, :, 1] - hbm.Cnoise[:, :, 1])/2) rtol=1e-6
+        @test nmw.covariance - nm.covariance ≈ quadratures(hbmw.Cnoise[:, :, 1] - hbm.Cnoise[:, :, 1]) rtol=1e-6
         # Nothing is inferred about a rational block's loss: a notch of
         # relative width 1e-6 at 3 GHz, an all pass elsewhere to a part in
         # 1e12, keeps its channels and, warm, emits the noise of its loss
@@ -482,7 +518,7 @@ end
         Sn = zeros(ComplexF64, 1, 1, 1)
         JosephsonCircuits.evaluateprovider!(Sn, notch(Passive()).provider, [wn])
         @test abs(Sn[1, 1, 1]) < 1e-3
-        excess = real(hwarm.Cnoise[1, 1, 1] - hcold.Cnoise[1, 1, 1])/2
+        excess = real(hwarm.Cnoise[1, 1, 1] - hcold.Cnoise[1, 1, 1])
         @test excess > 0.1
         @test nwarm.covariance - ncold.covariance ≈ excess .* Matrix(1.0I, 2, 2) rtol=1e-5
         @test_throws ArgumentError notch(Lossless())
@@ -555,7 +591,7 @@ end
         @test nw.covariance - nc.covariance ≈ ew.covariance - ec.covariance rtol=1e-6
         hbc = hblinsolve(2pi*[3e9], explicit(0.0); keyedarrays = false, returnCnoise = true)
         hbw = hblinsolve(2pi*[3e9], explicit(0.3); keyedarrays = false, returnCnoise = true)
-        @test nw.covariance - nc.covariance ≈ quadratures((hbw.Cnoise[:, :, 1] - hbc.Cnoise[:, :, 1])/2) rtol=1e-6
+        @test nw.covariance - nc.covariance ≈ quadratures(hbw.Cnoise[:, :, 1] - hbc.Cnoise[:, :, 1]) rtol=1e-6
     end
 
     @testset "a composed front end: lines, a warm fitted block and a pumped junction" begin
@@ -601,49 +637,71 @@ end
             (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         G = 100.0
         amp(V) = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance(V), dcmodel = OpenDC())
-        for V in ([1.0 0.0; 0.0 G - 1], [3.0 0.0; 0.0 5G])
+        for V in ([0.5 0.0; 0.0 (G - 1)/2], [1.5 0.0; 0.0 2.5G])
             na, plan = twoportnoise(mk(amp(V)))
             hb = hblinsolve(2pi*[3e9], mk(amp(V)); keyedarrays = false, returnCnoise = true, returnCM = true)
             @test hb.CM ≈ ones(2, 1) atol=1e-10
             @test na.diagnostics.passed
-            @test na.covariance ≈ quadratures(hb.S[:, :, 1]*hb.S[:, :, 1]' + hb.Cnoise[:, :, 1])/2 rtol=1e-6
+            @test na.covariance ≈ quadratures(hb.S[:, :, 1]*hb.S[:, :, 1]'/2 + hb.Cnoise[:, :, 1]) rtol=1e-6
+            @test na.addedcovariance ≈ quadratures(hb.Cnoise[:, :, 1]) rtol=1e-6
             @test na.commutator ≈ plan.commutator rtol=1e-5
             @test na.gain ≈ quadratures(hb.S[:, :, 1]) rtol=1e-6
             nf, _ = twoportnoise(mk(amp(V)); method = :forward)
             @test nf.covariance ≈ na.covariance rtol=1e-10
+            @test nf.addedcovariance ≈ na.addedcovariance rtol=1e-10
         end
-        baths = transientnoisebaths(transientproblem(mk(amp([1.0 0.0; 0.0 G - 1]))))
+        # the noise the circuit adds, its resistor's and its group's apart
+        # from its warm terminations', is the same contracted a frequency
+        # per tile, within a budget of a few bytes, and by the forward
+        # method
+        warm = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0, termination = MatchedTermination(temperature = 0.05))),
+            (:c1, 1, 0, Capacitor(0.3e-12)), (:r, 1, 0, Resistor(500.0; temperature = 0.1)), (:b, 1, 2, amp([1.5 0.0; 0.0 2.5G])),
+            (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0, termination = MatchedTermination(temperature = 0.3)))])
+        wsol = transientsolve(transientproblem(warm), (0.0, 1e-9*511/512); dt = 1e-9/512, record = :phases, method = GaussLegendre())
+        wplan = transientquantumplan(wsol, wsol.times, [3e9, 3e9]; ports = [1, 2])
+        args = (; frequencies = [2.9e9, 3e9, 3.1e9], weights = fill(1e9, 3))
+        whole = transientnoise(wsol, wplan; args...)
+        JC.noisememorybudget[] = 1
+        tiled = try
+            transientnoise(wsol, wplan; args...)
+        finally
+            JC.noisememorybudget[] = 0
+        end
+        @test tiled.addedcovariance ≈ whole.addedcovariance rtol=1e-10
+        @test tiled.covariance ≈ whole.covariance rtol=1e-10
+        @test transientnoise(wsol, wplan; args..., method = :forward).addedcovariance ≈ whole.addedcovariance rtol=1e-8
+        baths = transientnoisebaths(transientproblem(mk(amp([0.5 0.0; 0.0 (G - 1)/2]))))
         @test length(baths) == 4 && length(baths.groups) == 1 && all(iszero, b.temperature for b in baths.channels)
         # the analysis temperature warms neither the ports, which are
         # vacuum, nor the block, whose stated covariance is the whole of
         # its noise
-        warmed = transientnoisebaths(transientproblem(mk(amp([1.0 0.0; 0.0 G - 1]))); temperature = 0.3)
+        warmed = transientnoisebaths(transientproblem(mk(amp([0.5 0.0; 0.0 (G - 1)/2]))); temperature = 0.3)
         @test all(iszero, b.temperature for b in warmed.channels)
         S = [0.0 0.6; 0.6 0.0]
         K = I - S*S'
-        stated = ScatteringParameters(S; zref = 50.0, noise = NoiseCovariance(w -> JosephsonCircuits.thermaloccupation(w, 0.3) .* K))
+        stated = ScatteringParameters(S; zref = 50.0, noise = NoiseCovariance(w -> (thermaloccupation(w, 0.3) + 1/2) .* K))
         ns, _ = twoportnoise(mk(stated))
         nt, _ = twoportnoise(mk(ScatteringParameters(S; zref = 50.0, noise = ThermalEquilibrium(0.3))))
         @test ns.covariance ≈ nt.covariance rtol=1e-8
         @test ns.commutator ≈ nt.commutator rtol=1e-8
-        starved = ScatteringParameters([0.0 0.0; 10.0 0.0]; zref = 50.0, noise = NoiseCovariance(w -> [1.0 0.0; 0.0 98.0]))
+        starved = ScatteringParameters([0.0 0.0; 10.0 0.0]; zref = 50.0, noise = NoiseCovariance(w -> [0.5 0.0; 0.0 49.0]))
         @test_throws ArgumentError twoportnoise(mk(starved))
         # a covariance which is not Hermitian is refused as supplied,
         # before one triangle of it stands for the whole; a callable, since
         # a constant is checked when the block is built
-        skewed = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance(w -> [1.0 0.0; 10.0 G - 1]), dcmodel = OpenDC())
+        skewed = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance(w -> [0.5 0.0; 5.0 (G - 1)/2]), dcmodel = OpenDC())
         @test_throws ArgumentError twoportnoise(mk(skewed))
         # a covariance completed to the commutation relations: stated
         # below the quantum limit, the amplifier emits the limit, in both
         # solvers alike
-        under = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance([1.0 0.0; 0.0 0.5(G - 1)]; completed = true), dcmodel = OpenDC())
+        under = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance([0.5 0.0; 0.0 (G - 1)/4]; completed = true), dcmodel = OpenDC())
         nc, planc = twoportnoise(mk(under))
         hbc = hblinsolve(2pi*[3e9], mk(under); keyedarrays = false, returnCnoise = true, returnCM = true)
-        hbq = hblinsolve(2pi*[3e9], mk(amp([1.0 0.0; 0.0 G - 1])); keyedarrays = false, returnCnoise = true)
+        hbq = hblinsolve(2pi*[3e9], mk(amp([0.5 0.0; 0.0 (G - 1)/2])); keyedarrays = false, returnCnoise = true)
         @test hbc.Cnoise ≈ hbq.Cnoise atol=1e-10
         @test hbc.CM ≈ ones(2, 1) atol=1e-10
         @test nc.diagnostics.passed
-        @test nc.covariance ≈ quadratures(hbc.S[:, :, 1]*hbc.S[:, :, 1]' + hbc.Cnoise[:, :, 1])/2 rtol=1e-6
+        @test nc.covariance ≈ quadratures(hbc.S[:, :, 1]*hbc.S[:, :, 1]'/2 + hbc.Cnoise[:, :, 1]) rtol=1e-6
         @test nc.commutator ≈ planc.commutator rtol=1e-5
         # an amplifier whose gain rolls off, fitted to a rational block
         # without the passivity its gain forbids and realized in time
@@ -652,7 +710,7 @@ end
         # by a margin the fit's error does not reach
         w0, g0 = 2pi*8e9, 10.0
         rolloff(w) = [0.0 0.0; g0*w0/(w0 + im*w) 0.0]
-        rolloffnoise(w) = (K = I - rolloff(w)*rolloff(w)'; [1.05*abs(K[1, 1]) 0.0; 0.0 1.05*abs(K[2, 2]) + 0.1])
+        rolloffnoise(w) = (K = I - rolloff(w)*rolloff(w)'; [0.525*abs(K[1, 1]) 0.0; 0.0 0.525*abs(K[2, 2]) + 0.05])
         ampfit = RationalScattering(ScatteringParameters(rolloff; nports = 2, zref = 50.0, noise = NoiseCovariance(rolloffnoise)), 4;
             frequencies = collect(range(0.1e9, 40e9; length = 300)))
         nr, plan = twoportnoise(mk(ampfit))
@@ -660,7 +718,7 @@ end
         @test abs(hbr.S[2, 1, 1]) > 3
         @test hbr.CM ≈ ones(2, 1) atol=1e-10
         @test nr.diagnostics.passed
-        @test nr.covariance ≈ quadratures(hbr.S[:, :, 1]*hbr.S[:, :, 1]' + hbr.Cnoise[:, :, 1])/2 rtol=1e-5
+        @test nr.covariance ≈ quadratures(hbr.S[:, :, 1]*hbr.S[:, :, 1]'/2 + hbr.Cnoise[:, :, 1]) rtol=1e-5
         @test nr.commutator ≈ plan.commutator rtol=1e-5
         @test nr.gain ≈ quadratures(hbr.S[:, :, 1]) rtol=1e-5
     end

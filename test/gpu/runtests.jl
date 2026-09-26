@@ -358,6 +358,7 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         sweep(; kw...) = hbsolve(ws, (2*pi*4.75001e9,),
             [(mode = (1,), port = 1, current = 0.00565e-6)], (2,), (8,), c;
             keyedarrays = false, returnQE = false, returnCM = false,
+            returnnbar = false,
             kw...).linearized
         ra = sweep()
         rb = sweep(backend = CUDABackend())
@@ -600,6 +601,7 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         and = transientnoise(transientsolve(ap, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre(), backend = CUDABackend()), adplan;
             frequencies = [2df, 3df], weights = fill(df, 2))
         @test and.covariance ≈ anh.covariance rtol=1e-8
+        @test and.addedcovariance ≈ anh.addedcovariance rtol=1e-8
         @test and.commutator ≈ anh.commutator rtol=1e-8
         # a projected algebraic direction on the device against the host:
         # the junction to an inductor node without capacitance
@@ -805,14 +807,18 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         # emits, and its noise scattering parameters and added noise
         # covariance are compared on something
         @test isempty(rh.linearized.Snoise)
+        # the port warm, so that its noise enters the quantum efficiency,
+        # the occupations and the output covariance, which the device
+        # sweep forms from the covariance its reduction hands back
         lossycircuit = Circuit([
-            (:p1, 1, 0, Port(1; Z0 = Z0)),
+            (:p1, 1, 0, Port(1; Z0 = Z0,
+                termination = MatchedTermination(temperature = 0.05))),
             (:b, 1, 2, ScatteringParameters(ComplexF64[0 0.5; 0.5 0];
                 zref = Z0)),
             (:cc, 2, 3, Capacitor(100e-15)),
             (:jj, 3, 0, JosephsonJunction(1000e-12)),
             (:cj, 3, 0, Capacitor(1000e-15))])
-        kwn = (; returnSnoise = true, returnCnoise = true,
+        kwn = (; returnSnoise = true, returnCnoise = true, returnVout = true,
             keyedarrays = false)
         lh = hbsolve(ws, wp, src, (8,), (8,), lossycircuit; kwn...)
         ld = hbsolve(ws, wp, src, (8,), (8,), lossycircuit;
@@ -821,10 +827,15 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test ld.nonlinear.solverinfo.converged
         @test !isempty(lh.linearized.Snoise) && norm(lh.linearized.Snoise) > 0
         @test norm(lh.linearized.Cnoise) > 0
-        for name in (:S, :Snoise, :Cnoise, :QE, :CM)
+        for name in (:S, :Snoise, :Cnoise, :Vout, :QE, :CM, :nbar)
             @test agree(getfield(lh.linearized, name),
                 getfield(ld.linearized, name); rtol = 1e-8)
         end
+        # the output covariance without the added one returned
+        lv = hbsolve(ws, wp, src, (8,), (8,), lossycircuit;
+            backend = CUDABackend(), factorization = CUDSSFactorization(),
+            keyedarrays = false, returnVout = true)
+        @test agree(lh.linearized.Vout, lv.linearized.Vout; rtol = 1e-8)
 
         # the sweep itself, batch by batch
         nl = hbnlsolve(wp, (8,), src, blockcircuit; keyedarrays = false)

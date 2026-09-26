@@ -619,14 +619,14 @@ function connectS!(Sout, Sa, Sb, k::Int, l::Int;
 end
 
 # `X_Y_to_sympletic_pair` and `X_Y_to_sympletic_block` were misspelled.
-function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real}; kwargs...)
     Base.depwarn("`X_Y_to_sympletic_pair` is deprecated, use `X_Y_to_symplectic_pair` instead.", :X_Y_to_sympletic_pair; force=true)
-    return X_Y_to_symplectic_pair(X, Y)
+    return X_Y_to_symplectic_pair(X, Y; kwargs...)
 end
 
-function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real}; kwargs...)
     Base.depwarn("`X_Y_to_sympletic_block` is deprecated, use `X_Y_to_symplectic_block` instead.", :X_Y_to_sympletic_block; force=true)
-    return X_Y_to_symplectic_block(X, Y)
+    return X_Y_to_symplectic_block(X, Y; kwargs...)
 end
 
 

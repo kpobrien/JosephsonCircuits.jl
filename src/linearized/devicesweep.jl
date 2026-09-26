@@ -464,8 +464,9 @@ end
 Whether the transposed (adjoint) linearized system must be solved at each
 signal frequency: for the scattering parameter sensitivities always, and
 otherwise when a consumer of the adjoint solution (the noise scattering
-parameters, the quantum efficiency, the commutation relations, or the adjoint
-node outputs) is requested together with a source of it. The dissipative
+parameters, the noise covariances, the quantum efficiency, the occupations,
+the commutation relations, or the adjoint node outputs) is requested
+together with a source of it. The dissipative
 scattering blocks of a [`ScatteringNoisePlan`](@ref) are such a source, as
 the lumped noise ports are.
 
@@ -480,11 +481,17 @@ function needsadjointsolve(arrays::LinearizedArrays,
     hassource = !isempty(noiseportimpedanceindices) ||
         !isnothing(noiseplan) ||
         !isempty(arrays.nodefluxadjoint) || !isempty(arrays.voltageadjoint)
-    hasconsumer = !isempty(arrays.Snoise) || !isempty(arrays.QE) ||
-        !isempty(arrays.CM) || !isempty(arrays.Cnoise) ||
+    hasconsumer = readsnoise(arrays) ||
         !isempty(arrays.nodefluxadjoint) || !isempty(arrays.voltageadjoint)
     return hassource && hasconsumer
 end
+
+# whether an output of `arrays` reads the noise channels: the noise
+# scattering parameters, the noise covariances, the quantum efficiency,
+# the occupations or the commutation relations
+readsnoise(arrays::LinearizedArrays) = !isempty(arrays.Snoise) ||
+    !isempty(arrays.QE) || !isempty(arrays.CM) || !isempty(arrays.Cnoise) ||
+    !isempty(arrays.nbar) || !isempty(arrays.Vout)
 
 """
     DeviceSweep

@@ -168,6 +168,36 @@ end
             transientadjoint(sol[j], weights).currents rtol = 1e-8
     end
 
+    # the noise of a pumped block, whose correlated bath frequencies one
+    # tile must hold, over a batch of four conditions within a budget of
+    # exactly what one condition takes with every frequency on its one
+    # worker: the tiles are of one condition, whatever the threads, and
+    # the batch's noise is each condition's; a byte less is refused
+    wp = 2*pi*1e9
+    p0 = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), zeros(1, 1))
+    pc = JC.RationalScatteringProvider(fill(-wp, 1, 1), fill(wp, 1, 1), fill(0.1, 1, 1), zeros(1, 1))
+    pz = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), zeros(1, 1))
+    stated = LinearizedScattering([p0, JC.ModulatedRationalProvider(pc, pz)], wp; harmonics = [0, 1], nports = 1,
+        zref = 50.0, noise = NoiseCovariance([fill(10.0, 1, 1), zeros(ComplexF64, 1, 1)]))
+    pumped = transientproblem(Circuit([(:p, 1, 0, Port(1)), (:b, 1, stated)]))
+    psol = transientsolve(fill(pumped, 4), (0.0, 20e-9 - 2e-11); dt = 2e-11, method = GaussLegendre(), record = :checkpoints)
+    pplan = transientquantumplan(psol, psol.times, [0.4e9])
+    pargs = (; frequencies = [0.4e9, 0.6e9], weights = fill(1/20e-9, 2))
+    need = JC.noisetiling(typemax(Int), length(transientnoisebaths(pumped)), 2, length(psol.times), 2, 1, true, c -> c, false).bytes
+    JC.noisememorybudget[] = need
+    pnoise = try
+        transientnoise(psol, pplan; pargs...)
+    finally
+        JC.noisememorybudget[] = 0
+    end
+    @test pnoise.covariance[:, :, 4] ≈ transientnoise(psol[4], pplan; pargs...).covariance rtol = 1e-10
+    JC.noisememorybudget[] = need - 1
+    try
+        @test_throws ArgumentError transientnoise(psol, pplan; pargs...)
+    finally
+        JC.noisememorybudget[] = 0
+    end
+
     # a pump solve whose nonlinear term maps are longer than `hostlooplimit`,
     # which a threaded process applies as KernelAbstractions kernels on the
     # host rather than as plain loops
@@ -185,5 +215,6 @@ end
     serialize(ARGS[1], (; S = batched.S, Ssensitivity = batched.Ssensitivity,
         Snoise = batched.Snoise, fluxes, finalflux = sol.finalflux,
         tangent = tangent.outgoing, adjoint = adjoint.currents,
-        covariance = noise.covariance, gain, longflux = long.nodeflux))
+        covariance = noise.covariance, gain, longflux = long.nodeflux,
+        pumpedcovariance = pnoise.covariance))
 end

@@ -1347,7 +1347,7 @@ A network to connect: its name, its scattering parameters, their noise
 covariances and the names of its ports, `(network_name, i)` for port `i`
 by default. Without noise covariances, `noise = false` leaves an empty
 array in their place, which [`connectS!`](@ref) and [`solveS!`](@ref)
-replace with the passive covariance `I - S*S'` of the scattering
+replace with the passive covariance `(I - S*S')/2` of the scattering
 parameters `S` as they are when noise is connected, and `noise = true`
 computes that covariance at construction. The `noise` keyword of the
 constructors given noise covariances has no effect.
@@ -1402,7 +1402,7 @@ end
 """
     calc_noise_covariances(scattering_parameters; noise = true)
 
-Return the noise covariances `I - S*S'` of a passive network at every
+Return the noise covariances `(I - S*S')/2` of a passive network at every
 frequency of its scattering parameters `S` (Bosma's theorem), or, with
 `noise = false`, an empty array of their type, which stands for that
 covariance where networks are connected: see [`PassiveNetwork`](@ref).
@@ -2086,7 +2086,7 @@ arrays [`connectS!`](@ref) works on: the forward adjacency lists, the
 ports, and the scattering parameter and noise covariance matrices of every
 network, with splitters added where more than two ports meet. A network
 given without noise covariances has an empty array in their place, which
-`connectS!` replaces with the passive covariance `I - S S'` of its
+`connectS!` replaces with the passive covariance `(I - S S')/2` of its
 scattering parameters when it is called with `noise = true`; the `noise`
 keyword of this function is deprecated and has no effect. With
 `Nmodes > 1` each physical port of `connections` is expanded into its
@@ -2352,7 +2352,7 @@ The ports joined by a connection must share one real reference impedance.
 This function supports connections between more than two ports by
 automatically adding splitters, ideal lossless junctions for that
 impedance (see [`S_splitter!`](@ref)). With `noise = true` the noise covariance
-matrices are connected as well, the passive covariance `I - S S'` being
+matrices are connected as well, the passive covariance `(I - S S')/2` being
 used for a network given without one; with `Nmodes > 1` the scattering
 matrices are multi-mode and `connections` names physical ports, each
 expanded to its `Nmodes` modes (see [`add_modes`](@ref)). The frequencies
@@ -2927,7 +2927,7 @@ a connection of more than two ports is an ideal lossless junction for it
     splitter and connect the components to it.
 - `noise::Bool = false`: also connect the noise covariance matrices of the
     networks. A network given as `(name, S)` gets the passive covariance
-    `I - S S'`; one given as `(name, S, C)` uses `C`.
+    `(I - S S')/2`; one given as `(name, S, C)` uses `C`.
 - `factorization = KLUfactorization()`: the sparse factorization of the
     connection system; [`LUfactorization`](@ref) is another good choice.
     The connection system is singular when the connections close a

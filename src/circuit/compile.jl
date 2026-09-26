@@ -410,7 +410,9 @@ An analysis port and the environment it owns.
 `0` when the port owns none. It is recorded here when the port is
 compiled, so nothing downstream needs to look for a resistor on the port's
 branch, and a port may share its terminals with any number of ordinary
-device resistors.
+device resistors. `temperature` is the physical temperature in kelvin of
+that termination (see [`MatchedTermination`](@ref)), zero for a port
+which owns none.
 
 The reference impedance is not stored here: it is the value of the port's
 own entry in the flat component table, at `component`, so it is bound like
@@ -423,6 +425,7 @@ struct CompiledPort
     negativenode::Int
     environment::Int
     component::Int
+    temperature::Float64
 end
 
 """
@@ -996,7 +999,7 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
                     string(namedtermination(def.termination)))
             end
             push!(ports, CompiledPort(def.number, n1, n2, environment,
-                marker))
+                marker, porttemperature(def.termination)))
         end
     end
 
@@ -1021,13 +1024,13 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
             throw(ArgumentError(lazy"The port $(componentnames[ports[k].component]) names $(name) as its termination, which is not a resistor in this circuit."))
         end
         ports[k] = CompiledPort(ports[k].number, ports[k].positivenode,
-            ports[k].negativenode, i, ports[k].component)
+            ports[k].negativenode, i, ports[k].component, ports[k].temperature)
     end
 
     # `sortnodes` renumbered the nodes. The port nodes recorded above are in
     # the pre-sort numbering and are re-read from the sorted table.
     ports = [CompiledPort(p.number, nodeindices[1, p.component],
-        nodeindices[2, p.component], p.environment, p.component)
+        nodeindices[2, p.component], p.environment, p.component, p.temperature)
         for p in ports]
 
     warnduplicatematchedload(ports, componentnames, componenttypes,

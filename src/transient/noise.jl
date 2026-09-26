@@ -47,7 +47,7 @@ struct TransientNoiseBaths
     # the groups of channels whose covariance is contracted directly
     # rather than factored into independent channels: the ports of a
     # rational block, whose scattering matrix at a frequency gives the
-    # covariance `I - S S'` of its emitted wave, and of a block which
+    # commutator `I - S S'` of its emitted wave, and of a block which
     # states its noise with a NoiseCovariance, whose covariance and
     # commutator differ; as channels `first:last` of the list, and the
     # block
@@ -70,13 +70,13 @@ function groupcovariance(baths::TransientNoiseBaths, group, frequency)
 end
 
 # The symmetrized covariance and the commutator of a group's emitted
-# wave at a frequency in Hz, in the quadrature normalization of the
-# transient, where a vacuum channel has the variance 1/2: for a block
-# in equilibrium the commutator `K = I - S S'` and `(nbar + 1/2) K`, and
-# for a block which states its noise `K` and `V/2`, with `V` held to the
-# minimum the commutator requires, `V - K` and `V + K` positive
-# semidefinite, at this frequency, since a callable cannot be checked
-# before, or completed to it (see NoiseCovariance).
+# wave at a frequency in Hz, in quanta, where a vacuum channel has the
+# variance 1/2, the normalization of both solvers: for a block in
+# equilibrium the commutator `K = I - S S'` and `(nbar + 1/2) K`, and for
+# a block which states its noise `K` and `V`, with `V` held to the minimum
+# the commutator requires, `V - K/2` and `V + K/2` positive semidefinite,
+# at this frequency, since a callable cannot be checked before, or
+# completed to it (see NoiseCovariance).
 function groupnoise(baths::TransientNoiseBaths, group, frequency)
     b = baths.problem.blocks[group.block]
     S, K = groupcovariance(baths, group, frequency)
@@ -91,14 +91,14 @@ function groupnoise(baths::TransientNoiseBaths, group, frequency)
         skew <= noise.atol*max(1.0, maximum(abs, V1)) || throw(ArgumentError(
             lazy"the noise covariance of the scattering block at $(b.path) is not Hermitian at $(frequency) Hz: the largest entry of V - V' is $(skew)."))
         Vh = Hermitian(V[:, :, 1])
-        noise.completed && return Matrix(completecovariance(Vh, Matrix(K))) ./ 2, Matrix(K)
+        noise.completed && return Matrix(completecovariance(Vh, Matrix(K))), Matrix(K)
         margin = quantumnoisemargin(Vh, S)
         margin >= -noise.atol || throw(ArgumentError(
-            lazy"the noise covariance of the scattering block at $(b.path) is less than the commutation relations require at $(frequency) Hz: the smallest eigenvalue of V - K or V + K, with K = I - S S', is $(margin). An amplifier of power gain G has to emit at least G - 1 at its output; see NoiseCovariance."))
-        return Matrix(Vh) ./ 2, Matrix(K)
+            lazy"the noise covariance of the scattering block at $(b.path) is less than the commutation relations require at $(frequency) Hz: the smallest eigenvalue of V - K/2 or V + K/2, with K = I - S S', is $(margin). An amplifier of power gain G has to emit at least (G - 1)/2 at its output; see NoiseCovariance."))
+        return Matrix(Vh), Matrix(K)
     end
-    occupation = thermaloccupation(2pi*frequency, baths.channels[first(group.channels)].temperature)/2
-    return occupation .* Matrix(K), Matrix(K)
+    thermal = thermalnoise(2pi*frequency, baths.channels[first(group.channels)].temperature)
+    return thermal .* Matrix(K), Matrix(K)
 end
 
 """
@@ -108,8 +108,8 @@ The independent equilibrium baths of a circuit in time: every matched,
 port owned termination is one external bath, every finite internal
 resistor one internal bath, and every lossy constant scattering block the
 independent channels of its emitted noise wave, whose covariance is
-`I - S S'` (Bosma's relation, as the linearized solver has it), one
-channel per positive eigenvalue, while a rational block, whose `S`
+`(nbar + 1/2)(I - S S')` (Bosma's relation, as the linearized solver has
+it), one channel per positive eigenvalue of the commutator `I - S S'`, while a rational block, whose `S`
 depends on frequency, has one channel per port, correlated by its group
 at each bath frequency; from the compiler's termination
 ownership, the bound values, the component temperatures and the
@@ -125,9 +125,10 @@ noise is a group whose channels are correlated across the bath
 frequencies its harmonics relate (see [`PairLadder`](@ref)), and one
 declared lossless is no bath. `temperature` is the default in kelvin
 of every internal resistor and block, which a component's own stated
-temperature overrides; the port terminations are vacuum, as the
-linearized solver's ports are by definition. Every port must own a
-matched finite termination; an open resistor adds no bath. The same
+temperature overrides; a port's termination is a bath at its own
+temperature, zero unless `MatchedTermination(temperature = T)` states
+one, which the analysis temperature does not change. Every port must own
+a matched finite termination; an open resistor adds no bath. The same
 temperatures and models set the noise of [`hblinsolve`](@ref), so the
 two solvers compare at any temperature.
 """
@@ -140,7 +141,7 @@ function transientnoisebaths(p::TransientProblem; temperature = 0.0)
         isapprox(p.portconductances[j]*p.portimpedances[j], 1; rtol = 1e-12) || throw(ArgumentError(
             lazy"port $(port.number) needs its own matched termination for a bath."))
         push!(channels, TransientNoiseBath("port $(port.number)", noderows(p.portpositive[j], p.portnegative[j])...,
-            j, p.portimpedances[j], 0.0))
+            j, p.portimpedances[j], port.temperature))
     end
     for k in noiseindices(c, vvn)
         c.componenttypes[k] == :R || throw(ArgumentError("the transient baths are real resistors and scattering blocks."))
@@ -149,10 +150,11 @@ function transientnoisebaths(p::TransientProblem; temperature = 0.0)
         push!(channels, TransientNoiseBath(c.componentnames[k], noderows(c.nodeindices[1, k] - 1, c.nodeindices[2, k] - 1)...,
             0, r, get(c.componenttemperatures, k, t)))
     end
-    # A block emits the noise its loss requires, the wave with covariance
-    # I - S S' per Bosma, as the linearized solver computes it: the
-    # independent channels are the eigenvectors of that covariance scaled
-    # by the square roots of its eigenvalues, each entering the block's
+    # A block emits the noise its loss requires, the wave with commutator
+    # I - S S' and covariance (nbar + 1/2)(I - S S') per Bosma, as the
+    # linearized solver computes it: the independent channels are the
+    # eigenvectors of the commutator scaled by the square roots of its
+    # eigenvalues, each entering the block's
     # port current rows as the source 2 eta of the hybrid equation. A
     # block declared lossless emits nothing, which its construction proved
     # to its own tolerance, or the checks of a pumped block's family do
@@ -199,11 +201,12 @@ end
 # `H = R_c - i R_s` the complex response of the group's cosine and sine
 # quadratures in the demodulation's phasor convention, as the
 # independent channels are; for a block in equilibrium `V` is `K` times
-# the occupation and the two are one product, while a block which states
+# the symmetrized noise `nbar + 1/2` and the two are one product, while a
+# block which states
 # its noise has a covariance and a commutator of different shape. The
-# group's columns are masked out of the independent accumulation, so a
-# nearly lossless block's small covariance is never the difference of
-# two large ones. That convention is the conjugate of the linearized
+# group's columns are not among the independent baths' (see `bathsplit`),
+# so a nearly lossless block's small covariance is never the difference
+# of two large ones. That convention is the conjugate of the linearized
 # solver's, whose `S` gives `K`, so the wave's covariance reads
 # `conj(K)` here; the conjugate only matters when `K` has imaginary
 # off-diagonal entries, a scalar or real `K` hides it, and the block
@@ -213,18 +216,19 @@ end
 # condition's response are gathered and contracted where the response
 # lives, on the backend, so nothing of the response is copied to the
 # host.
-struct GroupCorrection{C, M, H, I, W, P}
+struct GroupCorrection{C, M, H, I, P}
     columns::Vector{Vector{I}}
     covariances::Vector{Vector{C}}
     # the commutator of each group at each frequency where it is not the
-    # covariance over its occupation
+    # covariance matrix itself, and the weight of that matrix in the
+    # covariance: the symmetrized noise nbar + 1/2 of a block in
+    # equilibrium, whose matrix is its commutator, and one for a block
+    # which states its covariance
     commutators::Vector{Vector{Union{Nothing,C}}}
-    occupations::Vector{Vector{Float64}}
+    weights::Vector{Vector{Float64}}
     # the ladders of a pumped block's group (see [`PairLadder`](@ref)),
     # empty for a group of one frequency at a time
     ladders::Vector{Vector{P}}
-    # the mask of the independent columns, zero on the groups'
-    mask::W
     R::M
     H::H
     T::H
@@ -244,11 +248,11 @@ block's noise wave over one ladder of its bath frequencies, the indices
 `frequencies` of those the ladder relates, square over their quadratures
 in the order `(frequency, port, quadrature)`. The block between the
 frequencies `a` and `b` holds the four real blocks `xx`, `xp`, `px` and
-`pp` from the normal correlator `N = <A_a A_b'>` and the anomalous one
-`M = <A_a transpose(A_b)>` of the complex amplitudes `A = x - i p` of
-the wave at the two frequencies, `xx = Re(N + M)/2`, `pp = Re(N - M)/2`,
-`xp = (Im N - Im M)/2`, `px = -(Im N + Im M)/2`, and `C` the same with
-`N` and `M` replaced by `2i` times the commutators of the amplitudes.
+`pp` from the symmetrized normal correlator `N` and anomalous one `M` of
+the wave's amplitudes at the two frequencies, in quanta, the vacuum's `N`
+being one half: `xx = Re(N + M)`, `pp = Re(N - M)`, `xp = Im N - Im M`,
+`px = -(Im N + Im M)`, and `C` the same with `N` and `M` replaced by `i`
+times the commutators of the amplitudes.
 `N` can be nonzero when the frequencies differ by a multiple of the
 pump frequency and `M` when they sum to one, both read from the block's
 noise over the family of the bath frequencies, its harmonic covariances
@@ -398,8 +402,10 @@ function pumpedladders(block::LinearizedScattering, frequencies, backend, refere
             M, Km = anomalous ? (entry(V, ia, ibm), entry(Kc, ia, ibm)) : (zeros(ComplexF64, n, n), zeros(ComplexF64, n, n))
             rn, ra = cis((nua - nub)*reference), cis((nua + nub)*reference)
             N, Kn, M, Km = rn .* N, rn .* Kn, ra .* M, ra .* Km
-            blocks = (N, M) -> (real.(N .+ M) ./ 2, (imag.(N) .- imag.(M)) ./ 2, .-(imag.(N) .+ imag.(M)) ./ 2, real.(N .- M) ./ 2)
-            push!(terms, (a, b, map(x -> Matrix{Float64}(x), blocks(N, M)), map(x -> Matrix{Float64}(x), blocks(2im .* Kn, 2im .* Km))))
+            # the quadrature blocks of a pair of symmetrized ladder
+            # correlators, and of the commutator through `im .* K`
+            blocks = (N, M) -> (real.(N .+ M), imag.(N) .- imag.(M), .-(imag.(N) .+ imag.(M)), real.(N .- M))
+            push!(terms, (a, b, map(x -> Matrix{Float64}(x), blocks(N, M)), map(x -> Matrix{Float64}(x), blocks(im .* Kn, im .* Km))))
         end
         isempty(terms) && continue
         # the pairs' blocks placed on the ladder's quadratures
@@ -419,23 +425,21 @@ end
 
 function groupcorrection(baths::TransientNoiseBaths, frequencies, m::Int, backend, reference::Real)
     nb = length(baths)
-    columns, covariances, occupations = Vector{Vector{Int}}[], Vector{Matrix{ComplexF64}}[], Vector{Float64}[]
+    columns, covariances, weights = Vector{Vector{Int}}[], Vector{Matrix{ComplexF64}}[], Vector{Float64}[]
     commutators = Vector{Union{Nothing,Matrix{ComplexF64}}}[]
     D = typeof(tobackend(backend, zeros(ComplexF64, 1, 1)))
     DR = typeof(tobackend(backend, zeros(Float64, 1, 1)))
     ladders = Vector{PairLadder{DR}}[]
     pmax, lmax = 0, 0
-    mask = ones(2nb*length(frequencies))
     for group in baths.groups
         cols = [[2*((f - 1)*nb + b - 1) + q for b in group.channels for q in 1:2] for f in eachindex(frequencies)]
-        foreach(c -> (mask[c] .= 0), cols)
         block = baths.problem.blocks[group.block].definition
         pmax = max(pmax, length(group.channels))
         push!(columns, cols)
         if block isa LinearizedScattering
             # correlated across the bath frequencies: pair terms, and no
             # term of one frequency
-            push!(covariances, Matrix{ComplexF64}[]); push!(commutators, Union{Nothing,Matrix{ComplexF64}}[]); push!(occupations, Float64[])
+            push!(covariances, Matrix{ComplexF64}[]); push!(commutators, Union{Nothing,Matrix{ComplexF64}}[]); push!(weights, Float64[])
             gl = PairLadder{DR}[PairLadder(L.frequencies, L.E, L.C) for L in pumpedladders(block, frequencies, backend, reference)]
             lmax = max(lmax, maximum(L -> size(L.E, 1), gl; init = 0))
             push!(ladders, gl)
@@ -445,26 +449,22 @@ function groupcorrection(baths::TransientNoiseBaths, frequencies, m::Int, backen
         gpairs = [groupnoise(baths, group, frequency) for frequency in frequencies]
         Ks = [Matrix(conj(stated ? V : K)) for (V, K) in gpairs]
         Cs = Union{Nothing,Matrix{ComplexF64}}[stated ? Matrix(conj(K)) : nothing for (V, K) in gpairs]
-        occ = [stated ? 1.0 : thermaloccupation(2pi*frequency, baths.channels[first(group.channels)].temperature)/2 for frequency in frequencies]
-        push!(covariances, Ks); push!(commutators, Cs); push!(occupations, occ)
+        weight = [stated ? 1.0 : thermalnoise(2pi*frequency, baths.channels[first(group.channels)].temperature) for frequency in frequencies]
+        push!(covariances, Ks); push!(commutators, Cs); push!(weights, weight)
         push!(ladders, PairLadder{DR}[])
     end
     allocate = (T, dims...) -> KernelAbstractions.zeros(backend, T, dims...)
     return GroupCorrection([[tobackend(backend, c) for c in cols] for cols in columns],
         [D[tobackend(backend, K) for K in Ks] for Ks in covariances],
         [Union{Nothing,D}[isnothing(K) ? nothing : tobackend(backend, K) for K in Cs] for Cs in commutators],
-        occupations, ladders, tobackend(backend, mask), allocate(Float64, m, 2pmax), allocate(ComplexF64, m, pmax), allocate(ComplexF64, m, pmax),
+        weights, ladders, allocate(Float64, m, 2pmax), allocate(ComplexF64, m, pmax), allocate(ComplexF64, m, pmax),
         allocate(ComplexF64, m, m), allocate(Float64, m, lmax), allocate(Float64, m, lmax), allocate(Float64, m, m))
 end
 
 # a group correction sharing the matrices of `gc`, which the contraction
 # only reads, with scratch of its own, for a worker of its own
-groupscratch(gc::GroupCorrection) = GroupCorrection(gc.columns, gc.covariances, gc.commutators, gc.occupations, gc.ladders,
-    gc.mask, similar(gc.R), similar(gc.H), similar(gc.T), similar(gc.A), similar(gc.Rl), similar(gc.Tl), similar(gc.Ar))
-
-# the groups' columns of a response masked out, for the independent
-# accumulation, once the groups have been contracted
-maskgroups!(response, gc::GroupCorrection) = (response .*= transpose(gc.mask); response)
+groupscratch(gc::GroupCorrection) = GroupCorrection(gc.columns, gc.covariances, gc.commutators, gc.weights, gc.ladders,
+    similar(gc.R), similar(gc.H), similar(gc.T), similar(gc.A), similar(gc.Rl), similar(gc.Tl), similar(gc.Ar))
 
 function groupcorrection!(covariance, commutator, response, gc::GroupCorrection)
     # the ladders of the pumped blocks' groups: the quadrature responses
@@ -495,7 +495,7 @@ function groupcorrection!(covariance, commutator, response, gc::GroupCorrection)
         T = view(gc.T, :, 1:p)
         mul!(T, H, K)
         mul!(gc.A, T, H')
-        covariance .+= gc.occupations[g][f] .* real.(gc.A)
+        covariance .+= gc.weights[g][f] .* real.(gc.A)
         C = gc.commutators[g][f]
         if isnothing(C)
             commutator .+= imag.(gc.A)
@@ -529,7 +529,7 @@ targetports(::TransientProblem, baths::TransientNoiseBaths) = [b.port for b in b
 The peak amplitude `2 sqrt(h f df/R)` of the cosine and sine Norton currents
 representing one quadrature pair of `bath` at the frequency `f` in Hz
 with the quadrature weight `df` in Hz. With the independent quadratures at
-variance `thermaloccupation(2pi f, T)/2 = nbar + 1/2` this gives the
+variance `nbar + 1/2` this gives the
 bilateral symmetrized current spectral density `h f/R coth(h f/2kT)`,
 `2kT/R` classically.
 """
@@ -550,17 +550,67 @@ end
 
 Add the contribution of the responses `response[:, 2j-1:2j]` of the
 quadrature pairs to the covariance, weighted by the pairs' `variances`,
-and to the commutator, which the occupation does not weight.
+and to the commutator, which the variances do not weight.
 """
 function transientnoiseaccumulate!(covariance, commutator, response, variances)
     size(response, 2) == length(variances) && iseven(length(variances)) || throw(DimensionMismatch(
         "the responses come in quadrature pairs."))
+    pairaccumulate!(commutator, response)
+    weighted = response .* transpose(sqrt.(variances))
+    mul!(covariance, weighted, transpose(weighted), 1.0, 1.0)
+    return nothing
+end
+
+# the commutator of the quadrature pairs `response[:, 2j-1:2j]`
+function pairaccumulate!(commutator, response)
     x = view(response, :, 1:2:size(response, 2))
     p = view(response, :, 2:2:size(response, 2))
     mul!(commutator, x, transpose(p), 1.0, 1.0)
     mul!(commutator, p, transpose(x), -1.0, 1.0)
-    weighted = response .* transpose(sqrt.(variances))
-    mul!(covariance, weighted, transpose(weighted), 1.0, 1.0)
+    return nothing
+end
+
+# The independent baths of a response whose columns are in the order
+# (quadrature, bath, frequency) at the `frequencies` in Hz, split into the
+# port baths, which bring in the noise of the terminations, and the rest,
+# the noise the circuit adds with the groups, whose baths are neither: for
+# each, on the backend, the baths and the square roots of the symmetrized
+# noise of each at each frequency, the weight of its pair's columns.
+function bathsplit(baths::TransientNoiseBaths, frequencies, backend)
+    nb = length(baths)
+    grouped = falses(nb)
+    foreach(g -> (grouped[g.channels] .= true), baths.groups)
+    ports = [baths.channels[b].port > 0 for b in 1:nb]
+    return (; nb, ports = bathpart(baths, findall(ports), frequencies, backend),
+        internal = bathpart(baths, findall(.!ports .& .!grouped), frequencies, backend))
+end
+function bathpart(baths::TransientNoiseBaths, selected::Vector{Int}, frequencies, backend)
+    amplitudes = [sqrt(thermalnoise(2pi*f, baths.channels[b].temperature)) for b in selected, f in frequencies]
+    return (; baths = tobackend(backend, selected),
+        amplitudes = tobackend(backend, reshape(amplitudes, 1, 1, length(selected), length(frequencies))))
+end
+
+# The noise of one condition from its responses: the groups' correction
+# into `added`, the noise the circuit adds, and the commutator; the port
+# baths' pairs, gathered into the scratch `portresponse`, into the
+# covariance `external`; and those of the other baths, gathered into
+# `internalresponse`, into `added`, each pair into the commutator before
+# it is weighted. `split` is the split of the baths (see `bathsplit`), and
+# each scratch is (objective, quadrature, bath, frequency).
+function splitaccumulate!(external, added, commutator, response, split, portresponse, internalresponse, correction)
+    isnothing(correction) || groupcorrection!(added, commutator, response, correction)
+    byquadrature = reshape(response, size(response, 1), 2, split.nb, :)
+    partaccumulate!(external, commutator, portresponse, byquadrature, split.ports)
+    partaccumulate!(added, commutator, internalresponse, byquadrature, split.internal)
+    return nothing
+end
+function partaccumulate!(covariance, commutator, gathered, response, part)
+    isempty(gathered) && return nothing
+    gathered .= view(response, :, :, part.baths, :)
+    columns = reshape(gathered, size(gathered, 1), :)
+    pairaccumulate!(commutator, columns)
+    gathered .*= part.amplitudes
+    mul!(covariance, columns, transpose(columns), 1.0, 1.0)
     return nothing
 end
 
@@ -976,6 +1026,35 @@ end
 const noisememorybudget = Ref(0)
 noisebudget(backend) = noisememorybudget[] > 0 ? noisememorybudget[] : freememory(backend) ÷ 4
 
+# The tiles of the noise contraction of `N` conditions within `budget`
+# bytes, for `nb` baths, `m` objectives, `nt` recorded times and `nf`
+# frequencies: whether the sums are taken on the bins, the conditions and
+# the frequencies of a tile, the workers `workers(c)` of a tile of `c`
+# conditions, and the bytes the tile holds. A tile of `c` conditions and
+# `f` frequencies holds each condition's accumulator, `16 nb m f` bytes,
+# and on the host its stationary initial terms, as much again; each
+# worker's scratch, a condition's response and its baths' columns
+# gathered, `32 nb m f` bytes at most; and on the bins every frequency
+# and each condition's kept columns, `24 nb m nt` bytes, as much again for
+# their copy on the host from a device, and the transform's `32 nb m nt`
+# with its work. The largest tile of conditions which holds every
+# frequency is taken, on the bins where they are asked for and one
+# condition fits there; where no condition fits with every frequency, one
+# condition takes as many frequencies as fit, and at least one.
+function noisetiling(budget::Integer, nb::Int, m::Int, nt::Int, nf::Int, N::Int, host::Bool, workers, onbins::Bool)
+    perfrequency = host ? 32*nb*m : 16*nb*m
+    bytes(c, f, bins) = (bins ? 80*nb*m*nt*c : 0) + (perfrequency*c + 32*nb*m*workers(c))*f
+    for bins in (onbins ? (true, false) : (false,))
+        c = N
+        while c > 0 && bytes(c, nf, bins) > budget
+            c -= 1
+        end
+        c > 0 && return (; onbins = bins, ctile = c, nft = nf, workers = workers(c), bytes = bytes(c, nf, bins))
+    end
+    nft = clamp(budget ÷ bytes(1, 1, false), 1, nf)
+    return (; onbins = false, ctile = 1, nft, workers = workers(1), bytes = bytes(1, nft, false))
+end
+
 # The classical equilibrium the noise starts from. The state must be a
 # fixed point of the circuit under the drive at that time: the drift
 # balances the drive, no inductive flux and no junction phase moves, the
@@ -1095,19 +1174,24 @@ record, so the frequency count costs sums rather than integrations;
 the sparse factorization the responses step on, as for
 [`transienttangent`](@ref), and `reuse` a [`TransientReuse`](@ref).
 Both return the
-same `covariance`, `commutator`, `expectedcommutator`, `diagnostics`
-(from [`transientquantumdiagnostics`](@ref)), and, with an input plan
-`inputs` on the same record, the incremental quadrature `gain` from its
-modes. A failed diagnostic is returned as such, not rescaled away; refine
-the bath cutoff, the frequency spacing, the record and the step
-independently before reading a quantum efficiency with
+same `covariance`, `addedcovariance`, `commutator`, `expectedcommutator`,
+`diagnostics` (from [`transientquantumdiagnostics`](@ref)), and, with an
+input plan `inputs` on the same record, the incremental quadrature `gain`
+from its modes. `covariance` is the whole noise of the measured modes, the
+counterpart of harmonic balance's `Vout`, and `addedcovariance` its part
+from the internal baths, the resistors and the blocks, the noise the
+circuit adds, the counterpart of `Cnoise`; the rest is the port
+terminations'. A failed diagnostic is returned as such, not rescaled
+away; refine the bath cutoff, the frequency spacing, the record and the
+step independently before reading a quantum efficiency with
 [`transientquantumefficiency`](@ref).
 """
 function transientnoise(sol::TransientSolution, measurement::TransientQuantumPlan; kwargs...)
     # the noise runs on a batch, of which a solution is one condition
     r = transientnoise(batchof(sol), measurement; kwargs...)
-    return (; covariance = r.covariance[:, :, 1], commutator = r.commutator[:, :, 1],
-        expectedcommutator = r.expectedcommutator, diagnostics = r.diagnostics[1], gain = r.gain[:, :, 1],
+    return (; covariance = r.covariance[:, :, 1], addedcovariance = r.addedcovariance[:, :, 1],
+        commutator = r.commutator[:, :, 1], expectedcommutator = r.expectedcommutator,
+        diagnostics = r.diagnostics[1], gain = r.gain[:, :, 1],
         r.measurement, r.inputs, r.baths, r.frequencies, r.weights)
 end
 Base.@nospecializeinfer function transientnoise(sol::TransientBatchSolution, measurement::TransientQuantumPlan;
@@ -1186,9 +1270,10 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
     stageoffsets = stagetimeoffsets(sol)
     injection = transientinjection(p, baths)
     amplitudes = [bathamplitude(b, fs[f], ws[f]) for b in baths.channels, f in 1:nf]
-    variances = [thermaloccupation(2pi*fs[f], baths.channels[b].temperature)/2 for f in 1:nf for b in 1:nb for _ in 1:2]
     ngain = isnothing(inputs) ? 0 : 2length(inputs.ports)
-    covariance, commutator, gain = zeros(m, m, N), zeros(m, m, N), zeros(m, ngain, N)
+    # the noise the port baths bring in and the noise the circuit adds,
+    # whose sum is the covariance
+    external, added, commutator, gain = zeros(m, m, N), zeros(m, m, N), zeros(m, m, N), zeros(m, ngain, N)
     if method == :forward
         # the responses of every quadrature pair in the measured modes of
         # every condition, as the columns of one matrix per condition in
@@ -1227,12 +1312,12 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
         end
         # the responses measured as the tangent produces them
         response .= measuredtangent(sol, sys, currents, baths, (flux0s, rate0s, waves0s, states0s), measurement, offset, reuse)
+        split = bathsplit(baths, fs, CPU())
+        portresponse = zeros(m, 2, length(split.ports.baths), nf)
+        internalresponse = zeros(m, 2, length(split.internal.baths), nf)
         for j in 1:N
-            if !isnothing(correction)
-                groupcorrection!(view(covariance, :, :, j), view(commutator, :, :, j), view(response, :, :, j), correction)
-                maskgroups!(view(response, :, :, j), correction)
-            end
-            transientnoiseaccumulate!(view(covariance, :, :, j), view(commutator, :, :, j), view(response, :, :, j), variances)
+            splitaccumulate!(view(external, :, :, j), view(added, :, :, j), view(commutator, :, :, j),
+                view(response, :, :, j), split, portresponse, internalresponse, correction)
             accumulatenoisegain!(view(gain, :, :, j), view(response, :, :, j), inputs, bins, fs, baths)
         end
     else
@@ -1250,42 +1335,37 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
         # (frequency, quadrature) accumulator on the backend, so no kernel
         # is stored: the columns are buffered over a block of times and
         # contracted by one product, so the accumulator is read and
-        # written once per block rather than once per time. The
-        # accumulator of all conditions and frequencies at once is
-        # `16 nb m nf N` bytes; within a quarter of the backend's free
-        # memory it is one, beyond it the conditions are tiled, each tile
-        # one adjoint over its conditions, and then the frequencies, each
-        # tile one more adjoint over the same conditions, a trade of
-        # passes for memory. The covariance, the commutator and the gain
-        # are accumulated from each tile on the backend, so the host never
-        # holds a kernel or a response. On the bins of the record the sums
-        # over the times are discrete Fourier transforms, taken by fast
-        # real ones on the host over the columns of every grid and stage
-        # time kept for one adjoint: `24 nb m nt` bytes a condition for the
-        # columns, as much again for their copy on the host from a device,
-        # and the transform's `32 nb m nt` with its work, which the
-        # conditions are then tiled by; a condition beyond the budget
+        # written once per block rather than once per time. Within a
+        # quarter of the backend's free memory the accumulator is one;
+        # beyond it the conditions are tiled, each tile one adjoint over
+        # its conditions, and then the frequencies, each tile one more
+        # adjoint over the same conditions, a trade of passes for memory
+        # (see `noisetiling`, which counts what a tile holds). The
+        # covariance, the commutator and the gain are accumulated from
+        # each tile on the backend, so the host never holds a kernel. On
+        # the bins of the record the sums over the times are discrete
+        # Fourier transforms, taken by fast real ones on the host over the
+        # columns of every grid and stage time kept for one adjoint, which
+        # the conditions are then tiled by; a condition beyond the budget
         # alone is contracted by the sums.
         budget = noisebudget(backend)
-        onbins = onbins && 80*nb*m*nt <= budget
-        percondition = onbins ? 80*nb*m*nt + 16*nb*m*nf : 16*nb*m*nf
-        ctile = clamp(budget ÷ percondition, 1, N)
-        dcov, dcomm = [KernelAbstractions.zeros(backend, Float64, m, m, N) for _ in 1:2]
+        tiling = noisetiling(budget, nb, m, nt, nf, N, backend isa CPU, c -> length(batchchunks(backend, c)), onbins)
+        (; onbins, ctile, nft) = tiling
+        dexternal, dadded, dcomm = [KernelAbstractions.zeros(backend, Float64, m, m, N) for _ in 1:3]
         dgain = KernelAbstractions.zeros(backend, Float64, m, ngain, N)
-        # the frequency tiles outermost, so that the loss matrices of the
-        # blocks' groups over a tile are evaluated once for every tile of
-        # conditions
-        nft = onbins ? nf : clamp(budget ÷ (16*nb*m*ctile), 1, nf)
         # the pair terms of a pumped block's group correlate the bath
-        # frequencies, which one tile must then hold together
+        # frequencies, which one tile must then hold together; the bytes
+        # of a tile grow in proportion to its frequencies
         if nft < nf && any(g -> baths.problem.blocks[g.block].definition isa LinearizedScattering, baths.groups)
-            throw(ArgumentError(lazy"the noise of a pumped block correlates the bath frequencies, which must be contracted in one tile: $(nf) frequencies over one condition need $(16*nb*m*nf) bytes against a budget of $(budget); use fewer frequencies or measured quadratures, or a larger noisememorybudget."))
+            throw(ArgumentError(lazy"the noise of a pumped block correlates the bath frequencies, which must be contracted in one tile: $(nf) frequencies over one condition, on $(tiling.workers) worker, need $(tiling.bytes ÷ nft * nf) bytes against a budget of $(budget); use fewer frequencies or measured quadratures, or a larger noisememorybudget."))
         end
-        # the memory's tiles one after another, so that no more than one
-        # tile's accumulators are live; on the host a tile is split across
-        # the threads of the session, each chunk on a worker of its own
-        # with its own reuse on the shared system and its own group
-        # correction, whose work is its own
+        # the memory's tiles one after another, the frequency tiles
+        # outermost, so that the loss matrices of the blocks' groups over a
+        # tile are evaluated once for every tile of conditions, and no more
+        # than one tile's accumulators are live; on the host a tile is
+        # split across the threads of the session, each chunk on a worker
+        # of its own with its own reuse on the shared system and its own
+        # group correction, whose work is its own
         schedule = conditionschedule(backend, N, ctile)
         nworkers = maximum(t -> length(t[2]), schedule)
         reuses = workerreuses(reuse, sys, nworkers)
@@ -1296,24 +1376,26 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
             corrections = [c == 1 || isnothing(shared) ? shared : groupscratch(shared) for c in 1:nworkers]
             tile! = (c, conditions) -> begin
                 sub = length(conditions) == N ? sol : sol[conditions]
-                noisetile!(view(dcov, :, :, conditions), view(dcomm, :, :, conditions), view(dgain, :, :, conditions),
-                    sub, sys, view(x0s, :, conditions), weightsout, baths, injection, fs, ftile, amplitudes,
-                    reference, stageoffsets, inputs, bins, reuses[c], corrections[c], onbins)
+                noisetile!(view(dexternal, :, :, conditions), view(dadded, :, :, conditions), view(dcomm, :, :, conditions),
+                    view(dgain, :, :, conditions), sub, sys, view(x0s, :, conditions), weightsout, baths, injection, fs, ftile,
+                    amplitudes, reference, stageoffsets, inputs, bins, reuses[c], corrections[c], onbins)
                 nothing
             end
             for (tile, chunks) in schedule
                 runchunks(tile!, chunks)
             end
         end
-        covariance .= Array(dcov)
+        external .= Array(dexternal)
+        added .= Array(dadded)
         commutator .= Array(dcomm)
         gain .= Array(dgain)
     end
+    covariance = external .+ added
     expected = copy(measurement.commutator)
     diagnostics = map(1:N) do j
         transientquantumdiagnostics(covariance[:, :, j], commutator[:, :, j], expected; rtol = commutationrtol)
     end
-    return (; covariance, commutator, expectedcommutator = expected, diagnostics, gain,
+    return (; covariance, addedcovariance = added, commutator, expectedcommutator = expected, diagnostics, gain,
         measurement, inputs, baths, frequencies = fs, weights = ws)
 end
 
@@ -1377,12 +1459,13 @@ end
 # stage times through a block buffer, the stationary initial terms of
 # the conditions through the adjoint's initial flux and rate, and the
 # responses formed on the backend, scaled by the amplitudes, and
-# accumulated into the covariance, the commutator and the gain.
-function noisetile!(covariance, commutator, gain, sub::TransientBatchSolution, sys::TransientSystem, x0s, weightsout,
+# accumulated into the port baths' covariance `external`, the covariance
+# the circuit adds, the commutator and the gain.
+function noisetile!(external, added, commutator, gain, sub::TransientBatchSolution, sys::TransientSystem, x0s, weightsout,
         baths::TransientNoiseBaths, injection, fs, ftile, amplitudes, reference, stageoffsets, @nospecialize(inputs), bins,
         @nospecialize(reuse), @nospecialize(correction), onbins::Bool)
-    backend = KernelAbstractions.get_backend(covariance)
-    nb, m, Nt = length(baths), size(covariance, 1), size(covariance, 3)
+    backend = KernelAbstractions.get_backend(external)
+    nb, m, Nt = length(baths), size(external, 1), size(external, 3)
     fsl = fs[ftile]
     nfl = length(fsl)
     if onbins
@@ -1430,7 +1513,9 @@ function noisetile!(covariance, commutator, gain, sub::TransientBatchSolution, s
         isnothing(adjoint.initialstates) ? nothing : reshape(adjoint.initialstates, size(adjoint.initialstates, 1), m, Nt))
     acc = reshape(accumulator, nb, m, Nt, 2nfl)
     amp = tobackend(backend, amplitudes[:, ftile])
-    variances = tobackend(backend, [thermaloccupation(2pi*fsl[f], baths.channels[b].temperature)/2 for f in 1:nfl for b in 1:nb for _ in 1:2])
+    split = bathsplit(baths, fsl, backend)
+    portresponse = KernelAbstractions.zeros(backend, Float64, m, 2, length(split.ports.baths), nfl)
+    internalresponse = KernelAbstractions.zeros(backend, Float64, m, 2, length(split.internal.baths), nfl)
     response = KernelAbstractions.zeros(backend, Float64, m, 2, nb, nfl)
     flat = reshape(response, m, 2nb*nfl)
     for j in 1:Nt
@@ -1442,11 +1527,8 @@ function noisetile!(covariance, commutator, gain, sub::TransientBatchSolution, s
         flat .+= tobackend(backend, initials[j])
         response .*= reshape(amp, 1, 1, nb, nfl)
         accumulatenoisegain!(view(gain, :, :, j), flat, inputs, isempty(bins) ? bins : bins[ftile], fsl, baths)
-        if !isempty(baths.groups)
-            groupcorrection!(view(covariance, :, :, j), view(commutator, :, :, j), flat, correction)
-            maskgroups!(flat, correction)
-        end
-        transientnoiseaccumulate!(view(covariance, :, :, j), view(commutator, :, :, j), flat, variances)
+        splitaccumulate!(view(external, :, :, j), view(added, :, :, j), view(commutator, :, :, j), flat,
+            split, portresponse, internalresponse, isempty(baths.groups) ? nothing : correction)
     end
     return nothing
 end

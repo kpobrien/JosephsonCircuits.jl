@@ -1,274 +1,279 @@
 # Harmonic balance
 
-The frequency domain solvers find the periodic steady state of a circuit
-driven by one or more strong tones, the pumps, and then the response of
-weak signals through the circuit linearized about that state, with its
-noise, quantum efficiency and sensitivities. This page is the usage
-guide; the [theory and implementation](harmonicbalancetheory.md) page
-explains what the solvers do and why, and the [examples](examples.md)
-run them on amplifiers from a single junction to a traveling wave line.
+Harmonic balance solves for the Fourier coefficients of a driven circuit.
+A second, linearized calculation gives its response to weak signals and
+their idlers. Start with the [quickstart](quickstart.md) for a complete JPA
+example, or use the small setup below while reading this guide.
 
-## Running a simulation
+## Running a solve
 
-Three functions run the analyses. Add a question mark `?` in front of a
-function to read its docstring, for example `?hbsolve`.
+```@example hbguide
+using JosephsonCircuits
+circuit = Circuit([
+    (:p1, 1, 0, Port(1; Z0 = 50.0)),
+    (:cc, 1, 2, Capacitor(100e-15)),
+    (:jj, 2, 0, JosephsonJunction(1e-9)),
+    (:cj, 2, 0, Capacitor(1e-12)),
+])
+ws = 2pi .* [4.6e9, 4.7e9, 4.8e9]
+wp = (2pi*4.75001e9,)
+sources = [(mode = (1,), port = 1, current = 0.00565e-6)]
+sol = hbsolve(ws, wp, sources, (8,), (16,), circuit)
+@assert sol.nonlinear.solverinfo.converged
+round.(10 .* log10.(abs2.(sol.linearized.S((0,), 1, (0,), 1, :))); digits = 3)
+```
 
-- `hbnlsolve(wp, Npumpharmonics, sources, circuit)` solves the nonlinear
-  circuit driven by the pumps: the harmonic balance solution of the pump
-  and its harmonics at one operating point.
-- `hblinsolve(ws, circuit; nonlinear = ...)` sweeps weak signals through
-  the circuit linearized about that operating point, or through a linear
-  circuit when no operating point is given.
-- `hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, circuit)`
-  runs both in sequence, which is what the examples below do.
+Frequencies are in rad/s. `current` is a complex Fourier coefficient in
+amperes; a nonzero real coefficient `Ip` represents `2Ip*cos(w*t)`.
+A DC coefficient is not doubled. See [conventions](conventions.md).
 
-The drive is a vector of sources, each a mode, a port and a current
-amplitude: `(mode = (1,), port = 1, current = Ip)` is a current of amplitude
-`Ip` at the first pump frequency `wp[1]` applied to port 1, and
-`(mode = (0,), port = 2, current = Idc)` a direct current bias on port 2
-(with `dc = true`). With two pumps the mode is a pair, `(1, 0)` and
-`(0, 1)`. The harmonic counts say how many pump harmonics the nonlinear
-solve keeps and how many signal and idler modes the linearized sweep
-keeps, one count per pump.
+| Entry point | Result |
+|---|---|
+| `hbnlsolve(wp, Npumpharmonics, sources, circuit)` | Strong-drive operating point |
+| `hblinsolve(ws, circuit; nonlinear, Nmodulationharmonics)` | Small-signal sweep about an operating point |
+| `hblinsolve(ws, circuit)` | Linear response, with junctions linearized at zero phase |
+| `hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, circuit)` | Operating point and linearized sweep |
+
+Parameterized circuits take their definitions after the circuit argument.
+Sources are named tuples `(mode, port, current)`. With two independent
+pumps, use `(1, 0)` and `(0, 1)` for their fundamentals. For commensurate
+pumps, use one fundamental in `wp` and drive its harmonics with different
+mode indices.
 
 ## Reading the results
 
-`hbnlsolve` returns a `NonlinearHB`, the operating point. Its main fields:
+`hbsolve` returns `sol.nonlinear` and `sol.linearized`.
 
-- `nodeflux`: the node flux at every retained mode of every node, a keyed
-  array with axes `outputmode` and `node` (with `keyedarrays = false` a
-  vector of length `Nmodes*(Nnodes - 1)`, the mode index varying
-  fastest). The zero mode is the static flux; the voltage of a mode at
-  frequency `w` is `i*w*phi0` times its flux.
-- `S`: the scattering parameters at the pump frequencies, which measure
-  how much of each pump is reflected and converted.
-- `dcnodevoltage`: the average voltage of each node in volts, when the
-  analysis has a zero frequency mode. See the direct current example.
-- `solverinfo`: whether the solve converged (`solverinfo.converged`) and
-  the residual history and step record of every solver stage, for
-  diagnosing a solve which did not.
-- `modes`: the retained modes as tuples of harmonic indices, which label
-  the mode axes of the arrays above.
+### The operating point
 
-`hblinsolve` returns a `LinearizedHB`, the small signal response. Its
-frequency dependent outputs are indexed by output mode, output port, input
-mode, input port and signal frequency, and are keyed arrays: the gain of
-the JPA below is read as
-`S(outputmode = (0,), outputport = 1, inputmode = (0,), inputport = 1, freqindex = :)`,
-or positionally as `S((0,), 1, (0,), 1, :)`. Mode `(0,)` is the signal
-itself, at `ws`, and `(k,)` the mode at `ws + k*wp`. Under the default
-four wave mixing the idler is `(-2,)`, at `ws - 2*wp`, the negative
-frequency of the idler tone `2*wp - ws`, so `S((-2,), 1, (0,), 1, :)` is
-the conversion from the signal to the idler; with three wave mixing
-(`threewavemixing = true`) the idler is `(-1,)`. The fields:
+| `NonlinearHB` field | Meaning |
+|---|---|
+| `nodeflux` | Reduced node-flux Fourier coefficients, indexed by `outputmode, node` |
+| `dcnodevoltage` | Average node voltages in V when a zero-frequency mode exists; otherwise `nothing` |
+| `modes` | Retained pump-mode tuples |
+| `solverinfo` | Convergence flag, residual history, and stage diagnostics |
+| `S` | Output-wave/incident-drive ratios of this strong-drive solution |
 
-- `w`: the signal frequencies of the sweep, and `modes` the retained
-  signal and idler modes.
-- `S`: the scattering parameters in units of photon flux, so that gain in
-  dB is `10*log10.(abs2.(S))` and a conversion between frequencies is
-  read in photons; multiply by `sqrt(w_out/w_in)` for power.
-- `QE` and `QEideal`: the quantum efficiency of each output, and that of
-  an ideal amplifier with the same gain, so `QE ./ QEideal` is the
-  fraction of the ideal.
-- `CM`: the commutation relation of each output, which is `1` for an
-  output at a positive frequency and `-1` for one at a negative frequency,
-  an idler, when the scattering matrix is complete; its deviation from
-  those measures modes the truncation left out.
-- `Snoise` and `Cnoise` (on request): the scattering from the noise
-  channels of the dissipative elements to the ports, and the added noise
-  covariance at a given temperature.
-- `nodeflux` and `voltage` (on request, `returnnodeflux = true` and
-  `returnvoltage = true`): the node fluxes and voltages resulting from a
-  unit input at each port and mode, for looking inside the circuit.
-- `Ssensitivity` (on request): the derivative of `S` with respect to the
-  named components or design parameters.
+The last field is not the differential scattering response. With several
+driven port modes, each column includes the response to all sources.
+Use `sol.linearized.S` for small-signal scattering.
 
-`hbsolve` returns an `HB` holding both, as `nonlinear` and `linearized`;
-the examples below read the gain from `sol.linearized.S` and the operating
-point from `sol.nonlinear`. Every output which was not requested is an
-empty array, and the `return...` keywords of `hbsolve` and `hblinsolve`
-choose which are computed.
+At nonzero angular frequency `w`, the physical voltage coefficient is
+`im*w*phi0*nodeflux`. The zero-frequency `nodeflux` is static flux; it
+is distinct from `dcnodevoltage`.
 
+### The small-signal response
+
+Keyed arrays allow selection by physical port number and mode tuple:
+
+```@example hbguide
+Ssignal = sol.linearized.S(outputmode = (0,), outputport = 1,
+    inputmode = (0,), inputport = 1, freqindex = :)
+Sidler = sol.linearized.S((-2,), 1, (0,), 1, :)
+(size(Ssignal), size(Sidler))
+```
+
+Mode `(0,)` is the signal at `ws`; mode `(k,)` is at `ws + k*wp[1]`.
+In four-wave mixing, `(-2,)` is the conjugate idler coordinate at
+`ws - 2wp[1]`. With three-wave mixing enabled, the analogous idler is
+`(-1,)`. See the [mode table](conventions.md#Modes-and-signed-frequencies).
+
+| Output | Keyed axes, in order | Interpretation |
+|---|---|---|
+| `S`, `QE`, `QEideal` | `outputmode, outputport, inputmode, inputport, freqindex` | Scattering and efficiency for each input/output pair |
+| `CM`, `nbar` | `outputmode, outputport, freqindex` | Output commutator; occupation of the wave leaving each port mode |
+| `Snoise` | `inputmode, component, outputmode, outputport, freqindex` | Response from internal noise channels |
+| `Cnoise`, `Vout` | `outputmode, outputport, conjoutputmode, conjoutputport, freqindex` | Added output-noise covariance; total output covariance |
+| `nodeflux`, `voltage` | `outputmode, node, inputmode, inputport, freqindex` | Internal response to a unit input current coefficient |
+| `Ssensitivity` | `outputmode, outputport, inputmode, inputport, component, freqindex` | Relative component derivative of `S` |
+
+Use `returnSnoise`, `returnCnoise`, `returnVout`, `returnnodeflux`,
+`returnvoltage`, or `returnSsensitivity` to request optional outputs;
+`nbar` is returned by default, like `QE` and `CM`. Unrequested array outputs
+are empty. With `keyedarrays=false`, modes and ports are flattened with
+mode varying fastest; see [`LinearizedHB`](@ref JosephsonCircuits.LinearizedHB) for the plain-array layout.
+
+`abs2(S)` is photon gain. Power gain is
+`abs(wout)/abs(win) * abs2(S)` for nonzero frequencies. The two coincide
+for reflection at the signal frequency. Frequency-converting power-wave
+amplitudes require the square root of that absolute frequency ratio.
 
 ## The modes and their truncation
 
-A solve retains a finite set of modes, the harmonics and
-intermodulation products of the pumps, and the keywords choose which.
-Every mode is a tuple of harmonic indices, one per pump, and its
-frequency is the dot product with the pump frequencies.
+The harmonic limits select unknowns on a finite Fourier grid. The
+nonlinearity is evaluated on a separate, usually larger grid.
 
-| Keyword | What it selects |
-| --- | --- |
-| `Npumpharmonics` | the largest harmonic index of each pump kept as an unknown of the nonlinear solve |
-| `Nevaluationharmonics` | the grid the nonlinearity is sampled on, twice the retained set by default, which dealiases the cubic products of a junction |
-| `Nmodulationharmonics` | the harmonics of each pump kept around the signal in the linearized solve, which sets the signal and idler modes |
-| `dc` | the zero frequency mode, for a direct current bias |
-| `fourwavemixing`, `threewavemixing` | the odd and the even pump harmonics, the ones four and three wave mixing couple through; in the linearized solve, the even and the odd offsets from the signal |
-| `maxpumpintermodorder`, `maxmodulationintermodorder` | a diamond truncation of the multi pump lattice by the absolute sum of the indices |
-| `frequencywindow` | a lower and upper bound on the absolute frequency of the retained pump modes |
+| Keyword | Role |
+|---|---|
+| `Npumpharmonics` | Largest retained harmonic index along each pump axis |
+| `Nevaluationharmonics` | Nonlinear evaluation grid; twice the retained limits by default |
+| `Nmodulationharmonics` | Pump-harmonic offsets retained around the signal |
+| `dc` | Include the zero-frequency mode |
+| `fourwavemixing`, `threewavemixing` | Select the corresponding parity of pump harmonics and signal offsets |
+| `maxpumpintermodorder`, `maxmodulationintermodorder` | Limit intermodulation order by the sum of absolute indices |
+| `frequencywindow` | Bounds on the absolute frequency of retained pump modes |
 
-Convergence in the harmonics is checked by raising `Npumpharmonics` and
-`Nmodulationharmonics` until the outputs stop moving; the commutation
-relation `CM` of each output measures the modes the truncation left out,
-and is `1`, or `-1` for an output at a negative frequency, when the
-scattering matrix is complete. Two pumps should be
-incommensurate; a commensurate pair is written as one frequency with the
-other as a source at the mode index of the ratio, and a product that
-lands on zero frequency is refused.
+The default evaluation padding avoids aliasing of the leading cubic
+products into retained modes. It is not an exact representation of a sine
+at arbitrary phase excursion. The [theory page](harmonicbalancetheory.md#The-mode-set-and-the-transforms)
+explains the grids and aliasing.
+
+## Checking convergence
+
+Check three different questions:
+
+1. **Did the nonlinear solve converge on this grid?** Inspect
+   `sol.nonlinear.solverinfo.converged` and its residual history.
+2. **Is the Fourier truncation adequate?** Increase pump harmonics,
+   modulation harmonics, and evaluation harmonics separately. Compare the
+   quantities of interest, including weak conversion products.
+3. **Is the noise/mode representation consistent?** Check `CM` against
+   `+1` at positive output frequency and `-1` at negative frequency.
+   This includes internal noise contributions where present.
+
+A small residual or commutator error does not by itself establish
+convergence of gain or noise. Near a threshold, small shifts in the
+operating point can produce much larger changes in gain.
 
 ## The nonlinear solver
 
-`method` chooses how the operating point is solved. The default
-[`NewtonKrylov`](@ref) is matrix free: Newton steps whose linear
-systems GMRES solves with the exact Jacobian-vector product through the
-transforms and a preconditioner, [`Automatic`](@ref) by default, which
-picks the full Jacobian with the backend's sparse factorization for one
-pump, and for two or more the full Jacobian in single precision block
-factors when they fit in half the free memory and a measured harmonic
-band when they do not. A preconditioner that stalls is grown, within the
-memory the grown factors are predicted to take. [`Newton`](@ref) assembles the
-exact real Jacobian and factorizes it, [`QuasiNewton`](@ref) uses the
-holomorphic approximation with Anderson acceleration, and
-[`Staged`](@ref) is source continuation on a ladder of harmonic grids,
-the method for an operating point the others cannot reach from a cold
-start, and the one that tells a hard operating point from one that does
-not exist.
+| Method | Use |
+|---|---|
+| `NewtonKrylov()` | Default; exact real Jacobian-vector products with preconditioned GMRES |
+| `Newton()` | Assemble and factorize the exact real Jacobian |
+| `Staged()` | Increase drive and retained harmonics in stages when a cold solve is difficult |
+| `QuasiNewton()` | Approximate holomorphic Jacobian with Anderson acceleration |
+
+A solve that fails to converge returns its last iterate and records the
+failure in `solverinfo`. It may warn about an exhausted work budget, a
+line search, or stagnation. Do not interpret that iterate as a converged
+operating point.
+
+`Staged()` reuses converged states along a source-continuation path. Its
+history can indicate where the path became difficult, but failure is not
+proof that no operating point exists. Another initial state, a finer
+schedule, or a different method can reach another branch.
+
+The following alternatives continue the setup at the start of this page;
+choose one rather than running every method:
 
 ```julia
-sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; method = NewtonKrylov(preconditioner = MeasuredBand()))
-sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; method = Staged())
-sol.nonlinear.solverinfo.converged
+sol = hbsolve(ws, wp, sources, (8,), (16,), circuit; method = Staged())
+sol = hbsolve(ws, wp, sources, (8,), (16,), circuit;
+    method = NewtonKrylov(preconditioner = MeasuredBand()))
 ```
 
-`atol` is the residual tolerance of the scaled system, independent of
-the units, and is raised to the rounding floor of the source when that
-is larger. A solve that does not converge returns its last iterate with
-`solverinfo.converged = false` and warns with the reason it stopped: the
-iterations spent, the work budget spent, a line search without decrease,
-or a residual that has stopped coming down or comes down too slowly for
-the budget left. Check the flag before using a result.
-
-The options of a method are keywords of its object:
-`NewtonKrylov(precision = Float32)` iterates in single precision,
-`refresh = Probe()` rebuilds the preconditioner only when a measurement
-says it pays, and `linesearch = Backtracking(...)` sets how the step is
-shortened, by interpolation unless asked to halve, which suits an
-inexact preconditioner such as the block diagonal.
+`atol` controls the scaled nonlinear residual. It is not a bound on gain
+error. Method options belong to the method object, for example
+`NewtonKrylov(refresh=Probe())` or
+`NewtonKrylov(linesearch=Backtracking(interpolate=false))`.
+See [performance](performance.md) for preconditioners and reuse, and
+[interoperability](interop.md) for external solvers.
 
 ## The linearized sweep
 
-[`hblinsolve`](@ref) sweeps the signal frequencies through the circuit
-linearized about the operating point, or through a linear circuit when
-none is given. Each signal frequency is one sparse linear system in the
-signal and idler modes, factorized and solved for a unit current at
-every port and mode; the frequencies are split into `nbatches` batches
-over the threads, and on a device a batch is assembled and solved as
-one uniform batch. `factorization` is the sparse factorization of the
-system, [`KLUfactorization`](@ref) on the host for one pump and the
-dense node block [`BlockFactorization`](@ref) in double precision for
-two or more when its factors fit in memory.
+Reuse a converged operating point when changing the signal frequencies or
+modulation truncation:
 
-```julia
-linear = hblinsolve(2pi*(1:0.01:10)*1e9, circuit)                 # a linear circuit
-lin = hblinsolve(ws, circuit; nonlinear = sol.nonlinear, Nmodulationharmonics = (2,))
-lin.S((0,), 1, (0,), 1, :)        # the signal reflected at port 1, its gain
-lin.S((-2,), 1, (0,), 1, :)       # conversion to the idler at port 1
+```@example hbguide
+lin = hblinsolve(ws, circuit; nonlinear = sol.nonlinear,
+    Nmodulationharmonics = (8,))
+@assert isapprox(lin.S, sol.linearized.S; rtol = 1e-10)
+nothing # hide
 ```
+
+Each signal frequency requires a linear system over its signal and idler
+modes. The solver reuses the sparse pattern across the sweep.
+A mode whose signal-plus-pump frequency is numerically zero is rejected:
+photon-wave normalization has no DC limit. Study a limiting response with
+small nonzero frequencies instead.
 
 ## Noise and quantum efficiency
 
-Every dissipative element is a noise channel: the port terminations,
-the resistors, the lossy capacitors and inductors, and the lossy
-scattering blocks, whose emitted noise wave has the covariance
-`I - S S'` of Bosma's relation. The linearized solve propagates every
-channel to the ports by one transposed solve per port, and reports the
-quantum efficiency `QE` of each output, the ratio of the signal it
-carries to everything it carries, that of an ideal amplifier of the same
-gain `QEideal`, and the commutation relation `CM`. `temperature` sets
-the occupation of every channel that does not state its own, a resistor
-by its `temperature` keyword and a block by its noise model, and
-`returnCnoise = true` returns the added noise covariance at the ports;
-`Snoise` is the scattering from the channels to the ports and does not
-depend on temperature.
+The noise calculation includes the field each port's termination sends
+in and the noise emitted by supported internal losses. A termination is at
+zero temperature, sending in the vacuum, unless it states one:
+`Port(1; termination = MatchedTermination(temperature = 0.05))`. Internal
+component temperatures and block noise models follow the
+[temperature table](conventions.md#Noise-normalization-and-temperature);
+the analysis `temperature` does not warm the ports.
 
-```julia
-sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; temperature = 0.05, returnCnoise = true)
-sol.linearized.QE((0,), 1, (0,), 1, :) ./ sol.linearized.QEideal((0,), 1, (0,), 1, :)
+For a selected input/output pair, `QE` is its photon gain divided by twice
+the total noise at the output, with every input in its state, the
+selected input's own included: a warm source lowers the efficiency of a
+measurement of its signal. `QEideal` is the package's ideal-amplifier
+reference at that gain; `QE/QEideal` compares the device with that
+reference. `nbar` is the occupation of the wave leaving each port mode:
+at an output, the photons the measurement receives; at the port facing a
+device, what the circuit sends back toward it.
+
+`Cnoise` contains only the internal added covariance, so a solved device
+can be embedded as a block with `NoiseCovariance(Cnoise)`. `Vout` is the
+whole output covariance, `S*Diagonal(sigma)*S' + Cnoise`, with `sigma` the
+`nbar + 1/2` of every input. `Snoise` describes transfer coefficients and
+is independent of temperature; with `channeltemperatures` it gives each
+internal channel's share of the noise at an output, a noise budget.
+[Noise at the ports](portnoise.md) works these through an input line and
+a readout chain.
+
+Continuing the circuit above:
+
+```@example hbguide
+noisy = hbsolve(ws, wp, sources, (8,), (16,), circuit;
+    temperature = 0.05, returnCnoise = true)
+@assert noisy.nonlinear.solverinfo.converged # hide
+noisy.linearized.QE((0,), 1, (0,), 1, :) ./
+    noisy.linearized.QEideal((0,), 1, (0,), 1, :)
 ```
+
+This circuit has no internal dissipative component, so changing the
+analysis temperature alone does not add thermal noise. To model a warm
+internal load, add a resistor or a block with a thermal noise model.
+Noise outputs for lossy mutually coupled inductors are not supported;
+see [component support](circuits.md#Supported-analyses).
 
 ## Sensitivities
 
-`sensitivitynames` names the components whose relative perturbation the
-scattering parameters are differentiated with respect to, by the
-adjoint method, including by default the shift of the pump operating
-point through the exact real Jacobian (`sensitivityoperatingpoint =
-true`), or at a fixed operating point with `sensitivityoperatingpoint =
-false`; near the gain peak of a strongly pumped amplifier the shift is
-the larger term.
-[`designsensitivities`](@ref) differentiates with respect to the design
-parameters a circuit's values are written in terms of, by the chain
-rule through the components with the exact derivative of every value,
-which is what a gradient based optimizer wants.
+`sensitivitynames` selects relative component derivatives,
+`dS/dr` for `p -> r*p` at `r=1`. By default the derivative includes the
+shift of the pump operating point. Use
+`sensitivityoperatingpoint=false` only when the operating point is meant
+to remain fixed.
 
 ```julia
-sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; sensitivitynames = ["jj", "cc"], returnSsensitivity = true)
-sol.linearized.Ssensitivity
-parameterized = Circuit([(:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(:Cc)),
-    (:jj, 2, 0, JosephsonJunction(:Lj)), (:cj, 2, 0, Capacitor(1000e-15))])
-out, dSdp = designsensitivities(parameterized, Dict(:Lj => 1e-9, :Cc => 100e-15), ws, wp, sources, (2,), (8,))
+sensitive = hbsolve(ws, wp, sources, (8,), (16,), circuit;
+    sensitivitynames = ["jj", "cc"], returnSsensitivity = true)
+dS_dlnLj = sensitive.linearized.Ssensitivity((0,), 1, (0,), 1, "jj", :)
 ```
+
+[`designsensitivities`](@ref) instead differentiates with respect to the
+parameters used to define component values. It combines every component's
+contribution by the chain rule. The [worked example](recipes/sensitivities.md)
+checks a design derivative against finite differences and converts it to
+a gain derivative.
 
 ## Direct current and flux pumping
 
-`dc = true` retains the zero frequency mode, whose flux is the static
-flux setting the inductor currents and junction phases; a direct
-current bias is a source with `mode = (0,)` at a port, or a
-`CurrentSource` component of the netlist, a constant current out of its
-first terminal and into its second, which the transient reads the same
-way (a nonzero one is an error without the mode), and a flux pump a
-current source through a mutual inductor. The average node voltages, which the
-periodic state alone does not carry, are solved beside it and returned
-as `dcnodevoltage`; a resistor is open at direct current in the periodic
-state and carries its direct current there. A subnetwork no inductor or
-junction connects to ground has a free static flux, fixed by a gauge
-row, and a direct current injected into such a subnetwork is refused,
-since no periodic solution exists.
+Use `dc=true` and a source with `mode=(0,)` for DC bias. A nonzero
+`CurrentSource` component also requires a zero-frequency mode. A flux pump
+can drive a bias inductor coupled to the device by a mutual inductor.
+
+Static flux determines inductor currents and junction phases. Average node
+voltage is a separate coordinate returned as `dcnodevoltage`. Thus a
+resistively grounded circuit can carry DC even without an inductive path
+to ground. A gauge fixes an undetermined static flux offset; it does not
+remove resistive DC conduction.
+
+A current with no supported DC return path is rejected, as is a component
+whose required DC conductance is not finite and real. Scattering blocks
+use their stated zero-frequency limit. See the [DC example](recipes/dc.md).
 
 ## Execution on a device
 
-```julia
-using JosephsonCircuits, CUDA, CUDSS
-sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; backend = CUDABackend())
-```
-
-The nonlinear solve assembles, factorizes and iterates on the device,
-its transforms through the device FFT, its preconditioner through cuDSS
-or the batched block factorization; the linearized sweep assembles the
-system matrices of a batch of frequencies with one kernel and factorizes
-and solves them as a uniform batch, falling back to the host for what it
-cannot serve: a frequency dependent component value, and sensitivities
-with respect to the parameters of a scattering block, whose stamps are
-rebuilt at each frequency.
+See [GPU execution](performance.md#GPU-execution) for dependencies,
+backend selection, and host/device boundaries.
 
 ## Reuse across a sweep of values
 
-A sweep over component values builds the structure once and moves
-values: [`hbcache`](@ref) holds what a solve built and
-[`hbsolve!`](@ref) reuses it, so a parameter sweep pays the compile, the
-symbolic analysis and the plans once. The cache takes a typed circuit
-whose values are written in terms of parameters, with a dictionary of
-their definitions, and each solve names the parameters it moves:
-
-```julia
-circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(:Cc)),
-    (:Lj1, 2, 0, JosephsonJunction(:Lj)), (:C2, 2, 0, Capacitor(1000e-15))])
-cache = hbcache((2*pi*4.75e9,), (8,), [(mode = (1,), port = 1, current = 1e-8)],
-    circuit, Dict(:Lj => 1000e-12, :Cc => 100e-15))
-for Lj in (900:25:1100)*1e-12
-    sol = hbsolve!(cache, (Lj = Lj,))
-    cache.converged || break
-end
-```
-
-The [other solvers](interop.md) page shows the problem object every
-external solver can drive.
+See [cache reuse](performance.md#Reuse-across-a-sweep-of-values) for a
+complete parameter-sweep example.

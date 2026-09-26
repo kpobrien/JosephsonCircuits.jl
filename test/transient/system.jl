@@ -263,7 +263,7 @@ using Test
                 notch = RationalScattering(Am, Bm, Cm, Dm)
                 hbn = hblinsolve([1.0], Circuit([(:p, 1, 0, Port(1)), (:block, 1, notch)]); keyedarrays = false, returnCnoise = true)
                 @test abs(hbn.S[1, 1, 1]) < 1e-6
-                @test real(hbn.Cnoise[1, 1, 1]) ≈ 1 rtol=1e-8
+                @test real(hbn.Cnoise[1, 1, 1]) ≈ 1/2 rtol=1e-8
             end
         end
         @test JC.hinfnorm(fill(-1.0, 1, 1), ones(1, 1), fill(2.0, 1, 1), zeros(1, 1))[1] ≈ 2 rtol=1e-8
@@ -862,7 +862,7 @@ end
         block2(A, ia, ib) = (isnothing(ia) || isnothing(ib)) ? zeros(ComplexF64, np, np) :
             ComplexF64[A[(p - 1)*nrd + ia, (q - 1)*nrd + ib] for p in 1:np, q in 1:np]
         multiple(d) = abs(d - round(d/blk.wp)*blk.wp) <= 1e-6*blk.wp
-        quads = (X, Y) -> (real.(X .+ Y) ./ 2, (imag.(X) .- imag.(Y)) ./ 2, .-(imag.(X) .+ imag.(Y)) ./ 2, real.(X .- Y) ./ 2)
+        quads = (X, Y) -> (real.(X .+ Y), imag.(X) .- imag.(Y), .-(imag.(X) .+ imag.(Y)), real.(X .- Y))
         out = Tuple{Int,Int,NTuple{4,Matrix{Float64}},NTuple{4,Matrix{Float64}}}[]
         for (a, fa) in enumerate(fs), (b, fb) in enumerate(fs)
             nua, nub = 2pi*fa, 2pi*fb
@@ -873,7 +873,7 @@ end
             N, Kn = normal ? (block2(Vd, ia, ib), block2(Kcd, ia, ib)) : (zed, zed)
             M, Km = anomalous ? (block2(Vd, ia, ibm), block2(Kcd, ia, ibm)) : (zed, zed)
             rn, ra = cis((nua - nub)*reference), cis((nua + nub)*reference)
-            push!(out, (a, b, quads(rn .* N, ra .* M), quads(2im .* rn .* Kn, 2im .* ra .* Km)))
+            push!(out, (a, b, quads(rn .* N, ra .* M), quads(im .* rn .* Kn, im .* ra .* Km)))
         end
         return out
     end
@@ -920,8 +920,8 @@ end
     Sf, Kc, Vf = JC.pumpednoisematrices(shared, rows, L4.cols, L4.K)
     i4, i24 = argmin(abs.(rows .- 2pi*0.4e9)), argmin(abs.(rows .- 2pi*2.4e9))
     @test abs(Kc[i4, i24]) > 0.1
-    @test isapprox(sn.covariance[1, 1] + sn.covariance[2, 2], sum(abs2, Sf[i4, :]) + real(Vf[i4, i4]); rtol = 1e-4)
-    @test isapprox(norm(sn.covariance[1:2, 3:4]), abs(Vf[i4, i24] + dot(Sf[i24, :], Sf[i4, :]))/sqrt(2); rtol = 1e-4)
+    @test isapprox(sn.covariance[1, 1] + sn.covariance[2, 2], sum(abs2, Sf[i4, :]) + 2real(Vf[i4, i4]); rtol = 1e-4)
+    @test isapprox(norm(sn.covariance[1:2, 3:4]), abs(2Vf[i4, i24] + dot(Sf[i24, :], Sf[i4, :]))/sqrt(2); rtol = 1e-4)
     # a covariance completed over the padded ladder of the modes of a
     # solve, of a block far from lossless: the transient emits the
     # completed covariance of the family of its bath frequencies, which
@@ -939,7 +939,7 @@ end
         rows = Lb.rows
         Sf, _, Vf = JC.pumpednoisematrices(bare, rows, Lb.cols, Lb.K)
         i = argmin(abs.(rows .- 2pi*0.4e9))
-        @test isapprox(bn.covariance[1, 1] + bn.covariance[2, 2], sum(abs2, Sf[i, :]) + real(Vf[i, i]); rtol = 1e-4)
+        @test isapprox(bn.covariance[1, 1] + bn.covariance[2, 2], sum(abs2, Sf[i, :]) + 2real(Vf[i, i]); rtol = 1e-4)
         hbb = hbsolve([2pi*0.4e9], (wp,), [], (nm,), (4,), one(bare); threewavemixing = true, returnCnoise = true)
         @test isapprox(real(Vf[i, i]), real(hbb.linearized.Cnoise((0,), 1, (0,), 1, 1)); rtol = 1e-10)
         push!(v2, real(Vf[i, i]))

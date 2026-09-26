@@ -68,7 +68,6 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
             JC.transientnoiseaccumulate!(v, k, device(h), device(fill(0.5, 4)))
             @test transientquantumdiagnostics(v, k, J).passed
             metrics = transientquantumefficiency(h[:, 1:2], v)
-            @test metrics.addednoise ≈ (1-1/g)/2 atol=1e-14
             @test metrics.QE ≈ g/(2g-1)
             @test metrics.normalizedQE ≈ 1
             # the phase conjugating gain from the idler input, a scaled
@@ -128,7 +127,7 @@ if !@isdefined(TRANSIENTBACKENDTESTS)
         for T in (0.0, 300.0)
             bath = JC.TransientNoiseBath("test", [1], [1.0], 1, 50.0, T)
             f, df = 5e9, 1e8
-            variance = JC.thermaloccupation(2pi*f, T)/2
+            variance = thermaloccupation(2pi*f, T) + 1/2
             psd = JC.bathamplitude(bath, f, df)^2*variance/(2df)
             expected = T == 0 ? JC.planck_constant*f/50 : 2JC.boltzmann_constant*T/50
             @test psd ≈ expected rtol=1e-7

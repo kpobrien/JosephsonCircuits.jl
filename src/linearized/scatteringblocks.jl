@@ -770,37 +770,40 @@ function scatteringlinearterm(ssys::ScatteringStampSystem,
     return spaddkeepzeros(Snm, ssys.kcl)
 end
 
-# === the vacuum noise of dissipative blocks ===
+# === the noise of dissipative blocks ===
 
 """
     ScatteringNoisePlan
 
-The vacuum noise channels of the dissipative [`ScatteringParameters`](@ref)
+The noise channels of the dissipative [`ScatteringParameters`](@ref)
 components of a circuit: which blocks of a [`ScatteringStampSystem`](@ref)
 carry noise and where their channels sit in the rows of the noise
 scattering matrix.
 
 A block which absorbs must add noise, or its output would violate the
 commutation relations. In the wave domain its constitutive equation is
-`b = S a + n` with an added noise wave whose vacuum covariance is
-`I - S S'`, and in the hybrid stamp
+`b = S a + n` with an added noise wave whose commutator is `K = I - S S'`
+and whose symmetrized covariance in the vacuum is `K/2`, and in the hybrid
+stamp
 
     im*w_m*scale*B(w_m) phi - C(w_m) i = 2 n
 
 that noise is a source in the auxiliary port current rows. A block with `n`
 ports therefore carries `n` noise channels, one per column of the
-triangular factor of `I - S S'` ([`psdcholesky!`](@ref)); those of a
-lossless block are identically zero, so only blocks
-which are not [`provablylossless`](@ref) are given channels.
+triangular factor of `I - S S'` ([`psdcholesky!`](@ref)), each weighted by
+its symmetrized noise `nbar + 1/2`; those of a lossless block are
+identically zero, so only blocks which are not [`provablylossless`](@ref)
+are given channels.
 
 A block which states its noise with a [`NoiseCovariance`](@ref) `V`,
 which is how an active block declares it, carries `2n` channels: `n`
-from the factor of `(V + K)/2` with `K = I - S S'`, which emit like modes
-in their vacuum, and `n` from the factor of `(V - K)/2`, which emit like
-the conjugates of modes and enter the commutation relations with the
-opposite sign (see [`noisechannelsigns`](@ref)). Their sum is `V`, their
-difference `K`, so the block adds the noise it states and its output
-obeys the commutation relations, and neither kind carries a temperature.
+from the factor of `V + K/2`, which emit like modes in their vacuum, and
+`n` from the factor of `V - K/2`, which emit like the conjugates of modes
+and enter the commutation relations with the opposite sign (see
+[`noisechannelsigns`](@ref)). Every channel carries the vacuum's half
+photon, so the block adds half their sum, `V`, and their difference is
+`K`: the block adds the noise it states and its output obeys the
+commutation relations, and neither kind carries a temperature.
 
 The channels of the blocks follow the noise ports of the dissipative
 lumped components in the rows of `Snoise`, with the same
@@ -923,9 +926,10 @@ end
 """
     noisecovariance!(L, off, n, S, soff)
 
-The vacuum noise covariance `I - S S'` of an `n` port block, into the length
-`n*n` column major block of `L` at `off`, from the scattering matrix in the
-same layout at `soff` in `S`.
+The commutator `I - S S'` of the noise wave of an `n` port block, twice
+its covariance in the vacuum, into the length `n*n` column major block of
+`L` at `off`, from the scattering matrix in the same layout at `soff` in
+`S`.
 
 Only the lower triangle is written, which is all
 [`psdcholesky!`](@ref) reads: the covariance is Hermitian.
@@ -1036,8 +1040,8 @@ solution `phiadj` at the mode frequencies `wmodes`.
 The noise wave `n` of a block enters its constitutive equation as a source
 in the auxiliary port current rows, so by the adjoint identity its
 contribution to the output is that source contracted against those same rows
-of the adjoint solution, weighted by the factor `L` of the vacuum covariance
-`L L' = I - S S'`:
+of the adjoint solution, weighted by the factor `L` of the commutator
+`L L' = I - S S'`, which a channel's symmetrized noise then weighs:
 
     noiseoutputwave[channel c] = sqrt(abs(w)) sum_p L[p,c] i[p]
 
@@ -1050,9 +1054,9 @@ the block transmits in, so contracting it would give a block which emits its
 noise backwards.
 
 A block which states its noise with a [`NoiseCovariance`](@ref) `V` has
-its channels of the first kind weighted by the factor of `(V + K)/2` and,
+its channels of the first kind weighted by the factor of `V + K/2` and,
 in the rows after them, its channels of the conjugate kind by the factor
-of `(V - K)/2`, with `K = I - S S'`, which [`checkblockdeclarations`](@ref)
+of `V - K/2`, with `K = I - S S'`, which [`checkblockdeclarations`](@ref)
 has admitted at every mode frequency of the sweep, or which a completed
 covariance meets by construction.
 
@@ -1193,7 +1197,7 @@ by the noise model's `padding` multiples of the pump frequency on
 either side, with every input which feeds it, and restricted to the
 rows, so that the block's noise is one model whatever modes a solve
 keeps, to the precision of the padding; plus the vacuum of the inputs
-which feed the rows and are not among `cols`, `S_c S_c'` for the
+which feed the rows and are not among `cols`, `S_c S_c'/2` for the
 scattering `S_c` from them, which a solve without those modes traces
 out, so that the covariance meets the commutator of the rows over the
 inputs the solve has.
@@ -1285,7 +1289,7 @@ function completedladder(block::LinearizedScattering, rows::Vector{Float64}, col
         for q in 1:n, p in 1:n
             v = Vc[(p-1)*np + index[m], (q-1)*np + index[mm]]
             for nn in absent, pp in 1:n
-                v += S[(p-1)*np + index[m], (pp-1)*npc + nn]*conj(S[(q-1)*np + index[mm], (pp-1)*npc + nn])
+                v += S[(p-1)*np + index[m], (pp-1)*npc + nn]*conj(S[(q-1)*np + index[mm], (pp-1)*npc + nn])/2
             end
             out[(p-1)*nr + m, (q-1)*nr + mm] = v
         end
@@ -1303,21 +1307,22 @@ end
 """
     completecovariance(V, K)
 
-The covariance `V` completed to the commutation relations of the
-commutator `K`: `V + neg(V - K) + neg(V + K)` with `neg` the negative
-part, which makes `V - K` and `V + K` positive semidefinite, so that
-the channels formed from them exist (see [`NoiseCovariance`](@ref));
-each addition is positive semidefinite and vanishes where `V` already
-meets the relations. For `V = 0` it is `|K|`, the least total noise a
-Gaussian channel with the map of `K` can add for its output to obey
-the commutation relations, the least in the trace, which is the
-`Ymin` of the quantum optics functions in the basis of the modes; for
-a stated `V` the addition is sufficient and not in general the least.
+The symmetrized covariance `V` completed to the commutation relations of
+the commutator `K`: `V + neg(V - K/2) + neg(V + K/2)` with `neg` the
+negative part, which makes `V - K/2` and `V + K/2` positive
+semidefinite, so that the channels formed from them exist (see
+[`NoiseCovariance`](@ref)); each addition is positive semidefinite and
+vanishes where `V` already meets the relations. For `V = 0` it is
+`|K|/2`, the least total noise a Gaussian channel with the map of `K`
+can add for its output to obey the commutation relations, the least in
+the trace, which is the `Ymin` of the quantum optics functions in the
+basis of the modes; for a stated `V` the addition is sufficient and not
+in general the least.
 The negative part of a matrix is not that of its parts, so a pumped
 block is completed over a padded ladder (see
 [`completedcovariance`](@ref)).
 """
-completecovariance(V::AbstractMatrix, K::AbstractMatrix) = V + negativepart(V - K) + negativepart(V + K)
+completecovariance(V::AbstractMatrix, K::AbstractMatrix) = V + negativepart(V - K/2) + negativepart(V + K/2)
 
 # a factor `F F' = A` of a Hermitian positive semidefinite matrix by its
 # eigendecomposition: every positive eigenvalue is kept, however small,
@@ -1338,7 +1343,7 @@ Check the noise model of a pumped block over the signed mode frequencies
 fed by the input modes `cols` (see [`pumpednoisematrices`](@ref)):
 a declared [`Lossless`](@ref) requires `J - S J S'` to vanish there, to
 the block's `atol`, and a stated [`NoiseCovariance`](@ref) requires
-`V - K` and `V + K` to be positive semidefinite, to the block's `atol`
+`V - K/2` and `V + K/2` to be positive semidefinite, to the block's `atol`
 or the covariance's, whichever is larger, relative to the square of the
 largest entry of `S`, and a covariance must have finite, Hermitian
 entries, to the same tolerance of its own largest entry. Throws
@@ -1379,7 +1384,7 @@ function checkpumpedblock(block::LinearizedScattering, rows::AbstractVector, col
     checkcovarianceentries(block, V, name, at)
     margin = commutationmargin(V, Kc)
     tol = max(block.atol, block.noise.atol)*scale
-    margin < -tol && throw(ArgumentError(lazy"the stated covariance of the pumped block at $(name) is less than the commutation relations require at $(at): the smallest eigenvalue of V - K or V + K, with K = J - S J S' and J the signs of the mode frequencies, is $(margin) against a tolerance of $(tol); see NoiseCovariance."))
+    margin < -tol && throw(ArgumentError(lazy"the stated covariance of the pumped block at $(name) is less than the commutation relations require at $(at): the smallest eigenvalue of V - K/2 or V + K/2, with K = J - S J S' and J the signs of the mode frequencies, is $(margin) against a tolerance of $(tol); see NoiseCovariance."))
     return nothing
 end
 
@@ -1614,7 +1619,7 @@ end
 # pumpedfamily), or over one set of modes coupled by `K`, relative to
 # the square of the largest entry of its multi-mode scattering matrix:
 # the largest entry of `J - S J S'` for a declared lossless block, and
-# how far below zero the smallest eigenvalue of `V - K` or `V + K`
+# how far below zero the smallest eigenvalue of `V - K/2` or `V + K/2`
 # falls for one which states its noise; what checkpumpedblock holds to
 # the tolerance
 pumpedviolation(block::LinearizedScattering, wmodes::AbstractVector, K::AbstractMatrix{Int}) =
@@ -1639,8 +1644,9 @@ its noise, into the rows of `noiseoutputwave` after `rowoffset`, as
 The block's noise is one wave over all its ports and modes at once, of
 covariance `V` and commutator `K = J - S J S'` (see
 [`pumpednoisematrices`](@ref)), so its channels are the columns of the
-factors of `(V + K)/2`, which emit like modes in their vacuum, and of
-`(V - K)/2`, which emit like their conjugates; each column spans the
+factors of `V + K/2`, which emit like modes in their vacuum, and of
+`V - K/2`, which emit like their conjugates, each channel carrying the
+vacuum's half photon; each column spans the
 port current rows of every mode. The block has `2 nports` channel slots
 of `Nmodes` rows each in the noise scattering matrix, and the columns
 are laid out over those rows, a column per row, the first `nports`
@@ -1668,8 +1674,8 @@ function pumpedblocknoisewaves!(noiseoutputwave::AbstractMatrix,
     # the triangular factor cannot tell a pivot of roundoff from a small
     # one, where an eigenvalue can; the covariance was checked against
     # the commutator before the sweep (see checkpumpedblockmodels)
-    L = psdfactor((V .+ Kc) ./ 2)
-    M = psdfactor((V .- Kc) ./ 2)
+    L = psdfactor(V .+ Kc ./ 2)
+    M = psdfactor(V .- Kc ./ 2)
     @inbounds for kind in 1:2
         F = kind == 1 ? L : M
         for c in 1:N
@@ -1730,7 +1736,7 @@ function blocknoisewaves!(noiseoutputwave::AbstractMatrix,
             end
             continue
         end
-        # the vacuum covariance of the added noise wave and its factor,
+        # the commutator of the added noise wave and its factor,
         # `L L' = I - S S'`, in the flat layout the kernel of the device
         # path uses so that the two compute the same channels
         noisecovariance!(L, 0, n, S, (m-1)*n*n)
@@ -1786,7 +1792,7 @@ end
 The factors of the channels of a block which states its noise: on entry
 the lower triangle of `L` holds `K = I - S S'` at mode `m` and `V[:,:,m]`
 the stated covariance there; on exit `L` holds the triangular factor of
-`(V + K)/2` and `M` that of `(V - K)/2`, both by [`psdcholesky!`](@ref),
+`V + K/2` and `M` that of `V - K/2`, both by [`psdcholesky!`](@ref),
 which are positive semidefinite for a covariance
 [`checkblockdeclarations`](@ref) has admitted or which is completed.
 """
@@ -1795,8 +1801,8 @@ function statednoisefactors!(L, M, V, m::Integer, n::Integer)
         for p in c:n
             k = L[(c-1)*n + p]
             v = V[p, c, m]
-            L[(c-1)*n + p] = (v + k)/2
-            M[(c-1)*n + p] = (v - k)/2
+            L[(c-1)*n + p] = v + k/2
+            M[(c-1)*n + p] = v - k/2
         end
     end
     psdcholesky!(L, 0, n)
@@ -1956,8 +1962,8 @@ none takes the default.
 
 The channels of a block which states its noise with a
 [`NoiseCovariance`](@ref) are at zero temperature: the covariance it
-states is the whole of its noise, and the occupation of one is what
-leaves it so.
+states is the whole of its noise, which the vacuum's half photon on each
+of its channels gives back (see [`ScatteringNoisePlan`](@ref)).
 """
 function noisechanneltemperatures(psc, noiseportimpedanceindices, noiseplan,
     ssys, temperature)

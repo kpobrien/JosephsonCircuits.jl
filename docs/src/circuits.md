@@ -1,401 +1,233 @@
 # Defining a circuit
 
-A circuit is a list of component instances and the connections between
-their terminals. It is written in one of two forms, and both build the same
-`Circuit` object.
+A [`Circuit`](@ref) contains named component instances and their
+connections. Use a netlist for a circuit with named nodes, or connection
+groups to connect terminals directly. Both forms produce the same circuit
+model and can be mixed across a hierarchy.
 
 ## The netlist form
 
-Each entry is a tuple of the instance name, the node of every terminal in
-order, and the component: `(name, nodes..., component)`, as a line of a
-SPICE netlist. Names are symbols or strings, nodes are integers, strings or
-symbols, and node `0` (or `"0"`, or `Ground`) is ground. Entries which name
-the same node share a net, and the nets take the node names, so they can be
-found again in the outputs.
+Each entry is `(name, nodes..., component)`. The node arguments follow the
+component's terminal order. Instance names can be symbols or strings;
+node names can also be integers. Node `0`, `"0"`, or `Ground` is ground.
+Entries naming the same node are connected.
 
-```julia
+```@example circuit
 using JosephsonCircuits
-
-R = 50.0
-Cc = 100.0e-15
-Lj = 1000.0e-12
-Cj = 1000.0e-15
-
-# a Josephson parametric amplifier: a port, a coupling capacitor, and a
-# junction shunted by a capacitor, with node 0 the ground
-circuit = Circuit(
-    [(:p1, 1, 0, Port(1; Z0 = R)),
-     (:cc, 1, 2, Capacitor(Cc)),
-     (:jj, 2, 0, JosephsonJunction(Lj)),
-     (:cj, 2, 0, Capacitor(Cj))])
+R, Cc, Lj, Cj = 50.0, 100e-15, 1000e-12, 1000e-15
+circuit = Circuit([
+    (:p1, 1, 0, Port(1; Z0 = R)),
+    (:cc, 1, 2, Capacitor(Cc)),
+    (:jj, 2, 0, JosephsonJunction(Lj)),
+    (:cj, 2, 0, Capacitor(Cj)),
+])
+nothing # hide
 ```
 
-The components are typed: `Capacitor`, `Inductor`, `Resistor`,
-`JosephsonJunction`, `Port` (with its reference impedance `Z0`),
-`MutualInductor`, `NonlinearInductor`, `ScatteringParameters` for a block
-described by its scattering matrix, and a `Circuit` with an interface as a
-subcircuit. A component value may be a number, a complex number (a
-capacitor with dielectric loss), or a `FrequencyDependent` function of a
-positive frequency, whose complex conjugate a mode of negative frequency
-takes.
+The example is a JPA: a port couples through `cc` to a junction shunted by
+`cj`. Component values use SI units. `JosephsonJunction(Lj)` takes its
+small-signal inductance; [`IctoLj`](@ref) converts a critical current to
+that inductance.
 
-An entry lists one node per terminal, so the form is not limited to two
-terminal elements. A subcircuit instance lists its pins in the order they
-were declared, a scattering parameter block lists the signal terminal of
-each port (or both terminals of each port when the block is not grounded),
-and a mutual inductor, which couples two inductor branches rather than
-nets, names the two inductors in place of nodes:
+## Ports and sources
 
-```julia
-(:k1, :l1, :l2, MutualInductor(0.9))
-```
+`Port(1; Z0=50.0)` identifies port 1 and supplies a matched 50 Ω external
+termination across its two terminals. It does not connect either terminal
+to ground unless the circuit does so. An extra resistor across the port is
+an additional load, with its own internal noise.
 
-The sign of the coupling coefficient follows the order each inductor's
-terminals are declared in: with a positive coefficient currents entering
-the first terminal of each inductor add flux to both, and reversing the
-terminals of one inductor, or the sign of the coefficient, opposes them.
+Use `termination=nothing` when the port should add no physical loading.
+This is a current-source and impedance-probe boundary, with a different
+reflection interpretation; see [`Port`](@ref). Transient noise baths
+require matched port terminations.
+
+Drive amplitudes belong to the analysis. HB uses Fourier coefficients;
+`TransientSource` uses instantaneous current. A [`CurrentSource`](@ref)
+component supplies constant current out of its first terminal and into its
+second. See [current conventions](conventions.md#Current-amplitudes).
 
 ## The connection-group form
 
-The same circuit written as a list of named components and a list of
-connection groups, each group naming the terminals which share a net. A
-terminal is `(instance, number)`; `Ground` may appear in any group, and may
-also be declared as a component, `:gnd => Ground()`, and referred to
-through its single terminal.
+A connection group lists terminals that share a net. `(instance, number)`
+selects a terminal; `Ground` can occur directly in a group or as a named
+component. Continuing the setup above:
 
-```julia
-circuit = Circuit(
-    [:p1 => Port(1; Z0 = R),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
-     :gnd => Ground()],
+```@example circuit
+connected = Circuit(
+    [:p1 => Port(1; Z0 = R), :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj), :cj => Capacitor(Cj), :gnd => Ground()],
     [[(:p1, 1), (:cc, 1)],
      [(:cc, 2), (:jj, 1), (:cj, 1)],
      [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+# Both descriptions give the same reflection coefficient.
+a = hblinsolve([2pi*4e9], circuit; keyedarrays = false)
+b = hblinsolve([2pi*4e9], connected; keyedarrays = false)
+@assert isapprox(a.S, b.S; rtol = 1e-12)
+nothing # hide
 ```
 
-This is the form the netlist form expands to. It is what to use when a
-connection is not a node list: the bundled port views of scattering blocks
-in pair connections, or nets named explicitly with `Net`. The two forms may
-be mixed freely across a hierarchy, since either produces a `Circuit`.
+Use this form when connections are easier to express through component
+interfaces than through node names. [`Net`](@ref) names a connection
+explicitly; [`PortRef`](@ref) and [`PinRef`](@ref) address interfaces.
 
-## Storage and compilation
+## Mutual inductors
 
-“Typed” refers to the component models, such as `Capacitor{Float64}`;
-the circuit description can still contain heterogeneous collections.
-The connection-group constructor keeps the collections supplied by the
-caller, without copying them. The netlist constructor builds vectors of
-pairs and named nets. Component models and unresolved endpoint keys may
-have different types, so those fields are heterogeneous.
+A mutual-inductor entry names two inductor instances rather than nodes:
 
-Parsing resolves connectivity to integer instance and terminal indices.
-`elaborate` flattens the hierarchy, `compile` builds the component tables,
-and value binding gathers numerical values into concrete arrays grouped
-by component kind for matrix assembly. This separates the flexible input
-syntax from numerical kernels without making each circuit topology a new
-solver type.
+```@example mutual
+using JosephsonCircuits
+coupled = Circuit([
+    (:p1, 1, 0, Port(1)),
+    (:l1, 1, 0, Inductor(1e-9)),
+    (:l2, 2, 0, Inductor(2e-9)),
+    (:p2, 2, 0, Port(2)),
+    (:k1, :l1, :l2, MutualInductor(0.9)),
+])
+nothing # hide
+```
 
-Use vectors for generated component lists and large connection groups.
-Unlike tuples, their types do not depend on their lengths. There is no
-need to eliminate every `Any` from a circuit description by encoding the
-entire circuit in a tuple type. The constructor validates the current
-contents; elaboration validates them again, so subsequent edits to the
-retained collections are observed.
-
-Within one elaboration, repeated subcircuits share the parsed definition
-and dictionary lookup of interface pin and port keys. These internal
-indexes are rebuilt on the next independent parse or elaboration, so they
-do not hide changes to the supplied interface collections. Custom interface
-keys, when used, must follow Julia's usual `isequal`/`hash` contract.
-
-Elaboration stores terminal wires in flat arrays with instance offsets.
-Wire and net numbers remain runtime data, and do not become type parameters.
+For positive coupling, currents entering the first terminal of each
+inductor add flux to both. Reversing one inductor's terminals, or changing
+the sign of the coefficient, reverses the coupling orientation.
 
 ## Subcircuits
 
-A `Circuit` given an interface through the `pins` keyword is a component,
-and is instanced in either form like any other. The pins map an interface
-pin number to a terminal of an inner component. The examples below build
-traveling wave amplifiers from unit cells and a snake amplifier from
-hierarchical subcircuits this way; a subcircuit instanced many times, such
-as a unit cell, is defined once, and the flattened circuit names its inner
-nets by path.
+Give a circuit a `pins` interface to use it as a component. Each interface
+pin maps to a terminal of an internal instance. A netlist instance lists
+the external nodes in the declared pin order.
 
-```julia
-# one unit cell of a transmission line, exposed through pins 1 and 2
-cell(Lj, Cj, Cg) = Circuit(
-    [(:jj, 1, 2, JosephsonJunction(Lj)),
-     (:cj, 1, 2, Capacitor(Cj)),
-     (:cg, 1, 0, Capacitor(Cg))];
-    pins = [1 => (:jj, 1), 2 => (:jj, 2)])
+```@example subcircuit
+using JosephsonCircuits
+cell(Lj, Cj, Cg) = Circuit([
+    (:jj, 1, 2, JosephsonJunction(Lj)),
+    (:cj, 1, 2, Capacitor(Cj)),
+    (:cg, 1, 0, Capacitor(Cg)),
+]; pins = [1 => (:jj, 1), 2 => (:jj, 2)])
 
-# three cells in a chain between two ports
-line = Circuit(
-    [(:p1, 1, 0, Port(1)),
-     (:cell1, 1, 2, cell(1e-9, 50e-15, 40e-15)),
-     (:cell2, 2, 3, cell(1e-9, 50e-15, 40e-15)),
-     (:cell3, 3, 4, cell(1e-9, 50e-15, 40e-15)),
-     (:p2, 4, 0, Port(2))])
+line = Circuit([
+    (:p1, 1, 0, Port(1)),
+    (:cell1, 1, 2, cell(1e-9, 50e-15, 40e-15)),
+    (:cell2, 2, 3, cell(1e-9, 50e-15, 40e-15)),
+    (:cell3, 3, 4, cell(1e-9, 50e-15, 40e-15)),
+    (:p2, 4, 0, Port(2)),
+])
+compiled = compile(line)
+nothing # hide
 ```
 
-The older netlist of `(name, node1, node2, value)` tuples with the
-component type given by the prefix of the name, `("C1", "1", "0", 1e-12)`,
-is deprecated: it is still read, with a warning, and will be removed in a
-future release. A port of such a netlist takes the resistor across it as
-its termination, so it is written as `Port(1; Z0 = 50.0)` with that
-resistor dropped.
+Repeated instances can share one subcircuit definition. Elaboration
+flattens the hierarchy and qualifies internal names by their instance
+paths. The [JTWPA](recipes/traveling-wave.md) and
+[snake amplifier](recipes/lesa.md) examples use this pattern at larger
+scales.
 
-Writing a frequency dependent value as an expression in a parameter named
-by the `symfreqvar` keyword of the solvers is deprecated in the same way.
-The value is a `FrequencyDependent` closure of the frequency instead, and
-`FrequencyDependent(identity)` is the frequency itself where an expression
-reads better than a closure:
+## Component values and design parameters
 
-```julia
-wc = 2*pi*10e9
-Resistor(FrequencyDependent(w -> 50.0*(1 + im*w/wc)))
-Resistor(50.0*(1 + im*FrequencyDependent(identity)/wc))
+A component value can be a number or a parameter such as `:Lj`. Supply a
+dictionary of parameter values when solving. For expressions involving
+several parameters, use `JosephsonCircuits.@params`; see
+[design sensitivities](recipes/sensitivities.md).
+
+Frequency-domain analyses also accept complex values and
+[`FrequencyDependent`](@ref) closures. The callable receives nonnegative
+angular frequency in rad/s; negative-frequency modes use conjugate
+symmetry. For example, a simple frequency-dependent impedance is:
+
+```@example values
+using JosephsonCircuits
+wc = 2pi*10e9
+load = Resistor(FrequencyDependent(w -> 50.0*(1 + im*w/wc)))
+nothing # hide
 ```
 
-### Interface changes
-
-The rest of this release's frontend changes, and what each asks of a
-caller:
-
-- `FrequencyDependent(f)` constructs the frequency dependent leaf of a
-  component value, so a closure combines with an expression in parameters
-  the way any other value does.
-- [`hbcache`](@ref) and [`designsensitivities`](@ref) take a typed circuit
-  with the definitions of its parameters, in place of a function which
-  builds a circuit from a point. The values which move are written as
-  parameters, `Capacitor(:Cc)`, and the definitions give each a number.
-- A circuit's node order is chosen when it is compiled, so `sorting` is a
-  keyword of [`compile`](@ref). A caller who wants an order other than the
-  default compiles with it and passes the compiled circuit, which every
-  entry point accepts: `hbsolve(ws, wp, sources, (2,), (8,),
-  compile(circuit; sorting = :number), circuitdefs)`. The entry points
-  take `sorting` themselves only with a tuple netlist, as they did.
-- A compiled circuit carries its own topology, so no entry point takes a
-  separate graph. [`calccircuitgraph`](@ref) builds the graph with its
-  diagnostics, which is what it is for.
-
+Such a value is not automatically a causal time-domain realization. Use
+explicit circuit elements or a [rational scattering model](scattering.md)
+for transient simulation.
 
 ## Nonlinear elements and their current-phase relations
 
-A [`JosephsonJunction`](@ref) is the sinusoidal relation
-`I(φ) = (phi0/Lj)*sin(φ)`, and it is what almost every circuit uses. An
-element whose relation is something else is a
-[`NonlinearInductor`](@ref), written as its small signal inductance and a
-relation of unit slope at zero:
+A [`JosephsonJunction`](@ref) uses `I(φ) = (phi0/Lj)*sin(φ)`, where `φ`
+is reduced branch flux and `phi0` is the reduced flux quantum.
+[`NonlinearInductor`](@ref) accepts a different current-phase relation.
+The inductance sets the current scale; the relation has unit slope at zero.
 
-```julia
+```@example cpr
 using JosephsonCircuits
-# the effective relation of a SNAIL, biased away from its symmetric point:
-# the quadratic term is what makes it a three wave mixer
-snail = NonlinearInductor(1e-9, PolynomialCPR([1.0, 0.3, -1/6]))
+# An effective asymmetric relation with quadratic and cubic terms.
+element = NonlinearInductor(1e-9, PolynomialCPR([1.0, 0.3, -1/6]))
+nothing # hide
 ```
 
-A [`PolynomialCPR`](@ref) is given by the coefficients of its expansion,
-`f(φ) = c[1]*φ + c[2]*φ^2 + ...`, with `c[1] = 1` so that the `L0` of the
-element is the small signal inductance. It is the way to write an element
-whose junctions you do not want to wire up: a SNAIL, a SQUID, a Quarton,
-a kinetic inductor, or an array of `N` junctions in series, which divides
-the phase and so has the relation `N*sin(φ/N)`. A kinetic inductor whose
-inductance rises with its current as `L(I) = L0*(1 + I^2/Istar^2)` has the
-relation `[1, 0, -(IL/Istar)^2/3, 0, (IL/Istar)^4/3]`, with `IL = phi0/L0`
-the current scale of the element.
+[`PolynomialCPR`](@ref) represents `f(φ) = c[1]*φ + c[2]*φ^2 + ...`,
+with `c[1]=1`. It can approximate a biased SNAIL, a SQUID, a kinetic
+inductor, or a junction array over a specified phase range. For example,
+`N` identical series junctions have normalized relation `N*sin(φ/N)`;
+expand that relation to obtain a local polynomial approximation.
 
-The element is a junction to everything else. It makes the same branch,
-enters the same matrices, and is indexed with the junctions, so a circuit
-which mixes the two kinds is ordinary. What differs is the relation the
-solver evaluates at the junction phases, and its derivative, which is
-where `cos` would otherwise stand.
+For a kinetic inductor with differential inductance
+`L(I)=L0*(1+I^2/Istar^2)`, the expansion through fifth order is
+`[1, 0, -(IL/Istar)^2/3, 0, (IL/Istar)^4/3]`, where `IL=phi0/L0`.
 
-Two things follow from a polynomial not being a sine. It is not bounded,
-so nothing warns that an element is past the range its coefficients were
-fitted on, and it is not band limited: a term of degree `d` generates
-harmonics to `d` times the drive, which the harmonic count has to cover.
-Both are yours to judge.
+Check two approximations independently:
 
-Both solvers evaluate any of these relations. Harmonic balance takes it
-in the residual, the Jacobian, the Hessian and the pump modulation of the
-linearized system; the transient solver steps it, and its tangent, its
-adjoint and the linearization its noise is taken about all read the same
-derivative.
+1. Keep the simulated phase within the range where the fitted relation is
+   physically meaningful. Polynomial extrapolation can predict unphysical currents.
+2. Refine the Fourier grids or time step. A degree-`d` polynomial can
+   expand the Fourier support of its input phase by a factor of `d`;
+   a sine also generates higher harmonics. The drive frequency alone does
+   not determine the required grid.
 
+Both solvers use the chosen relation and its derivatives for the
+nonlinear response, linearization, and sensitivities.
+
+## Supported analyses
+
+| Representation | Harmonic balance | Transient simulation |
+|---|---|---|
+| Real constant R, C, L, mutual inductors, junctions, polynomial CPRs | Supported | Supported; initial algebraic constraints must hold |
+| Complex or frequency-dependent lumped values | Supported | Use a causal circuit or block realization instead |
+| Constant real scattering matrix | Supported | `GaussLegendre()` |
+| Tabulated, Touchstone, or callable scattering data | Supported within the provider's domain | Fit a rational model first |
+| Rational scattering realization | Supported | `GaussLegendre()` |
+| Pumped `LinearizedScattering` | Supported subject to its excitation restrictions | Fit with `RationalScattering`; `GaussLegendre()` |
+| Ideal `TransmissionLine` | Supported | `GaussLegendre()`; delay at least one step |
+
+Noise calculations have additional restrictions. In particular, noise
+outputs for lossy mutually coupled inductors are rejected; an S-only
+frequency-domain calculation does not supply a noise model for that loss.
+Transient noise requires a passive equilibrium prehistory and supported
+baths. See [quantum noise in time](transientnoise.md).
+
+## Storage and compilation
+
+For a generated circuit, use vectors of entries or connection groups.
+Component types may differ, so a heterogeneous description is normal.
+Compilation gathers values into concrete numerical arrays for the solver;
+the entire topology need not be encoded in a Julia tuple type.
+
+The connection-group constructor retains the supplied collections.
+Subsequent elaboration observes edits to them. A compiled circuit or solver
+cache represents a compiled structure: rebuild it after changing topology.
+For repeated value changes, use the [cache interface](performance.md).
+
+The [implementation notes](implementation.md#Circuit-compilation) describe
+parsing, hierarchy reuse, and storage. Custom interface keys must obey
+Julia's `isequal`/`hash` contract.
+
+### Interface changes
+
+See [migration](migration.md) for legacy netlists, frequency-dependent
+expressions, parameterized circuits, and node ordering.
 
 ## Scattering blocks, transmission lines and fitted data
 
-A [`ScatteringParameters`](@ref) block is a multiport given by its
-scattering matrix: a constant matrix, a callable of angular frequency, a
-table of frequencies and matrices, or a Touchstone file, at its own
-reference impedances, with the default `grounded = true` tying every
-reference terminal to ground. The harmonic balance solvers evaluate a
-block at every frequency they need; the time domain solver takes a block
-with a constant real matrix, an attenuator, a circulator, a through,
-a short or an open, and a [`RationalScattering`](@ref) block, a real
-state space realization `S(s) = D + C (s I - A)^(-1) B`, which is the
-form a fit of measured or simulated data takes.
-
-A tabulated block is interpolated with the cubic spline through each
-entry's samples and, by default, refuses a frequency outside its band.
-The harmonic balance solvers place mixing products at sums and
-differences of the pump harmonics and the signal, which measured data
-often does not cover, and the noise of a lossy block reads the
-dissipation `I - S S'`, in which an error of the data or its interpolant
-appears roughly doubled. Measured data meant for those solvers is
-therefore best fitted once with [`RationalScattering`](@ref): the fit
-extrapolates as a rational function, is stable by construction and made
-passive where it strays, then validated at every frequency, and the same
-block runs in the frequency and the time domain solvers.
-
-```julia
-# a fit of tabulated data at as many poles as it might need; the poles it
-# does not need are dropped
-data = ScatteringParameters((2pi .* frequencies, S); nports = 2, zref = 50.0)
-fitted = RationalScattering(data, 8)
-
-# a hand written realization: a series inductor L between 50 ohm ports
-a = 2*50.0/L
-inductor = RationalScattering(fill(-a, 1, 1), [1.0 -1.0], -a .* [1.0; -1.0;;], Matrix(1.0I, 2, 2); zref = 50.0)
-```
-
-A rational block is validated as stable and passive at construction by
-its largest singular value over every frequency, which finds a peak
-however narrow, and a fit is made passive where it strays. A
-[`TransmissionLine`](@ref) is an ideal lossless line of a characteristic
-impedance and a length, with a phase velocity that defaults to the speed
-of light; in the frequency domain it is the exact line, in time the
-method of characteristics with a history of the waves. A delay is not a
-rational function, so a lossy cable is a line in cascade with a fit of
-its data with the delay removed, which `RationalScattering` does for a
-`delays` of one delay per port, moving a stated covariance to the same
-reference planes.
-
-A pumped device in its periodic steady state, a parametric amplifier,
-converter or isolator, is a linear time-periodic multiport: it converts
-between frequencies a harmonic of its pump apart. [`LinearizedScattering`](@ref)
-is such a block, described by harmonic transfer functions `H_k(nu)`,
-the wave leaving at `nu + k*wp` per unit wave incident at `nu`, and is
-built from the `linearized` output of `hbsolve` of the device, whose
-multi-mode scattering matrix is the same data indexed by mode:
-
-```julia
-device = hbsolve(ws, (wp,), [(mode = (1,), port = 1, current = Ip)], (8,), (16,), jpa)
-block = LinearizedScattering(device.linearized, wp; phase = -wp*delay)
-chain = Circuit([(:p1, 1, 0, Port(1)), (:line, 1, 2, TransmissionLine(50.0, len)), (:amp, 2, block)])
-sol = hbsolve(ws, (wp,), [], (8,), (16,), chain)
-```
-
-The harmonic balance solvers stamp it as a coupling between the modes
-of the circuit whose frequencies differ by its harmonics, so the
-circuit is solved with the block's pump frequency, with no source at it
-when the block is the only pumped element; `phase` is the phase of the
-block's pump relative to the data's, the delay of the pump line for
-instance, which the conversion entries carry. The block keeps the
-device's idler and every other mode it converts to, and interacts with
-the rest of the circuit at all of them. The pump solve carries the
-block as a coupling between its retained modes alone, and a block also
-couples a retained mode to the conjugate of another when their
-frequencies sum to a harmonic of its pump, which a drive would excite,
-so a pump solve with a source and such a block is refused; without a
-source every mode is zero and the linearized solve is unaffected. A
-lossless device emits no noise, which is checked on its stored data
-and again over the modes of every solve which evaluates the block,
-whatever outputs the solve is asked for; one with loss
-states the covariance its solve reports,
-`noise = NoiseCovariance(device.linearized.Cnoise)` from a
-solve with `returnCnoise = true`, which becomes the block's harmonic
-covariances and is held to the minimum the commutation relations
-require, on the data and at every solve; the block then adds the noise
-its solve found, its correlations between the modes included, through
-channels which span all its modes at once. A solve reports its
-covariance at its own modes, so an idler is held at a negative
-frequency; the noise between the conjugates of two modes is the noise
-between the modes, transposed, `V_k(-nu - k wp) = transpose(V_k(nu))`,
-so the block states the noise at the conjugate of a mode as well as at
-the mode, and refuses data which holds both and disagrees. The block's `atol` is the
-tolerance of its data in these checks, with a covariance's own `atol`
-counting as well, and it is what the pump solve takes an entry of the
-data below as zero when it asks whether the block converts the
-conjugate of a mode. A fit of the block meets the declaration no better
-than its error, so it declares nothing: its noise is the covariance the
-block states, zero for a lossless one, completed to the commutation
-relations of the fitted functions over the ladder of the modes of a
-solve, padded so that the noise is one model whatever modes the solve
-keeps, the least a channel with the fitted functions can add for a
-lossless device (see [`NoiseCovariance`](@ref)). Every mode a solve
-asks for is completed, one beyond the sidebands the data holds carrying
-the vacuum its commutator requires, and the ladders of the pump are
-completed one at a time, the block coupling nothing between frequencies
-which are not a multiple of the pump apart. Its output then obeys the commutation
-relations exactly, and what it adds is what the fit costs, which the
-fit refuses beyond its `noisetol`, as it refuses a fit which misses
-the data by more than its `tol`, since a covariance large enough
-covers the commutator of a poor fit at no noise; the block's `atol`
-stays that of the data.
-
-In time the block is `RationalScattering(block, npoles)`: every
-harmonic transfer function fitted to stable filters, `H_0` as an
-ordinary rational block and each `H_k` as the real filters of its cosine
-and sine parts, whose outputs the transient multiplies by
-`2 cos(k wp t)` and `-2 sin(k wp t)`. A block built from a solve holds
-every sideband the mode truncation reached, so the fit takes a `band`
-of frequencies in Hz, and a long device, a traveling wave amplifier,
-is mostly delay, which the fit takes out per port with `delays` and
-which goes back as a `TransmissionLine` in cascade at the port. A
-lumped device fits over all of its sidebands at a few poles each, and
-is then the device in time, noise included. A long line does not: its
-sidebands are dispersive delay of many turns of phase, which no
-rational function of a practical order follows, so it is fitted within
-its signal band, where it serves signals and pulses, and outside it
-the fit extrapolates and states through its completed noise that it
-is no better than that. The fitted block is evaluated by
-the harmonic balance solvers too, so the two solvers describe the same
-block, and a `transientnoise` of a circuit with one agrees with the
-linearized solve of the same circuit, the stated noise of a lossy
-device included, which in time correlates the bath frequencies on one
-ladder of the pump, those a multiple of its frequency apart and those
-summing to one. Its `envelope`, a callable of
-the time multiplying the conversion, is a prescribed gate of the
-conversion rather than a model of the pump being switched, since the
-unconverted response, the filters and a stated covariance stay those
-of the pumped device while the conversion is scaled: ramped from zero,
-it leaves the circuit time invariant before the record a noise
-calculation needs, as the pumps of the junction circuits are ramped,
-and the noise is read once the conversion has been on longer than the
-block's memory. Without one the conversion is on from the start, and a
-noise calculation takes the fluctuations before its record as those of
-the unconverted response.
+The [scattering-block guide](scattering.md) covers construction, fitting,
+delays, pumped devices, and noise contracts with separate examples.
 
 ## Noise models and temperatures
 
-Every dissipative element is a bath at a temperature: a
-[`Resistor`](@ref) at its `temperature` keyword or the analysis default,
-a port's termination at the port's, and a scattering block at its noise
-model, [`Passive`](@ref) taking the analysis default,
-[`ThermalEquilibrium`](@ref)`(T)` its own temperature, and
-[`Lossless`](@ref) asserting that the block emits nothing, which is
-validated where it can be. A lossy block emits the noise wave of
-Bosma's relation, of covariance `I - S S'`; nothing is inferred about a
-rational block's loss, which keeps its noise channels however small it
-is. The same models and temperatures set the noise of the linearized
-solver and of the time domain solver, so the two compare on the same
-circuit.
-
-An active block, an amplifier given by its scattering parameters, has
-no equilibrium noise and states its own with
-[`NoiseCovariance`](@ref)`(V)`: the symmetrized covariance of the wave
-it emits, in the units of `Cnoise`, where a vacuum channel counts as
-one. With `K = I - S S'` the added noise has the commutator `K`, so `V`
-is admitted only when `V - K` and `V + K` are both positive
-semidefinite, which is the noise quantum mechanics requires of the
-block's gain: an amplifier of power gain `G` from port 1 to port 2 has
-`K[2,2] = 1 - G` and must emit at least `G - 1` there, and one with an
-input referred added noise of `nadd` photons states `V[2,2] = 2 G nadd`.
-The block then carries channels of both kinds, `(V + K)/2` emitting
-like modes and `(V - K)/2` like their conjugates, so it adds the noise
-it states and its output obeys the commutation relations, and both
-solvers treat it alike. A passive block may state its noise the same
-way, `V = coth(hbar w/2kT) K` being its equilibrium.
+A port's input carries the thermal field of its termination, the vacuum
+unless `MatchedTermination(temperature = T)` states a temperature. Internal
+losses use the component's temperature or the analysis default;
+scattering blocks can state a thermal or explicit covariance model. See the
+[temperature table](conventions.md#Noise-normalization-and-temperature).

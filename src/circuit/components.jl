@@ -153,13 +153,40 @@ where the two are numerically equal.
 abstract type AbstractPortTermination end
 
 """
-    MatchedTermination()
+    MatchedTermination(; temperature = 0.0)
 
 A source and load environment matched to the port's reference impedance,
-acting across the two port terminals. This is the default: a port owns its
+acting across the two port terminals, at the physical `temperature` in
+kelvin, finite and nonnegative. This is the default: a port owns its
 environment, so no resistor should be added in order to terminate it.
+
+The environment sends into the port the thermal field of a matched load:
+the symmetrized noise `nbar + 1/2` in each mode, `nbar` its
+[`thermaloccupation`](@ref) at the mode's frequency, which is the vacuum's
+half photon at zero temperature. The temperature is the port's own and is
+zero unless it is given here, whatever `temperature` an analysis gives its
+dissipative elements: the termination is the measurement line, not the
+device. For a line whose noise is not that of one temperature, give the
+temperature of the field arriving at the port
+([`effectivetemperature`](@ref)), or put the line's attenuators in the
+circuit at their own temperatures.
+
+# Examples
+```jldoctest
+julia> MatchedTermination(temperature = 0.05).temperature
+0.05
+```
 """
-struct MatchedTermination <: AbstractPortTermination end
+struct MatchedTermination <: AbstractPortTermination
+    temperature::Float64
+    MatchedTermination(; temperature = 0.0) =
+        new(checktemperature(temperature, "a port's matched termination"))
+end
+
+# the physical temperature of a port's environment, zero for a port which
+# owns none
+porttemperature(t::MatchedTermination) = t.temperature
+porttemperature(::AbstractPortTermination) = 0.0
 
 """
     NoPortTermination()
@@ -195,7 +222,7 @@ end
 
 """
     Port(number::Integer; Z0 = 50.0,
-        termination = JosephsonCircuits.MatchedTermination())
+        termination = MatchedTermination())
 
 An analysis port with the port number `number` and reference impedance `Z0`
 in Ohms. A `Port` identifies an electrical port for excitation and
@@ -204,7 +231,10 @@ the circuit topology.
 
 By default the port owns a matched external source and load environment of
 impedance `Z0` acting across its two terminals, so a port needs no resistor
-to define its impedance. The environment acts between the port terminals and
+to define its impedance. The environment is at zero temperature unless
+`termination = MatchedTermination(temperature = T)` warms it (see
+[`MatchedTermination`](@ref)); its thermal field then enters the port as
+the field of a matched load at `T`. The environment acts between the port terminals and
 is never tied to [`Ground`](@ref) on its own, so a differential port behaves
 the same way as a ground referenced one.
 
@@ -252,7 +282,8 @@ function Base.show(io::IO, p::Port)
     showtermination(io, p.termination)
     print(io, ")")
 end
-showtermination(io::IO, ::MatchedTermination) = nothing
+showtermination(io::IO, t::MatchedTermination) = iszero(t.temperature) ? nothing :
+    print(io, ", termination = MatchedTermination(temperature = ", t.temperature, ")")
 showtermination(io::IO, ::NoPortTermination) = print(io, ", termination = nothing")
 
 # === mutual inductors ===
@@ -387,6 +418,8 @@ The derivative of a current-phase relation as a callable. `sin` gives
 other callable throws an `ArgumentError`, since those two are the
 relations the solvers evaluate.
 """
+function cprderivative end
+
 cprderivative(::typeof(sin)) = cos
 function cprderivative(p::PolynomialCPR{T}) where T
     return PolynomialCPRDerivative{T}(differentiatecoefficients(p.a))
@@ -1385,10 +1418,10 @@ struct Native end
 The default noise model for a [`ScatteringParameters`](@ref): the block is a
 passive network with no locally specified noise, so what it adds is set by
 what it absorbs and by the temperature the analysis is run at. A dissipative
-block adds noise of covariance `I - S S'` (see
-[`ScatteringNoisePlan`](@ref)), scaled by the thermal factor of the
-`temperature` or `temperatures` given to the analysis, which default to zero
-temperature and so to the vacuum covariance itself.
+block adds noise of symmetrized covariance `(nbar + 1/2)(I - S S')` (see
+[`ScatteringNoisePlan`](@ref)), with `nbar` the occupation at the
+`temperature` given to the analysis, which defaults to zero temperature and
+so to the vacuum's `(I - S S')/2`.
 
 Saying nothing here is what keeps temperature out of a component definition
 which several analyses share. [`ThermalEquilibrium`](@ref) is how a block
@@ -1548,13 +1581,14 @@ end
 A noise model for a passive [`ScatteringParameters`](@ref) in thermal equilibrium
 at the physical temperature `temperature` in Kelvin, finite and
 nonnegative. The added noise
-covariance is the vacuum covariance `I - S S'` scaled by
-`coth(hbar*w/(2*k*T))`, the factor by which a mode at that temperature
-exceeds its vacuum noise.
+covariance is `(nbar + 1/2)(I - S S')`, the commutator `I - S S'` weighted
+by the symmetrized noise of a mode at that temperature, `nbar` its
+[`thermaloccupation`](@ref).
 
 This states the block's temperature where the block is defined, so it
-overrides the `temperature` argument of the analysis. At zero temperature
-it coincides with [`Passive`](@ref).
+overrides the `temperature` argument of the analysis. At zero temperature,
+under an analysis at zero temperature, it coincides with
+[`Passive`](@ref).
 """
 struct ThermalEquilibrium{T}
     temperature::T
@@ -1572,25 +1606,27 @@ The noise a [`ScatteringParameters`](@ref) adds, stated outright rather
 than derived from its loss, which is how an active block, an amplifier
 given by its scattering parameters, declares its noise. `V` is the
 symmetrized covariance of the noise wave the block emits at its ports, in
-the units of the rest of the noise outputs, where a vacuum channel counts
-as one and a channel at temperature `T` as `coth(hbar*w/(2*k*T))`, that is
-`2*nbar + 1`: the same units as `Cnoise`. It may be a matrix, a callable
+quanta, the units of the rest of the noise outputs, where a vacuum channel
+counts as `1/2` and a channel at temperature `T` as `nbar + 1/2`: the same
+units as `Cnoise`. It may be a matrix, a callable
 of angular frequency, or a tuple `(frequencies, values)` of tabulated
 data, following the same provider forms as the scattering data, and is
 evaluated with the block's negative frequency rule.
 
 The block's output must obey the commutation relations, so with
 `K = I - S S'` the added noise has the commutator `K`, and a covariance is
-realizable only when `V - K` and `V + K` are both positive semidefinite.
-`(V + K)/2` is then the covariance of channels which emit like a mode in
-its vacuum and `(V - K)/2` of channels which emit like the conjugate of
-one, the idler channels of an amplifier; a passive block in thermal
-equilibrium is the case `V = coth(hbar*w/(2*k*T)) K`. A phase insensitive
-amplifier of power gain `G` from port 1 to port 2 has `K[2,2] = 1 - G`, so
-`V[2,2] >= G - 1`, the noise of a quantum limited amplifier, and one with
-an input referred added noise of `nadd` photons has `V[2,2] = 2*G*nadd`;
-`V[1,1]` is what it emits backward out of its input, `(2*nbar + 1)*K[1,1]`
-for an input matched at its physical temperature.
+realizable only when `V - K/2` and `V + K/2` are both positive
+semidefinite. `V + K/2` then factors into channels which emit like a mode
+in its vacuum and `V - K/2` into channels which emit like the conjugate of
+one, the idler channels of an amplifier; each channel carries the vacuum's
+half photon, so the block adds half their sum, `V`. A passive block in
+thermal equilibrium is the case
+`V = (nbar + 1/2) K`. A phase insensitive amplifier of power gain `G` from
+port 1 to port 2 has `K[2,2] = 1 - G`, so `V[2,2] >= (G - 1)/2`, the noise
+of a quantum limited amplifier, and one with an input referred added noise
+of `nadd` photons has `V[2,2] = G*nadd` (see [`noisequanta`](@ref) for a
+noise temperature); `V[1,1]` is what it emits backward out of its input,
+`(nbar + 1/2)*K[1,1]` for an input matched at its physical temperature.
 
 The condition is checked on the eigenvalues to `atol` when the block is
 built, at the samples where both the scattering data and `V` are stored,
@@ -1602,10 +1638,10 @@ temperature: its noise is `V`, whatever the analysis temperature.
 
 With `completed = true` the covariance is completed to the commutation
 relations rather than held to them: `V` is replaced by
-`V + neg(V - K) + neg(V + K)`, `neg` taking the negative part of a
+`V + neg(V - K/2) + neg(V + K/2)`, `neg` taking the negative part of a
 Hermitian matrix, the sum of `-lambda v v'` over its negative
-eigenvalues, which makes `V - K` and `V + K` positive semidefinite and
-adds nothing where they are. For `V = 0` the addition is `|K|`, the
+eigenvalues, which makes `V - K/2` and `V + K/2` positive semidefinite and
+adds nothing where they are. For `V = 0` the addition is `|K|/2`, the
 least total noise a Gaussian channel with the block's map can add, the
 `Ymin` of the quantum optics functions in the basis of the modes; for
 a stated `V` it is a sufficient addition, the least being a
@@ -1893,13 +1929,13 @@ preparenoise(noise, n::Int) = noise
 """
     commutationmargin(V::AbstractMatrix, K::AbstractMatrix)
 
-The smallest eigenvalue of `V - K` and of `V + K`, which is nonnegative
-when the noise covariance `V` meets the commutation relations of the
-commutator `K`: `(V + K)/2` and `(V - K)/2` are then the covariances of
+The smallest eigenvalue of `V - K/2` and of `V + K/2`, which is
+nonnegative when the symmetrized noise covariance `V` meets the commutation
+relations of the commutator `K`: `V + K/2` and `V - K/2` then factor into
 the channels of either kind (see [`NoiseCovariance`](@ref)).
 """
 commutationmargin(V::AbstractMatrix, K::AbstractMatrix) =
-    min(minimum(eigvals(Hermitian(V - K))), minimum(eigvals(Hermitian(V + K))))
+    min(minimum(eigvals(Hermitian(V - K/2))), minimum(eigvals(Hermitian(V + K/2))))
 
 """
     quantumnoisemargin(V::AbstractMatrix, S::AbstractMatrix)
@@ -1971,7 +2007,7 @@ known:
   covariance's `atol` times its largest entry, or than its `atol` for a
   covariance of entries below one;
 - it is at least what the commutation relations require of the block,
-  the smallest eigenvalue of `V - K` and of `V + K` with `K = I - S S'`
+  the smallest eigenvalue of `V - K/2` and of `V + K/2` with `K = I - S S'`
   (see [`quantumnoisemargin`](@ref)) no lower than `-atol` with the
   covariance's `atol`, unless it is completed to them;
 - a block declared [`Lossless`](@ref) is unitary, no entry of `I - S S'`
@@ -2001,7 +2037,7 @@ function checkblockcontract(block::ScatteringParameters, S, V, w; name = nothing
     if noise isa NoiseCovariance
         (isnothing(V) || noise.completed) && return nothing
         margin = quantumnoisemargin(V, S)
-        margin >= -noise.atol || throw(ArgumentError(lazy"the noise covariance of $(subject) is less than the commutation relations require$(at): the smallest eigenvalue of V - K or V + K, with K = I - S S', is $(margin), below the covariance's atol of $(noise.atol). An amplifier of power gain G has to emit at least G - 1 at its output; see NoiseCovariance."))
+        margin >= -noise.atol || throw(ArgumentError(lazy"the noise covariance of $(subject) is less than the commutation relations require$(at): the smallest eigenvalue of V - K/2 or V + K/2, with K = I - S S', is $(margin), below the covariance's atol of $(noise.atol). An amplifier of power gain G has to emit at least (G - 1)/2 at its output; see NoiseCovariance."))
     elseif noise isa Lossless
         deviation = unitaritydeviation(S)
         deviation <= block.atol || throw(ArgumentError(lazy"$(subject) declares noise = Lossless(), but$(at) the largest entry of I - S S' is $(deviation), above its atol of $(block.atol). A block which dissipates must carry the noise its loss requires; use the default Passive() noise model."))
@@ -2614,10 +2650,10 @@ is by construction, and a callable, whose values away from any sampled
 frequency are unknown, and a realization, whose norms are costly to
 bound, are not.
 
-A block which is not provably lossless carries vacuum noise channels
+A block which is not provably lossless carries noise channels
 ([`ScatteringNoisePlan`](@ref)), and those of a block which is in fact
 lossless are identically zero, so a `false` costs work. A `true` leaves
-out channels whose covariance `I - S S'` is within the block's `atol` of
+out channels whose commutator `I - S S'` is within the block's `atol` of
 zero, the tolerance a block declared [`Lossless`](@ref) is held to.
 """
 provablylossless(b::ScatteringParameters) = unitaritybound(b.provider) <= b.atol
@@ -3041,7 +3077,11 @@ from solves of neighboring signal frequencies whose mode truncations
 differ; a device whose mode truncation was too tight fails both, and
 `atol` admits the discrepancy of one which was nearly so.
 `ports` selects and orders the device's ports which become the block's,
-by default all of them, and `zref` gives their reference impedances.
+by default all of them, and `zref` gives their reference impedances. A
+port left out takes its termination into the block, so a stated
+covariance gains the noise that termination sends in, scattered to the
+ports the block keeps, at the temperature the solve records for it
+(`porttemperatures`).
 `phase` rotates `H_k` by `exp(im*k*phase)`, the phase of the block's
 pump relative to the one the data was computed with, which matters when
 other elements of the circuit share the pump.
@@ -3072,10 +3112,10 @@ and the block then emits no noise. A device with loss states the noise it adds
 with `noise = NoiseCovariance(linearized.Cnoise)`, the covariance its
 solve reports with `returnCnoise = true`, over the same modes, ports
 and frequencies: in the units of `Cnoise`, where a vacuum channel counts
-as one, it becomes the harmonic covariances
+as `1/2`, it becomes the harmonic covariances
 `V_k(nu) = <n(nu + k wp) n(nu)'>`, sampled like the transfer functions,
 and is held to the minimum the commutation relations require,
-`V - K` and `V + K` positive semidefinite with `K = J - S J S'`, on the
+`V - K/2` and `V + K/2` positive semidefinite with `K = J - S J S'`, on the
 data and again at every frequency of a sweep. The block then carries
 channels of both kinds over all its modes at once, as an active block
 does (see [`NoiseCovariance`](@ref)), so it adds the noise its solve
@@ -3309,6 +3349,13 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
             size(C, 5) == length(wv) && collect(AxisKeys.axiskeys(C, 5)) == collect(AxisKeys.axiskeys(S, 5))) || throw(ArgumentError(
             "the stated covariance does not share the modes, ports and frequencies of the scattering matrix; take both from one solve."))
         Ca = Array(C)
+        # the ports the block leaves out become part of it, their
+        # terminations with them: what the field each sends in scatters to
+        # the ports the block keeps is noise the block emits, at the
+        # temperature of that termination (the vacuum where the solve
+        # records none)
+        temps = hasproperty(lin, :porttemperatures) ? lin.porttemperatures : zeros(length(inports))
+        dropped = [(r, Float64(temps[r])) for r in eachindex(inports) if !(inports[r] in selected)]
         vsamples = Dict{Int,Vector{Tuple{Float64,Matrix{Complex{Float64}}}}}()
         for (a, mo) in enumerate(modes), (b, mi) in enumerate(modes), i in eachindex(wv)
             k = mo - mi
@@ -3316,6 +3363,12 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
             M = Matrix{Complex{Float64}}(undef, n, n)
             for q in 1:n, p in 1:n
                 M[p, q] = Ca[a, po[p], b, qi[q], i]
+            end
+            for (r, T) in dropped, (c, mc) in enumerate(modes)
+                d = thermalnoise(wv[i] + mc*wp, T)
+                for q in 1:n, p in 1:n
+                    M[p, q] += A[a, po[p], c, r, i]*d*conj(A[b, po[q], c, r, i])
+                end
             end
             if k >= 0
                 push!(get!(vsamples, k, Tuple{Float64,Matrix{Complex{Float64}}}[]), (nu, M))

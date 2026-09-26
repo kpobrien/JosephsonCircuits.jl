@@ -94,9 +94,10 @@ end
 A callback which computes the noise scattering parameters of a signal
 frequency from the adjoint solutions on the backend.
 
-`temperatures` is one temperature per noise channel, or `nothing`; the waves
-of a warm channel are scaled where they are computed, so nothing downstream
-of this knows about temperature.
+`temperatures` is one temperature per noise channel, or `nothing` for the
+vacuum; the state of each channel, its symmetrized noise `nbar + 1/2`,
+weighs its waves where they are reduced, so nothing downstream of this
+knows about temperature.
 
 `blockplan` is the [`DeviceBlockNoisePlan`](@ref) of the dissipative
 scattering blocks, or `nothing` when there are none; their channels follow
@@ -139,21 +140,22 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
     # dozen threads each walking every noise port in turn
     absq = KernelAbstractions.allocate(backend, Float64, nrows, nrhs)
     signs = KernelAbstractions.allocate(backend, Float64, nrows, 1)
-    denomd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
+    symmetrizedd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     signedd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     wmodesd = KernelAbstractions.allocate(backend, Float64, plan.nmodes)
-    denom = zeros(Float64, nrhs)
+    symmetrized = zeros(Float64, nrhs)
     signed = zeros(Float64, nrhs)
     wmodes = zeros(Float64, plan.nmodes)
-    reduction = NoiseReduction(denom, signed)
-    # The occupation of each channel mode, when any channel is warm. It
-    # depends on the mode frequencies, so it is rebuilt per signal frequency
-    # and sent; one entry per channel mode, which is small beside the
-    # waves. It enters the sum the quantum efficiency reads and not the one
-    # the commutation relations read, which is why the latter stay at one.
+    reduction = NoiseReduction(symmetrized, signed)
+    # The symmetrized noise of each channel mode, when any channel is warm;
+    # the vacuum's is 1/2 for every channel. It depends on the mode
+    # frequencies, so it is rebuilt per signal frequency and sent; one
+    # entry per channel mode, which is small beside the waves. It enters
+    # the sum the quantum efficiency reads and not the one the commutation
+    # relations read, which do not depend on the state of a channel.
     warm = !isnothing(temperatures) && !all(iszero, temperatures)
-    occupationhost = warm ? zeros(Float64, nrows) : Float64[]
-    occupationd = warm ? KernelAbstractions.allocate(backend, Float64, nrows) :
+    channelnoisehost = warm ? zeros(Float64, nrows) : Float64[]
+    channelnoised = warm ? KernelAbstractions.allocate(backend, Float64, nrows) :
         KernelAbstractions.allocate(backend, Float64, 0)
     # the added noise covariance, when it is asked for, is formed here rather
     # than by bringing the noise scattering matrix home: it is one product of
@@ -212,32 +214,33 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
             ndrange = nrows)
         KernelAbstractions.synchronize(backend)
         Snoise .= out .* signs .* colscale
-        # the same two passes and two reductions as at zero temperature, with
-        # the occupation folded into the one the quantum efficiency reads
+        # the same two passes and two reductions as in the vacuum, with the
+        # state of the channels folded into the one the quantum efficiency
+        # reads
         if warm
-            noiseoccupation!(occupationhost, temperatures, wmodes,
+            thermalnoise!(channelnoisehost, temperatures, wmodes,
                 plan.nmodes)
-            copyto!(occupationd, occupationhost)
-            absq .= abs2.(Snoise) .* occupationd
+            copyto!(channelnoised, channelnoisehost)
+            absq .= abs2.(Snoise) .* channelnoised
         else
-            absq .= abs2.(Snoise)
+            absq .= abs2.(Snoise) ./ 2
         end
-        sum!(denomd, absq)
+        sum!(symmetrizedd, absq)
         absq .= abs2.(Snoise) .* signs
         sum!(signedd, absq)
         KernelAbstractions.synchronize(backend)
-        copyto!(denom, denomd)
+        copyto!(symmetrized, symmetrizedd)
         copyto!(signed, signedd)
         if keepmatrix && !isempty(Snoiseview)
             copyto!(Snoisehost, Snoise)
             copyto!(Snoiseview, Snoisehost)
         end
         if !isnothing(Cnoiseview)
-            # Cnoise[i,j] = sum_c occupation[c] Snoise[c,i] conj(Snoise[c,j])
+            # Cnoise[i,j] = sum_c channelnoise[c] Snoise[c,i] conj(Snoise[c,j])
             if warm
-                Cwork .= occupationd .* conj.(Snoise)
+                Cwork .= channelnoised .* conj.(Snoise)
             else
-                Cwork .= conj.(Snoise)
+                Cwork .= conj.(Snoise) ./ 2
             end
             mul!(Cdev, transpose(Snoise), Cwork)
             KernelAbstractions.synchronize(backend)
@@ -251,8 +254,8 @@ end
 """
     blocknoisefactorkernel!
 
-The factor `L` of the vacuum noise covariance `I - S S'` of each dissipative
-scattering block definition at each mode frequency, one work item per
+The factor `L` of the commutator `I - S S'` of the noise wave of each
+dissipative scattering block definition at each mode frequency, one work item per
 (definition, mode), from tabulated or constant scattering data. The
 entries of `factorentries` are the first instances of the definitions,
 whose factors the other instances read.
@@ -304,8 +307,8 @@ end
     end
 end
 
-# The factor, at `off` in `L`, of the vacuum noise covariance `I - S S'` of
-# an `n` port block at the mode frequency `wm`, from its scattering
+# The factor, at `off` in `L`, of the commutator `I - S S'` of the noise
+# wave of an `n` port block at the mode frequency `wm`, from its scattering
 # entries `entry(p, q, w)`, which the two kernels above read from a table
 # or a callable. A block which states its data at positive frequencies
 # only (`isconj`) is read at `abs(wm)` and conjugated at a negative one.
@@ -378,7 +381,7 @@ end
 """
     DeviceBlockNoisePlan
 
-The vacuum noise channels of the dissipative scattering blocks, on a backend.
+The noise channels of the dissipative scattering blocks, on a backend.
 
 Where the host path reads the auxiliary port current rows of an adjoint
 solution it has brought back, this describes the same channels as flat

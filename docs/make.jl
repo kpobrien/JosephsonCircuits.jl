@@ -1,7 +1,10 @@
 using Documenter, DocumenterVitepress, JosephsonCircuits
 
+include("pages.jl")
+
 # The doctests run in the test suite, not here.
 makedocs(
+    root = @__DIR__,
     modules = [JosephsonCircuits],
     authors = "Kevin P. O'Brien and contributors",
     sitename = "JosephsonCircuits.jl",
@@ -18,28 +21,16 @@ makedocs(
         # VitePress development server to pick up
         build_vitepress = !haskey(ENV, "DOCS_LIVE"),
     ),
-    pages = [
-        "Home" => "index.md",
-        "Circuits" => "circuits.md",
-        "Harmonic balance" => [
-            "Usage" => "harmonicbalance.md",
-            "Theory and implementation" => "harmonicbalancetheory.md",
-            "Examples" => "examples.md",
-            "Using other solvers" => "interop.md",
-        ],
-        "Time domain" => [
-            "Usage" => "transient.md",
-            "Theory and implementation" => "transienttheory.md",
-            "Quantum noise in time" => "transientnoise.md",
-        ],
-        "Reference" => "reference.md",
-    ],
+    pages = docpages,
 )
 
-DocumenterVitepress.deploydocs(
-    repo = "github.com/kpobrien/JosephsonCircuits.jl",
-    target = joinpath(@__DIR__, "build"),
-    branch = "gh-pages",
-    devbranch = "main",
-    cname = "josephsoncircuits.org",
-)
+# Deployment is opt-in; local builds and live previews only render the site.
+if get(ENV, "DOCS_DEPLOY", "false") == "true" && !haskey(ENV, "DOCS_LIVE")
+    DocumenterVitepress.deploydocs(
+        repo = "github.com/kpobrien/JosephsonCircuits.jl",
+        target = joinpath(@__DIR__, "build"),
+        branch = "gh-pages",
+        devbranch = "main",
+        cname = "josephsoncircuits.org",
+    )
+end

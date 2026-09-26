@@ -252,7 +252,7 @@ end
             Sp = b.linearized.S[1:nm, nm+1:2*nm, i]
             @test isapprox(transpose(a.linearized.Snoise[:, :, i]), Sp;
                 atol = 1e-10)
-            @test isapprox(a.linearized.Cnoise[:, :, i], Sp*Sp'; atol = 1e-10)
+            @test isapprox(a.linearized.Cnoise[:, :, i], Sp*Sp'/2; atol = 1e-10)
             @test isapprox(a.linearized.S[:, :, i], b.linearized.S[1:nm, 1:nm, i];
                 atol = 1e-10)
         end

@@ -127,10 +127,10 @@ using Test
 
         # passivity validation; an active block declares its noise, which
         # is held to the minimum the commutation relations require, here
-        # |I - S S'| = 3 I
+        # |I - S S'|/2 = 3I/2
         @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0])
         active = ScatteringParameters([0.0 2.0; 2.0 0.0];
-            noise = NoiseCovariance([3.0 0.0; 0.0 3.0]))
+            noise = NoiseCovariance([1.5 0.0; 0.0 1.5]))
         @test active.nports == 2
         @test active.noise.provider isa JosephsonCircuits.ConstantMatrixProvider
         @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0];
@@ -138,7 +138,7 @@ using Test
         @test_throws ArgumentError NoiseCovariance([3.0 0.0; 0.0 3.0]; atol = -1.0)
         # noise covariance must be Hermitian
         @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0];
-            noise = NoiseCovariance([3.0 1.0; 0.0 3.0]))
+            noise = NoiseCovariance([1.5 1.0; 0.0 1.5]))
         # thermal equilibrium noise model carries the temperature
         blkT = ScatteringParameters(S; noise = ThermalEquilibrium(20e-3))
         @test blkT.noise.temperature == 20e-3
@@ -415,8 +415,8 @@ using Test
         wq = pi/2/taus[1]
         turn(w) = [cis(w*(taus[p] - taus[q])) for p in 1:2, q in 1:2]
         rotated = ScatteringParameters(S; noise = NoiseCovariance(
-            JC.RotatedMatrixProvider(JC.ConstantMatrixProvider(K .* conj.(turn(wq))), taus)))
-        @test JC.quantumnoisemargin(K .* conj.(turn(wq)), S) < -0.1
+            JC.RotatedMatrixProvider(JC.ConstantMatrixProvider(K/2 .* conj.(turn(wq))), taus)))
+        @test JC.quantumnoisemargin(K/2 .* conj.(turn(wq)), S) < -0.1
         @test abs(hblinsolve([wq], two(rotated); keyedarrays = false, returnCM = true).CM[1, 1]) ≈ 1 atol = 1e-8
         @test_throws ArgumentError hblinsolve([2wq], two(rotated); keyedarrays = false, returnCnoise = true)
     end

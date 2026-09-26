@@ -1770,7 +1770,7 @@ end
 
 """
     RationalScattering(block::LinearizedScattering, npoles; frequencies = nothing,
-        band = nothing, delays = nothing, tol = 1e-2, noisetol = 1e-2,
+        band = nothing, delays = nothing, tol = 1e-2, noisetol = 5e-3,
         padding = 4, fitting = VectorFitting())
 
 The [`LinearizedScattering`](@ref) block with every harmonic transfer
@@ -1825,7 +1825,7 @@ that it adds, whatever modes a solve keeps, the noise its own
 commutator requires, the least a channel with the fitted functions can
 add for a lossless device, and its output obeys the commutation
 relations exactly. That noise is what the fit costs, and the fit is
-refused when it exceeds `noisetol` of the square of the largest entry
+refused when it exceeds, in quanta, `noisetol` of the square of the largest entry
 over the modes the data reaches from its frequencies and from the
 midpoints between them; the block's `atol` stays that of the data. The fit is held to the data as
 well, and refused where it misses a sample by more than `tol` of the
@@ -1838,7 +1838,7 @@ the fit of `H_0` exactly. The harmonic balance solvers evaluate the
 fitted block too, so the two describe the same block.
 """
 function RationalScattering(block::LinearizedScattering, npoles::Integer; frequencies = nothing,
-        band = nothing, delays = nothing, tol::Real = 1e-2, noisetol::Real = 1e-2, padding::Integer = 4,
+        band = nothing, delays = nothing, tol::Real = 1e-2, noisetol::Real = 5e-3, padding::Integer = 4,
         fitting::VectorFitting = VectorFitting())
     npoles >= 1 || throw(ArgumentError("fit at least one pole."))
     padding >= 0 || throw(ArgumentError("padding must be nonnegative."))

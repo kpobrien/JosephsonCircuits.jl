@@ -24,8 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1  # if package requires Pkg.build()
       - uses: julia-actions/julia-docdeploy@v1
         env:
+          DOCS_DEPLOY: 'true'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

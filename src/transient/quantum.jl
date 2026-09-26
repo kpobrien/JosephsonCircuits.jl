@@ -241,7 +241,9 @@ isotropic canonical output covariance (vacuum = I/2). The gain is a scaled
 rotation, phase preserving, or a scaled reflection, phase conjugating, as
 from a signal to its idler. `gain` is the incremental
 response to a coherent displacement, not a ratio of large loaded amplitudes.
-Returns photon gain, input-referred added noise, QE, QEideal and QE/QEideal.
+Returns photon gain, QE, QEideal and QE/QEideal. The QE is `G/(2v)`, the
+covariance holding every bath in its state, the input's own included, as
+[`hblinsolve`](@ref)'s is.
 Uses the existing HB ideal-efficiency convention, which `hbsolve` applies to
 its idler outputs too. Phase-sensitive gain or
 anisotropic noise is rejected: retain the full gain/covariance for those cases.
@@ -259,5 +261,5 @@ function transientquantumefficiency(gain, covariance; rtol = 1e-3)
     ideal = only(calcqeideal(reshape([sqrt(g)], 1, 1)))
     qe = g/(2s)
     return (;
-        gain = g, addednoise = s/g-0.5, QE = qe, QEideal = ideal, normalizedQE = qe/ideal)
+        gain = g, QE = qe, QEideal = ideal, normalizedQE = qe/ideal)
 end

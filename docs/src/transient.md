@@ -1,541 +1,248 @@
-# Time domain or transient simulations.
+# Transient simulation
 
-The time domain simulators in `transientsolve` numerically integrates the
-differential equations describing the system given the initial conditions and
-time dependent current sources. Time domain simulation is a natural choice
-when the user is interested in the transient behavior of a nonlinear
-circuit (eg. pulsing the pump of an amplifier). Time domain simulations can
-also be useful in approximating periodic steady state solutions to highly
-multi-tone harmonic balance problems. The size of the system solved by the
-harmonic balance method scales exponentially in the number of tones, so,
-depending on the system, a highly multi-tone simulation may be faster to
-simulate in the time domain. The time domain solver computes the analytic
-tangent and adjoint of the system at each step, which is useful for noise
-and sensitivity analysis.
-
-This page is a guide to setting a time domain simulation and interpreting the
-results. The [theory and implementation](transienttheory.md)
-page explains how the solver works, and the
-[quantum noise](transientnoise.md) page how fluctuations are propagated
-through a recorded trajectory.
+[`transientsolve`](@ref) integrates the circuit equations under prescribed
+current waveforms. Use it for pump turn-on, pulses, depletion, and drives
+whose many independent tones make a harmonic grid impractical. The tangent
+and adjoint calculate incremental responses about the recorded trajectory.
 
 ## Example
 
-```julia
-using JosephsonCircuits
+This one-port junction circuit is driven by a smooth pump and a smaller
+signal. The source returns instantaneous current in amperes.
 
+```@example transient
+using JosephsonCircuits
 circuit = Circuit([
     (:P1, 1, 0, Port(1; Z0 = 50.0)),
     (:C1, 1, 0, Capacitor(1e-12)),
     (:Lj1, 1, 0, JosephsonJunction(1e-9)),
 ])
-rise(t) = t <= 0 ? 0.0 : t >= 15e-9 ? 1.0 : sinpi(t/30e-9)^2
-pulse(t) = rise(t - 20e-9)*rise(120e-9 - t)
+rise(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : sinpi(t/4e-9)^2
 drive(t) = 0.12e-6*rise(t)*cospi(2*3e9*t) +
-    pulse(t)*(2e-9*cospi(2*1.1e9*t) + 2e-9*cospi(2*1.8e9*t))
-
+    2e-9*rise(t - 2e-9)*cospi(2*1.1e9*t)
 problem = transientproblem(circuit; sources = [TransientSource(1, drive)])
-solution = transientsolve(problem, (0.0, 140e-9); dt = 1e-12)
-
-# port rows follow problem.circuit.ports; time is in seconds
-solution.voltage                       # volts
-solution.incident, solution.outgoing   # instantaneous waves in sqrt(W)
-solution.stats
+solution = transientsolve(problem, (0.0, 8e-9); dt = 2e-12)
+@assert all(isfinite, solution.voltage) # hide
+(size(solution.voltage), last(solution.times))
 ```
 
-`TransientSource(1, drive)` is an instantaneous Norton current in Amperes into
-the positive terminal of port 1. For a matched port of resistance `R` a
-sinusoidal peak current `Ip` launches the available power `Ip^2*R/8`.
+Rows follow `problem.circuit.ports`; columns are saved times in seconds.
+The main outputs are:
 
-`TransientSource("I1", waveform)` replaces the constant value of a
-named `CurrentSource`. Multiple waveforms on the same target component sum
-together. A source function must return finite real values and must be
-deterministic, because the tangent and adjoint evaluate it again on the
-recorded grid.
+| Field | Meaning |
+|---|---|
+| `voltage` | Port voltage, V |
+| `incident`, `outgoing` | Instantaneous real power waves, `sqrt(W)` |
+| `times` | Saved sample times, s |
+| `stats` | Solver work and convergence statistics |
+| `finalflux`, `finalrate` | Scaled final state arrays; use `transientstate(solution)` to continue |
 
-The circuit may be a typed [`Circuit`](@ref) or a compiled circuit.
+For a matched termination `R`, a sinusoidal Norton current of peak
+amplitude `Ipeak` launches available power `Ipeak^2*R/8`. The same pump's
+HB coefficient is half its peak amplitude; see [conventions](conventions.md).
 
+`TransientSource("I1", waveform)` replaces the constant value of a named
+`CurrentSource`. Multiple waveforms on the same target sum. Source
+functions must return finite real values and be deterministic: response
+calculations and checkpoint replay evaluate them again.
 
 ## Choosing the rule, the step and the record
 
-[`GaussLegendre`](@ref), the default, is the two stage Gauss-Legendre
-collocation: fourth order, A-stable and symplectic, and free of
-numerical damping, so a lossless LC oscillation keeps its energy.
-[`Trapezoidal`](@ref) applies the trapezoidal rule to the flux and to
-its rate, which is Newmark's rule with the averaging parameters: second
-order, with the same freedom from damping, one implicit equation in the
-new flux per step, and the rule which takes a `linearsolver`.
-[`BackwardEuler`](@ref) is first order and strongly damping, a reference
-for checking that a result does not depend on the rule.
+### Stepping rule
 
-The choice of rule is a matter of samples per period. The trapezoidal
-rule warps every frequency by `(2 pi f dt)^2/12`, a fifth of a percent
-at 42 samples of a 4.75 GHz period, and a resonator's detuning and an
-amplifier's bifurcation magnify that: the pumped amplifier of the noise
-example has its pump response 123% off harmonic balance at 5 ps and
-needs 0.3 ps for half a percent. The Gauss-Legendre rule warps by
-`(2 pi f dt)^4/720`: the same amplifier is 5e-4 off at 5 ps and 3e-5 at
-2.5 ps, converging as the fourth power. Neither rule is L-stable: an unresolved fast mode is
-not damped, and a sharp edge in a drive is resolved by the grid, not
-smoothed by the rule.
+| Method | Nominal differential order | Practical use |
+|---|---:|---|
+| `GaussLegendre()` | 4 | Default; low phase error, blocks, lines, and batched conditions |
+| `Trapezoidal()` | 2 | Nondamping reference; supports an optional iterative linear solve |
+| `BackwardEuler()` | 1 | Strongly damping comparison method |
 
-`dt` is a maximum step; the uniform grid is shortened slightly to land on
-the final time. `rtol` and `atol` control the Newton residual, not the
-temporal error, and there is no step control: repeat at `dt/2` and compare
-the amplitudes, phases, weak products and pulse energy. Resolve the
-highest generated harmonic and the circuit's resonances, not only the
-drive. A discontinuous drive needs a grid aligned with it.
+Gauss–Legendre and trapezoidal integration do not damp a resolved linear
+lossless LC oscillation. This does not make large steps accurate: phase
+error shifts resonances and can strongly change amplifier gain near a
+threshold. Neither method damps unresolved fast modes as an L-stable
+method would. Algebraic variables can have lower accuracy than the
+nominal differential order; see [theory](transienttheory.md).
 
-By default only the port waveforms and the final state are kept.
-`saveevery` decimates the saved samples without changing the integration
-grid, always keeping both endpoints; it has no antialiasing filter, so the
-saved rate must still resolve whatever is demodulated afterwards.
+### Time step and output sampling
 
-[`transientdemodulate`](@ref)`(solution, port, frequency; quantity,
-window)` integrates a windowed waveform and returns a complex peak
-amplitude. A smooth window suppresses leakage from a strong pump; close
-products still need enough observation time.
+`dt` is the maximum step. A uniform grid is chosen and shortened slightly
+if needed to land on the final time. There is no adaptive temporal-error
+control. `rtol` and `atol` control the nonlinear residual at each step,
+not the discretization error.
 
+Repeat with `dt/2` and compare the quantities you need: amplitudes, phases,
+weak products, and pulse energy. Resolve generated harmonics and circuit
+resonances, not only the applied drives. Align discontinuities with the
+grid where possible; a smooth turn-on generally requires fewer high
+frequencies to resolve.
 
-Under `Trapezoidal()` with `linearsolver = GMRES()` each Newton correction is
-instead solved matrix free by the package's Krylov solver, with the last factorization
-as the preconditioner and a refresh of it only when the iteration count
-says the phases have moved away from it, so a whole solve can run on one
-factorization. On a one dimensional line on the CPU the direct step is
-faster, since KLU refactorizes such a pattern in a tenth of the step;
-the iterative step is for patterns with fill, where a refactorization
-grows faster than a product does.
+`saveevery` decimates saved samples without changing the integration grid
+and always preserves the endpoints. It applies no anti-alias filter.
+The saved rate must still resolve anything you demodulate later.
 
-A [`TransientReuse`](@ref) passed as `reuse` to a solve, a tangent or an
-adjoint carries the scaled system with its Jacobian plan, the
-factorization as it was left and the Krylov workspace to the next call
-on the same problem at the same step, rule and backend, so a parameter
-sweep over the drives, or the tangent and adjoint after a solve, pay the
-setup once; it is the counterpart of the reuse between the solves of an
-[`hbcache`](@ref).
+### Recording level
+
+| `record` | Use | Stored trajectory |
+|---|---|---|
+| `:ports` | Port waveforms and continuation | Default; port traces and endpoint states |
+| `:phases` | Tangent, adjoint, and noise about a nonlinear trajectory | Junction phases at every integration step |
+| `:states` | State inspection and state-dependent component derivatives | Full flux/rate history as well as phases |
+| `:checkpoints` | Response calculations on long records | States at checkpoints, with intermediate steps replayed |
+
+The last three require `saveevery=1`. Checkpoints are supported under
+`GaussLegendre()`; `checkpointevery` chooses their spacing. They reduce
+stored state history, while port traces and some input/output arrays still
+grow with the record length. See [memory and replay](performance.md#Transient-records-and-reuse).
 
 ## Supported circuits and the initial state
 
-Supported are real, constant resistors, capacitors, inductors, mutual
-inductors, Josephson junctions and nonlinear inductors with a
-[`PolynomialCPR`](@ref), current sources, ports,
-[`ScatteringParameters`](@ref) blocks with a constant real matrix,
-[`RationalScattering`](@ref) blocks, pumped blocks fitted for time with
-`RationalScattering(block, npoles)`, and ideal
-[`TransmissionLine`](@ref)s, the last four under
-[`GaussLegendre`](@ref). Frequency dependent or complex values and
-other blocks are rejected, since they need a causal realization in
-time. An infinite resistance is an open.
+The [support table](circuits.md#Supported-analyses) distinguishes component
+representations. Real constant lumped elements work directly. Constant
+real scattering blocks, rational blocks, fitted pumped blocks, and ideal
+transmission lines require `GaussLegendre()`. General complex or
+frequency-dependent component values need a causal time-domain model.
 
+The default initial state is zero. Use [`transientstate`](@ref) to supply
+node fluxes in webers and node voltages in volts, in compiled node order.
+It constructs the scaled state and the associated auxiliary coordinates.
+The solver checks the initial algebraic constraints; it does not search
+for an operating point or project an inconsistent initial state.
 
-[`transientstate`](@ref) builds the initial state, a
-[`TransientState`](@ref), from node fluxes in Weber and node voltages in
-Volts in the compiled order; the auxiliary currents follow from the
-constitutive equations and the gauge is normalized as harmonic balance
-normalizes an initial guess. The default is the zero state, and
-`transientstate(solution)` is the state at the end of a solve, to
-continue from, whatever the solve recorded: with transmission lines it
-carries the waves over the delay window before the end, so the
-continuation is the
-uninterrupted solve at the same step, and reads that history through
-the lines' own interpolation at another. The state holds the solver's scaled quantities, which is
-why `initialstate` takes only a `TransientState` and not a pair of
-arrays; the solution's `finalflux` and `finalrate` are those scaled
-quantities too. The solver checks that the state satisfies the algebraic
-rows at the start, the nodes without capacitance and the augmentation,
-and otherwise throws: it does not look for an operating point or project
-the state. A resistor driven by a nonzero current at the first sample
-needs its initial voltage supplied; a shunt capacitor can start charging
-from zero. An adapter from a harmonic balance operating point to a
-transient initial state is future work.
+For example, a resistor driven by nonzero current at the first sample
+needs its initial voltage supplied. A shunt capacitor can instead begin
+charging from zero. The [amplitude example](conventions.md#Check-the-convention-on-a-resistor)
+shows an explicitly initialized resistor.
 
+To continue a solve, keep the full state:
 
-## Scattering blocks, transmission lines and fitted data
-
-A circuit in time may contain constant real scattering blocks, an
-attenuator, a circulator, an ideal through, short or open, rational
-scattering blocks, which is the form a fit of measured or simulated
-scattering data takes, and ideal transmission lines, all under
-[`GaussLegendre`](@ref). They are the same components the harmonic
-balance solvers take, with the same reference impedances, noise models
-and temperatures, so a result can be compared between the two domains
-with the same circuit.
-
-```julia
-using JosephsonCircuits
-
-# a cable of 60 ohms and 300 ps (9 cm at the speed of light) in front of
-# a two port whose measured
-# scattering parameters were fitted at four poles, at 0.3 kelvin
-data = ScatteringParameters((2pi .* frequencies, S); nports = 2, zref = 50.0,
-    noise = ThermalEquilibrium(0.3))
-fitted = RationalScattering(data, 4)
-circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
-    (:cable, 1, 2, TransmissionLine(60.0, 0.09)),
-    (:block, 2, 3, fitted),
-    (:cc, 3, 4, Capacitor(100e-15)),
-    (:jj, 4, 0, JosephsonJunction(1000e-12)),
-    (:cj, 4, 0, Capacitor(1000e-15))])
-problem = transientproblem(circuit; sources = [TransientSource(1, pump)])
-solution = transientsolve(problem, (0.0, 200e-9); dt = 2.5e-12, method = GaussLegendre())
+```@example transient
+continued = transientsolve(problem, (8e-9, 9e-9); dt = 2e-12,
+    initialstate = transientstate(solution))
+@assert all(isfinite, continued.voltage) # hide
+nothing # hide
 ```
 
-A [`TransmissionLine`](@ref) is given its impedance and length, with a
-phase velocity that defaults to the speed of light; its delay must be at
-least a step, and at least four steps for the read of its history to
-keep the rule's order. A [`RationalScattering`](@ref) block is given as
-a real state space realization, validated as stable and passive, or is
-fitted from any [`ScatteringParameters`](@ref) block, tabulated,
-Touchstone or callable, by `RationalScattering(block, npoles)`; ask for
-as many poles as the data might need, since the poles it does not need
-are dropped. A delay is not a rational function, so a cable is a line in
-cascade with a fit of the data with that delay removed, which
-`RationalScattering` does itself for a `delays` of one delay per port
-in seconds, moving a stated covariance to the same reference planes.
-A block's
-`ThermalEquilibrium(T)` sets the temperature of the noise its loss
-emits, a declared `Lossless()` is validated, and a block which states
-its noise with a `NoiseCovariance`, an amplifier given by its
-scattering parameters, constant or fitted without the passivity its
-gain forbids, is realized in time with that noise. A pumped device as
-a [`LinearizedScattering`](@ref) block is realized by
-`RationalScattering(block, npoles)`, the fit of its harmonic transfer
-functions to filters whose outputs are modulated at the harmonics of
-its pump, with an `envelope` to switch the conversion on, and with the
-noise the fit's own commutator requires, its stated covariance
-completed to the commutation relations; a long device is fitted with
-its `delays` taken out and a line put back. The
-modulation changes the stage operator within a step, and by as much as
-the operator itself for an amplifier, so the step's frozen operator
-carries the block's unconverted response and the modulation, of the
-rank of the block's port rows, is solved exactly on it, in the step,
-its tangent and its adjoint, so the operator is refactorized only when
-the junctions ask. A [`transientstate`](@ref) of a circuit with lines
-takes their direct currents as `linecurrents`, and holds the waves on
-the lines as its `waves` and the states of the blocks as its
-`blockstates`.
+With transmission lines this includes the required prehistory; with
+rational blocks it includes the internal states. At a different time step,
+line history is read through the line interpolation. There is currently
+no adapter from an HB operating point to a transient initial state.
 
-## Many drive conditions as one solve
+## Demodulate a port trace
 
-The typical use of the transient is one circuit under many pumps or
-signals. [`transientproblem`](@ref)`(problem; sources)` rebinds the
-sources of a compiled problem without compiling again, and
-[`transientsolve`](@ref) on a vector of such problems steps them as one
-system under [`GaussLegendre`](@ref): the states are matrices with the
-conditions as columns, every product and residual takes all conditions
-in one call, the junction stiffness and the complex factorization are
-one per condition, KLU on the CPU and the uniform cuDSS batch on a
-device, and the Newton engine accepts and refreshes per condition. The
-problems of a batch drive the same targets and leave the same sources
-constant, so that only their waveforms differ, and each condition's
-initial state is checked under its own drive.
+[`transientdemodulate`](@ref) returns a complex peak amplitude at a
+frequency in Hz. Continuing the example above:
 
-```julia
-base = transientproblem(circuit; sources = [TransientSource(1, t -> 0.0)])
-pump(ip) = t -> 2ip*ramp(t)*cospi(2fp*t)
-problems = [transientproblem(base; sources = [TransientSource(1, pump(ip))]) for ip in amplitudes]
-batch = transientsolve(problems, (0.0, 300e-9); dt = 5e-12, record = :phases)
-batch.voltage            # port by time by condition
-member = batch[3]        # an ordinary solution: demodulate it, take its adjoint, its noise
+```@example transient
+window(t) = 4e-9 <= t <= 8e-9 ? sinpi((t - 4e-9)/4e-9)^2 : 0.0
+amplitude = transientdemodulate(solution, 1, 1.1e9;
+    quantity = :outgoing, window)
+@assert isfinite(amplitude) # hide
+nothing # hide
 ```
 
-On a device this is where the throughput lies: a step's launches serve
-every condition, so the time per step per condition falls with the
-batch until the device is busy. A single problem is a batch of one, on
-the same path. The tangent, the adjoint and the noise of a batch run
-on the same principle, every condition's directions or objectives in
-one pass on one factorization per condition, and return the conditions
-as the trailing dimension.
-
-By default a solve keeps the port waves and the first and last states,
-which is what the port responses need; `record = :phases` adds the
-junction phases at every step, the least the responses and the noise
-read, `record = :states` the whole flux and rate history, and
-`record = :checkpoints` only the state every `checkpointevery` steps,
-from which the responses replay each window of steps as they walk it,
-so the phases of a record of any length cost the checkpoints, the
-square root of the steps by default, and one window, for one more solve;
-what remains per time is the port waves of the record, the weights of an
-objective and the currents of a direction, which are per port rather
-than per state.
-
+A smooth window reduces leakage from a strong pump. It does not separate
+arbitrarily close tones: their separation also sets the required
+observation time. The result above includes the response to both applied
+drives; use a tangent calculation to isolate an incremental probe.
 
 ## Tangent and adjoint of the recorded steps
 
-An adjoint given a `sink`, a function of the recorded index and the
-final column of the currents, stores no currents at all: each column is
-handed over once no remaining step touches it, in decreasing time, which
-is how the noise contracts a long record without memory per time.
+The tangent propagates a small change to the drive about the entire
+trajectory, including the pump, signal, and depletion. The adjoint gives
+the derivative of a selected output objective with respect to the drives.
+This example checks their transpose identity:
 
-Record the complete state only when it is needed:
+```@example transient
+recorded = transientsolve(problem, (0.0, 2e-9); dt = 2e-12, record = :phases)
+deltacurrent = zeros(size(recorded.voltage))
+deltacurrent[1, :] .= 1e-9 .* sinpi.(2*1.8e9 .* recorded.times)
+response = transienttangent(recorded, deltacurrent)
 
-```julia
-solution = transientsolve(problem, (0.0, 2e-9); dt = 1e-12, record = :phases)
-deltacurrent = zeros(size(solution.voltage))  # A, port rows and time columns
-deltacurrent[1, :] .= 1e-9*sinpi.(2*1.8e9*solution.times)
-response = transienttangent(solution, deltacurrent)
-
-weights = zeros(size(solution.outgoing))
-weights[1, end] = 1.0  # the objective: the final outgoing wave at port 1
-adjoint = transientadjoint(solution, weights; quantity = :outgoing)
-# sum(weights .* response.outgoing) == sum(adjoint.currents .* deltacurrent)
+weights = zeros(size(recorded.outgoing))
+weights[1, end] = 1.0   # final outgoing wave at port 1
+adj = transientadjoint(recorded, weights; quantity = :outgoing)
+forward = sum(weights .* response.outgoing)
+reverse = sum(adj.currents .* deltacurrent)
+@assert isapprox(forward, reverse; rtol = 1e-8, atol = 1e-15)
+(forward, reverse)
 ```
 
-The tangent is linearized about the full recorded trajectory, pump and
-signals together, so the loaded junction phases enter every response. The
-adjoint is the exact transpose of the steps taken, on the factorization
-of the step itself, transposed where a scattering block makes the step
-matrix unsymmetric, including both
-source endpoints of the trapezoidal rule and the direct feedthrough of a
-port current into the measured wave; `adjoint.initialflux` and
-`adjoint.initialrate` are the sensitivities to what the circuit stored at
-the start. For a time integral put the quadrature weights into `weights`,
-and use separate real and imaginary objectives for a complex
-demodulation. Recording the states costs the state size times the number
-of steps.
+For an integral objective, include quadrature weights in `weights`.
+Use separate real and imaginary objectives for a complex demodulation.
+`adj.initialflux` and `adj.initialrate` describe sensitivity to the initial
+scaled state; blocks and lines have additional state contributions.
 
-The tangent and the adjoint take any targets, port numbers or component
-names, and a trailing dimension of directions or objectives propagated
-together on each step's factorization; the [quantum noise](transientnoise.md)
-is built on them, with the baths as targets.
+Port numbers or component names select drive targets. A trailing array
+dimension carries several tangent directions or adjoint objectives through
+the same step factorization. The derivatives are exact for the discretized
+equations to the response-solve tolerances; refine `dt` to check physical
+accuracy.
 
-The derivative with respect to a component value is the same machinery
-with the component's own contribution to the equations as the forcing,
-so it is exact for the recorded steps as well. `transientsensitivity`
-takes the names of `C`, `L`, `R` and `Lj` components, the ones
-`hblinsolve` differentiates `S` with respect to, and returns the
-derivative of the port responses with respect to a relative change of
-each value, `p -> r*p` at `r = 1`, with the components as the trailing
-dimension; the `components` keyword of `transientadjoint` gives the
-derivative of the adjoint's objective with respect to the same
-perturbations as `sensitivity`, contracted on the few entries each
-component touches, so the work of every step and the memory it holds
-grow with the components and not with the state times the components;
-the entries are read once, before the steps, from the stamps the
-linearized solve builds its matrices from. A port's own termination
-moves the port's reference impedance and conductance with it, as the
-linearized solve has it, and the port waves carry that directly.
-A capacitor, inductor or resistor reads
-the recorded states, so solve with `record = :states`, or with
-`record = :checkpoints` under `GaussLegendre()`, which replays them; a
-junction reads only the phases.
+### Component sensitivities
 
-```julia
-solution = transientsolve(problem, (0.0, 2e-9); dt = 1e-12, record = :states)
-sensitivity = transientsensitivity(solution, ["Lj1", "C1"])
-sensitivity.outgoing[:, :, 1]   # d(outgoing)/dr for r*Lj1, port rows and time columns
-adjoint = transientadjoint(solution, weights; components = ["Lj1", "C1"])
-adjoint.sensitivity             # the derivative of the objective, one per component
+[`transientsensitivity`](@ref) differentiates port responses with respect
+to relative changes of named `C`, `L`, `R`, and `Lj` values. For `p -> r*p`,
+it returns the derivative at `r=1`. `transientadjoint(...; components=...)`
+contracts the same derivatives against the objective.
+
+```@example transient
+states = transientsolve(problem, (0.0, 2e-9); dt = 2e-12, record = :states)
+sensitivity = transientsensitivity(states, ["Lj1", "C1"])
+adj_components = transientadjoint(states, weights; quantity = :outgoing,
+    components = ["Lj1", "C1"])
+@assert isapprox(sum(weights .* sensitivity.outgoing[:, :, 1]),
+    adj_components.sensitivity[1]; rtol = 1e-8, atol = 1e-15)
+nothing # hide
 ```
+
+Capacitor, inductor, and resistor derivatives require states or checkpoint
+replay; junction derivatives can use the phase record. Changing a port
+termination also changes its wave normalization, which is included in the
+derivative.
+
+## Many drive conditions as one solve
+
+Rebind the waveforms of a compiled problem to simulate several drive
+conditions under `GaussLegendre()`. The topology, driven targets, and
+sources left constant must be the same; only the waveforms differ.
+
+```@example transient
+base = transientproblem(circuit; sources = [TransientSource(1, t -> 0.0)])
+pump(Ipeak) = t -> Ipeak*rise(t)*cospi(2*3e9*t)
+problems = [transientproblem(base; sources = [TransientSource(1, pump(a))])
+    for a in (0.04e-6, 0.08e-6, 0.12e-6)]
+batch = transientsolve(problems, (0.0, 2e-9); dt = 5e-12, record = :phases)
+member = batch[2]
+size(batch.voltage)   # port, time, condition
+```
+
+A member is an ordinary solution for demodulation, responses, or noise.
+Batched responses put the condition dimension last. Each condition retains
+its own stiffness, factorization, convergence check, and initial state.
+See [performance](performance.md) for CPU/GPU tradeoffs and workspace reuse.
+
+## Scattering blocks, transmission lines and fitted data
+
+See [scattering blocks](scattering.md) for complete fitting examples,
+reference-plane delays, and pumped-block restrictions. In an initial state,
+`linecurrents` sets line DC currents; `waves` and `blockstates` hold the
+line and rational-block state. A noise calculation additionally requires
+an equilibrium prehistory.
 
 ## GPU execution
 
-Every transient solve accepts the package's KernelAbstractions backend
-convention:
-
-```julia
-using JosephsonCircuits, CUDA, CUDSS
-CUDA.allowscalar(false)
-solution = transientsolve(problem, (0.0, 140e-9); dt = 1e-12, backend = CUDABackend())
-outgoing = Array(solution.outgoing)   # download once for host analysis
-```
-
-The default is `backend = CPU()`. The sparse factorization is KLU on the
-CPU and the package's [`CUDSSFactorization`](@ref) on an NVIDIA device,
-through the same `factorize` and `refactorize!` interface as the harmonic
-balance solvers, so another device needs a factorization for it. On a
-device the state, the products, the junction term, the Jacobian assembly,
-the factorization and the solves all run there, through the package's
-device sparse matrices and its assembly kernels; the compiled circuit, the
-sample times and the source callables stay on the host, and each step
-transfers the drive values and the Newton engine's few numbers per
-condition, its norms, floors and masks. The Newton control needs them,
-so the loop synchronizes between kernels, and a small circuit is not
-expected to run faster on a GPU.
-
-`solution.voltage`, `incident`, `outgoing`, `finalflux`, `finalrate` and
-the optional `flux` and `rate` stay on the backend.
-[`transientdemodulate`](@ref) downloads only the requested port trace.
-[`transienttangent`](@ref) and [`transientadjoint`](@ref) run on the
-solution's backend and return arrays there.
-
+See [GPU execution](performance.md#GPU-execution). The solution arrays stay
+on the backend. `transientdemodulate` downloads the selected port trace;
+`Array(solution.outgoing)` explicitly downloads all outgoing traces.
 
 ## A Josephson transmission line with ten pulsed signals
 
-The line below is a small demonstration circuit, not a calibrated
-travelling wave amplifier. A pump at 7.5 GHz turns on smoothly and stays
-on while a 100 ns pulse of ten signals between 4 and 6.4 GHz passes. The
-solve keeps only the port waveforms and the final state, and the outgoing
-signals, the pump's third harmonic and an intermodulation product are read
-by demodulating the port 2 wave through a smooth window.
-
-```julia
-using JosephsonCircuits
-
-function transientline(cells)
-    circuit = Any[(:P1, 1, 0, Port(1; Z0 = 50.0))]
-    for k in 1:cells
-        push!(circuit, (Symbol(:Lj, k), k, k + 1, JosephsonJunction(100e-12)))
-        push!(circuit, (Symbol(:Cj, k), k, k + 1, Capacitor(20e-15)))
-        push!(circuit, (Symbol(:Cg, k), k, 0, Capacitor(40e-15)))
-    end
-    push!(circuit, (:Cend, cells + 1, 0, Capacitor(40e-15)),
-        (:P2, cells + 1, 0, Port(2; Z0 = 50.0)))
-    return Circuit(circuit)
-end
-
-rise(t, width) = t <= 0 ? 0.0 : t >= width ? 1.0 : sinpi(t/(2width))^2
-pulse(t) = rise(t - 20e-9, 15e-9)*rise(120e-9 - t, 15e-9)
-
-cells, ntones = 64, 10
-frequencies = collect(range(4e9, 6.4e9; length = ntones))
-phases = [pi*j*(j - 1)/ntones for j in 1:ntones]
-fp, Ip, Is = 7.5e9, 2e-6, 5e-9
-function drive(t)
-    pump = Ip*rise(t, 15e-9)*cospi(2fp*t)
-    signals = sum(cospi(2frequencies[j]*t + phases[j]/pi) for j in 1:ntones)
-    return pump + Is*pulse(t)*signals
-end
-
-problem = transientproblem(transientline(cells); sources = [TransientSource(1, drive)])
-solution = transientsolve(problem, (0.0, 140e-9); dt = 2e-12)
-
-window(t) = 40e-9 <= t <= 100e-9 ? sinpi((t - 40e-9)/60e-9)^2 : 0.0
-for f in frequencies
-    a = transientdemodulate(solution, 2, f; window)
-    println("$(f/1e9) GHz: $(abs(a)) sqrt(W) at $(angle(a)) rad")
-end
-idler = transientdemodulate(solution, 2, 2fp - first(frequencies); window)
-third = transientdemodulate(solution, 2, 3fp; window)
-```
-
-Repeat with half the step and compare the amplitudes: the step controls
-the temporal error, and nothing in the solver estimates it (see
-[Choosing the rule, the step and the record](@ref)).
-
+The [ten-tone line recipe](recipes/transient-line.md) constructs a small
+junction line and measures transmitted tones, an idler, and a third
+harmonic in a smooth time window.
 
 ## A JPA against WRspice at the signal frequency
 
-The JPA of the first example of the manual, pumped near its resonance,
-solved in time and compared with a WRspice transient simulation of the
-same circuit at the signal frequency, and with harmonic balance. WRspice
-comes with the [XicTools_jll](https://github.com/JuliaBinaryWrappers/XicTools_jll.jl/)
-package on x86_64 Linux; elsewhere install it and use
-`JosephsonCircuits.wrspice_cmd()` for the executable.
-
-The pump alone is solved once, for 200 ns at eighty steps per pump
-period with the `1 - sech(t/10 ns)` rise of the WRspice input. The
-signals are then directions of the tangent about that recorded
-trajectory: a unit current at each signal frequency, its cosine and its
-sine, with the same rise, all on one pass. The reflection at a signal
-frequency comes from the last pump period exactly as
-`JosephsonCircuits.wrspice_calcS_paramp` reads it: the cosine and sine responses
-combined as `cos + i sin` carry the signal at its own frequency and the
-idler at the negative of its own, so demodulated at the signal
-frequency the idler is periodic in the pump and averages to nothing
-over one period, and a Norton current `I` into the 50 ohm port gives
-`V = 25 I (1 + S11)`.
-
-```julia
-using JosephsonCircuits, XicTools_jll, Plots
-
-circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:cc, 1, 2, Capacitor(100e-15)),
-    (:jj, 2, 0, JosephsonJunction(1000e-12)), (:cj, 2, 0, Capacitor(1000e-15))])
-fp, Ip = 4.75001e9, 0.00565e-6
-fs = (4.5:0.01:5.0)*1e9
-
-# harmonic balance
-jpa = hbsolve(2pi*fs, (2pi*fp,), [(mode = (1,), port = 1, current = Ip)], (8,), (16,), circuit)
-hbgain = 10*log10.(abs2.(jpa.linearized.S(outputmode = (0,), outputport = 1,
-    inputmode = (0,), inputport = 1, freqindex = :)))
-
-# the pump alone in time, eighty steps per pump period, WRspice's rise
-rise(t) = 1 - 2/(exp(t/10e-9) + exp(-t/10e-9))
-problem = transientproblem(circuit; sources = [TransientSource(1, t -> 2Ip*rise(t)*cospi(2fp*t))])
-steps = 80
-dt = 1/(steps*fp)
-pump = transientsolve(problem, (0.0, 76000dt); dt, method = GaussLegendre(), record = :phases)
-
-# the signals as directions of the tangent: unit cosine and sine at each frequency
-currents = zeros(1, length(pump.times), 2length(fs))
-for (k, f) in enumerate(fs)
-    currents[1, :, 2k - 1] .= rise.(pump.times) .* cospi.(2f .* pump.times)
-    currents[1, :, 2k] .= rise.(pump.times) .* sinpi.(2f .* pump.times)
-end
-signal = transienttangent(pump, currents)
-
-# the reflection over the last pump period
-reflection(v, f, t) = 2*sum(v .* cispi.(-2f .* t))/length(t)/50 - 1
-last = length(pump.times) - steps + 1:length(pump.times)
-S11 = [reflection(signal.voltage[1, last, 2k - 1] .+ im .* signal.voltage[1, last, 2k], fs[k], pump.times[last])
-    for k in eachindex(fs)]
-tdgain = 10*log10.(abs2.(S11))
-
-# WRspice: the pump alone, then the pump with a small sine and a small cosine at each frequency
-netlist = JosephsonCircuits.exportnetlist(circuit)
-input = JosephsonCircuits.wrspice_input_paramp(netlist.netlist, 2pi*fs, 2pi*fp, 2Ip, (0, 1), (0, 1);
-    stepsperperiod = steps)
-output = JosephsonCircuits.spice_run(input, XicTools_jll.wrspice())
-wrgain = 10*log10.(abs2.(JosephsonCircuits.wrspice_calcS_paramp(output, 2pi*fs, netlist.Nnodes;
-    stepsperperiod = steps).S11))
-
-plot(fs/1e9, hbgain; label = "harmonic balance", xlabel = "Frequency (GHz)", ylabel = "Gain (dB)")
-plot!(fs/1e9, tdgain; label = "JosephsonCircuits.jl transient", seriestype = :scatter)
-plot!(fs/1e9, wrgain; label = "WRspice", seriestype = :scatter, marker = :x)
-```
-
-On one core the pump solve and the tangent of a hundred and two
-directions take about ten seconds each, and the hundred and three
-WRspice simulations about twenty five. The three agree:
-
-| Signal (GHz) | Harmonic balance (dB) | Transient (dB) | WRspice (dB) |
-|---|---|---|---|
-| 4.50 | 0.0027 | 0.0027 | 0.0027 |
-| 4.70 | 0.7108 | 0.7102 | 0.7120 |
-| 4.73 | 4.1802 | 4.1781 | 4.1874 |
-| 4.75 | 13.3023 | 13.1726 | 13.2485 |
-| 4.77 | 4.1857 | 4.1843 | 4.1930 |
-| 4.80 | 0.7115 | 0.7115 | 0.7130 |
-| 4.90 | 0.0193 | 0.0194 | 0.0193 |
-
-The two time domain results are within 0.03 dB of each other and of
-harmonic balance across the band, and at the gain peak within 0.08 dB of
-each other and 0.13 dB of harmonic balance, where the amplifier sits
-nearest its threshold and the gain has not finished settling at 200 ns,
-as the next comparison shows.
-
-The port response resolved in time at one signal frequency, 4.76 GHz,
-is the same demodulation slid along the record, one pump period at a
-time, through the rise of the pump. From WRspice it is the difference
-between the runs with and without the signal, which the tangent gives
-directly:
-
-```julia
-k = findfirst(==(4.76e9), fs)
-Is = 1e-13
-vw = ((output[2k + 1].values["V"][1, :] .- output[1].values["V"][1, :]) .+
-    im .* (output[2k].values["V"][1, :] .- output[1].values["V"][1, :])) ./ Is
-vt = signal.voltage[1, :, 2k - 1] .+ im .* signal.voltage[1, :, 2k]
-js = steps:steps:length(pump.times)
-envelope(v) = [10*log10(abs2(reflection(v[j - steps + 1:j], fs[k], pump.times[j - steps + 1:j]))) for j in js]
-plot(pump.times[js]*1e9, envelope(vt); label = "JosephsonCircuits.jl transient",
-    xlabel = "Time (ns)", ylabel = "Signal gain (dB)")
-plot!(pump.times[js]*1e9, envelope(vw); label = "WRspice", linestyle = :dash)
-```
-
-| Time (ns) | Transient (dB) | WRspice (dB) |
-|---|---|---|
-| 4.2 | -1.093 | -1.093 |
-| 12.6 | -4.650 | -4.650 |
-| 21.1 | -3.255 | -3.255 |
-| 42.1 | 0.869 | 0.872 |
-| 63.2 | 5.319 | 5.333 |
-| 84.2 | 7.734 | 7.757 |
-| 109.5 | 8.454 | 8.483 |
-| 160.0 | 8.153 | 8.176 |
-| 197.9 | 8.181 | 8.205 |
-
-The signal is first absorbed as the pump rises, then amplified as it
-passes threshold, overshoots and settles, and the two simulations
-follow each other to 0.03 dB at every time.
-
+The [JPA comparison](recipes/transient-wrspice.md) evaluates the
+small-signal reflection by tangent propagation and compares it with HB and
+WRspice, both after settling and during pump turn-on.

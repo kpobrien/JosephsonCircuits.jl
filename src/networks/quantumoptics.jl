@@ -86,6 +86,7 @@ julia> JosephsonCircuits.indefinite_hermitian_form_pair(2)
  ⋅  -1  ⋅   ⋅
  ⋅   ⋅  1   ⋅
  ⋅   ⋅  ⋅  -1
+```
 """
 function indefinite_hermitian_form_pair(n::Integer)
     Sigma = sparse([1 0; 0 -1])
@@ -102,12 +103,15 @@ an `n` by `n` matrix of zeros and `1_n` is an `n` by `n` identity matrix.
 
 # Examples
 ```jldoctest
+julia> using LinearAlgebra
+
 julia> JosephsonCircuits.indefinite_hermitian_form_block(2)
 4×4 Diagonal{Int64, Vector{Int64}}:
  1  ⋅   ⋅   ⋅
  ⋅  1   ⋅   ⋅
  ⋅  ⋅  -1   ⋅
  ⋅  ⋅   ⋅  -1
+```
 """
 function indefinite_hermitian_form_block(n::Integer)
     d = Vector{Int}(undef, 2 * n)
@@ -423,45 +427,73 @@ function is_orthogonal_bogoliubov_pair(M)
 end
 
 
-"""
-    is_cptp(Omega, X, Y; atol = 0, rtol = ...) -> Bool
+# the scale `hbar` of the quadrature functions, finite and positive; see
+# `is_cptp`
+function checkhbar(hbar::Real)
+    if !(isfinite(hbar) && hbar > 0)
+        throw(ArgumentError(lazy"`hbar` must be finite and positive; got $(hbar)."))
+    end
+    return hbar
+end
 
-Return `true` if the Gaussian map with the transformation `X` and the noise
-`Y` is completely positive and trace preserving for the symplectic form
-`Omega`, that is if `K = Y + im*(Omega - X*Omega*X')` is Hermitian and
-positive semi-definite (Eq. 5.37 of Serafini), and `false` otherwise.
+"""
+    is_cptp(Omega, X, Y; hbar = 1, atol = 0, rtol = ...) -> Bool
+
+Return `true` if the Gaussian map `V -> X*V*X' + Y` of the transformation
+`X` and the noise `Y` is completely positive and trace preserving for the
+symplectic form `Omega`, that is if
+`K = Y + im*(hbar/2)*(Omega - X*Omega*X')` is Hermitian and positive
+semi-definite, and `false` otherwise.
+
+The quadrature functions share one convention, with the scale `hbar`. The
+quadratures of a mode with the ladder operators `[a, adag] = 1` are
+`x = sqrt(hbar/2)*(a + adag)` and `p = -im*sqrt(hbar/2)*(a - adag)`, with
+`[x, p] = im*hbar`; the covariance of the quadratures `r` is
+`V = ⟨{Δr, Δrᵀ}⟩/2`, and that of the vacuum `(hbar/2)*I`. The default
+`hbar = 1` counts the vacuum as half a photon, as circuit quantum
+electrodynamics does; `hbar = 2` gives the covariance `σ` of Serafini,
+whose vacuum is `I`, and the condition of his Eq. 5.37. `hbar` must be
+finite and positive.
 
 `K` is a difference of terms which cancel, exactly so for a noiseless map
 (`Y = 0` with `X` symplectic), so it is judged against their scale
-`s = norm(Y) + norm(Omega)*(1 + opnorm(X)^2)` rather than against itself:
-`K` is Hermitian when `norm(K - K') <= tol` and positive semi-definite
-when the smallest eigenvalue of its Hermitian part is at least `-tol`, with
-`tol = max(atol, rtol*s)`. The default `rtol` is the square root of the
-machine epsilon of the element type, and zero when `atol` is given.
+`s = norm(Y) + (hbar/2)*norm(Omega)*(1 + opnorm(X)^2)` rather than against
+itself: `K` is Hermitian when `norm(K - K') <= tol` and positive
+semi-definite when the smallest eigenvalue of its Hermitian part is at least
+`-tol`, with `tol = max(atol, rtol*s)`. The default `rtol` is the square root
+of the machine epsilon of the element type, and zero when `atol` is given.
 
 # References
 A. Serafini, "Quantum Continuous Variables: A Primer of Theoretical
 Methods," CRC Press (2017).
 """
-function is_cptp(Omega, X, Y; atol::Real = 0,
+function is_cptp(Omega, X, Y; hbar::Real = 1, atol::Real = 0,
         rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
-    if size(X) != size(Omega) || size(Y) != size(Omega) || size(Omega, 1) != size(Omega, 2)
-        throw(DimensionMismatch(lazy"`Omega`, `X` and `Y` must be square matrices of one size; got $(size(Omega)), $(size(X)) and $(size(Y))."))
-    end
-    Omegam = Matrix(Omega)
-    K = Y + im * (Omegam - X * Omegam * X')
-    tol = max(atol, rtol * (norm(Y) + norm(Omegam) * (1 + opnorm(X)^2)))
+    K, tol = cptpcondition(Omega, X, Y, hbar, atol, rtol)
     if norm(K - K') > tol
         return false
     end
     return isempty(K) || eigmin(Hermitian((K + K') / 2)) >= -tol
 end
 
+# the matrix `K` of the condition of `is_cptp` and the tolerance `tol` it
+# is judged to, which the dilation of the map shares
+function cptpcondition(Omega, X, Y, hbar, atol, rtol)
+    checkhbar(hbar)
+    if size(X) != size(Omega) || size(Y) != size(Omega) || size(Omega, 1) != size(Omega, 2)
+        throw(DimensionMismatch(lazy"`Omega`, `X` and `Y` must be square matrices of one size; got $(size(Omega)), $(size(X)) and $(size(Y))."))
+    end
+    Omegam = Matrix(Omega)
+    K = Y + im * (hbar / 2) * (Omegam - X * Omegam * X')
+    tol = max(atol, rtol * (norm(Y) + (hbar / 2) * norm(Omegam) * (1 + opnorm(X)^2)))
+    return K, tol
+end
+
 """
-    is_cptp_quadrature_block(X, Y; atol = 0, rtol = ...) -> Bool
+    is_cptp_quadrature_block(X, Y; hbar = 1, atol = 0, rtol = ...) -> Bool
 
 [`is_cptp`](@ref) for the quadrature transformation `X` and noise `Y` in
-block operator order.
+block operator order, in the units of `hbar` stated there.
 """
 function is_cptp_quadrature_block(X, Y; kwargs...)
     n = size(X, 1) ÷ 2
@@ -470,10 +502,10 @@ function is_cptp_quadrature_block(X, Y; kwargs...)
 end
 
 """
-    is_cptp_quadrature_pair(X, Y; atol = 0, rtol = ...) -> Bool
+    is_cptp_quadrature_pair(X, Y; hbar = 1, atol = 0, rtol = ...) -> Bool
 
 [`is_cptp`](@ref) for the quadrature transformation `X` and noise `Y` in
-pair operator order.
+pair operator order, in the units of `hbar` stated there.
 """
 function is_cptp_quadrature_pair(X, Y; kwargs...)
     n = size(X, 1) ÷ 2
@@ -485,29 +517,34 @@ end
     is_cptp_ladder_pair(X, Y; atol = 0, rtol = ...) -> Bool
 
 [`is_cptp`](@ref) for the ladder (Bogoliubov) transformation `X` and noise
-`Y` in pair operator order.
+`Y` in pair operator order. The ladder operators are dimensionless,
+`[a, adag] = 1`, and `Y` is a symmetrized covariance `⟨{Δξ, Δξ†}⟩/2` of
+`ξ = [a_1, adag_1, ...]`, whose vacuum is `I/2`;
+[`ladder_to_quadrature_pair`](@ref) takes it to the quadrature covariance
+at `hbar = 1`.
 """
-function is_cptp_ladder_pair(X, Y; kwargs...)
+function is_cptp_ladder_pair(X, Y; atol::Real = 0,
+        rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
     n = size(X, 1) ÷ 2
     # the ladder image of the quadrature symplectic form is -im*Σ, with Σ
     # the indefinite Hermitian form; +im*Σ, used here, gives the complex
     # conjugate of the condition in the quadrature basis, which has the same
     # eigenvalues, so the verdict is the same
     Omega = im * indefinite_hermitian_form_pair(n)
-    return is_cptp(Omega, X, Y; kwargs...)
+    return is_cptp(Omega, X, Y; hbar = 1, atol = atol, rtol = rtol)
 end
 
 """
     is_cptp_ladder_block(X, Y; atol = 0, rtol = ...) -> Bool
 
-[`is_cptp`](@ref) for the ladder (Bogoliubov) transformation `X` and noise
-`Y` in block operator order.
+[`is_cptp_ladder_pair`](@ref) in block operator order.
 """
-function is_cptp_ladder_block(X, Y; kwargs...)
+function is_cptp_ladder_block(X, Y; atol::Real = 0,
+        rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
     n = size(X, 1) ÷ 2
     # as in is_cptp_ladder_pair
     Omega = im * indefinite_hermitian_form_block(n)
-    return is_cptp(Omega, X, Y; kwargs...)
+    return is_cptp(Omega, X, Y; hbar = 1, atol = atol, rtol = rtol)
 end
 
 function rand_positive_definite(T, n::Integer)
@@ -863,20 +900,23 @@ function cayley_transform(Omega, M)
 end
 
 """
-    rand_cptp_quadrature_block(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
-    rand_cptp_quadrature_block(nsys; nenv = nsys)
+    rand_cptp_quadrature_block(T, nsys; nenv = nsys, hbar = 1,
+        sigma_env = hbar*I(2*nenv))
+    rand_cptp_quadrature_block(nsys; nenv = nsys, hbar = 1)
 
 Return a random completely positive trace preserving (CPTP) map `(X, Y)`
 of `nsys` modes in the quadrature basis with block operator order: the
 system block `X` of a random symplectic matrix of `nsys + nenv` modes and
 the noise `Y = B*sigma_env*transpose(B)` its system-environment block `B`
-adds from an environment of `nenv` modes with covariance `sigma_env`, by
-default `2*I`, a thermal state (the vacuum is `I` with the uncertainty
-relation of [`is_cptp`](@ref)). `T` is the element type, `Float64` by
-default.
+adds from an environment of `nenv` modes with covariance `sigma_env`. The
+covariances are in the units of `hbar` of [`is_cptp`](@ref), whose vacuum
+is `(hbar/2)*I`; the default `sigma_env = hbar*I` is a thermal state of
+half a photon in each mode, and a given `sigma_env` is taken in these units
+as it is. `T` is the element type, `Float64` by default.
 """
 function rand_cptp_quadrature_block(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nenv))
+    hbar::Real=1, sigma_env=hbar * I(2 * nenv))
+    checkhbar(hbar)
     # start from a pair ordered matrix
     S = rand_symplectic_pair(T, nsys + nenv)
     # and convert each block to the block ordering
@@ -888,20 +928,22 @@ function rand_cptp_quadrature_block(T, nsys::Integer; nenv::Integer=nsys,
     return (X=X, Y=Y)
 end
 
-function rand_cptp_quadrature_block(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_quadrature_block(Float64, nsys; nenv=nenv)
+function rand_cptp_quadrature_block(nsys::Integer; nenv::Integer=nsys, hbar::Real=1)
+    return rand_cptp_quadrature_block(Float64, nsys; nenv=nenv, hbar=hbar)
 end
 
 """
-    rand_cptp_quadrature_pair(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
-    rand_cptp_quadrature_pair(nsys; nenv = nsys)
+    rand_cptp_quadrature_pair(T, nsys; nenv = nsys, hbar = 1,
+        sigma_env = hbar*I(2*nenv))
+    rand_cptp_quadrature_pair(nsys; nenv = nsys, hbar = 1)
 
 Return a random CPTP map `(X, Y)` of `nsys` modes in the quadrature basis
-with pair operator order, with an environment of `nenv` modes; see
-[`rand_cptp_quadrature_block`](@ref).
+with pair operator order, with an environment of `nenv` modes, in the units
+of `hbar` of [`is_cptp`](@ref); see [`rand_cptp_quadrature_block`](@ref).
 """
 function rand_cptp_quadrature_pair(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nenv))
+    hbar::Real=1, sigma_env=hbar * I(2 * nenv))
+    checkhbar(hbar)
     S = rand_symplectic_pair(T, nsys + nenv)
     A = S[1:2*nsys, 1:2*nsys]
     B = S[1:2*nsys, 2*nsys+1:end]
@@ -911,22 +953,25 @@ function rand_cptp_quadrature_pair(T, nsys::Integer; nenv::Integer=nsys,
     return (X=X, Y=Y)
 end
 
-function rand_cptp_quadrature_pair(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_quadrature_pair(Float64, nsys; nenv=nenv)
+function rand_cptp_quadrature_pair(nsys::Integer; nenv::Integer=nsys, hbar::Real=1)
+    return rand_cptp_quadrature_pair(Float64, nsys; nenv=nenv, hbar=hbar)
 end
 
 """
-    rand_cptp_ladder_pair(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
+    rand_cptp_ladder_pair(T, nsys; nenv = nsys, sigma_env = I(2*nenv))
     rand_cptp_ladder_pair(nsys; nenv = nsys)
 
 Return a random CPTP map `(X, Y)` of `nsys` modes in the ladder basis with
 pair operator order: the system block `X` of a random Bogoliubov matrix of
 `nsys + nenv` modes and the noise `Y = B*sigma_env*B'` its
-system-environment block `B` adds from an environment of `nenv` modes.
-`T` is the element type, `Complex{Float64}` by default.
+system-environment block `B` adds from an environment of `nenv` modes with
+covariance `sigma_env`. The covariances are symmetrized, with the vacuum
+`I/2` of [`is_cptp_ladder_pair`](@ref); the default `sigma_env = I` is a
+thermal state of half a photon in each mode. `T` is the element type,
+`Complex{Float64}` by default.
 """
 function rand_cptp_ladder_pair(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nenv))
+    sigma_env=I(2 * nenv))
     S = rand_bogoliubov_pair(T, nsys + nenv)
     A = S[1:2*nsys, 1:2*nsys]
     B = S[1:2*nsys, 2*nsys+1:end]
@@ -941,15 +986,15 @@ function rand_cptp_ladder_pair(nsys::Integer; nenv::Integer=nsys)
 end
 
 """
-    rand_cptp_ladder_block(T, nsys; nenv = nsys, sigma_env = 2*I(2*nenv))
+    rand_cptp_ladder_block(T, nsys; nenv = nsys, sigma_env = I(2*nenv))
     rand_cptp_ladder_block(nsys; nenv = nsys)
 
 Return a random CPTP map `(X, Y)` of `nsys` modes in the ladder basis with
-block operator order, with an environment of `nenv` modes; see
-[`rand_cptp_ladder_pair`](@ref).
+block operator order, with an environment of `nenv` modes and the
+symmetrized covariances of [`rand_cptp_ladder_pair`](@ref).
 """
 function rand_cptp_ladder_block(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env=2 * I(2 * nenv))
+    sigma_env=I(2 * nenv))
     # start from a pair ordered matrix
     S = rand_bogoliubov_pair(T, nsys + nenv)
     # and convert each block to the block ordering
@@ -2961,25 +3006,47 @@ end
 
 
 
-function B_from_X_Y_quadrature(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
-    Y::AbstractMatrix{<:Real})
+"""
+    B_from_X_Y_quadrature(Omega, X::AbstractMatrix{<:Real},
+        Y::AbstractMatrix{<:Real}; hbar = 1, atol = 0, rtol = ...)
 
-    # Y must be positive semidefinite
-    if !is_positive_semi_definite(Y)
-        error(lazy"`Y` must be positive semi-definite.")
+Return the real `2n x 4n` block `B`, from an environment of `2n` modes in
+block operator order to the `n` modes of the system, which realizes the
+completely positive trace preserving (CPTP) map of the quadrature
+transformation `X` and noise `Y` with the environment in the vacuum:
+`X*Omega*transpose(X) + B*ΩE*transpose(B) = Omega`, with `ΩE` the block
+ordered symplectic form of the environment, and `Y = (hbar/2)*B*transpose(B)`.
+`Omega` is the symplectic form of the system and `hbar` the scale of the
+covariances of [`is_cptp`](@ref).
+
+`B` is a square root of `(2/hbar)*K`, with
+`K = Y + im*(hbar/2)*(Omega - X*Omega*transpose(X))` the matrix of
+[`is_cptp`](@ref), which is Hermitian and positive semi-definite for a
+CPTP map, and so `Y`, its real part. `K` is judged as `is_cptp` judges
+it, to the same tolerance `tol = max(atol, rtol*s)` of the scale
+`s = norm(Y) + (hbar/2)*norm(Omega)*(1 + opnorm(X)^2)`: an eigenvalue down
+to `-tol` is rounding and taken as zero, and a map `is_cptp` refuses
+throws an `ArgumentError`.
+"""
+function B_from_X_Y_quadrature(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
+    Y::AbstractMatrix{<:Real}; hbar::Real = 1, atol::Real = 0,
+    rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
+    K, tol = cptpcondition(Omega, X, Y, hbar, atol, rtol)
+    if norm(K - K') > tol
+        throw(ArgumentError(lazy"The map is not completely positive and trace preserving: `Y` is not symmetric to the tolerance $(tol)."))
     end
 
-    Delta = Matrix(Omega - X * Omega * X')
+    vals, vecs = eigen(Hermitian((K + K') / 2))
 
-    Gamma = Hermitian(Y + im * Delta)
-
-    vals, vecs = eigen(Gamma)
-
-
-    # clamp eigenvalues which rounding made slightly negative
+    # an eigenvalue below zero by more than the tolerance is a map which is
+    # not CPTP; one within it is rounding
+    if !isempty(vals) && vals[1] < -tol
+        throw(ArgumentError(lazy"The map is not completely positive and trace preserving: `Y + im*(hbar/2)*(Omega - X*Omega*X')` has the eigenvalue $(vals[1]), below zero by more than the tolerance $(tol)."))
+    end
     clamp!(vals, 0, Inf)
 
-    F = vecs * Diagonal(sqrt.(vals))
+    # the noise in the units of a vacuum of I, so that Y = (hbar/2)*B*B'
+    F = vecs * Diagonal(sqrt.((2 / hbar) .* vals))
 
     # this is specific to the block form
     B = [imag(F) real(F)]
@@ -2989,28 +3056,35 @@ end
 
 """
     B_from_X_Y_quadrature_block(X::AbstractMatrix{<:Real},
-        Y::AbstractMatrix{<:Real})
+        Y::AbstractMatrix{<:Real}; hbar = 1, atol = 0, rtol = ...)
 
-Return the `B` part of a symplectic matrix `S=[A B;C D]` from the completely
-positive trace preserving (CPTP) map `X`, `Y` assuming the environment is in a
-vacuum state.
-
+[`B_from_X_Y_quadrature`](@ref) for the quadrature transformation `X` and
+noise `Y` in block operator order: the block `B` of a symplectic matrix
+`S = [X B; C D]` with the environment in the vacuum, `Y = (hbar/2)*B*B'`
+in the units of `hbar` of [`is_cptp`](@ref).
 """
 function B_from_X_Y_quadrature_block(X::AbstractMatrix{<:Real},
-    Y::AbstractMatrix{<:Real})
+    Y::AbstractMatrix{<:Real}; kwargs...)
 
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_block(n)
-    B = B_from_X_Y_quadrature(Omega, X, Y)
+    B = B_from_X_Y_quadrature(Omega, X, Y; kwargs...)
     return B
 end
 
+"""
+    B_from_X_Y_quadrature_pair(X::AbstractMatrix{<:Real},
+        Y::AbstractMatrix{<:Real}; hbar = 1, atol = 0, rtol = ...)
+
+[`B_from_X_Y_quadrature_block`](@ref) in pair operator order, the columns
+of `B` too, in the units of `hbar` of [`is_cptp`](@ref).
+"""
 function B_from_X_Y_quadrature_pair(X::AbstractMatrix{<:Real},
-    Y::AbstractMatrix{<:Real})
+    Y::AbstractMatrix{<:Real}; kwargs...)
 
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_pair(n)
-    B = B_from_X_Y_quadrature(Omega, X, Y)
+    B = B_from_X_Y_quadrature(Omega, X, Y; kwargs...)
 
     # permute the columns of B to the pair form
     p = block_to_pair_perm(size(B, 2) ÷ 2)
@@ -3018,76 +3092,101 @@ function B_from_X_Y_quadrature_pair(X::AbstractMatrix{<:Real},
 end
 
 """
-    X_Y_to_symplectic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    X_Y_to_symplectic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real};
+        hbar = 1, atol = 0, rtol = ...)
 
 Return a symplectic matrix `S` of `3n` modes, in pair operator order, whose
 restriction to the first `n` modes with an environment of `2n` modes in
 the vacuum is the completely positive trace preserving (CPTP) map of the
 quadrature transformation `X` and noise `Y` of `n` modes: `X` is the upper
-left `2n x 2n` block of `S`.
+left `2n x 2n` block of `S`, and its upper right block `B` adds the noise
+`Y = (hbar/2)*B*transpose(B)` from the vacuum `(hbar/2)*I`, in the
+convention of [`is_cptp`](@ref). A map which is not CPTP to the
+tolerances `atol` and `rtol` of `is_cptp` throws an `ArgumentError`
+([`B_from_X_Y_quadrature`](@ref)).
 
 """
-function X_Y_to_symplectic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+function X_Y_to_symplectic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real};
+    hbar::Real = 1, atol::Real = 0,
+    rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
 
     # compute B from X and Y
-    B = B_from_X_Y_quadrature_pair(X, Y)
+    B = B_from_X_Y_quadrature_pair(X, Y; hbar, atol, rtol)
 
     return A_B_to_symplectic_pair(X, B)
 end
 
 
 """
-    X_Y_to_symplectic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    X_Y_to_symplectic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real};
+        hbar = 1, atol = 0, rtol = ...)
 
 The block ordered form of [`X_Y_to_symplectic_pair`](@ref) for `X` and `Y`
-in block order: `S` is in the block order of all `3n` modes, so `X` is the
+in block order, in the units of `hbar` of [`is_cptp`](@ref) and to its
+tolerances: `S` is in the block order of all `3n` modes, so `X` is the
 submatrix of the rows and columns `[1:n; 3n+1:4n]` of `S`.
 
 """
-function X_Y_to_symplectic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+function X_Y_to_symplectic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real};
+    hbar::Real = 1, atol::Real = 0,
+    rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
 
     # compute B from X and Y
-    B = B_from_X_Y_quadrature_block(X, Y)
+    B = B_from_X_Y_quadrature_block(X, Y; hbar, atol, rtol)
 
     return pair_to_block(A_B_to_symplectic_pair(block_to_pair(X), block_to_pair(B)))
 end
 
 """
-    X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix)
+    X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix; atol = 0,
+        rtol = ...)
 
 The ladder form of [`X_Y_to_symplectic_pair`](@ref): return a Bogoliubov
 matrix of `3n` modes, in pair operator order, which realizes the CPTP map
 of the ladder transformation `X` and noise `Y` of `n` modes with an
-environment in the vacuum.
+environment in the vacuum. `Y` is a symmetrized covariance with the vacuum
+`I/2` ([`is_cptp_ladder_pair`](@ref)), so the block `B` of the Bogoliubov
+matrix from the environment to the system adds `Y = B*B'/2`. A map which
+is not CPTP to the tolerances `atol` and `rtol` of `is_cptp_ladder_pair`
+throws an `ArgumentError`.
 
 """
-function X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix)
+function X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix; atol::Real = 0,
+    rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
 
+    # R*M*R', with R unitary, is both the similarity which converts the
+    # map X and the congruence which converts the covariance Y; R involves
+    # no hbar, so the symmetrized covariance, vacuum I/2, becomes the
+    # quadrature covariance at hbar = 1
     X_quadrature = real(ladder_to_quadrature_pair(X))
     Y_quadrature = real(ladder_to_quadrature_pair(Y))
 
     # compute B from X and Y
-    B = B_from_X_Y_quadrature_pair(X_quadrature, Y_quadrature)
+    B = B_from_X_Y_quadrature_pair(X_quadrature, Y_quadrature; hbar = 1, atol, rtol)
 
     return quadrature_to_ladder_pair(A_B_to_symplectic_pair(X_quadrature, B))
 end
 
 
 """
-    X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix)
+    X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix; atol = 0,
+        rtol = ...)
 
 The ladder form of [`X_Y_to_symplectic_block`](@ref), with `X`, `Y` and
-the Bogoliubov matrix returned in block operator order.
+the Bogoliubov matrix returned in block operator order, and the symmetrized
+covariances and the tolerances of [`X_Y_to_bogoliubov_pair`](@ref).
 
 """
-function X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix)
+function X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix; atol::Real = 0,
+    rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
 
+    # as in X_Y_to_bogoliubov_pair, the conversion takes the covariance Y
+    # to the quadrature covariance at hbar = 1
     X_quadrature = real(ladder_to_quadrature_block(X))
     Y_quadrature = real(ladder_to_quadrature_block(Y))
 
-
     # compute B from X and Y
-    B = B_from_X_Y_quadrature_block(X_quadrature, Y_quadrature)
+    B = B_from_X_Y_quadrature_block(X_quadrature, Y_quadrature; hbar = 1, atol, rtol)
 
     return quadrature_to_ladder_block(pair_to_block(A_B_to_symplectic_pair(block_to_pair(X_quadrature), block_to_pair(B))))
 end
@@ -3158,7 +3257,22 @@ function halmos_dilation(S; atol::Real = 0, rtol::Real = defaultrtol(S, atol))
     return U
 end
 
-function Ymin_from_X(Omega, X; method=1)
+"""
+    Ymin_from_X(Omega, X; method = 1, hbar = 1)
+
+Return the noise `Y = (hbar/2)*|im*Δ|`, with `Δ = Omega - X*Omega*transpose(X)`
+and `|H|` the absolute value of a Hermitian matrix, which makes the Gaussian
+map of the quadrature transformation `X` completely positive and trace
+preserving for the symplectic form `Omega`, in the units of `hbar` of
+[`is_cptp`](@ref). It is minimal: no noise below it in the positive
+semi-definite order makes the map CPTP.
+
+`method` selects the factorization `|im*Δ|` is computed from: `1`, the
+default, an eigendecomposition of `im*Δ`; `2`, a Schur decomposition of
+`Δ`; `3`, a singular value decomposition of `Δ`.
+"""
+function Ymin_from_X(Omega, X; method=1, hbar::Real=1)
+    checkhbar(hbar)
 
     Delta = Matrix(Omega .- X * Omega * transpose(X))
 
@@ -3182,17 +3296,29 @@ function Ymin_from_X(Omega, X; method=1)
         error(lazy"Unknown method")
     end
 
-    return Ymin
+    return (hbar / 2) * Ymin
 end
 
-function Ymin_from_X_quadrature_pair(X; method=1)
+"""
+    Ymin_from_X_quadrature_pair(X; method = 1, hbar = 1)
+
+[`Ymin_from_X`](@ref) for the quadrature transformation `X` in pair
+operator order, in the units of `hbar` of [`is_cptp`](@ref).
+"""
+function Ymin_from_X_quadrature_pair(X; method=1, hbar::Real=1)
     Omega = symplectic_form_pair(size(X, 1) ÷ 2)
-    return Ymin_from_X(Omega, X; method=method)
+    return Ymin_from_X(Omega, X; method=method, hbar=hbar)
 end
 
-function Ymin_from_X_quadrature_block(X; method=1)
+"""
+    Ymin_from_X_quadrature_block(X; method = 1, hbar = 1)
+
+[`Ymin_from_X`](@ref) for the quadrature transformation `X` in block
+operator order, in the units of `hbar` of [`is_cptp`](@ref).
+"""
+function Ymin_from_X_quadrature_block(X; method=1, hbar::Real=1)
     Omega = symplectic_form_block(size(X, 1) ÷ 2)
-    return Ymin_from_X(Omega, X; method=method)
+    return Ymin_from_X(Omega, X; method=method, hbar=hbar)
 end
 
 

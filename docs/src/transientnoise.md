@@ -1,294 +1,285 @@
 # Quantum noise in time
 
-The noise calculation linearizes about the complete recorded trajectory,
-pump, signals, depletion and intermodulation products together, and
-propagates the fluctuations of the physical baths, the port terminations
-and the resistors, through that time dependent linear system: the
-Gaussian approximation of harmonic balance's noise calculation carried
-into time, small fluctuations about a classical mean rather than the
-full quantum state. It runs on the tangent and the adjoint of the
-recorded steps, so it is exact for the discrete trajectory it is given,
-replayed from its checkpoints where it recorded them, and needs no
-interpolation or quadrature grid of its own.
+[`transientnoise`](@ref) propagates small fluctuations about a recorded
+classical trajectory. The trajectory can include a pump, strong signals,
+depletion, and intermodulation. The calculation is a Gaussian
+linearization about that mean, not a simulation of the full nonlinear
+quantum state.
+
+The workflow is to record the trajectory, define the output temporal
+modes, choose physical baths and their frequency quadrature, and inspect
+both the noise and its convergence.
+
+## A passive two-port
+
+Start with a circuit whose answer is known: a passive network at zero
+temperature must preserve vacuum when all baths are included. The resistor
+below joins two capacitively loaded 50 Ω ports.
+
+```@example noise
+using JosephsonCircuits, LinearAlgebra
+circuit = Circuit([
+    (:p1, 1, 0, Port(1)), (:p2, 2, 0, Port(2)),
+    (:c1, 1, 0, Capacitor(0.3e-12)),
+    (:c2, 2, 0, Capacitor(0.5e-12)),
+    (:loss, 1, 2, Resistor(30.0)),
+])
+problem = transientproblem(circuit)
+n, T, f = 512, 1e-9, 3e9
+solution = transientsolve(problem, (0.0, T*(n - 1)/n);
+    dt = T/n, record = :phases)
+measurement = transientquantumplan(solution, solution.times, [f, f]; ports = [1, 2])
+
+# This circuit is time invariant and the modes are single Fourier bins.
+# Only the bath frequency at that bin contributes to each stationary mode.
+noise = transientnoise(solution, measurement;
+    frequencies = [f], weights = [1/T], inputs = measurement)
+@assert noise.diagnostics.passed
+@assert isapprox(noise.covariance, measurement.vacuum; rtol = 1e-5, atol = 1e-6)
+round.(noise.covariance; digits = 4)
+```
+
+The four rows are `X1, P1, X2, P2`, and the expected covariance is `I/2`.
+The single-frequency bath is appropriate for this stationary,
+bin-aligned example. **A pulse or a pumped trajectory generally requires
+many bath frequencies**, including frequencies outside the measurement
+band. See [choosing the bath grid](#Choosing-the-bath-grid).
+
+`N` uniform samples define a Fourier interval of duration `N*dt`, even
+though the last sample is at `(N-1)*dt`. That is why the endpoint above is
+slightly less than `T`: the 3 GHz measurement then lies exactly on a bin
+of a 1 ns interval.
+
+### Compare gain and thermal noise with harmonic balance
+
+For this time-invariant circuit, convert each complex HB entry into the
+real quadrature block `[real(z) imag(z); -imag(z) real(z)]`. The signs
+follow the temporal mode's cosine/sine convention.
+
+```@example noise
+quadratures(M) = reduce(vcat, [reduce(hcat,
+    [[real(z) imag(z); -imag(z) real(z)] for z in M[j, :]])
+    for j in axes(M, 1)])
+hb = hblinsolve([2pi*f], circuit; keyedarrays = false, returnCnoise = true)
+@assert isapprox(noise.gain, quadratures(hb.S[:, :, 1]); rtol = 1e-4, atol = 1e-4)
+
+# Warm only internal loss. The port terminations stay at zero kelvin.
+baths = transientnoisebaths(problem; temperature = 0.3)
+warm = transientnoise(solution, measurement; frequencies = [f],
+    weights = [1/T], baths)
+hbwarm = hblinsolve([2pi*f], circuit; keyedarrays = false,
+    temperature = 0.3, returnCnoise = true)
+S = hbwarm.S[:, :, 1]
+expected = quadratures(S*S'/2 + hbwarm.Cnoise[:, :, 1])
+@assert isapprox(warm.covariance, expected; rtol = 1e-4, atol = 1e-5)
+@assert isapprox(warm.addedcovariance, quadratures(hbwarm.Cnoise[:, :, 1]);
+    rtol = 1e-4, atol = 1e-5)
+[b.temperature for b in baths.channels]
+```
+
+The port temperatures are zero and the resistor is at 0.3 K. The total
+covariance holds both the incident vacuum, half a photon at each input
+(`S*S'/2`), and the noise the circuit adds, `Cnoise`, which is the
+transient's `addedcovariance`: the part from the internal baths, the
+resistors and the blocks, without the port terminations'. Both solvers
+count the vacuum as one half, so the quadrature form needs no further
+factor.
 
 ## Temporal modes
 
-[`transientquantumplan`](@ref) defines photon normalized measurements of
-the outgoing power waves in sqrt(W). Where [`transientiq`](@ref) returns
-classical peak phasors, this plan returns real quadratures in the row
-order `X1, P1, X2, P2, ...`, with `[X, P] = im`, vacuum covariance `I/2`,
-and coherent photon number `(X^2 + P^2)/2` for a normalized mode.
+[`transientquantumplan`](@ref) defines photon-normalized measurements of
+outgoing power waves. A mode is a unit-norm vector of coefficients over
+positive Fourier bins. For `N` samples with spacing `dt`, those bins are
+`k/(N*dt)` for `k=1:fld(N-1,2)`; DC and the self-conjugate Nyquist bin
+are excluded.
 
-A record of `N` uniform samples covers the half open interval
-`[t0, t0 + N*dt)`; its positive frequency bins are `f = k/(N*dt)` for
-`k = 1:fld(N - 1, 2)`, without DC and without the self conjugate Nyquist
-bin. With `T = N*dt` the physical wave of one canonical bin is
+For a canonical bin of frequency `f_k` over duration `T=N*dt`, the wave is
 
 ```math
-w_k(t) = \sqrt{\frac{h f_k}{T}}\,[X_k\cos(2\pi f_k(t - t_0)) + P_k\sin(2\pi f_k(t - t_0))].
+w_k(t)=\sqrt{\frac{h f_k}{T}}
+\left[X_k\cos(2\pi f_k(t-t_0))+P_k\sin(2\pi f_k(t-t_0))\right].
 ```
 
-A mode is a column of unit norm coefficients over those bins, and the
-measured annihilator is `A_j = sum(conj(c[k, j])*a_k)`, with the
-`1/sqrt(h*f)` weighting applied per bin before the bins are combined,
-which matters for a pulse spread over gigahertz. The frequency form of
-the constructor makes bin aligned monochromatic modes, or projects
-sampled envelopes onto the positive bins and normalizes them. Modes on
-the same port need not be orthogonal: `plan.gram` is their overlap and
-`plan.vacuum` and `plan.commutator` the corresponding cross mode
-quadrature matrices. [`transientquantumvjp!`](@ref) is the exact
-transpose of the measurement.
+Here `h` is Planck's constant. The quadratures obey `[X,P]=im`; vacuum has
+variance one half in each quadrature. The coherent photon number is
+`(X^2+P^2)/2` for a normalized mode.
+
+A frequency-only constructor selects bin-aligned modes. Supplied sampled
+envelopes are projected onto the positive-frequency bins and normalized.
+The weighting `1/sqrt(h*f)` is applied separately at each bin before
+combination, which matters for broadband pulses. With coefficients `c`,
+the measured annihilator is `A_j=sum(conj(c[k,j])*a_k)`.
+
+Modes on the same port can overlap. `plan.gram` records their overlap;
+`plan.vacuum` and `plan.commutator` include the resulting cross-mode terms.
+Use those matrices as the reference, rather than assuming `I/2` and
+independent canonical pairs. [`transientquantumvjp!`](@ref) is the
+transpose of the measurement. [`transientiq`](@ref) instead measures
+classical peak phasors.
 
 ## Baths and the initial fluctuations
 
-[`transientnoisebaths`](@ref)`(problem)` builds one independent
-equilibrium bath per matched port termination and per finite internal
-resistor, from the compiled port ownership, the bound values and the
-component temperatures; a typed [`Circuit`](@ref) expresses which
-resistor a port owns. For positive frequency `f` and quadrature weight
-`df` in Hz, a bath of resistance `R` injects cosine and sine Norton
-currents of peak amplitude
+The classical record must start at an equilibrium compatible with a
+constant passive prehistory. The check includes node flux and rate, line
+waves, and rational-block states. For a pumped nonlinear circuit, a smooth
+ramp from an equilibrium is one way to meet this requirement.
+
+Zero classical initial voltage does not mean zero initial quantum noise.
+For each bath frequency, the calculation initializes the stationary
+response of the circuit about the initial state. This includes energy
+stored in reactive elements and its correlation with subsequent forcing.
+Lines carry the fluctuations that entered before the record; rational
+blocks carry their stationary internal fluctuations.
+
+Trapezoidal and backward Euler use the stationary response of their own
+discrete rules. Gauss–Legendre uses the continuous stationary response,
+whose discretization mismatch is fourth order at resolved frequencies.
+The initial-noise treatment must therefore be included in time-step and
+cutoff convergence checks. See [theory](transienttheory.md#Quantum-noise).
+
+### Bath types and temperatures
+
+[`transientnoisebaths`](@ref) constructs external port baths, internal
+resistor baths, and supported scattering-block channels. Each external
+port must own a finite matched termination. An infinite resistor is open
+and adds no bath.
+
+An external port's bath is at the temperature of its termination, zero
+unless `Port(n; termination = MatchedTermination(temperature = T))`
+states one; the analysis temperature does not warm it. An internal
+resistor uses its component temperature or the analysis default passed to
+`transientnoisebaths`.
+Blocks follow their `Passive`, `ThermalEquilibrium`, `Lossless`, or
+`NoiseCovariance` model. The same conventions apply to HB; see the
+[temperature table](conventions.md#Noise-normalization-and-temperature).
+
+For a resistor `R` at positive frequency `f`, a quadrature weight `df` in
+Hz gives cosine and sine Norton-current amplitudes
 
 ```math
-I_{\mathrm{peak}} = 2\sqrt{h f\,df/R},
+I_{\mathrm{peak}}=2\sqrt{h f\,df/R}.
 ```
 
-whose independent quadratures have variance
-`thermaloccupation(2pi*f, T)/2 = nbar + 1/2`, so the bilateral
-symmetrized current spectral density is `h*f/R*coth(h*f/(2kT))`, the
-classical `2kT/R` at high temperature. A port's bath is injected as a
-port source is, into the port, so its current enters the port's wave as
-a source's does; an internal resistor's bath is injected between the
-resistor's terminals. As targets of [`transienttangent`](@ref) and
-[`transientadjoint`](@ref) the baths are what the noise drives.
-
-The record must start at a classical equilibrium with a constant passive
-prehistory, and the check reads the whole of the state the solve started
-from: the node fluxes and rates, the waves on the lines, which carry a
-direct current, and the states of the rational blocks, which must be at
-rest under the incident waves there. For each bath and frequency the
-stationary response
-`[-w^2 C + i w G + L + J'(x_0)] x = b` of the circuit at the initial
-state starts the cosine and sine responses, so the noise already stored
-in the capacitors and inductors, and its correlation with the forcing to
-come, are kept; zero classical initial voltage does not mean zero
-quantum noise. The trapezoidal and backward Euler rules start on their
-own stationary response instead, the same operator with `i w` replaced
-by the rate of a sinusoid on their grid, `i (2/h) tan(w h/2)` and
-`(1 - exp(-i w h))/h`, so each bath's response is periodic from the first
-step. The continuous response differs from the trapezoidal rule's by
-`(w h)^2/12`, which near the Nyquist frequency, where the vacuum weight
-of a bath is largest, is the whole response: started there, the baths
-would ring at the circuit's frequencies and leak into every measured
-mode. The Gauss-Legendre rule's stationary response matches the
-continuous one to its fourth order warping, and it starts on that.
+Their independent quadratures have variance `nbar + 1/2`, with
+`nbar = thermaloccupation(2pi*f, T)`.
+The bilateral symmetrized current spectral density is
+`h*f/R*coth(h*f/(2kT))`, approaching `2kT/R` at high temperature.
 
 ## The calculation
 
+The example's result fields are:
+
+| Field | Meaning |
+|---|---|
+| `covariance` | Total symmetrized output quadrature covariance, harmonic balance's `Vout` |
+| `addedcovariance` | Its part from the internal baths, the noise the circuit adds, harmonic balance's `Cnoise` |
+| `commutator` | Commutator propagated from the baths |
+| `expectedcommutator` | Algebra defined by the measurement modes |
+| `gain` | Stationary quadrature response to `inputs`, when requested |
+| `diagnostics` | Commutator and uncertainty-relation checks |
+
+The default `method=:adjoint` propagates the measured quadratures backward
+and contracts their bath-response kernels with the frequency quadrature.
+`method=:forward` propagates two directions per bath and frequency. It is
+useful as a small reference calculation but can be much more expensive.
+Both methods contract the same discrete responses.
+
+## Choosing the bath grid
+
+With no custom grid, the bath uses all positive Fourier bins of the
+record, at spacing and weight `1/T`, below Nyquist. A `cutoff` in Hz limits
+that grid. Alternatively, supply positive `frequencies` and corresponding
+positive quadrature `weights`, both in Hz.
+
+For a pulse, begin with enough frequency coverage to include resonances
+and pump-converted contributions to the measured modes. Refine the
+frequency spacing to resolve the measurement window's spectrum. A list of
+just the applied tones and nominal idlers is not generally a complete
+bath: the loaded trajectory can mix a continuous band into the window.
+
+A calculation continuing the setup above, using the default record bins,
+can be written as:
+
 ```julia
-using JosephsonCircuits
-
-# a solve recording the junction phases, which is all the noise reads
-problem = transientproblem(circuit; sources = [TransientSource(1, pump)])
-n, T = 20000, 100e-9
-solution = transientsolve(problem, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
-measurement = transientquantumplan(solution, solution.times, [5e9]; ports = [2])
-inputs = transientquantumplan(solution, solution.times, [5e9]; ports = [1])
-noise = transientnoise(solution, measurement; inputs)
-
-noise.diagnostics
-noise.covariance          # the symmetrized output covariance
-noise.commutator          # the propagated bath commutator
-noise.expectedcommutator  # the measurement's own mode algebra
-noise.gain                # the incremental quadrature response to the inputs
+full = transientnoise(solution, measurement)
+bounded = transientnoise(solution, measurement; cutoff = 20e9)
 ```
 
-The bath is periodic over the record by default: every positive Fourier
-bin `k/T` of its duration `T` with the weight `1/T`, up to the record's
-Nyquist frequency, which is the complete bath of the recorded steps. The
-adjoint method contracts those bins with the kernels by fast Fourier
-transforms over the recorded times, and frequencies given by a sum per
-bath, frequency and time; the stationary prehistory of the baths is one
-factorization of the stationary operator per frequency and distinct
-initial state, so the complete bath of a long record is not free. A
-`cutoff` in Hz bounds it, and `frequencies` with `weights`
-replace it, which is what a circuit with loss spread along a line wants:
-a few bands around the tones and their idlers at the resolution of the
-window; the forward method, two directions per bath and frequency,
-wants a cutoff always.
+These calls illustrate grid selection; agreement must be checked for the
+particular trajectory. Smooth measurement envelopes usually suppress
+remote spectral leakage more effectively than rectangular windows.
 
-`method = :adjoint`, the default, propagates the measured quadratures
-backward through [`transientadjoint`](@ref): its derivatives with
-respect to the bath currents at every recorded time are the bath
-kernels, and each column of them is contracted against the cosine and
-sine of every frequency at the grid or stage time the adjoint hands it
-over at, a rank one update
-of a (bath, objective) by (frequency, quadrature) accumulator on the
-backend, so nothing is stored per recorded time and the frequency count
-costs sums rather than integrations; the columns are buffered over a
-block of times and contracted by one product. That accumulator holds
-`16 nb m nf N` bytes for `nb` baths, `m` measured quadratures, `nf`
-frequencies and `N` conditions, which for distributed loss and a dense
-band is the memory of the method: within a quarter of the backend's free
-memory it is one, beyond it the conditions are tiled, each tile one
-adjoint over its conditions, and then the frequencies, each tile one
-more adjoint over the same conditions, a trade of passes for memory
-rather than a bound; the frequency count itself is set by where the
-measured modes respond, a few bands around the tones and their idlers
-at the resolution of the window, not by the whole record. The
-covariance, the commutator and the gain accumulate from each tile on
-the backend, and the stationary operator is factorized once per
-frequency for all conditions sharing an initial state. The stationary initial term enters
-through the adjoint's initial flux and rate with one stationary solve
-per frequency and objective, so no bath's initial state is ever built;
-the memory of the adjoint method is the record of the solve itself plus
-that accumulator. `method = :forward` propagates the bath
-quadratures forward, two tangent directions per bath and frequency
-through [`transienttangent`](@ref), all directions of every condition
-of a batch on each step's factorization; it is the reference the adjoint
-is checked against, and the two agree to roundoff since they contract
-the same responses.
+When `inputs` is supplied for stationary gain, the bath must cover its
+Fourier coefficients on the matching bins with weights `1/T`. Do not use
+arbitrary integration weights and interpret that gain as the same input
+normalization.
 
-Two gains are on offer. [`transientgain`](@ref)`(solution, measurement,
-inputs)` drives each input mode's unit quadratures as incident waves
-inside the input window only, evaluated at the grid and the stage times
-of the steps inside it and zero elsewhere, through the tangent, and
-reads them in the measurement's modes: the causal, pulsed gain, with
-the transients of the probe's own edges, independent of any bath grid,
-and nothing of it reaches a window that ends before the probe starts.
-The `gain` of
-[`transientnoise`](@ref) with an input plan is the response to the
-periodic Fourier mode of the window extended over the record and
-started stationary, which is what a stationary amplifier's harmonic
-balance gain is; it needs the bath on the window's Fourier bins with
-weights `1/T`. The two agree as the window grows past the circuit's
-memory.
+## Pulsed gain or stationary gain
 
-Every dissipative element is a bath: the port terminations, the
-internal resistors, and the lossy scattering blocks, whose emitted
-noise wave has the covariance `I - S S'` of Bosma's relation, the same
-the linearized solver uses, factored into independent channels that
-enter the block's port current rows as the source of the hybrid
-equation; a lossless block, a circulator or a through, emits nothing.
-A [`RationalScattering`](@ref) block's covariance depends on
-frequency, so its ports are channels correlated by `I - S S'` at each
-bath frequency, contracted directly with that covariance so that a
-block lossless to a part in a million is never the difference of two
-large terms, and its states enter the stationary response and its
-initial term; a lossy rational block leaves the vacuum the vacuum when
-cold and has the excess `hblinsolve` gives it when warm. Nothing is
-inferred about a rational block's loss: it keeps its channels however
-small its loss, and a declared `Lossless()` is validated by the norms
-of the block and of its inverse over all frequencies, which can only
-refuse it.
-A block's temperature is its `ThermalEquilibrium(T)`, a resistor's its
-`temperature`, and the other internal elements' the analysis default,
-while the port terminations are vacuum, in both solvers alike, so a warm
-attenuator in time has the covariance
-[`hblinsolve`](@ref) gives it, and equals its own resistive network at
-the same temperature. A block which states its noise with a
-[`NoiseCovariance`](@ref), an amplifier given by its scattering
-parameters, has its ports as correlated channels of the same kind,
-contracted with the covariance it states and with the commutator
-`I - S S'` of its gain, which differ; it adds the noise the linearized
-solver gives it and its output obeys the commutation relations, at
-whatever temperature the analysis runs. A pumped block which states
-its noise is contracted over pairs of bath frequencies on one ladder
-of its pump, those differing by a multiple of the pump frequency and
-those summing to one, with the covariance and the commutator of its
-noise over all the bath frequencies at once, its harmonic covariances
-and its multi-mode scattering matrix assembled over them with every
-input which feeds them and, for a fitted block, completed there, so
-the correlations of an amplifier's noise between its signal and its
-idler are kept, and those the completion adds, and referred to the
-start of the record as the bath quadratures are; the bath frequencies
-must include the partners. A completed covariance is completed over
-the padded ladder of the bath frequencies as the linearized solver
-completes it over the padded ladder of a sweep's modes, so the two
-read one noise model. The block couples nothing between frequencies
-which are not a multiple of the pump apart, so the bath frequencies are
-grouped into the ladders of the pump and the block's scattering matrix,
-its commutator and its covariance are assembled, completed and read one
-ladder at a time, and no matrix spans two of them. At a given number of
-ports and a given width of ladder that cost grows with the number of
-ladders, the grouping of the frequencies and the ordering of the pairs
-adding their sort. A ladder is as wide as the bath frequencies it
-holds, so a bath whose frequencies are all a multiple of the pump apart
-is one ladder, whose covariance and pair list grow with the square of
-its width and whose completion with the cube. Every pumped
-block is checked over the bath frequencies before the calculation, as
-the linearized solver checks it over the modes of a sweep, which a
-fitted block, its covariance completed to the commutation relations of
-its own filters, passes but for the finite, Hermitian entries any
-covariance must have; and since the pair terms
-correlate the bath frequencies the frequencies of a calculation with
-a pumped block are contracted in one tile, which the memory budget
-must hold.
+| Calculation | Input being measured |
+|---|---|
+| `transientgain(solution, measurement, inputs)` | Probe confined to its input window, including the response to its edges |
+| `transientnoise(solution, measurement; inputs).gain` | Periodic Fourier mode extended over the record and initialized stationary |
 
-A transmission line stores the fluctuations that entered it before the
-record began. The stationary response of the circuit to each bath tone
-is solved on the flux phasors together with the phasors of the waves
-leaving the line ports, nothing inverted in the lines, so it is regular
-at a line's half wave resonances; the forward method hands the tangent
-those waves over the prehistory the delays reach into, and the adjoint's
-initial term contracts its cotangents of that prehistory through the
-transposed system. A cold line between mismatched loads then leaves the
-vacuum the vacuum, and a pumped amplifier behind a cable has the gain
-and the quantum efficiency the linearized solver gives it with the same
-line.
+Use `transientgain` for a causal pulse response. An output window ending
+before the input begins has zero response. Use the stationary definition
+for comparison with settled HB gain. They approach one another when the
+windows are long compared with the circuit's memory; for short windows,
+their difference is expected.
 
-The bath quadrature is any set of positive frequency nodes with positive
-weights in Hz; a list of driven tones and idlers is not a complete bath
-for a pulse, since the loaded trajectory mixes the whole band into a
-measured window. The optional input plan returns the incremental
-quadrature gain from the same responses, and requires the measurement's
-record, bin aligned frequencies with weights `1/T`, and coverage of every
-input coefficient.
+## Diagnostics and convergence
 
-What convergence looks like on a pulsed, distributed loss case, a two
-hundred cell line of series junctions with a loss resistor in every
-cell, pumped by a pulse and measured in Hann windows of 2 ns on the
-rise, the plateau and the fall of the pulse with the output window
-delayed by the line's transit: the step converges at fourth order, the
-covariance and the pulsed gain moving sixteen times less from 2.5 ps to
-1.25 ps than from 5 ps to 2.5 ps; the bath spacing converges as the
-window's spectrum is resolved, at a part in ten thousand by a quarter of
-the window's bin; and the cutoff must pass the junction plasma frequency
-of the line, near 29 GHz there, where the line responds most and the
-pump mixes into the measured band, a band stopping short of it missing
-a part in a thousand and one past it changing nothing further. A
-rectangular window converges slowly in the cutoff, since its sidelobes
-carry noise from far away; a smooth envelope does not. The test suite
-runs the same case on a line of a hundred cells.
+The diagnostics compare propagated and expected commutators and test the
+uncertainty relation
 
-The diagnostics check the commutator against the measurement's algebra
-and the uncertainty relation `covariance + im*expectedcommutator/2 >= 0`,
-and a failure is returned as such rather than rescaled away. Passing is
-necessary, not sufficient: refine the bath cutoff, the frequency
-spacing, the record and the step independently. On a passive two port
-the quadrature gain agrees with [`hblinsolve`](@ref) to a part in ten
-thousand at 128 samples of a 3 GHz record and to three parts in a hundred
-thousand at 512, converging at second order with the step.
+```math
+V+\frac{i}{2}\Omega_{\mathrm{expected}}\succeq0.
+```
 
-[`transientquantumefficiency`](@ref) reduces a phase insensitive single
-mode result, a scaled rotation for a phase preserving gain or a scaled
-reflection for a phase conjugating one, as from a signal to its idler,
-and an isotropic covariance, to photon gain `G`, added noise
-`v/G - 1/2`, `QE = G/(2v)` and the package's ideal `G/(2G - 1)`, which
-[`hbsolve`](@ref) reports for its idler outputs too; phase sensitive
-gain or anisotropic noise is rejected and the full matrices remain. On a pumped Josephson
-amplifier measured after 200 ns of settling with the stationary Floquet
-frequencies as the bath, the gain and the quantum efficiency converge to
-[`hbsolve`](@ref) at the order of the stepping rule: under the
-trapezoidal rule, whose frequency warping a resonator's detuning and an
-amplifier's bifurcation magnify, the gain is 12% high at 5 ps and half
-a percent at 0.16 ps; under [`GaussLegendre`](@ref) it agrees to 1.5e-3
-at 5 ps and to 2e-5 at 2.5 ps, with the quantum efficiency to 6e-6, in
-about a second of solve and noise together. On a traveling wave amplifier of two hundred series junctions pumped to
-2.6 radians of node flux, where the accumulated propagation phase and
-the phase matching are the constraint, the periodic gain and the
-quantum efficiency agree with [`hbsolve`](@ref) to 4e-4 at 5 ps and
-3e-5 at 2.5 ps, again at fourth order. Harmonic balance takes
-milliseconds on these stationary problems and stays their reference,
-the transient being for pulses and drives too heavily loaded for a
-harmonic grid.
+A failed check is reported, not repaired by rescaling the result. Passing
+is necessary but does not establish convergence. Refine independently:
+
+1. Time step, with the classical trajectory and derivatives recomputed.
+2. Bath cutoff, including relevant circuit resonances and conversion bands.
+3. Bath-frequency spacing and quadrature weights.
+4. Record length, settling time, and measurement window.
+5. Fitting band/order and harmonic coverage for fitted pumped blocks.
+
+Compare covariance and the selected gain, not only the commutator.
+Near an amplifier threshold, frequency warping and incomplete settling
+can dominate a comparison with HB. The [JPA validation recipe](recipes/transient-wrspice.md)
+illustrates the role of settling time.
+
+## Scalar gain and efficiency
+
+[`transientquantumefficiency`](@ref) accepts a phase-insensitive one-mode
+channel: a scaled rotation for phase-preserving gain, or a scaled
+reflection for phase conjugation, together with isotropic covariance
+`v*I`. It reports photon gain `G` and `QE=G/(2v)`, with the package's
+ideal-gain reference. The covariance holds every bath in its state, the
+input's own port included, so the QE is that of the measurement, as
+`hbsolve` reports it.
+
+Phase-sensitive gain and anisotropic covariance need the full matrices;
+the scalar reduction rejects them. See [`transientquantumefficiency`](@ref)
+for its tolerances and the convention below unity gain.
+
+## Scattering blocks and correlated baths
+
+A passive block emits covariance `(nbar + 1/2)(I-S*S')`; an active block can supply
+`NoiseCovariance(V)`. Rational-block covariances depend on frequency and
+are contracted directly, retaining small losses without subtracting large
+output covariances. Their internal states also enter the initial-noise
+response.
+
+A pumped block correlates bath frequencies separated by pump harmonics,
+including conjugate partners. The bath grid must include those partners.
+The covariance and commutator are assembled on padded pump ladders,
+consistent with the HB model. A fitted block's covariance is completed
+against its fitted transfer functions. See [pumped-block contracts](scattering.md#Correlated-noise-and-fit-tolerances).
+
+Correlated pumped-block frequencies cannot be tiled independently, so the
+required frequency accumulator must fit the memory budget. For ordinary
+independent baths, condition and frequency tiling trade extra adjoint
+passes for memory. See [noise cost](performance.md#Noise-calculation-cost)
+and [implementation notes](implementation.md#Pumped-block-noise).

@@ -70,23 +70,24 @@ using Test
         @test JosephsonCircuits.calccm(S, w) ≈ [1.0, -1.0] atol = 1e-6
         @test JosephsonCircuits.calccm(S, w) == JosephsonCircuits.calccm(S .+ 0im, w)
 
-        # the noise reduction against the explicit sums, with and without an
-        # occupation, and against the diagonal of the noise covariance
+        # the noise reduction against the explicit sums, in the vacuum and
+        # with warm channels, and against the diagonal of the noise
+        # covariance
         rng = Random.default_rng()
         m = 3
         Snoise = randn(rng, ComplexF64, 5*m, 2*m)
         w = randn(rng, m)
-        occ = 1 .+ rand(rng, 5*m)
+        occ = 0.5 .+ rand(rng, 5*m)
         n0 = JosephsonCircuits.noisereduction(Snoise, w)
         n1 = JosephsonCircuits.noisereduction(Snoise, w, occ)
-        @test n0.denom ≈ vec(sum(abs2, Snoise; dims = 1))
-        @test n1.denom ≈ vec(sum(occ .* abs2.(Snoise); dims = 1))
+        @test n0.symmetrized ≈ vec(sum(abs2, Snoise; dims = 1))/2
+        @test n1.symmetrized ≈ vec(sum(occ .* abs2.(Snoise); dims = 1))
         signs = [sign(w[(c-1) % m + 1]) for c in 1:5*m]
         @test n0.signed ≈ vec(sum(signs .* abs2.(Snoise); dims = 1))
         @test n1.signed == n0.signed
         C = zeros(ComplexF64, 2*m, 2*m)
         JosephsonCircuits.calcnoisecovariance!(C, Snoise, occ)
-        @test n1.denom ≈ real(diag(C))
+        @test n1.symmetrized ≈ real(diag(C))
         @test C ≈ [sum(occ[c]*Snoise[c, i]*conj(Snoise[c, j]) for c in axes(Snoise, 1))
             for i in axes(Snoise, 2), j in axes(Snoise, 2)]
 
@@ -95,14 +96,29 @@ using Test
         S = randn(rng, ComplexF64, 2*m, 2*m)
         qe = JosephsonCircuits.calcqe(S, n1)
         @test qe ≈ JosephsonCircuits.calcqe_S_Cnoise(S, C)
-        @test qe ≈ abs2.(S) ./ (vec(sum(abs2, S; dims = 2)) .+ n1.denom)
+        # and with every input in a state of its own
+        inputnoise = 0.5 .+ rand(rng, 2*m)
+        @test JosephsonCircuits.calcqe(S, n1; inputnoise) ≈
+            JosephsonCircuits.calcqe_S_Cnoise(S, C; inputnoise)
+        # an ideal phase preserving amplifier of gain G with its signal and
+        # idler inputs in states of their own: the signal's output noise is
+        # G(ns + 1/2) + (G - 1)(ni + 1/2), its quantum efficiency G over
+        # twice that, by either route
+        G, ns, ni = 20.0, 0.3, 0.05
+        amplifier = [sqrt(G) sqrt(G - 1); sqrt(G - 1) sqrt(G)]
+        states = [ns + 1/2, ni + 1/2]
+        Vs = G*(ns + 1/2) + (G - 1)*(ni + 1/2)
+        @test JosephsonCircuits.outputnoise!(zeros(2), zeros(2), amplifier, states)[1] ≈ Vs
+        @test JosephsonCircuits.calcqe(amplifier; inputnoise = states)[1, 1] ≈ G/(2Vs)
+        @test JosephsonCircuits.calcqe_S_Cnoise(amplifier, zeros(2, 2); inputnoise = states)[1, 1] ≈ G/(2Vs)
+        @test qe ≈ abs2.(S) ./ (vec(sum(abs2, S; dims = 2)) .+ 2 .* n1.symmetrized)
         @test JosephsonCircuits.calcqe(S) ≈ abs2.(S) ./ vec(sum(abs2, S; dims = 2))
         cm = JosephsonCircuits.calccm(S, w, n0)
         colsigns = [sign(w[(j-1) % m + 1]) for j in 1:2*m]
         @test cm ≈ vec(sum(abs2.(S) .* transpose(colsigns); dims = 2)) .+ n0.signed
         # the scratch is the caller's
         qe2 = similar(qe); cm2 = similar(cm)
-        JosephsonCircuits.calcqe!(qe2, S, n1; denom = zeros(2*m), comp = zeros(2*m))
+        JosephsonCircuits.calcqe!(qe2, S, n1; vout = zeros(2*m), comp = zeros(2*m))
         JosephsonCircuits.calccm!(cm2, S, w, n0; comp = zeros(2*m))
         @test qe2 == qe && cm2 == cm
     end
@@ -121,6 +137,18 @@ using Test
         @test_throws(
             DimensionMismatch("Sizes of QE and S matrices must be equal."),
             JosephsonCircuits.calcqeideal!([1 2;3 4],[1 2 3;4 5 6]))
+    end
+
+    @testset "thermal occupations and their temperatures" begin
+        # the Bose occupation diverges at zero frequency above zero
+        # temperature, a temperature is nonnegative, and at zero frequency
+        # no temperature has a finite positive occupation
+        @test thermaloccupation(0.0, 0.3) == Inf
+        @test thermaloccupation(0.0, 0.0) == 0.0
+        @test_throws ArgumentError thermaloccupation(2pi*5e9, -0.05)
+        @test_throws ArgumentError thermaloccupation(2pi*5e9, NaN)
+        @test effectivetemperature(0.0, 0.0) == 0.0
+        @test_throws ArgumentError effectivetemperature(0.0, 1.0)
     end
 
     @testset "calcCnoise! errors" begin
