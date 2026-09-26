@@ -578,6 +578,8 @@ using Test
             merge(defs2, Dict(:Lj => 120e-12 + 0im, :Cg => 45e-15 + 0im));
             debugJacobian = true, dc = true, odd = true, even = true,
             keyedarrays = false)
+        # KLU's refactorization keeps its pivot sequence while the growth
+        # stays below 1/pivottol, and loses as many digits as it grows
         d2.fjreal(nothing, d2.Jr, x)
         for pr in (mk(FullJacobian()), pb)
             JosephsonCircuits.updatepreconditioner!(pr, x)
@@ -585,7 +587,8 @@ using Test
             JosephsonCircuits.updatepreconditioner!(pr, x)
             JosephsonCircuits.applypreconditioner!(z, pr, r)
             bound = pr.P isa JosephsonCircuits.BlockStructure ?
-                100*eps()*blockcond(pr)*norm(d2.Jr)*norm(z) : 1e-10*norm(r)
+                100*eps()*blockcond(pr)*norm(d2.Jr)*norm(z) :
+                eps()/KLUfactorization().pivottol*norm(d2.Jr)*norm(z)
             @test norm(d2.Jr*z - r) <= bound
         end
 
@@ -919,7 +922,8 @@ using Test
         JosephsonCircuits.updatepreconditioner!(pk, xk)
         rk = randn(length(d.xr)); zk = similar(rk)
         JosephsonCircuits.applypreconditioner!(zk, pk, rk)
-        @test norm(Matrix{Float64}(pk.P)*zk - rk) <= 1e-9*norm(rk)
+        Pk = Matrix{Float64}(pk.P)
+        @test norm(Pk*zk - rk) <= eps()/KLUfactorization().pivottol*norm(Pk)*norm(zk)
         # the application allocates nothing beyond the solve of its
         # factorization: no conversion and no scratch vector. The solve is
         # the reference rather than zero because KLU.jl's allocates the

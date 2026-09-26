@@ -647,10 +647,11 @@ end
 #
 # The pattern is the circuit's, so it is built once, with the position
 # in its values of every entry of every term, and refilled in place at
-# each state and frequency, and the factorization keeps its symbolic
-# analysis across the frequencies of a bath, as the stage operator of
-# the Gauss-Legendre rule keeps its pattern across the steps.
-mutable struct StationaryOperator
+# each state and frequency, and it is refactorized in place across the
+# frequencies of a bath (`tryfactorize!`), as the stage operator of the
+# Gauss-Legendre rule is across the steps, by the system's factorization
+# on the host and by the host's default under a device.
+struct StationaryOperator
     problem::TransientProblem
     Lscale::Float64
     n::Int
@@ -686,7 +687,8 @@ mutable struct StationaryOperator
     dmap::Vector{Int}
     ddelay::Vector{Float64}
     imap::Vector{Int}
-    factor::Union{Nothing, SparseArrays.UMFPACK.UmfpackLU{ComplexF64, Int}}
+    factorization::AbstractFactorization
+    cache::FactorizationCache
 end
 
 # the positions in the values of `F` of the entries `(rows[k], cols[k])`,
@@ -758,7 +760,8 @@ function stationaryoperator(sys::TransientSystem)
         position(jrows, jcols), jcoef, jjunction, zeros(length(lmolj)), RJ, hostrelations(sys.relations),
         position(rrows, rcols),
         position(brows, bcols), bcoef, bdelay, position(erows, ecols), ecoef, position(drows, dcols), ddelay,
-        position(irows, irows), nothing)
+        position(irows, irows), sys.backend isa CPU ? sys.factorization : transientfactorization(CPU()),
+        FactorizationCache())
 end
 
 # the operator at the initial state `x0`: the derivative of the junction
@@ -783,10 +786,9 @@ function addentries!(values, positions, coefficients, scale::Number)
     return nothing
 end
 
-# the operator refilled at the angular frequency `w` and factorized, on
-# the analysis of the first factorization, with `s` the rate a rule's
-# stationary response carries at it (see `stationaryrate`) on the
-# capacitance and the conductance
+# the operator refilled at the angular frequency `w` and refactorized,
+# with `s` the rate a rule's stationary response carries at it (see
+# `stationaryrate`) on the capacitance and the conductance
 function stationaryfactor!(op::StationaryOperator, w, s = im*w)
     values = nonzeros(op.F)
     fill!(values, 0)
@@ -799,14 +801,18 @@ function stationaryfactor!(op::StationaryOperator, w, s = im*w)
         nnz(R) == length(op.rmap) || error("the rational blocks' term changed its pattern with the frequency.")
         addentries!(values, op.rmap, nonzeros(R), 1.0)
     end
-    addentries!(values, op.bmap, op.bcoef, cis.(-w .* op.bdelay))
+    # the lines' delays as phases, entry by entry
+    for k in eachindex(op.bmap)
+        values[op.bmap[k]] += cis(-w*op.bdelay[k])*op.bcoef[k]
+    end
     addentries!(values, op.emap, op.ecoef, im*w)
-    addentries!(values, op.dmap, cis.(-w .* op.ddelay), 1.0)
+    for k in eachindex(op.dmap)
+        values[op.dmap[k]] += cis(-w*op.ddelay[k])
+    end
     for k in op.imap
         values[k] += 1
     end
-    op.factor = isnothing(op.factor) ? lu(op.F) : lu!(op.factor, op.F)
-    return op.factor
+    return tryfactorize!(op.cache, op.factorization, op.F).factorization
 end
 
 # The stationary response of the circuit at the initial state to a
@@ -882,6 +888,7 @@ function stationaryresponses(sys::TransientSystem, x0, injection, frequencies, t
     tpre = [t0 - (npre - j)*sys.h for j in 1:npre]
     op = stationarystate!(stationaryoperator(sys), x0)
     rhs = zeros(ComplexF64, n + nl2, nb)
+    Y = similar(rhs)
     for (f, frequency) in enumerate(frequencies)
         w = 2pi*frequency
         s = stationaryrate(sys.method, w, sys.h)
@@ -893,7 +900,7 @@ function stationaryresponses(sys::TransientSystem, x0, injection, frequencies, t
         # Re(s x exp(i w t)); the cosine and the sine of a bath are
         # adjacent columns of the responses
         rhs[1:n, :] .= cispi(-2frequency*reference) .* inj
-        Y = F \ rhs
+        trysolve!(Y, F, rhs)
         cosines, sines = 2*(f - 1)*nb .+ (1:2:2nb), 2*(f - 1)*nb .+ (2:2:2nb)
         Z = view(Y, 1:n, :) .* cispi(2frequency*t0)
         flux[:, cosines] .= real.(Z)
@@ -944,6 +951,8 @@ Base.@nospecializeinfer function stationaryinitialterms(sys::TransientSystem, x0
         LA = reshape(view(la, :, :, :, group), nl2, npre, m*length(group))
         LZ = reshape(view(lz, :, :, group), nzs, m*length(group))
         stationarystate!(op, view(x0s, :, first(group)))
+        rhs, Y = zeros(ComplexF64, n + nl2, m*length(group)), zeros(ComplexF64, n + nl2, m*length(group))
+        P = zeros(ComplexF64, nb, m*length(group))
         for (f, frequency) in enumerate(frequencies)
             w = 2pi*frequency
             # the adjoint's stationary solve is the transposed system, the
@@ -952,8 +961,8 @@ Base.@nospecializeinfer function stationaryinitialterms(sys::TransientSystem, x0
             # phase of each sample's time relative to the start
             s = stationaryrate(sys.method, w, sys.h)
             F = stationaryfactor!(op, w, s)
-            rhs = zeros(ComplexF64, n + nl2, m*length(group))
             rhs[1:n, :] .= LX .+ s .* LV
+            rhs[n + 1:n + nl2, :] .= 0
             for j in 1:npre
                 rhs[n + 1:n + nl2, :] .+= cispi(-2frequency*(npre - j)*sys.h) .* view(LA, :, j, :)
             end
@@ -970,8 +979,9 @@ Base.@nospecializeinfer function stationaryinitialterms(sys::TransientSystem, x0
                 end
                 rhs .+= transpose(Ga)*abar
             end
-            Y = (transpose(F) \ rhs)[1:n, :]
-            P = (injectiont*Y) .* cispi(2frequency*(t0 - reference))
+            trysolvetranspose!(Y, F, rhs)
+            mul!(P, injectiont, view(Y, 1:n, :))
+            P .*= cispi(2frequency*(t0 - reference))
             all(isfinite, P) || throw(ArgumentError(
                 "the stationary response of a bath is singular: an undamped mode at that frequency needs an explicit initial state."))
             for (jj, j) in enumerate(group), b in 1:nb
@@ -1172,7 +1182,9 @@ times the adjoint hands over, by fast transforms on the bins of the
 record, so the frequency count costs sums rather than integrations;
 `factorization` is
 the sparse factorization the responses step on, as for
-[`transienttangent`](@ref), and `reuse` a [`TransientReuse`](@ref).
+[`transienttangent`](@ref), which on the host also factorizes the
+stationary operator at every bath frequency (under a device, the host's
+default does), and `reuse` a [`TransientReuse`](@ref).
 Both return the
 same `covariance`, `addedcovariance`, `commutator`, `expectedcommutator`,
 `diagnostics` (from [`transientquantumdiagnostics`](@ref)), and, with an

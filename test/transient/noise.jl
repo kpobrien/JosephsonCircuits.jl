@@ -40,6 +40,9 @@ function pumpednoise(c; fp = 4.75e9, fs = 4.7e9, ip = 0.00565e-6)
         Cnoise = hb.linearized.Cnoise((0,), 1, (0,), 1, 1))
 end
 
+# the bytes of a refactorization of a stationary operator at `w`
+refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
+
 # The quantum noise of a transient against harmonic balance: a passive two
 # port, whose linearized scattering and vacuum covariance the temporal mode
 # noise must reproduce, warm loss against the linearized noise covariance,
@@ -374,6 +377,15 @@ end
             @test noise.covariance ≈ plan.vacuum rtol=1e-6
             @test noise.gain ≈ quadratures(hb.S[:, :, 1]) rtol=1e-6
         end
+    end
+
+    @testset "the stationary operator is refactorized in place" begin
+        # at every frequency of a bath: less than a copy of its values
+        c, defs = testchaincircuit(32)
+        sys = JC.transientsystem(transientproblem(c, defs), 2e-12, GaussLegendre(), JC.CPU(), JC.transientfactorization(JC.CPU()))
+        op = JC.stationarystate!(JC.stationaryoperator(sys), zeros(length(sys.problem)))
+        refactorbytes(op, 2pi*1e9); refactorbytes(op, 2pi*2e9)
+        @test refactorbytes(op, 2pi*3e9) < sizeof(nonzeros(op.F))
     end
 
     @testset "the tiles of a batch's conditions" begin

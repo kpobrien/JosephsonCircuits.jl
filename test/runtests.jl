@@ -62,11 +62,16 @@ function testjobs()
                 :(using JosephsonCircuits); recursive = true)
             # Documenter narrates each of its steps at info level, which
             # says nothing about the doctests; a failing doctest is logged
-            # as an error and still comes through
+            # as an error and still comes through. LAPACK and BLAS leave
+            # the sign of an exact zero to the platform, which the
+            # imaginary parts of a solve's printed result show (`0.0-0.0im`
+            # on one, `0.0+0.0im` on another), so an imaginary zero is
+            # compared whatever its sign.
             with_logger(ConsoleLogger(stderr, Logging.Warn)) do
                 makedocs(remotes = nothing,
                     root = joinpath(dirname(pathof(JosephsonCircuits)), "..", "docs"),
                     modules = [JosephsonCircuits], doctest = :only,
+                    doctestfilters = [r"[+-](?= ?0\\.0im)"],
                     sitename = "JosephsonCircuits",
                     format = Documenter.HTML(edit_link = nothing, disable_git = true))
             end
