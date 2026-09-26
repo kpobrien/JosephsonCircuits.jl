@@ -25,6 +25,8 @@ end
         @test DocstringCheck.argnamelist("f(x, y), g = (1, 2), h") ==
             ["f(x, y)", "g", "h"]
         @test DocstringCheck.argnamelist("") == String[]
+        @test DocstringCheck.argnamelist("@nospecialize(a::Int), @nospecialize(b = 1), c") ==
+            ["a", "b", "c"]
         @test DocstringCheck.argnames("f(a, b; c = 1, kwargs...)") ==
             (["a", "b"], ["c", "kwargs..."])
         @test DocstringCheck.argnames("f(a)") == (["a"], String[])
@@ -36,6 +38,7 @@ end
         @test DocstringCheck.stripprefixes("@inline function f(x)") == "f(x)"
         @test DocstringCheck.stripprefixes("@kernel function k!(a)") == "k!(a)"
         @test DocstringCheck.stripprefixes("function  g(x)") == "g(x)"
+        @test DocstringCheck.stripprefixes("Base.@nospecializeinfer function f(x)") == "f(x)"
         @test DocstringCheck.stripwhere("f(x::T) where {T<:Real}") == "f(x::T)"
     end
 

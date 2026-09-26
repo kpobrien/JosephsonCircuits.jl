@@ -55,7 +55,7 @@ const SKIPPED_HEADERS = ("struct ", "mutable struct ", "abstract type ",
 # Prefixes stripped from a definition before its name and arguments are
 # read. They are stripped repeatedly, so `@inline function f(x)` reads as
 # `f(x)`.
-const HEADER_PREFIXES = ("@inline ", "@noinline ", "@kernel ", "function ")
+const HEADER_PREFIXES = ("@inline ", "@noinline ", "@kernel ", "Base.@nospecializeinfer ", "function ")
 
 # --- parsing ---------------------------------------------------------------
 
@@ -63,8 +63,9 @@ const HEADER_PREFIXES = ("@inline ", "@noinline ", "@kernel ", "function ")
     argnamelist(s)
 
 The bare argument names of the comma separated list `s`: split at top level
-commas, then each part is cut at its first `=` and its first `::`, stripped,
-and stripped of `...`. An unnamed argument (`::Type{T}`) gives `""`.
+commas, then each part is unwrapped of `@nospecialize(...)`, cut at its first
+`=` and its first `::`, stripped, and stripped of `...`. An unnamed argument
+(`::Type{T}`) gives `""`.
 """
 function argnamelist(s::AbstractString)
     parts = String[]
@@ -87,6 +88,9 @@ function argnamelist(s::AbstractString)
     for a in parts
         a = strip(a)
         isempty(a) && continue
+        if startswith(a, "@nospecialize(") && endswith(a, ")")
+            a = strip(a[length("@nospecialize(")+1:end-1])
+        end
         a = first(split(a, '='; limit = 2))
         a = first(split(a, "::"; limit = 2))
         push!(names, String(strip(a)))

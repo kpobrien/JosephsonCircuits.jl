@@ -19,14 +19,14 @@ function twoportnoise(c; method = :adjoint)
 end
 
 # The pumped amplifier `c`, its pump ramped on at port 1 over 2 ns,
-# settled for 100 ns and measured over 20 ns at the signal frequency
+# settled for 60 ns and measured over 20 ns at the signal frequency
 # under Gauss-Legendre at 2.5 ps, the bath the stationary Floquet
 # frequencies of the signal: the noise, its scalar metrics, and the gain
 # and the quantum efficiency harmonic balance gives the same circuit
 function pumpednoise(c; fp = 4.75e9, fs = 4.7e9, ip = 0.00565e-6)
     hb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), c; atol = 1e-14)
     ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
-    settle, record, dt = 100e-9, 20e-9, 2.5e-12
+    settle, record, dt = 60e-9, 20e-9, 2.5e-12
     sol = transientsolve(transientproblem(c; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))]),
         (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
     first = round(Int, settle/dt) + 1

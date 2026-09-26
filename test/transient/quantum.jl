@@ -88,9 +88,12 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
     end
 end
 
-# A CPU test set, as a function so that including this file in the GPU
-# suite does not run it there.
-function testquantumcontracts()
+# the main suite runs the CPU backend by including this file; the GPU
+# suite defines TRANSIENTBACKENDTESTS and calls the function with its device
+if !@isdefined(TRANSIENTBACKENDTESTS)
+    testtransientquantum(JosephsonCircuits.CPU())
+    # the contracts, on the host alone; at the top level rather than in a
+    # function, whose compilation would cost more than its tests
     @testset "Quantum measurement and bath contracts" begin
         JC = JosephsonCircuits
         ts = collect(0:63) .* 1e-11
@@ -139,14 +142,5 @@ function testquantumcontracts()
         # source's direction
         @test inj[:, 1] == transientinjection(prob, [1])[:, 1]
         @test inj[:, 2] == -transientinjection(prob, ["Rloss"])[:, 1]
-        return nothing
     end
-    return nothing
-end
-
-# the main suite runs the CPU backend by including this file; the GPU
-# suite defines TRANSIENTBACKENDTESTS and calls the function with its device
-if !@isdefined(TRANSIENTBACKENDTESTS)
-    testtransientquantum(JosephsonCircuits.CPU())
-    testquantumcontracts()
 end

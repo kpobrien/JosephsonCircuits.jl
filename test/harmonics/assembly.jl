@@ -132,9 +132,12 @@ end
             cp = sys.complexjacobianplan
             JosephsonCircuits.refreshvalues!(cp, L2, G2, C2, sys.wmodesm,
                 sys.wmodes2m, d.Ljb, d.Lscale)
-            c = zeros(ComplexF64, nnz(d.Jx))
+            # (read through the matrix alone: a comprehension naming `d`
+            # would be compiled for the type of everything `d` holds)
+            Jx = d.Jx
+            c = zeros(ComplexF64, nnz(Jx))
             JosephsonCircuits.assemblecomplexjacobian!(c, cp, zerofd)
-            @test c == [K[i, j] for j in axes(d.Jx, 2) for i in rowvals(d.Jx)[nzrange(d.Jx, j)]]
+            @test c == [K[i, j] for j in axes(Jx, 2) for i in rowvals(Jx)[nzrange(Jx, j)]]
         end
     end
 

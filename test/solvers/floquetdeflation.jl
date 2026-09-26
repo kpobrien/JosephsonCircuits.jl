@@ -17,6 +17,16 @@ JC.updatepreconditioner!(pc::DensePC, x) = pc
 JC.isexactpreconditioner(pc::DensePC) = pc.exact
 JC.escalatepreconditioner!(::DensePC) = false
 
+# The product with the Jacobian, a dense matrix held in a reference so that
+# a test can move the point. Every test takes the product through this one
+# type, so the preconditioner built on it and the Krylov solve are compiled
+# once rather than once for each test.
+struct DenseProduct{T} <: Function
+    J::Base.RefValue{Matrix{T}}
+end
+DenseProduct(J::Matrix) = DenseProduct(Ref(J))
+(p::DenseProduct)(y, v) = (mul!(y, p.J[], v); y)
+
 # `J` with a few directions the base `B0` inverts badly: `B0` is the exact
 # inverse on the complement and is wrong by a large factor on `nbad` of the
 # singular directions, which is the low-rank-defect situation the
@@ -40,7 +50,7 @@ end
     @testset "construction and argument checking" begin
         J, B0, _ = defectsystem(20, 2)
         b = zeros(20)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, b)
         @test JC.deflationsize(pc) == 0
         @test JC.candidatecount(pc) == 0
@@ -77,7 +87,7 @@ end
     @testset "unit eigenspace invariant J*B*C = C" begin
         n, nbad = 40, 3
         J, B0, Q = defectsystem(n, nbad)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         # seed the bad directions themselves, plus noise
         JC.seeddeflation!(pc, hcat(Q[:, 1:nbad], randn(Random.default_rng(), n, 2));
@@ -101,7 +111,7 @@ end
     @testset "rank-deficient candidates are compressed away" begin
         n = 30
         J, B0, Q = defectsystem(n, 2)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         x = Q[:, 1:2]
         # the same two directions offered five times over, in different
@@ -118,7 +128,7 @@ end
     @testset "base-exact directions are filtered out" begin
         n, nbad = 30, 2
         J, B0, Q = defectsystem(n, nbad)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         # columns nbad+1 onward satisfy B0*J*x = x exactly; only the first
         # nbad are missing from the base
@@ -144,7 +154,7 @@ end
     @testset "kmax caps the active rank" begin
         n = 40
         J, B0, Q = defectsystem(n, 8)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(size = 3), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:8]; source = :test)
         JC._rebuildfloquet!(pc)
@@ -157,7 +167,7 @@ end
     @testset "the candidate bank stays bounded" begin
         n = 25
         J, B0, _ = defectsystem(n, 2)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(size = 4, candidates = 10), DensePC(B0), jvp!, zeros(n))
         rng = Random.default_rng()
         for _ in 1:20
@@ -221,7 +231,7 @@ end
         # from orthogonal, so eigen and singular information disagree
         A = triu(randn(rng, n, n), 1)*8.0 + Diagonal(range(0.05, 2.0; length = n))
         B0 = Matrix{Float64}(I, n, n)
-        jvp!(y, v) = (mul!(y, A, v); y)
+        jvp! = DenseProduct(A)
         pc = JC.FloquetPreconditioner(Floquet(harvest = 2, ritz = 2, size = 8), DensePC(B0), jvp!, zeros(n))
         # a real Arnoldi factorization of A on a random start
         m = 12
@@ -247,7 +257,7 @@ end
     @testset "harvesting does not rebuild under a running solve" begin
         n = 30
         J, B0, Q = defectsystem(n, 2)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
         JC._rebuildfloquet!(pc)
@@ -268,7 +278,7 @@ end
     @testset "application matches the closed form" begin
         n = 30
         J, B0, Q = defectsystem(n, 3)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:3]; source = :test)
         JC._rebuildfloquet!(pc)
@@ -285,15 +295,14 @@ end
         n = 30
         J, B0, Q = defectsystem(n, 2)
         Jmoved = J + 0.01*Q*Diagonal(randn(Random.default_rng(), n))*Q'
-        moved = Ref(false)
-        jvp!(y, v) = (mul!(y, moved[] ? Jmoved : J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
         JC._rebuildfloquet!(pc)
         @test J*pc.X ≈ pc.C atol = 1e-9
         rebuilds = JC.deflationrebuilds(pc)
 
-        moved[] = true
+        jvp!.J[] = Jmoved
         JC.pointmoved!(pc)
         # stale until something asks for an application
         @test JC.deflationrebuilds(pc) == rebuilds
@@ -312,7 +321,7 @@ end
     @testset "gmres! converges faster with the correction" begin
         n, nbad = 60, 4
         J, B0, Q = defectsystem(n, nbad; factor = 200.0)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         rng = Random.default_rng()
         b = randn(rng, n)
 
@@ -348,15 +357,14 @@ end
         base = DensePC(B0)
 
         # cold start at the second operator
-        jvp1!(y, v) = (mul!(y, J1, v); y)
+        jvp1! = DenseProduct(J1)
         cold = JC.FloquetPreconditioner(Floquet(size = 8), base, jvp1!, zeros(n))
         wsc = JC.GMRESWorkspace(b, 40); xc = zeros(n)
         outcold = JC.gmres!(xc, jvp1!, b, wsc; Mop! = cold, rtol = 1e-10,
             maxrestarts = 4)
 
         # warm: harvest at the first operator, carry the physical vectors
-        Jcur = Ref(J0)
-        jvp!(y, v) = (mul!(y, Jcur[], v); y)
+        jvp! = DenseProduct(J0)
         warm = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 4, ritz = 2), base, jvp!, zeros(n))
         ws = JC.GMRESWorkspace(b, 40); x = zeros(n)
         out0 = JC.gmres!(x, jvp!, b, ws; Mop! = warm, rtol = 1e-10,
@@ -365,7 +373,7 @@ end
         @test JC.candidatecount(warm) > 0
 
         # move to the second operator; the bank is rebuilt against it
-        Jcur[] = J1
+        jvp!.J[] = J1
         JC.pointmoved!(warm)
         ws2 = JC.GMRESWorkspace(b, 40); x2 = zeros(n)
         outwarm = JC.gmres!(x2, jvp!, b, ws2; Mop! = warm, rtol = 1e-10,
@@ -396,7 +404,7 @@ end
         g = 1 .+ 0.9*rand(rng, n)
         g[1:nbad] .= range(100.0, 500.0; length = nbad)
         B0 = Q*Diagonal(g ./ d)*Q'
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         b = randn(Random.default_rng(), n)
         base = DensePC(B0)
         # a restart cycle short enough that the solve takes several of
@@ -435,7 +443,7 @@ end
     @testset "an external seed takes effect at the next solve; a harvest waits" begin
         n = 40
         J, B0, Q = defectsystem(n, 3)
-        jvp!(y, v) = (mul!(y, J, v); y)
+        jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
         JC._rebuildfloquet!(pc)
@@ -474,7 +482,7 @@ end
         d = collect(range(1.0, 3.0; length = n))
         d[1] = 1e-3; d[2] = 2e-3
         A = Qm*Diagonal(d)*Qm'
-        jvp!(y, v) = (mul!(y, A, v); y)
+        jvp! = DenseProduct(A)
         b = randn(rng, n)
         m = 16
         ws = JC.GMRESWorkspace(b, m)

@@ -868,9 +868,12 @@ end
 
 # the terms of every condition, `(n, m, N)` initial fluxes and rates, one
 # factorization per frequency and group of conditions sharing an initial
-# state, solved for the objectives of the whole group together
-function stationaryinitialterms(sys::TransientSystem, x0s, injection, frequencies, t0, reference, initialflux, initialrate,
-        initialwaves = nothing, initialstates = nothing)
+# state, solved for the objectives of the whole group together. The
+# cotangents are read on the host, unspecialized, so that a system's terms
+# compile once whether or not the circuit has lines and blocks.
+Base.@nospecializeinfer function stationaryinitialterms(sys::TransientSystem, x0s, injection, frequencies, t0, reference,
+        @nospecialize(initialflux), @nospecialize(initialrate), @nospecialize(initialwaves = nothing),
+        @nospecialize(initialstates = nothing))
     p = sys.problem
     n = length(p)
     nl2 = 2length(p.lines)
@@ -879,9 +882,9 @@ function stationaryinitialterms(sys::TransientSystem, x0s, injection, frequencie
     injection = (sys.Lscale/phi0) .* injection
     injectiont = sparse(transpose(injection))
     nb, nf = size(injection, 2), length(frequencies)
-    lx, lv = Array(initialflux), Array(initialrate)
-    la = nl2 > 0 ? Array(initialwaves) : zeros(0, npre, size(lx, 2), size(lx, 3))
-    lz = nzs > 0 ? Array(initialstates) : zeros(0, size(lx, 2), size(lx, 3))
+    lx, lv = Array(initialflux)::Array{Float64, 3}, Array(initialrate)::Array{Float64, 3}
+    la = (nl2 > 0 ? Array(initialwaves) : zeros(0, npre, size(lx, 2), size(lx, 3)))::Array{Float64, 4}
+    lz = (nzs > 0 ? Array(initialstates) : zeros(0, size(lx, 2), size(lx, 3)))::Array{Float64, 3}
     m, N = size(lx, 2), size(lx, 3)
     terms = [zeros(m, 2nb*nf) for _ in 1:N]
     op = stationaryoperator(sys)
@@ -1107,10 +1110,13 @@ function transientnoise(sol::TransientSolution, measurement::TransientQuantumPla
         expectedcommutator = r.expectedcommutator, diagnostics = r.diagnostics[1], gain = r.gain[:, :, 1],
         r.measurement, r.inputs, r.baths, r.frequencies, r.weights)
 end
-function transientnoise(sol::TransientBatchSolution, measurement::TransientQuantumPlan;
+Base.@nospecializeinfer function transientnoise(sol::TransientBatchSolution, measurement::TransientQuantumPlan;
         frequencies = nothing, weights = nothing, cutoff = nothing, baths = nothing,
         method::Symbol = :adjoint, inputs = nothing, commutationrtol = 1e-3,
         factorization = nothing, reuse = nothing)
+    # compiled once whatever the options are: they are brought to the forms
+    # the contraction takes here, and it is invoked dynamically
+    @nospecialize frequencies weights cutoff baths inputs commutationrtol factorization reuse
     recordedsolution(sol)
     # the default bath lies on the bins of the record, which the adjoint
     # contracts with fast Fourier transforms
@@ -1123,11 +1129,11 @@ function transientnoise(sol::TransientBatchSolution, measurement::TransientQuant
         isnothing(cutoff) || throw(ArgumentError("a cutoff bounds the default bath; the frequencies given are the bath."))
     end
     p = first(sol.problems)
-    baths = isnothing(baths) ? transientnoisebaths(p) : baths
+    baths = (isnothing(baths) ? transientnoisebaths(p) : baths)::TransientNoiseBaths
     baths.problem.circuit === p.circuit || throw(ArgumentError("the baths belong to another circuit."))
     method in (:forward, :adjoint) || throw(ArgumentError("method must be :forward or :adjoint."))
     isnothing(inputs) || inputs isa TransientQuantumPlan || throw(ArgumentError("inputs must be a TransientQuantumPlan."))
-    fs, ws = Float64.(collect(frequencies)), Float64.(collect(weights))
+    fs, ws = Float64.(collect(frequencies))::Vector{Float64}, Float64.(collect(weights))::Vector{Float64}
     !isempty(fs) && length(fs) == length(ws) && all(x -> isfinite(x) && x > 0, fs) &&
         all(x -> isfinite(x) && x > 0, ws) && issorted(fs) && allunique(fs) || throw(ArgumentError(
         "give distinct increasing positive bath frequencies and positive weights in Hz."))
@@ -1535,8 +1541,10 @@ function transientgain(sol::TransientSolution, measurement::TransientQuantumPlan
     # the gain runs on a batch, of which a solution is one condition
     return transientgain(batchof(sol), measurement, inputs; factorization, reuse)[:, :, 1]
 end
-function transientgain(sol::TransientBatchSolution, measurement::TransientQuantumPlan,
+Base.@nospecializeinfer function transientgain(sol::TransientBatchSolution, measurement::TransientQuantumPlan,
         inputs::TransientQuantumPlan; factorization = nothing, reuse = nothing)
+    # compiled once whatever the options are (see transientnoise)
+    @nospecialize factorization reuse
     recordedsolution(sol)
     p = first(sol.problems)
     backend = KernelAbstractions.get_backend(sol.finalflux)

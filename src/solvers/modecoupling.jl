@@ -515,10 +515,9 @@ take ([`couplingbytes`](@ref)): the Jacobian index matrices, the incidence
 matrix, the counts, the mode layout, the mode offsets and the requested
 precision. Everything with a value in it is read from the system at the
 time of the rebuild, so a system rebound to new values is what a rebuild
-sees. A plain struct, so that a preconditioner's type depends on its
-system's type alone; the two parameters, the mode offsets (whose tuple
-length is the tone count) and the precision, are what a rebuild dispatches
-on.
+sees. The preconditioner holds it in a field of abstract type; the two
+parameters, the mode offsets (whose tuple length is the tone count) and
+the precision, are what a rebuild dispatches on.
 """
 struct PreconditionerPlan{A,P<:Union{Nothing,Type{<:AbstractFloat}}}
     Amatrixindices::Matrix{Int}
@@ -727,11 +726,15 @@ strongly pumped device the block diagonal alone stalls, and
     backend's free memory at the time ([`freememory`](@ref)); set by
     tests, not by a constructor keyword.
 """
-mutable struct ModeCouplingPreconditioner{TS} <: AbstractPreconditioner
+mutable struct ModeCouplingPreconditioner <: AbstractPreconditioner
     # untyped, because on a backend `P` is a `DeviceSparsePattern` rather
     # than a host sparse matrix
     P
-    sys::TS      # replaced when the system is rebound to new values
+    # the system, replaced when it is rebound to new values; untyped, so
+    # that the methods of the preconditioner are compiled once rather than
+    # once per system: they reach the system through a dynamic call per
+    # rebuild, beside the assembly and the factorization it starts
+    sys
     const cache::FactorizationCache
     factorization::AbstractFactorization
     # the structural ingredients from which `buildcoupling` rebuilds
@@ -794,7 +797,7 @@ floating point type of the factorization, `nothing` for that of the
 system. `Amatrixmodes` is the harmonic offset of every mode pair, needed by
 `HarmonicBand` and `MeasuredBand`.
 """
-function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
+function ModeCouplingPreconditioner(@nospecialize(sys), Amatrixindices::Matrix,
     Amatrixconjindices::Matrix, Ljb::SparseVector, Lscale,
     Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
     Nfreq::Integer, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,
@@ -803,6 +806,8 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     precision::Union{Nothing,Type{<:AbstractFloat}} = nothing,
     Amatrixmodes = nothing)
 
+    # built once per solve, so the system, which only the calls below and
+    # the rebuilds read, is not specialized on
     backend = sys.nonlineartermplan.backend
     spec isa Automatic && (spec = resolveautomatic(sys, Rbnm, Nmodes,
         Nbranches, layout, Amatrixmodes, backend))

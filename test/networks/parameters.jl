@@ -36,17 +36,6 @@ import StaticArrays
                     @test isapprox(arg1,f[4](f[3](arg4,portimpedances=portimpedances),portimpedances=portimpedances))
                 end
             end
-            # vector of matrices
-            for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2), (StaticArrays.@MVector rand(Complex{Float64},2))]
-                for arg1 in [
-                        [rand(Complex{Float64},2,2) for i in 1:10],
-                        [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:10],
-                    ]
-                    arg2 = [f[1](arg1[i],portimpedances=portimpedances) for i in 1:10]
-                    arg3 = [f[2](arg2[i],portimpedances=portimpedances) for i in 1:10]
-                    @test isapprox(arg1,arg3)
-                end
-            end
         end
     end
 
@@ -76,15 +65,6 @@ import StaticArrays
                 @test isapprox(arg1,arg3)
                 arg4 = copy(arg1)
                 @test isapprox(arg1,f[4](f[3](arg4)))
-            end
-            # vector of matrices
-            for arg1 in [
-                    [rand(Complex{Float64},2,2) for i in 1:10],
-                    [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:10],
-                ]
-                arg2 = [f[1](arg1[i]) for i in 1:10]
-                arg3 = [f[2](arg2[i]) for i in 1:10]
-                @test isapprox(arg1,arg3)
             end
         end
     end

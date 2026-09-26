@@ -117,8 +117,11 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
 
     # a bare in-place product is normalized to a `mul!`-able operator once,
-    # so the loop below and the pluggable linear solver see one interface
-    jvp = asoperator(jvp!, length(x))
+    # so the loop below and the pluggable linear solver see one interface.
+    # It, the residual and the preconditioner are erased (see `erased`), so
+    # that the iteration, the line search and the linear solve are compiled
+    # once per vector type rather than once per system
+    jvp = asoperator(erased(jvp!), length(x))
 
     # validate every option before the first residual evaluation; the line
     # search validated its own when it was built
@@ -143,7 +146,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     isnothing(workspace) || (workspace[] = kv)
     # the iteration behind a function barrier, so that it is compiled for
     # the concrete type of a workspace which a reuse holds untyped
-    return _nlsolvekrylov!(fj!, jvp, F, x, pc, method, kv;
+    return _nlsolvekrylov!(erased(fj!), jvp, F, x, erased(pc), method, kv;
         iterations = iterations, atol = atol, rtol = rtol)
 end
 

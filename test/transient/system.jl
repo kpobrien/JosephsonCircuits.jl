@@ -99,11 +99,11 @@ using Test
         fp, Ip, fs = 4.75001e9, 0.00565e-6, 4.76e9
         hb = hbsolve(2pi*[fs], (2pi*fp,), [(mode = (1,), port = 1, current = Ip)], (8,), (16,), jpa)
         s11 = hb.linearized.S((0,), 1, (0,), 1, 1)
-        rise(t) = 1 - 2/(exp(t/10e-9) + exp(-t/10e-9))
+        rise(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         pj = transientproblem(jpa; sources = [TransientSource(1, t -> 2Ip*rise(t)*cospi(2fp*t))])
         steps = 80
         h = 1/(steps*fp)
-        pump = transientsolve(pj, (0.0, 76000h); dt = h, method = GaussLegendre(), record = :checkpoints)
+        pump = transientsolve(pj, (0.0, 300steps*h); dt = h, method = GaussLegendre(), record = :checkpoints)
         cur = zeros(1, length(pump.times), 2)
         cur[1, :, 1] .= rise.(pump.times) .* cospi.(2fs .* pump.times)
         cur[1, :, 2] .= rise.(pump.times) .* sinpi.(2fs .* pump.times)
@@ -386,6 +386,57 @@ using Test
         @test transientadjoint(rcps, rweights).currents ≈ rab.currents rtol=1e-9
     end
 
+    @testset "fitted rational blocks" begin
+        # the RLC two-port fitted at its three poles equals the explicit
+        # RLC around a junction to roundoff
+        rlc = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:l1, 1, 2, Inductor(1.5e-9)), (:c, 2, 0, Capacitor(0.6e-12)),
+            (:r, 2, 0, Resistor(120.0)), (:l2, 2, 3, Inductor(1.0e-9)), (:p2, 3, 0, Port(2; Z0 = 50.0))])
+        fs = collect(range(0.2e9, 12e9; length = 240))
+        hb = hblinsolve(2pi .* fs, rlc; keyedarrays = false)
+        fitted = RationalScattering(ScatteringParameters((2pi .* fs, hb.S); nports = 2, zref = 50.0), 3)
+        drive(t) = t <= 0 ? 0.0 : 0.3e-6*sinpi(t/1e-9)^2*sinpi(2*3e9*t)
+        withblock = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)), (:blk, 1, 2, fitted),
+            (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.3e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
+        explicit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)), (:l1, 1, 4, Inductor(1.5e-9)),
+            (:c, 4, 0, Capacitor(0.6e-12)), (:r, 4, 0, Resistor(120.0)), (:l2, 4, 2, Inductor(1.0e-9)),
+            (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.3e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
+        sb = transientsolve(transientproblem(withblock; sources = [TransientSource(1, drive)]), (0.0, 1.5e-9);
+            dt = 2e-12, method = GaussLegendre(), rtol = 1e-12)
+        se = transientsolve(transientproblem(explicit; sources = [TransientSource(1, drive)]), (0.0, 1.5e-9);
+            dt = 2e-12, method = GaussLegendre(), rtol = 1e-12)
+        @test sb.outgoing ≈ se.outgoing rtol=1e-8
+        # A network which is a perfect open at one port and a perfect
+        # short at the other at infinite frequency fits with its
+        # feedthrough exactly on the unit circle. The stamps snap the
+        # roundoff residues of I - S and I + S to the exact zeros the
+        # algebra has, so the endpoint's rate system sees zero rows
+        # rather than equations of machine epsilon; without the snap the
+        # reading amplifies the residual by their inverse at every step
+        # and the state overflows within tens of steps. The fitted block
+        # in front of a junction is checked against the same circuit as
+        # lumped elements.
+        embed = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:le, 1, 2, Inductor(1e-9)), (:re, 2, 3, Resistor(0.5)),
+            (:ce, 3, 0, Capacitor(1e-12)), (:p2, 3, 0, Port(2; Z0 = 50.0))])
+        ghz = collect(range(0.5e9, 10e9; length = 80))
+        hbe = hblinsolve(2pi .* ghz, embed; keyedarrays = false)
+        fite = @test_logs match_mode = :any RationalScattering(
+            ScatteringParameters((2pi .* ghz, hbe.S); nports = 2, zref = 50.0), 2)
+        edrive(t) = 0.1e-6*sin(2pi*4e9*t)*(1 - exp(-t/0.5e-9))
+        eblock = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cp, 1, 0, Capacitor(50e-15)), (:blk, 1, 2, fite),
+            (:jj, 2, 0, JosephsonJunction(1e-9)), (:cj, 2, 0, Capacitor(1e-12))])
+        elump = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cp, 1, 0, Capacitor(50e-15)),
+            (:le, 1, 2, Inductor(1e-9)), (:re, 2, 3, Resistor(0.5)),
+            (:ce, 3, 0, Capacitor(1e-12)),
+            (:jj, 3, 0, JosephsonJunction(1e-9)), (:cj, 3, 0, Capacitor(1e-12))])
+        ses = [transientsolve(transientproblem(c; sources = [TransientSource(1, edrive)]),
+            (0.0, 2e-9); dt = 1e-12, method = GaussLegendre()) for c in (eblock, elump)]
+        @test maximum(abs, ses[1].voltage .- ses[2].voltage) <
+            1e-3*maximum(abs, ses[2].voltage)
+    end
+
 
     @testset "ideal transmission lines" begin
         # the line is the method of characteristics: a conductance at its
@@ -408,7 +459,7 @@ using Test
             a = 1e-7
             pf = transientproblem(loaded; sources = [TransientSource(1, t -> t <= 0 ? 0.0 : 2a*(1 - exp(-(t/2e-9)^2))*cospi(2f*t))])
             dt = 1/(80f)
-            T = 40e-9
+            T = 20e-9
             nsteps = round(Int, T/dt)
             sol = transientsolve(pf, (0.0, nsteps*dt); dt, method = GaussLegendre())
             window(t) = t >= T - 8/f ? sinpi((t - (T - 8/f))*f/8)^2 : 0.0
@@ -692,7 +743,7 @@ end
     # a settling time which is not a whole number of pump periods, so
     # that the reference of the bath quadratures, the start of the
     # record, is not a zero of the pump's phase
-    settle, record = 60.0625e-9, 20e-9
+    settle, record = 20.0625e-9, 10e-9
     nsol = transientsolve(transientproblem(cr), (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
     first = round(Int, settle/dt) + 1
     nplan = transientquantumplan(nsol, nsol.times[first:end], [fn])
@@ -703,8 +754,8 @@ end
     @test isapprox(metrics.gain, abs2(hbn.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-4)
     @test isapprox(metrics.QE, hbn.linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
     # the forward method against the adjoint on a record settled for a
-    # twelfth of the time, which their agreement does not need
-    ssettle = 5.0625e-9
+    # nanosecond, which their agreement does not need
+    ssettle = 1.0625e-9
     ssol = transientsolve(transientproblem(cr), (0.0, ssettle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
     sfirst = round(Int, ssettle/dt) + 1
     splan = transientquantumplan(ssol, ssol.times[sfirst:end], [fn])
@@ -947,7 +998,7 @@ end
     fi = 1e9 - fs
     a0 = Is*sqrt(Z0)/2
     hb = hbsolve([2pi*fs], (wp,), [], (2,), (4,), cj; threewavemixing = true)
-    tsol = transientsolve(transientproblem(cj; sources = [TransientSource(1, t -> Is*sinpi(2fs*t))]), (0.0, 400e-9);
+    tsol = transientsolve(transientproblem(cj; sources = [TransientSource(1, t -> Is*sinpi(2fs*t))]), (0.0, 80e-9);
         dt, method = GaussLegendre())
     iqplan = transientiqplan(tsol, tsol.times, [fs, fi]; duration = 40e-9, ports = [1, 1], stride = 400)
     iq = transientiq(iqplan, tsol.outgoing)

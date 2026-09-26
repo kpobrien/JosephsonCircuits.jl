@@ -4,84 +4,39 @@ using Test
 
 @testset verbose = true "quantumoptics" begin
 
+    # the forms of four modes, stored dense in the floating point types
+    # the checks and conversions take in the rest of the file
+    Omega_block = Matrix{Float64}(JosephsonCircuits.symplectic_form_block(4))
+    Omega_pair = Matrix{Float64}(JosephsonCircuits.symplectic_form_pair(4))
+    Sigma_block = Matrix{Complex{Float64}}(JosephsonCircuits.indefinite_hermitian_form_block(4))
+    Sigma_pair = Matrix{Complex{Float64}}(JosephsonCircuits.indefinite_hermitian_form_pair(4))
+
     @testset "symplectic form" begin
 
         # Serafini B.2, the symplectic form is a member of the symplectic
         # group
-        @test JosephsonCircuits.is_symplectic_block(
-            JosephsonCircuits.symplectic_form_block(4),
-        )
-
-        @test JosephsonCircuits.is_symplectic_pair(
-            JosephsonCircuits.symplectic_form_pair(4),
-        )
-
-        # Serafini B.3, the inverse equals the adjoint
-        @test isapprox(
-            inv(Matrix(JosephsonCircuits.symplectic_form_block(4))),
-            adjoint(JosephsonCircuits.symplectic_form_block(4)),
-        )
-
-        @test isapprox(
-            inv(Matrix(JosephsonCircuits.symplectic_form_pair(4))),
-            adjoint(JosephsonCircuits.symplectic_form_pair(4)),
-        )
+        @test JosephsonCircuits.is_symplectic_block(Omega_block)
+        @test JosephsonCircuits.is_symplectic_pair(Omega_pair)
 
         # Serafini B.3, the adjoint equals the negative of the symplectic
         # form
-
-        @test isapprox(
-            adjoint(JosephsonCircuits.symplectic_form_block(4)),
-            -JosephsonCircuits.symplectic_form_block(4),
-        )
-
-        @test isapprox(
-            adjoint(JosephsonCircuits.symplectic_form_pair(4)),
-            -JosephsonCircuits.symplectic_form_pair(4),
-        )
+        @test isapprox(adjoint(Omega_block), -Omega_block)
+        @test isapprox(adjoint(Omega_pair), -Omega_pair)
 
         # Serafini pg. 31, symplectic form times itself is minus identity
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_block(4)^2,
-            -I(2 * 4),
-        )
+        @test isapprox(Omega_block^2, -I(2 * 4))
+        @test isapprox(Omega_pair^2, -I(2 * 4))
 
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_pair(4)^2,
-            -I(2 * 4),
-        )
-
-        # Serafini pg. 31, symplectic form times adjoint is the identity
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_block(4) * JosephsonCircuits.symplectic_form_block(4)',
-            I(2 * 4),
-        )
-
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_pair(4) * JosephsonCircuits.symplectic_form_pair(4)',
-            I(2 * 4),
-        )
+        # Serafini pg. 31, symplectic form times adjoint is the identity:
+        # the inverse is the adjoint (Serafini B.3)
+        @test isapprox(Omega_block * Omega_block', I(2 * 4))
+        @test isapprox(Omega_pair * Omega_pair', I(2 * 4))
 
         # convert between the symplectic forms
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_block(4),
-            JosephsonCircuits.pair_to_block(JosephsonCircuits.symplectic_form_pair(4)),
-        )
-
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_block(4),
-            JosephsonCircuits.pair_to_block2(JosephsonCircuits.symplectic_form_pair(4)),
-        )
-
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_pair(4),
-            JosephsonCircuits.block_to_pair(JosephsonCircuits.symplectic_form_block(4)),
-        )
-
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_pair(4),
-            JosephsonCircuits.block_to_pair2(JosephsonCircuits.symplectic_form_block(4)),
-        )
+        @test isapprox(Omega_block, JosephsonCircuits.pair_to_block(Omega_pair))
+        @test isapprox(Omega_block, JosephsonCircuits.pair_to_block2(Omega_pair))
+        @test isapprox(Omega_pair, JosephsonCircuits.block_to_pair(Omega_block))
+        @test isapprox(Omega_pair, JosephsonCircuits.block_to_pair2(Omega_block))
 
         # the permutation matrices reorder a matrix which is not square as
         # the permutations do
@@ -90,15 +45,10 @@ using Test
         @test JosephsonCircuits.pair_to_block2(M) == JosephsonCircuits.pair_to_block(M)
 
         # test the conversions and their inverses
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_pair(4),
-            JosephsonCircuits.block_to_pair(JosephsonCircuits.pair_to_block(JosephsonCircuits.symplectic_form_pair(4))),
-        )
-
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_block(4),
-            JosephsonCircuits.pair_to_block(JosephsonCircuits.block_to_pair(JosephsonCircuits.symplectic_form_block(4))),
-        )
+        @test isapprox(Omega_pair,
+            JosephsonCircuits.block_to_pair(JosephsonCircuits.pair_to_block(Omega_pair)))
+        @test isapprox(Omega_block,
+            JosephsonCircuits.pair_to_block(JosephsonCircuits.block_to_pair(Omega_block)))
 
     end
 
@@ -106,44 +56,29 @@ using Test
 
         # imaginary number times indefinite Hermitian form is a member of the
         # bogoliubov group
-        @test JosephsonCircuits.is_bogoliubov_block(
-            -im*JosephsonCircuits.indefinite_hermitian_form_block(4),
-        )
-
-        @test JosephsonCircuits.is_bogoliubov_pair(
-            -im*JosephsonCircuits.indefinite_hermitian_form_pair(4),
-        )
+        @test JosephsonCircuits.is_bogoliubov_block(-im*Sigma_block)
+        @test JosephsonCircuits.is_bogoliubov_pair(-im*Sigma_pair)
 
         # convert symplectic form to indefinite hermitian form
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_ladder_block(JosephsonCircuits.symplectic_form_block(4)),
-            -im*JosephsonCircuits.indefinite_hermitian_form_block(4)
-        )
-
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_ladder_pair(JosephsonCircuits.symplectic_form_pair(4)),
-            -im*JosephsonCircuits.indefinite_hermitian_form_pair(4)
-        )
+        @test isapprox(JosephsonCircuits.quadrature_to_ladder_block(Omega_block),
+            -im*Sigma_block)
+        @test isapprox(JosephsonCircuits.quadrature_to_ladder_pair(Omega_pair),
+            -im*Sigma_pair)
 
         # convert indefinite hermitian form to symplectic form
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_block(4),
-            JosephsonCircuits.ladder_to_quadrature_block(-im*JosephsonCircuits.indefinite_hermitian_form_block(4))
-        )
-
-        @test isapprox(
-            JosephsonCircuits.symplectic_form_pair(4),
-            JosephsonCircuits.ladder_to_quadrature_pair(-im*JosephsonCircuits.indefinite_hermitian_form_pair(4))
-        )
+        @test isapprox(Omega_block,
+            JosephsonCircuits.ladder_to_quadrature_block(-im*Sigma_block))
+        @test isapprox(Omega_pair,
+            JosephsonCircuits.ladder_to_quadrature_pair(-im*Sigma_pair))
 
     end
 
     @testset "is_positive_semi_definite" begin
 
-        @test JosephsonCircuits.is_positive_semi_definite([1 0;0 1])
-        @test JosephsonCircuits.is_positive_semi_definite([1 0;0 0])
-        @test !JosephsonCircuits.is_positive_semi_definite([1 0;0 -1])
-        @test !JosephsonCircuits.is_positive_semi_definite([1 1;0 1])
+        @test JosephsonCircuits.is_positive_semi_definite([1.0 0;0 1])
+        @test JosephsonCircuits.is_positive_semi_definite([1.0 0;0 0])
+        @test !JosephsonCircuits.is_positive_semi_definite([1.0 0;0 -1])
+        @test !JosephsonCircuits.is_positive_semi_definite([1.0 1;0 1])
 
     end
 
@@ -171,8 +106,8 @@ using Test
 
     @testset "is_cptp" begin
 
-        @test !JosephsonCircuits.is_cptp_quadrature_pair([1 0;0 1],[1 0;1 1])
-        @test JosephsonCircuits.is_cptp_quadrature_pair([1 0;0 1],[0 0;0 0])
+        @test !JosephsonCircuits.is_cptp_quadrature_pair([1.0 0;0 1],[1.0 0;1 1])
+        @test JosephsonCircuits.is_cptp_quadrature_pair([1.0 0;0 1],[0.0 0;0 0])
 
         # a Gaussian unitary adds no noise, so it is CPTP with Y = 0, where
         # Y + im*(Ω - X*Ω*X') is zero up to rounding of either sign
@@ -956,11 +891,11 @@ using Test
         # errors
         @test_throws(
             ErrorException,
-            JosephsonCircuits.symplectic_normal_form_pair([1 1;1 1]),
+            JosephsonCircuits.symplectic_normal_form_pair([1.0 1;1 1]),
         )
         @test_throws(
             ErrorException,
-            JosephsonCircuits.symplectic_normal_form_pair([0 0 1;0 0 0;-1 0 0]),
+            JosephsonCircuits.symplectic_normal_form_pair([0.0 0 1;0 0 0;-1 0 0]),
         )
 
     end
@@ -1070,7 +1005,7 @@ using Test
 
         @test_throws(
             ErrorException,
-            JosephsonCircuits.B_from_X_Y_quadrature_block([1 0;0 1],[1 0;0 -1]),
+            JosephsonCircuits.B_from_X_Y_quadrature_block([1.0 0;0 1],[1.0 0;0 -1]),
         )
     end
 
@@ -1205,7 +1140,7 @@ using Test
         @test Sm[2, 1, :] == [0.5im, -0.5im]
 
         # test with incorrect dimensions
-        w = 0.01:0.01:1.0
+        w = collect(0.01:0.01:1.0)
         @test_throws(
             ErrorException,
             JosephsonCircuits.interpolate_scattering(w,randn(Complex{Float64},2),w),

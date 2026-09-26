@@ -234,8 +234,13 @@ end
             0 => fill(4.0, n), 1 => fill(0.5, n - 1), 2 => fill(-1.0, n - 2))
         o = JC.fillordering(JC.KLUfactorization(), A)
         JC.kluordered(A, o); JC.kluordered(A, o.perm)
-        sized = @allocated JC.kluordered(A, o)
-        unsized = @allocated JC.kluordered(A, o.perm)
+        # (measured inside a function: `@allocated` has Julia compile the
+        # whole top-level expression it is written in, here the file's
+        # testset)
+        allocations(A, ordering) =
+            @allocated JosephsonCircuits.kluordered(A, ordering)
+        sized = allocations(A, o)
+        unsized = allocations(A, o.perm)
         @test sized < unsized/2
         b = randn(rng, n)
         @test JC.kluordered(A, o)\b ≈ JC.kluordered(A, o.perm)\b

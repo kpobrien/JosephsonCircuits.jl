@@ -16,7 +16,7 @@ compiling again: the same matrices and augmentation, new bound drives.
 The problems of one batch must drive the same targets in the same order,
 which this gives when `sources` differ only in their waveforms.
 """
-function transientproblem(p::TransientProblem; sources)
+Base.@nospecializeinfer function transientproblem(p::TransientProblem; @nospecialize(sources))
     psc = p.circuit
     drives, injection, constantcurrent = bindsources(psc, p.matrices.vvn, p.ports, p.portpositive, p.portnegative, length(p), sources)
     return TransientProblem(psc, p.matrices, p.Nnodal, p.Naux, p.Lscale, p.coupledbranches,
@@ -2050,9 +2050,13 @@ split across the threads of the session when the outputs are stored,
 as the solve splits them; an `outputsink` receives the columns of every
 condition at each time, so a call with one runs on one thread.
 """
-function transienttangent(b::TransientBatchSolution, currents::Union{Nothing,AbstractArray{<:Real}};
+Base.@nospecializeinfer function transienttangent(b::TransientBatchSolution,
+        @nospecialize(currents::Union{Nothing,AbstractArray{<:Real}});
         targets = porttargets(first(b.problems)), initialstate = nothing, factorization = nothing, reuse = nothing,
         outputsink = nothing, perturbation = nothing)
+    # compiled once whatever the arguments are: they are brought to the
+    # forms the steps take here, and the steps are invoked dynamically
+    @nospecialize targets initialstate factorization reuse outputsink perturbation
     # a batch of one under another rule is its solution's own tangent
     b.method isa GaussLegendre || return map(addcondition, transienttangent(singlecondition(b), currents;
         targets, initialstate, factorization, reuse, outputsink, perturbation))
@@ -2081,9 +2085,11 @@ the host the conditions are split across the threads of the session
 when the currents are stored, as the solve splits them; a call with a
 `sink` or a `stagesink` runs on one thread.
 """
-function transientadjoint(b::TransientBatchSolution, weights::AbstractArray{<:Real};
+Base.@nospecializeinfer function transientadjoint(b::TransientBatchSolution, @nospecialize(weights::AbstractArray{<:Real});
         quantity::Symbol = :outgoing, targets = porttargets(first(b.problems)), factorization = nothing,
         reuse = nothing, sink = nothing, stagesink = nothing, components = String[])
+    # compiled once whatever the arguments are (see transienttangent)
+    @nospecialize targets factorization reuse sink stagesink components
     # a batch of one under another rule is its solution's own adjoint
     b.method isa GaussLegendre || return map(addcondition, transientadjoint(singlecondition(b), weights;
         quantity, targets, factorization, reuse, sink, stagesink, components))
@@ -3695,8 +3701,10 @@ function responsewindows(sol::TransientBatchSolution, problems, sys::TransientSy
     # the rate across the projected junctions at every time of the
     # window, read as the solve read it
     rbuffer = KernelAbstractions.zeros(sys.backend, Float64, npj, K + 2, N)
-    rw = npj > 0 ? ratereadwork(sys, sys.backend, length(sys.problem), N, N) : nothing
-    vread = npj > 0 ? KernelAbstractions.zeros(sys.backend, Float64, length(sys.problem), N) : nothing
+    # the work and the buffers the replay captures are there whether or
+    # not it reads them, empty then, so that its closure is one type
+    rw = ratereadwork(sys, sys.backend, length(sys.problem), N, N)
+    vread = KernelAbstractions.zeros(sys.backend, Float64, length(sys.problem), N)
     delta = ratedelta(sys)
     readrates! = (column, t) -> begin
         readstepper!(vread, st, rw, t, delta)
@@ -3707,9 +3715,10 @@ function responsewindows(sol::TransientBatchSolution, problems, sys::TransientSy
     # the states of the window and the stage increments of its steps, for
     # the responses which read them
     n = length(sys.problem)
-    xbuffer = withstates ? KernelAbstractions.zeros(sys.backend, Float64, n, K + 2, N) : nothing
-    vbuffer = withstates ? KernelAbstractions.zeros(sys.backend, Float64, n, K + 2, N) : nothing
-    dbuffer = withstates ? KernelAbstractions.zeros(sys.backend, Float64, n, 2, K + 1, N) : nothing
+    ns = withstates ? n : 0
+    xbuffer = KernelAbstractions.zeros(sys.backend, Float64, ns, K + 2, N)
+    vbuffer = KernelAbstractions.zeros(sys.backend, Float64, ns, K + 2, N)
+    dbuffer = KernelAbstractions.zeros(sys.backend, Float64, ns, 2, K + 1, N)
     windows = map(1:nc) do c
         kstart = (c - 1)*K + 1
         kend = min(c*K, nt - 1)

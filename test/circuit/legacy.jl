@@ -436,7 +436,8 @@ end
     end
 
     @testset "X_Y_to_sympletic is X_Y_to_symplectic" begin
-        X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(2)
+        # a noisy attenuator of two modes, the same in pair and block order
+        X, Y = 0.6*Matrix(1.0I, 4, 4), Matrix(1.0I, 4, 4)
         S = @test_logs (:warn,) JosephsonCircuits.X_Y_to_sympletic_pair(X, Y)
         @test S == JosephsonCircuits.X_Y_to_symplectic_pair(X, Y)
         S = @test_logs (:warn,) JosephsonCircuits.X_Y_to_sympletic_block(X, Y)

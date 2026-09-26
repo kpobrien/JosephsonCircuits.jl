@@ -282,10 +282,13 @@ states, see [`TransientBlock`](@ref), and an ideal
 circuits with blocks or lines step under [`GaussLegendre`](@ref). Any
 other block is rejected.
 """
-function transientproblem(circuit::CompilableCircuit,
+Base.@nospecializeinfer function transientproblem(circuit::CompilableCircuit,
         circuitdefs::AbstractDict = Dict{Symbol,Any}();
         sources = ())
-    psc = compile(circuit)
+    # compiled once for every kind of circuit and every waveform: the body
+    # reads the compiled circuit and binds the drives through wrappers
+    @nospecialize circuit sources
+    psc = compile(circuit)::CompiledCircuit
     vvn = numericvalues(psc, circuitdefs)
     for k in eachindex(vvn)
         v = transientreal(vvn[k], psc.componentnames[k])
@@ -361,7 +364,10 @@ end
 # positive terminal and a named current source's out of its first
 # terminal and into its second, and the constant current of the
 # netlist's current sources no source replaced, from the values `vvn`.
-function bindsources(psc::CompiledCircuit, vvn::Vector, ports::Vector{CompiledPort}, portpositive, portnegative, n::Int, sources)
+# Compiled once for every collection of sources, whose waveforms the
+# drives wrap.
+Base.@nospecializeinfer function bindsources(psc::CompiledCircuit, vvn::Vector, ports::Vector{CompiledPort}, portpositive,
+        portnegative, n::Int, @nospecialize(sources))
     drives = TransientDrive[]
     rows, cols, vals = Int[], Int[], Float64[]
     replaced = Set{Int}()

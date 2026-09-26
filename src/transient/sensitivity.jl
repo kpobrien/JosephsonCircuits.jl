@@ -580,9 +580,13 @@ time. The linearization is about the full recorded state, so the loaded
 junction phases enter every response; both the trajectory and its grid
 are held fixed.
 """
-function transienttangent(sol::TransientSolution, currents::Union{Nothing,AbstractArray{<:Real}};
+Base.@nospecializeinfer function transienttangent(sol::TransientSolution,
+        @nospecialize(currents::Union{Nothing,AbstractArray{<:Real}});
         targets = porttargets(sol.problem), initialstate = nothing,
         factorization = nothing, reuse = nothing, outputsink = nothing, perturbation = nothing)
+    # compiled once whatever the arguments are: they are brought to the
+    # forms the steps take here, and the steps are invoked dynamically
+    @nospecialize targets initialstate factorization reuse outputsink perturbation
     # the Gauss-Legendre responses run on a batch, of which a solution is
     # one condition
     sol.method isa GaussLegendre && return map(dropcondition, transienttangent(batchof(sol), currents;
@@ -642,8 +646,9 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
     # waves come from the tangent rate read as the solve's is, the reading
     # linearized at the recorded phases and read rates of the projected
     # junctions, with the tangent currents' rate and the components'
-    # perturbation of the constraints
-    reading = sys.portsread ? outputreading(sys, backend, n, 1, ndir) : nothing
+    # perturbation of the constraints; the work is there whether or not a
+    # port reads, so that the closure of the outputs is one type
+    reading = outputreading(sys, backend, n, 1, ndir)
     withstates = !isnothing(perturbation) && perturbation.states
     dIh = currents.grid
     delta = ratedelta(sys)
@@ -658,12 +663,12 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
     fdev, fh = projecting ? (allocate(n, ndir), allocate(n, ndir)) : (nothing, nothing)
     statewindow, readingat! = recordreadings(sol, sys, withstates, xk, delta)
     function outputs!(k)
-        if !isnothing(reading)
+        if sys.portsread
             readingat!(reading, k)
             readoutputs!(reading, sys, k, dv, dx, dIh, injh, withstates ? Array(xk) : zeros(0, 0),
                 withstates ? Array(reading.wk) : zeros(0, 0), perturbation, backend)
         end
-        stepmul!(portwork, sys.ports, isnothing(reading) ? dv : reading.dvread)
+        stepmul!(portwork, sys.ports, sys.portsread ? reading.dvread : dv)
         portwork .*= phi0
         stepmul!(directwork, portmap, view(dI, :, kcol(k), :))
         outs = isnothing(outputsink) ? (view(voltage, :, k, :), view(incident, :, k, :), view(outgoing, :, k, :)) : outwork
@@ -824,10 +829,12 @@ like the sink's columns, is valid until the next call, and the grid columns
 hold only what the grid reads; that pair is the transpose of the staged
 form of the tangent's currents, and it is what the noise contracts.
 """
-function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real};
+Base.@nospecializeinfer function transientadjoint(sol::TransientSolution, @nospecialize(weights::AbstractArray{<:Real});
         quantity::Symbol = :outgoing, targets = porttargets(sol.problem),
         factorization = nothing, reuse = nothing, sink = nothing, stagesink = nothing,
         components = String[])
+    # compiled once whatever the arguments are (see transienttangent)
+    @nospecialize targets factorization reuse sink stagesink components
     # the Gauss-Legendre responses run on a batch, of which a solution is
     # one condition
     sol.method isa GaussLegendre && return map(dropcondition, transientadjoint(batchof(sol), weights;
@@ -872,8 +879,9 @@ function stepadjoint(sol::TransientSolution, wh::Array{Float64, 3}, single::Bool
     portwork = allocate(np, nobj)
     targetwork = allocate(nq, nobj)
     # the adjoint of an output at time `k`, as the Gauss-Legendre
-    # adjoint's (see `adjointoutput!`)
-    transposing = sys.portsread ? outputtranspose(sys, backend, n, 1, nobj) : nothing
+    # adjoint's (see `adjointoutput!`), its work there whether or not a
+    # port reads, so that the closure is one type
+    transposing = outputtranspose(sys, backend, n, 1, nobj)
     withstates = !isnothing(perturbation) && perturbation.states
     delta = ratedelta(sys)
     xk = allocate(n, 1)
@@ -891,7 +899,7 @@ function stepadjoint(sol::TransientSolution, wh::Array{Float64, 3}, single::Bool
     function output!(k)
         portwork .= cv .* view(w, :, k, :)
         stepmul!(work, sys.portst, portwork)
-        if isnothing(transposing)
+        if !sys.portsread
             vbar .+= phi0 .* work
             return nothing
         end
@@ -991,8 +999,10 @@ phases every record holds. The adjoint counterpart is the `components`
 keyword of [`transientadjoint`](@ref), whose `sensitivity` is the
 derivative of its objective with respect to the same perturbations.
 """
-function transientsensitivity(sol::Union{TransientSolution,TransientBatchSolution}, names;
+Base.@nospecializeinfer function transientsensitivity(sol::Union{TransientSolution,TransientBatchSolution}, @nospecialize(names);
         factorization = nothing, reuse = nothing, outputsink = nothing)
+    # compiled once whatever the arguments are (see transienttangent)
+    @nospecialize factorization reuse outputsink
     recordedsolution(sol)
     p = transientproblemof(sol)
     backend = KernelAbstractions.get_backend(sol.finalflux)

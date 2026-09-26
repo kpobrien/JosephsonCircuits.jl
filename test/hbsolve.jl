@@ -838,6 +838,30 @@ using Test
             @test isapprox(forward, solve(:forward); rtol = 1e-2)
         end
 
+        @testset "the reverse order allocates little per frequency" begin
+            # the reverse order's innermost loops touch every time sample
+            # of every junction for every pair of output modes at each
+            # signal frequency, and a buffer whose type is not concrete
+            # there boxes each element they touch, 16 bytes or more; the
+            # solves of a frequency allocate a byte or two per element
+            n = 8
+            circuit, defs = testchaincircuit(n)
+            solve(nf) = hbsolve(2*pi*collect(range(4.8e9, 5.2e9; length = nf)),
+                (2*pi*7e9,), [(mode=(1,),port=1,current=1e-8)], (4,), (8,),
+                circuit, defs; keyedarrays=false,
+                sensitivitynames=["Lj1", "C1"], returnSsensitivity=true,
+                sensitivitymode=:reverse)
+            sol = solve(2); solve(4)
+            # one port, so the pairs of output modes are those of the modes
+            touched = length(sol.linearized.modes)^2*
+                prod(sol.nonlinear.frequencies.Nt)*n
+            # measured in a function: `@allocated` compiles the whole
+            # expression it stands in, which here would be this testset
+            allocations(nf) = @allocated solve(nf)
+            perfrequency = (allocations(4) - allocations(2)) ÷ 2
+            @test perfrequency < 8*touched
+        end
+
         @testset "operating point input validation" begin
             # malformed low level inputs must be rejected at the boundary,
             # not discovered as out of bounds indexing inside the

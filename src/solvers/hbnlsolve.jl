@@ -872,15 +872,11 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # a reused system already holds this array, its time domain twin and
     # the plans, and they are read from it below rather than allocated
     reusesys = reusing && !isnothing(reuse.sys)
-    if reusesys
-        rs = reuse.sys
-        (size(rs.phimatrix) == Nwtuple &&
-         eltype(rs.phimatrix) == Complex{precision} &&
-         KernelAbstractions.get_backend(rs.phimatrix) == backend) ||
-            throw(ArgumentError("the system handed in for reuse was built for a different mode grid, precision or backend; hand in a fresh `HBReuse`."))
-    end
+    heldphimatrix, heldcomplexplan, heldrealplan = reusesys ?
+        reusedparts(reuse.sys, Nwtuple, precision, backend) :
+        (nothing, nothing, nothing)
     phimatrix, phimatrixtd, irfftplan, rfftplan = if reusesys
-        reuse.sys.phimatrix, nothing, nothing, nothing
+        heldphimatrix, nothing, nothing, nothing
     else
         pm = tobackend(backend, zeros(Complex{precision}, Nwtuple))
         # create an array to hold the time domain data for the RFFT. also
@@ -1118,7 +1114,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # reads its structure. A reused system which holds a complex plan
     # refreshes it on rebind, and the Jacobian it assembles is taken over.
     reusejx = needjx && reusesys && !isnothing(reuse.complexjacobian) &&
-        !isnothing(reuse.sys.complexjacobianplan)
+        !isnothing(heldcomplexplan)
     Jx, complexjosephson = if needjx && !reusejx
         plancomplexjacobian(Amatrixindices, Ljb, Lscale, Rbnm, Nmodes,
             Nbranches, Nfreq, invLnm, Gnm, Cnm)
@@ -1126,7 +1122,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         nothing, nothing
     end
     Jxb, complexjacobianplan = if reusejx
-        reuse.complexjacobian, reuse.sys.complexjacobianplan
+        reuse.complexjacobian, heldcomplexplan
     elseif devicex
         Jxt = sparse(transpose(Jx))
         # the Josephson structure on the device, in the solver's precision
@@ -1158,9 +1154,9 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # its own much sparser restricted plan, so the full Jacobian plan (the
     # largest object in a multi-tone solve) is never built.
     reusejr = needjr && reusesys && !isnothing(reuse.jacobian) &&
-        !isnothing(reuse.sys.realjacobianplan)
+        !isnothing(heldrealplan)
     Jr, realjacobianplan = if reusejr
-        reuse.jacobian, reuse.sys.realjacobianplan
+        reuse.jacobian, heldrealplan
     elseif needjr
         # on a backend the structure is built there, transposed, because a
         # device factorization is compressed by rows, and the assembly writes
@@ -1449,6 +1445,11 @@ function solvenewtonkrylov!(method::NewtonKrylov;
     # wrapper: its candidates are then corrections of the whole canonical
     # state, and the Arnoldi factorization it harvests is that of the
     # operator GMRES actually ran, rather than a restriction of it.
+    #
+    # The residual, the product and the preconditioner are erased here
+    # (see `ErasedFunction`), before the deflation wraps them, so that the
+    # iteration and the deflation are compiled once per vector type rather
+    # than once per system.
     if dcexplicit
         work = canonwork
         L = work.layout
@@ -1459,12 +1460,14 @@ function solvenewtonkrylov!(method::NewtonKrylov;
         # flux blocks only and would leave them undefined
         fill!(ucb, zero(eltype(ucb)))
         gathercanonical!(ucb, xrb, L)
-        pcbase = CanonicalPreconditioner(base, work)
-        jvsolve = canonicaljvp(jvpreal!, work)
+        pcbase = ErasedPreconditioner(CanonicalPreconditioner(base, work))
+        fsolve = ErasedFunction(canonicalresidual(fjreal!, work))
+        jvsolve = ErasedFunction(canonicaljvp(jvpreal!, work))
         usolve, Fsolve = ucb, Fcb
     else
-        pcbase = base
-        jvsolve = jvpreal!
+        pcbase = ErasedPreconditioner(base)
+        fsolve = ErasedFunction(fjreal!)
+        jvsolve = ErasedFunction(jvpreal!)
         usolve, Fsolve = xrb, Frb
     end
 
@@ -1477,7 +1480,7 @@ function solvenewtonkrylov!(method::NewtonKrylov;
     # first refresh of the new solve. The inherited state is copied and
     # committed back only after a converged solve (below), so a failed
     # point cannot seed the next one.
-    pc = if spec isa Floquet
+    floquet = if spec isa Floquet
         prev = reusing ? reuse.recycling : nothing
         # the residual-image form with physical candidates: `harvest`
         # is the number of singular directions per harvest, the
@@ -1489,26 +1492,23 @@ function solvenewtonkrylov!(method::NewtonKrylov;
         end
         FloquetPreconditioner(spec, pcbase, jvsolve, usolve; state = state)
     else
-        pcbase
+        nothing
     end
+    pc = isnothing(floquet) ? pcbase : ErasedPreconditioner(floquet)
 
     # the linear solver, the refresh policy and the escalation are read
     # off the method; see `NewtonKrylov`
-    info = if dcexplicit
-        out = nlsolvekrylov!(canonicalresidual(fjreal!, canonwork),
-            jvsolve, Fsolve, usolve, pc, method;
-            iterations = iterations, atol = atol, rtol = rtol,
-            workspace = reusing ? reuse.krylovcanonical : nothing)
+    workspace = !reusing ? nothing :
+        dcexplicit ? reuse.krylovcanonical : reuse.krylov
+    info = nlsolvekrylov!(fsolve, jvsolve, Fsolve, usolve, pc, method;
+        iterations = iterations, atol = atol, rtol = rtol,
+        workspace = workspace)
+    if dcexplicit
         dccanonical, dcsol = canonicalresult!(xrb, Frb, usolve, Fsolve,
             canonwork, dcplan)
-        out
-    else
-        nlsolvekrylov!(fjreal!, jvsolve, Fsolve, usolve, pc, method;
-            iterations = iterations, atol = atol, rtol = rtol,
-            workspace = reusing ? reuse.krylov : nothing)
     end
-    if reusing && !(spec isa AbstractModeCoupling) && info.converged
-        reuse.recycling = pc.state
+    if reusing && !isnothing(floquet) && info.converged
+        reuse.recycling = floquet.state
     end
     # back to the host for the complex representation returned to the
     # caller; the conversion walks a BitVector serially
@@ -1838,6 +1838,19 @@ function checkjunctioncurrents(nl::NonlinearHB, psc::CompiledCircuit)
     checkjunctiondc(phitd, Ljb.nzind, junctionbranchnames(psc),
         isnothing(relations) ? nothing : sinusoidalmask(relations))
     return nothing
+end
+
+# The frequency domain array and the complex and real Jacobian plans of a
+# reused system, once it is checked to be built for the frequency domain
+# array size `Nwtuple`, the precision and the backend of this solve. A
+# function barrier: a reuse holds its system untyped, and each field read
+# from it outside one boxes a copy of the system.
+function reusedparts(sys::HBSystem, Nwtuple::Dims, precision, backend)
+    pm = sys.phimatrix
+    (size(pm) == Nwtuple && eltype(pm) == Complex{precision} &&
+     KernelAbstractions.get_backend(pm) == backend) ||
+        throw(ArgumentError("the system handed in for reuse was built for a different mode grid, precision or backend; hand in a fresh `HBReuse`."))
+    return pm, sys.complexjacobianplan, sys.realjacobianplan
 end
 
 """

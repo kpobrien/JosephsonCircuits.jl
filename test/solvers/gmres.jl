@@ -1,5 +1,18 @@
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
 
+# The product with a matrix and the solve with a factorization, in the
+# form the solver takes them. The tests make their operators here, so the
+# solver is compiled once for each type of matrix rather than once for
+# each test.
+matrixproduct(A) = (w, v) -> mul!(w, A, v)
+factorsolve(F) = (z, v) -> ldiv!(z, F, v)
+
+# the inverse of a diagonal, as a preconditioner of the package's interface
+struct JacobiP <: JosephsonCircuits.AbstractPreconditioner
+    d::Vector{Float64}
+end
+JosephsonCircuits.applypreconditioner!(z::AbstractVector, p::JacobiP,
+    r::AbstractVector) = (z .= r ./ p.d; z)
 
 # The Krylov solver itself: the basis it grows, the systems it is exact
 # on, restarting, preconditioning, its allocation, and the breakdowns and
@@ -11,7 +24,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         @test_throws ArgumentError JosephsonCircuits.GMRESWorkspace(-1, 3)
         ws = JosephsonCircuits.GMRESWorkspace(5, 3)
         A = Matrix(1.0I, 5, 5)
-        op!(w, v) = mul!(w, A, v)
+        op! = matrixproduct(A)
         @test_throws DimensionMismatch JosephsonCircuits.gmres!(
             zeros(4), op!, zeros(5), ws)
         @test_throws DimensionMismatch JosephsonCircuits.gmres!(
@@ -32,7 +45,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         ws = JosephsonCircuits.GMRESWorkspace(b, m)
         @test size(ws.V) == (n, JosephsonCircuits.GMRESINITIALCOLUMNS)
         x = zeros(n)
-        out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+        out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
             rtol = 1e-12, maxrestarts = 1)
         @test out.converged
         @test out.iterations > JosephsonCircuits.GMRESINITIALCOLUMNS
@@ -44,7 +57,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         full = JosephsonCircuits.GMRESWorkspace(b, m)
         full.V = similar(b, n, m + 1)
         y = zeros(n)
-        JosephsonCircuits.gmres!(y, (w, v) -> mul!(w, A, v), b, full;
+        JosephsonCircuits.gmres!(y, matrixproduct(A), b, full;
             rtol = 1e-12, maxrestarts = 1)
         @test x == y
         # growth stops at the restart length: a basis asked for more keeps
@@ -55,7 +68,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
     @testset "zero right hand side" begin
         ws = JosephsonCircuits.GMRESWorkspace(4, 3)
         A = Matrix(2.0I, 4, 4)
-        out = JosephsonCircuits.gmres!(ones(4), (w, v) -> mul!(w, A, v), zeros(4), ws)
+        out = JosephsonCircuits.gmres!(ones(4), matrixproduct(A), zeros(4), ws)
         @test out.converged
         @test out.iterations == 0
     end
@@ -67,7 +80,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
             xref = A \ b
             ws = JosephsonCircuits.GMRESWorkspace(n, n)
             x = zeros(n)
-            out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+            out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
                 rtol = 1e-12, maxrestarts = 4)
             @test out.converged
             @test isapprox(x, xref; rtol = 1e-8)
@@ -85,7 +98,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         b = randn(n)
         ws = JosephsonCircuits.GMRESWorkspace(n, 2n)
         x = zeros(n)
-        out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+        out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
             rtol = 1e-13, maxrestarts = 1)
         @test out.converged
         @test out.iterations <= n
@@ -100,7 +113,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         for m in (5, 15, n)
             ws = JosephsonCircuits.GMRESWorkspace(n, m)
             x = zeros(n)
-            out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+            out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
                 rtol = 1e-11, maxrestarts = 50)
             @test out.converged
             @test isapprox(x, xref; rtol = 1e-7)
@@ -112,7 +125,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         # a badly scaled operator that GMRES struggles with unpreconditioned
         A = sprandn(n, n, 0.05) + spdiagm(0 => range(1.0, 500.0; length = n))
         b = randn(n)
-        Aop!(w, v) = mul!(w, A, v)
+        Aop! = matrixproduct(A)
 
         ws1 = JosephsonCircuits.GMRESWorkspace(n, 40)
         x1 = zeros(n)
@@ -121,7 +134,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
 
         # exact preconditioner: one iteration, and the answer is the direct one
         F = lu(A)
-        Mop!(z, v) = ldiv!(z, F, v)
+        Mop! = factorsolve(F)
         ws2 = JosephsonCircuits.GMRESWorkspace(n, 40)
         x2 = zeros(n)
         out2 = JosephsonCircuits.gmres!(x2, Aop!, b, ws2; Mop! = Mop!,
@@ -140,13 +153,13 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         n = 80
         A0 = sprandn(n, n, 0.06) + spdiagm(0 => fill(30.0, n))
         F = lu(A0)
-        Mop!(z, v) = ldiv!(z, F, v)
+        Mop! = factorsolve(F)
         b = randn(n)
         for pert in (0.0, 0.05, 0.25)
             A = A0 + pert*spdiagm(0 => randn(n))
             ws = JosephsonCircuits.GMRESWorkspace(n, 30)
             x = zeros(n)
-            out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+            out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
                 Mop! = Mop!, rtol = 1e-10, maxrestarts = 20)
             @test out.converged
             @test isapprox(x, A \ b; rtol = 1e-6)
@@ -160,7 +173,7 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         xref = A \ b
         ws = JosephsonCircuits.GMRESWorkspace(n, n)
         x = copy(xref)                       # start at the solution
-        out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+        out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
             rtol = 1e-10, initialzero = false)
         @test out.converged
         @test out.iterations == 0            # nothing to do
@@ -171,24 +184,55 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
         n = 50
         A = randn(n, n) + 5n*I
         b = randn(n)
-        Aop!(w, v) = mul!(w, A, v)
+        Aop! = matrixproduct(A)
         # a small fixed overhead remains from the views handed to the BLAS
         # calls; what matters is that it does not grow with the iteration
         # count, so compare a short solve against a long one
+        # (measured inside a function: `@allocated` has Julia compile the
+        # whole top-level expression it is written in, here the file's
+        # testset)
+        allocations(x, ws, rtol, maxrestarts) = @allocated JosephsonCircuits.gmres!(
+            x, Aop!, b, ws; rtol, maxrestarts)
         ws1 = JosephsonCircuits.GMRESWorkspace(n, 3)
         x1 = zeros(n)
         JosephsonCircuits.gmres!(x1, Aop!, b, ws1; rtol = 1e-10, maxrestarts = 1)
-        short = @allocated JosephsonCircuits.gmres!(x1, Aop!, b, ws1;
-            rtol = 1e-10, maxrestarts = 1)
+        short = allocations(x1, ws1, 1e-10, 1)
 
         ws2 = JosephsonCircuits.GMRESWorkspace(n, 40)
         x2 = zeros(n)
         JosephsonCircuits.gmres!(x2, Aop!, b, ws2; rtol = 1e-12, maxrestarts = 20)
-        long = @allocated JosephsonCircuits.gmres!(x2, Aop!, b, ws2;
-            rtol = 1e-12, maxrestarts = 20)
+        long = allocations(x2, ws2, 1e-12, 20)
 
         @test short <= 1024
         @test long <= 1024
+    end
+
+    @testset "the erased operator and preconditioner allocate nothing per step" begin
+        # the Newton-Krylov iteration hands GMRES its product and its
+        # preconditioner erased, and every Arnoldi step calls both through
+        # a dynamic dispatch, whose arguments must not be boxed
+        n = 50
+        A = randn(n, n) + 2*sqrt(n)*I
+        b = randn(n)
+        Aop = JosephsonCircuits.asoperator(
+            JosephsonCircuits.erased(matrixproduct(A)), n)
+        M = JosephsonCircuits.erased(JacobiP(diag(A)))
+        allocations(x, ws, rtol, maxrestarts) = @allocated JosephsonCircuits.gmres!(
+            x, Aop, b, ws; Mop! = M, rtol, maxrestarts)
+        ws1 = JosephsonCircuits.GMRESWorkspace(n, 3)
+        x1 = zeros(n)
+        JosephsonCircuits.gmres!(x1, Aop, b, ws1; Mop! = M, rtol = 1e-12,
+            maxrestarts = 1)
+        short = allocations(x1, ws1, 1e-12, 1)
+        ws2 = JosephsonCircuits.GMRESWorkspace(n, 40)
+        x2 = zeros(n)
+        out = JosephsonCircuits.gmres!(x2, Aop, b, ws2; Mop! = M,
+            rtol = 1e-12, maxrestarts = 4)
+        long = allocations(x2, ws2, 1e-12, 4)
+        # the long solve takes ten times the steps of the short one
+        @test out.iterations >= 30
+        @test long <= short
+        @test norm(A*x2 - b) <= 1e-10*norm(b)
     end
 
     @testset "the norm is formed through the inner product in double alone" begin
@@ -210,7 +254,7 @@ end
     b = [1.0, 2.0, 3.0]
     x = zeros(3)
     ws = JosephsonCircuits.GMRESWorkspace(3, 3, Float64)
-    out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+    out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
         rtol = 1e-8, maxrestarts = 5)
     @test !out.converged
     @test out.reason != :converged
@@ -224,7 +268,7 @@ end
     b2 = [1.0, 1.0, 1.0]
     x2 = zeros(3)
     ws2 = JosephsonCircuits.GMRESWorkspace(3, 3, Float64)
-    out2 = JosephsonCircuits.gmres!(x2, (w, v) -> mul!(w, A2, v), b2, ws2;
+    out2 = JosephsonCircuits.gmres!(x2, matrixproduct(A2), b2, ws2;
         rtol = 1e-8, maxrestarts = 3)
     @test !out2.converged
     @test all(isfinite, x2)
@@ -238,9 +282,9 @@ end
     br = ones(20)
     xr1 = zeros(20); xrs = zeros(20)
     wsr = JosephsonCircuits.GMRESWorkspace(20, 20, Float64)
-    outr1 = JosephsonCircuits.gmres!(xr1, (w, v) -> mul!(w, Ar, v), br, wsr;
+    outr1 = JosephsonCircuits.gmres!(xr1, matrixproduct(Ar), br, wsr;
         rtol = 1e-10, maxrestarts = 3)
-    outrs = JosephsonCircuits.gmres!(xrs, (w, v) -> mul!(w, 1e-18*Ar, v), br,
+    outrs = JosephsonCircuits.gmres!(xrs, matrixproduct(1e-18*Ar), br,
         wsr; rtol = 1e-10, maxrestarts = 3)
     @test outr1.converged && outrs.converged
     @test isapprox(1e-18*xrs, xr1; rtol = 1e-9)
@@ -254,7 +298,7 @@ end
     Av = Matrix(Diagonal(1.0 .+ (1:40) ./ 40)) .+ 0.05 .* sin.((1:40) .* (1:40)')
     wsv = JosephsonCircuits.GMRESWorkspace(40, 30, Float64)
     lengths = Int[]
-    outv = JosephsonCircuits.gmres!(zeros(40), (w, v) -> mul!(w, Av, v),
+    outv = JosephsonCircuits.gmres!(zeros(40), matrixproduct(Av),
         ones(40), wsv; Mop! = Mv!, rtol = 1e-10, maxrestarts = 6,
         oncycle = (ws, j) -> push!(lengths, j))
     @test outv.cycles == length(lengths) >= 2
@@ -293,7 +337,7 @@ end
     applied = Ref(0)
     Me!(z, v) = (applied[] += 1; ldiv!(z, Fe, v))
     xe = zeros(40)
-    oute = JosephsonCircuits.gmres!(xe, (w, v) -> mul!(w, An, v), bn,
+    oute = JosephsonCircuits.gmres!(xe, matrixproduct(An), bn,
         JosephsonCircuits.GMRESWorkspace(40, 30, Float64); Mop! = Me!,
         rtol = 1e-12, maxrestarts = 4)
     @test oute.converged && oute.lastcycle == 1
@@ -305,7 +349,7 @@ end
     # multiple of the first basis vector, x = D*[1, 1]
     D = [1.0, 2.0]
     xd = zeros(2)
-    outd = JosephsonCircuits.gmres!(xd, (w, v) -> mul!(w, [1.0 0.0; 0.0 0.0], v),
+    outd = JosephsonCircuits.gmres!(xd, matrixproduct([1.0 0.0; 0.0 0.0]),
         [1.0, 1.0], JosephsonCircuits.GMRESWorkspace(2, 2, Float64);
         Mop! = (z, v) -> (z .= D .* v), rtol = 1e-12, maxrestarts = 1)
     @test outd.lastcycle == 2
@@ -318,9 +362,9 @@ end
     x3 = zeros(2)
     ws3 = JosephsonCircuits.GMRESWorkspace(2, 2, Float64)
     @test_throws ArgumentError JosephsonCircuits.gmres!(x3,
-        (w, v) -> mul!(w, A3, v), b3, ws3; rtol = Inf)
+        matrixproduct(A3), b3, ws3; rtol = Inf)
     @test_throws ArgumentError JosephsonCircuits.gmres!(x3,
-        (w, v) -> mul!(w, A3, v), b3, ws3; atol = NaN)
+        matrixproduct(A3), b3, ws3; atol = NaN)
 
     # a zero right hand side with initialzero = false must measure the warm
     # start rather than discard it
@@ -328,7 +372,7 @@ end
     b4 = [0.0, 0.0]
     x4 = [7.0, -4.0]
     ws4 = JosephsonCircuits.GMRESWorkspace(2, 2, Float64)
-    out4 = JosephsonCircuits.gmres!(x4, (w, v) -> mul!(w, A4, v), b4, ws4;
+    out4 = JosephsonCircuits.gmres!(x4, matrixproduct(A4), b4, ws4;
         rtol = 1e-10, initialzero = false)
     @test out4.converged
     @test norm(A4*x4 - b4) <= 1e-10
@@ -339,7 +383,7 @@ end
     b5 = ones(20)
     x5 = zeros(20)
     ws5 = JosephsonCircuits.GMRESWorkspace(20, 20, Float64)
-    out5 = JosephsonCircuits.gmres!(x5, (w, v) -> mul!(w, A5, v), b5, ws5;
+    out5 = JosephsonCircuits.gmres!(x5, matrixproduct(A5), b5, ws5;
         rtol = 1e-10, maxrestarts = 3)
     @test out5.converged
     @test out5.reason == :converged
@@ -354,7 +398,7 @@ end
     F6 = b5; p6 = -x5
     ϕ0 = JosephsonCircuits.merit(F6)
     Jv = zeros(20)
-    op = JosephsonCircuits.asoperator((y, v) -> mul!(y, A5, v), 20)
+    op = JosephsonCircuits.asoperator(matrixproduct(A5), 20)
     fromproduct = JosephsonCircuits.meritslope!(Jv, op, p6, F6, ϕ0, nothing)
     @test fromproduct ≈ dot(F6, A5*p6)
     fromresidual = JosephsonCircuits.meritslope!(Jv, op, p6, F6, ϕ0,

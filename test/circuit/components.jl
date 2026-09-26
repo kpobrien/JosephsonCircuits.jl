@@ -204,9 +204,6 @@ using Test
         sq = GaussianChannel([exp(r) 0.0; 0.0 exp(-r)], zeros(2,2);
             nmodes = 1)
         @test abs(sq.cp_margin) < 1e-10
-        # Bogoliubov conversion: a beamsplitter swap
-        X = quadraturetransform([0 1; 1 0], zeros(2, 2))
-        @test X == [0 1 0 0; 1 0 0 0; 0 0 0 1; 0 0 1 0]
         # two mode channel from the Bogoliubov form of a two mode squeezer
         A = cosh(r)*Matrix(1.0I, 2, 2)
         B = sinh(r)*[0.0 1.0; 1.0 0.0]

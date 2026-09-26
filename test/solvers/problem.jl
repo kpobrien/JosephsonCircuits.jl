@@ -17,14 +17,18 @@ hbnlp_relerr(a, b) = norm(a - b)/max(norm(a), norm(b), eps())
 function hbnlp_testproblems(; padded::Bool = true)
     circuit, defs = testjpacircuitnumeric()
     grid(N) = padded ? map(i -> 2i, N) : N
+    # the entries are typed alike, so that neither building the list nor
+    # reading an entry back infers the join of the problems' types, which
+    # is costly
+    entry(name, problem) = Pair{String,Any}(name, problem)
     return [
-        ("1 tone", JC.hbnonlinearproblem((2*pi*4.75001e9,), (8,),
+        entry("1 tone", JC.hbnonlinearproblem((2*pi*4.75001e9,), (8,),
             [(mode=(1,),port=1,current=0.02e-6)], circuit, defs;
             Nevaluationharmonics = grid((8,)))),
-        ("1 tone dc+even", JC.hbnonlinearproblem((2*pi*4.75001e9,), (6,),
+        entry("1 tone dc+even", JC.hbnonlinearproblem((2*pi*4.75001e9,), (6,),
             [(mode=(1,),port=1,current=0.02e-6)], circuit, defs;
             dc=true, even=true, Nevaluationharmonics = grid((6,)))),
-        ("2 tone", JC.hbnonlinearproblem((2*pi*4.65e9, 2*pi*4.85e9), (3,3),
+        entry("2 tone", JC.hbnonlinearproblem((2*pi*4.65e9, 2*pi*4.85e9), (3,3),
             [(mode=(1,0),port=1,current=1e-8),(mode=(0,1),port=1,current=1e-8)],
             circuit, defs; Nevaluationharmonics = grid((3,3)))),
         # An asymmetric three tone grid with direct current and both mixing
@@ -34,7 +38,7 @@ function hbnlp_testproblems(; padded::Bool = true)
         # cover such a grid; these are the operators underneath them, whose
         # transposes and second and third derivatives nothing else samples
         # on more than two tones.
-        ("3 tone asymmetric dc", JC.hbnonlinearproblem(
+        entry("3 tone asymmetric dc", JC.hbnonlinearproblem(
             2*pi .* (4.75001e9, 1.17003e9, 0.63007e9), (2,1,1),
             [(mode=(1,0,0),port=1,current=1e-8),(mode=(0,1,0),port=1,current=5e-9),
              (mode=(0,0,1),port=1,current=3e-9),(mode=(0,0,0),port=1,current=1e-9)],

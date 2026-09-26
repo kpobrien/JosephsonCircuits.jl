@@ -37,9 +37,8 @@ using Test
     # the scattering data of an RLC two-port, tabulated as the
     # linearized solver gives it, fitted by vector fitting at its
     # three poles and at more: the fit is exact, the poles the RLC's,
-    # the extra poles dropped, and in time the fitted block equals the
-    # explicit RLC around a junction to roundoff; the raw fit is
-    # returned on request, and the sampling is checked
+    # and the extra poles dropped; the raw fit is returned on request,
+    # and the sampling is checked
     rlc(R) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:l1, 1, 2, Inductor(1.5e-9)), (:c, 2, 0, Capacitor(0.6e-12)),
         (:r, 2, 0, R), (:l2, 2, 3, Inductor(1.0e-9)), (:p2, 3, 0, Port(2; Z0 = 50.0))])
     fs = collect(range(0.2e9, 12e9; length = 240))
@@ -730,16 +729,9 @@ using Test
             @test JC.hinfnorm(q.A, q.B, q.C, q.D)[3] <= 1 + 4e-8
         end
     end
-    # A network which is a perfect open at one port and a perfect
+    # a network which is a perfect open at one port and a perfect
     # short at the other at infinite frequency fits with its
-    # feedthrough exactly on the unit circle. The stamps snap the
-    # roundoff residues of I - S and I + S to the exact zeros the
-    # algebra has, so the endpoint's rate system sees zero rows
-    # rather than equations of machine epsilon; without the snap the
-    # reading amplifies the residual by their inverse at every step
-    # and the state overflows within tens of steps. The fitted block
-    # in front of a junction is checked against the same circuit as
-    # lumped elements.
+    # feedthrough exactly on the unit circle
     embed = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
         (:le, 1, 2, Inductor(1e-9)), (:re, 2, 3, Resistor(0.5)),
         (:ce, 3, 0, Capacitor(1e-12)), (:p2, 3, 0, Port(2; Z0 = 50.0))])
@@ -748,19 +740,6 @@ using Test
     fite = @test_logs match_mode = :any RationalScattering(
         ScatteringParameters((2pi .* ghz, hbe.S); nports = 2, zref = 50.0), 2)
     @test maximum(abs.(abs.(diag(fite.provider.D)) .- 1)) < 1e-9
-    edrive(t) = 0.1e-6*sin(2pi*4e9*t)*(1 - exp(-t/0.5e-9))
-    eblock = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
-        (:cp, 1, 0, Capacitor(50e-15)), (:blk, 1, 2, fite),
-        (:jj, 2, 0, JosephsonJunction(1e-9)), (:cj, 2, 0, Capacitor(1e-12))])
-    elump = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
-        (:cp, 1, 0, Capacitor(50e-15)),
-        (:le, 1, 2, Inductor(1e-9)), (:re, 2, 3, Resistor(0.5)),
-        (:ce, 3, 0, Capacitor(1e-12)),
-        (:jj, 3, 0, JosephsonJunction(1e-9)), (:cj, 3, 0, Capacitor(1e-12))])
-    se = [transientsolve(transientproblem(c; sources = [TransientSource(1, edrive)]),
-        (0.0, 2e-9); dt = 1e-12, method = GaussLegendre()) for c in (eblock, elump)]
-    @test maximum(abs, se[1].voltage .- se[2].voltage) <
-        1e-3*maximum(abs, se[2].voltage)
     # a fit needs its last pole unless a constant reproduces the data:
     # one real pole and one conjugate pair fitted at their order and
     # above keep it, and constant data is refused as a rational block
@@ -787,17 +766,6 @@ using Test
     JC.evaluateprovider!(S3, fit3.provider, 2pi .* fs)
     @test maximum(abs.(S3 .- hb3.S)) < 1e-10 && size(fit3.provider.A, 1) <= 6
     @test_throws ArgumentError RationalScattering(data, 4; frequencies = fs[1:4])
-    drive(t) = t <= 0 ? 0.0 : 0.3e-6*sinpi(t/1e-9)^2*sinpi(2*3e9*t)
-    withblock = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)), (:blk, 1, 2, fitted),
-        (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.3e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
-    explicit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)), (:l1, 1, 4, Inductor(1.5e-9)),
-        (:c, 4, 0, Capacitor(0.6e-12)), (:r, 4, 0, Resistor(120.0)), (:l2, 4, 2, Inductor(1.0e-9)),
-        (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.3e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
-    pb = transientproblem(withblock; sources = [TransientSource(1, drive)])
-    pe = transientproblem(explicit; sources = [TransientSource(1, drive)])
-    sb = transientsolve(pb, (0.0, 1.5e-9); dt = 2e-12, method = GaussLegendre(), rtol = 1e-12)
-    se = transientsolve(pe, (0.0, 1.5e-9); dt = 2e-12, method = GaussLegendre(), rtol = 1e-12)
-    @test sb.outgoing ≈ se.outgoing rtol=1e-8
 end
 
 # A delay is not a rational function, so a cable fitted whole spends its

@@ -1,6 +1,7 @@
 # The preconditioner interface of the Newton-Krylov solve: the operator wrapper
 # handed to a linear solver, the abstract preconditioner and every hook a wrapper
-# may implement, and the record of one linear solve.
+# may implement, the record of one linear solve, and the erased forms in which
+# the iteration receives its residual, product and preconditioner.
 
 """
     FunctionOperator(f!, n)
@@ -33,6 +34,25 @@ working.
 """
 asoperator(f::Function, n::Integer) = FunctionOperator(f, Int(n))
 asoperator(A, ::Integer) = A
+
+"""
+    ErasedFunction(f)
+
+A callable which calls `f` and returns `nothing`, with `f` held in a field
+of type `Any`. Code which calls it is compiled once whatever `f` is, where a
+closure over an [`HBSystem`](@ref) has a type of its own for every
+precision, backend, tone count and layout of the system. Each call is one
+dynamic dispatch, and its arguments cross it boxed unless they are heap
+objects already, so it suits a call which does heavy work on arrays: the
+residual and the Jacobian-vector product of [`nlsolvekrylov!`](@ref).
+"""
+struct ErasedFunction <: Function
+    f::Any
+end
+# a product `f(y, v)` and a residual `f(F, J, x)`, spelled out: a splatted
+# call through an untyped function allocates its argument tuple
+(e::ErasedFunction)(a, b) = (e.f(a, b); nothing)
+(e::ErasedFunction)(a, b, c) = (e.f(a, b, c); nothing)
 
 
 
@@ -388,3 +408,49 @@ deflationrebuilds(pc::AbstractWrappedPreconditioner) =
     deflationrebuilds(innerpreconditioner(pc))
 deflationproducts(pc::AbstractWrappedPreconditioner) =
     deflationproducts(innerpreconditioner(pc))
+
+"""
+    ErasedPreconditioner(pc::AbstractPreconditioner)
+
+`pc` held in a field of abstract type, the counterpart of
+[`ErasedFunction`](@ref) for a preconditioner: code which applies it is
+compiled once whatever `pc` is, and every hook reaches `pc` through one
+dynamic dispatch. A column view, which GMRES applies the preconditioner to
+at every Arnoldi step, crosses the dispatch as its matrix and its column
+index rather than as a view, which the dispatch would box.
+"""
+struct ErasedPreconditioner <: AbstractWrappedPreconditioner
+    inner::AbstractPreconditioner
+end
+
+innerpreconditioner(pc::ErasedPreconditioner) = pc.inner
+
+updatepreconditioner!(pc::ErasedPreconditioner, x::AbstractVector) =
+    (updatepreconditioner!(pc.inner, x); pc)
+
+applypreconditioner!(z::AbstractVector, pc::ErasedPreconditioner,
+    r::AbstractVector) = (applypreconditioner!(z, pc.inner, r); z)
+
+function applypreconditioner!(z::AbstractVector, pc::ErasedPreconditioner,
+        r::SubArray{<:Any,1,<:AbstractMatrix,<:Tuple{Base.Slice,Int}})
+    applycolumn!(z, pc.inner, parent(r), last(parentindices(r)))
+    return z
+end
+
+# the application to column `j` of `V`, specialized on the preconditioner
+applycolumn!(z, pc, V, j) =
+    (applypreconditioner!(z, pc, view(V, :, j)); nothing)
+
+"""
+    erased(f)
+    erased(pc::AbstractPreconditioner)
+
+The residual or product `f` as an [`ErasedFunction`](@ref), and `pc` as an
+[`ErasedPreconditioner`](@ref); either unchanged when it is erased already.
+An operator which is not a function is returned as it is.
+"""
+erased(f::Function) = ErasedFunction(f)
+erased(f::ErasedFunction) = f
+erased(pc::AbstractPreconditioner) = ErasedPreconditioner(pc)
+erased(pc::ErasedPreconditioner) = pc
+erased(A) = A

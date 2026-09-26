@@ -16,6 +16,14 @@ struct Passthrough <: JosephsonCircuits.AbstractPreconditioner end
 JosephsonCircuits.applypreconditioner!(z, ::Passthrough, r) = copyto!(z, r)
 JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
 
+# a grounded two port block which is a series impedance `Z` at every
+# frequency, an ideal through when `Z` is zero; the tests build their
+# series blocks here, so that the blocks share one type and their
+# evaluation is compiled once
+seriesblock(Z) = ScatteringParameters(
+    w -> JosephsonCircuits.ABCDtoS(JosephsonCircuits.ABCD_seriesZ(Z + 0im));
+    nports = 2, grounded = true, noise = Lossless())
+
 @testset verbose=true "direct current through resistors" begin
 
     ws = (2*pi*5e9,)
@@ -199,12 +207,8 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         # when something is injected.
         JC = JosephsonCircuits
         R = 100.0
-        through() = ScatteringParameters(
-            w -> JC.ABCDtoS(JC.ABCD_seriesZ(0.0 + 0im));
-            nports = 2, grounded = true, noise = Lossless())
-        finite() = ScatteringParameters(
-            w -> JC.ABCDtoS(JC.ABCD_seriesZ(10.0 + 0im));
-            nports = 2, grounded = true, noise = Lossless())
+        through() = seriesblock(0.0)
+        finite() = seriesblock(10.0)
         pump = [(mode=(1,), port=1, current=1e-6)]
         direct = [(mode=(0,), port=1, current=1e-6)]
         go(c, srcs) = hbnlsolve(ws, (1,), srcs, c, Dict{Any,Any}();
@@ -416,7 +420,6 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
     # current rather than the open circuit row `i = 0`, and a block which
     # is a resistor carries what that resistor would.
     @testset "a scattering block carries direct current" begin
-        JC = JosephsonCircuits
         Rb, Idc, Zbig = 100.0, 1.0e-6, 1.0e9
 
         # the same circuit twice: once with the resistor, once with a
@@ -426,9 +429,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
              :c1 => Capacitor(1e-12)],
             [[(:p1,1),(:rb,1),(:c1,1)], [(:rb,2), Ground],
              [(:p1,2),(:c1,2), Ground]])
-        blk = ScatteringParameters(
-            w -> JC.ABCDtoS(JC.ABCD_seriesZ(Rb + 0im));
-            nports = 2, grounded = true, noise = Lossless())
+        blk = seriesblock(Rb)
         asblk = Circuit(
             [:p1 => Port(1; Z0 = Zbig), :b => blk, :c1 => Capacitor(1e-12)],
             [[(:p1,1),(:b,1),(:c1,1)], [(:b,2), Ground],
@@ -519,9 +520,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         # answers. What is pinned instead is a direction the nodes cannot
         # see, which is a floating island's common voltage; the difference
         # is `H N`, not the block type.
-        through() = ScatteringParameters(
-            w -> JC.ABCDtoS(JC.ABCD_seriesZ(0.0 + 0im));
-            nports = 2, grounded = true, noise = Lossless())
+        through() = seriesblock(0.0)
         undetermined = Circuit(
             [:p1 => Port(1; Z0 = R), :l => Inductor(1e-9), :t => through(),
              :c1 => Capacitor(1e-12), :c2 => Capacitor(1e-12)],
@@ -531,9 +530,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
 
         # giving the block a finite series impedance determines the division
         # and the same circuit solves
-        finite() = ScatteringParameters(
-            w -> JC.ABCDtoS(JC.ABCD_seriesZ(10.0 + 0im));
-            nports = 2, grounded = true, noise = Lossless())
+        finite() = seriesblock(10.0)
         determined = Circuit(
             [:p1 => Port(1; Z0 = R), :l => Inductor(1e-9), :t => finite(),
              :c1 => Capacitor(1e-12), :c2 => Capacitor(1e-12)],
@@ -568,9 +565,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         # and drop the through current which lands in it. The physical
         # answer is that no current crosses -- the second node has nowhere
         # to send it -- and both nodes sit at `I*R`.
-        through = ScatteringParameters(
-            w -> JC.ABCDtoS(JC.ABCD_seriesZ(0.0 + 0im));
-            nports = 2, grounded = true, noise = Lossless())
+        through = seriesblock(0.0)
         bridged = Circuit(
             [:p1 => Port(1; Z0 = R), :t => through,
              :c1 => Capacitor(1e-12), :c2 => Capacitor(1e-12)],
@@ -607,10 +602,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
     # the circuit happens to use, which is why the rows and columns are
     # equilibrated before anything is decided.
     @testset "the classification does not depend on the impedance scale" begin
-        JC = JosephsonCircuits
-        through = ScatteringParameters(
-            w -> JC.ABCDtoS(JC.ABCD_seriesZ(0.0 + 0im));
-            nports = 2, grounded = true, noise = Lossless())
+        through = seriesblock(0.0)
         for k in (1e-3, 1.0, 1e3)
             R, L, C, I = 100.0*k, 1e-9*k, 1e-12/k, 1e-6/k
             go(c) = hbnlsolve(ws, (1,), [(mode=(0,), port=1, current=I)], c,

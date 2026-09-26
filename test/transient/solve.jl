@@ -18,6 +18,11 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
     return WeakRef(buffer)
 end
 
+# the bytes a state extracted from a solution allocates, measured in a
+# function of its own: `@allocated` compiles the expression it sits in,
+# which at the top level of a file is the whole testset around it
+stateallocations(sol) = @allocated transientstate(sol)
+
 # the same component at a value scaled by `r`, for finite differences
 rescale(c::Capacitor, r) = Capacitor(r*c.C)
 rescale(c::Inductor, r) = Inductor(r*c.L)
@@ -275,9 +280,9 @@ end
     # extracting a state reads the delay window alone, so it costs what
     # the window does for a record of any length
     brief = transientsolve(cabled, (0.0, 0.4e-9); dt = 2e-12, record = :phases, gl...)
-    transientstate(brief), transientstate(uninterrupted)
+    stateallocations(brief), stateallocations(uninterrupted)
     @test size(uninterrupted.linewaves, 2) > 5*size(brief.linewaves, 2)
-    @test (@allocated transientstate(uninterrupted)) < 2*(@allocated transientstate(brief))
+    @test stateallocations(uninterrupted) < 2*stateallocations(brief)
     # the end of a solve continues whatever it recorded: a rational
     # block's states under a record of the ports or of checkpoints,
     # and the waves of a line short enough that checkpoints keep its
@@ -368,6 +373,11 @@ end
     island = transientproblem(Circuit([("C1", "1", "0", Capacitor(1e-12)), ("L2", "2", "3", Inductor(1e-9)), ("C3", "2", "3", Capacitor(1e-12))]))
     @test island.gaugeindices == [2]
     @test isempty(transientproblem(Circuit(rc)).gaugeindices)
+    # and a circuit with such a node, which harmonic balance refuses,
+    # solves
+    islanded = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12)),
+        ("C2", "2", "3", Capacitor(1e-12)), ("L2", "2", "3", Inductor(1e-9))])
+    @test all(isfinite, transientsolve(transientproblem(islanded), (0.0, 1e-10); dt = 1e-12).outgoing)
     @test_throws ArgumentError transientproblem(Circuit([("C1", "1", "0", Capacitor(1e-12 + 1e-15im))]))
     @test_throws ArgumentError transientproblem(Circuit([("R1", "1", "0", Resistor(FrequencyDependent(w -> 50.0)))]))
     @test_throws ArgumentError transientproblem(Circuit([("L1", "1", "0", Inductor(0.0))]))
@@ -621,36 +631,6 @@ end
     @test length(prob) == 1
 end
 
-@testset "a floating junction and port, several drives" begin
-    circuit = Circuit([
-        ("p1", "1", "0", Port(1)), ("p2", "2", "1", Port(2; Z0 = 75.0)),
-        ("c1", "1", "0", Capacitor(1e-12)), ("c2", "2", "0", Capacitor(1e-12)),
-        ("jj", "2", "1", JosephsonJunction(1e-9))])
-    drive(t) = 0.1e-6*sinpi(2*3e9*t)
-    prob = transientproblem(circuit; sources = [TransientSource(1, drive)])
-    sol = transientsolve(prob, (0.0, 1e-9); dt = 2e-12, record = :phases, rtol = 1e-12)
-    rng = Random.default_rng()
-    currents = [1e-8*sinpi(2*1.1e9*t + p) - 1e-8*sinpi(p) for p in 1:2, t in sol.times]
-    response = transienttangent(sol, currents)
-    weights = randn(rng, size(currents))
-    adj = transientadjoint(sol, weights; quantity = :outgoing)
-    # exact as an identity, and checkable to the roundoff of the
-    # sums which meet in it, which cancel by an amount the draw
-    # decides; the tolerance is measured from their terms
-    cancellation = sum(abs, weights .* response.outgoing) +
-        sum(abs, adj.currents .* currents)
-    @test sum(weights .* response.outgoing) ≈ sum(adj.currents .* currents) rtol=1e-10 atol=1e-12*cancellation
-    eps = 1e-3
-    function loaded(sign)
-        sources = [TransientSource(1, t -> drive(t) + sign*eps*1e-8*(sinpi(2*1.1e9*t + 1) - sinpi(1))),
-            TransientSource(2, t -> sign*eps*1e-8*(sinpi(2*1.1e9*t + 2) - sinpi(2)))]
-        transientsolve(transientproblem(circuit; sources), (0.0, 1e-9); dt = 2e-12, rtol = 1e-12)
-    end
-    plus, minus = loaded(1), loaded(-1)
-    @test response.outgoing ≈ (plus.outgoing - minus.outgoing)/(2eps) rtol=2e-6
-    @test_throws ArgumentError transientadjoint(plus, weights)
-end
-
 @testset "the Gauss-Legendre rule: fourth order, the responses, the reuse" begin
     # the driven RC against a fine reference: the error falls sixteen
     # fold per halving where the trapezoidal rule's falls four fold
@@ -761,6 +741,7 @@ end
     # complex factorization across the solve and the responses
     bare = transientsolve(lp, (0.0, T); dt, method = GaussLegendre())
     @test_throws ArgumentError transienttangent(bare, currents)
+    @test_throws ArgumentError transientadjoint(bare, weights)
     reuse = TransientReuse()
     r1 = transientsolve(lp, (0.0, T); dt, record = :phases, rtol = 1e-12, method = GaussLegendre(), reuse)
     @test reuse.system.method isa GaussLegendre

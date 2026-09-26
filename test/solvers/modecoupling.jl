@@ -21,6 +21,12 @@ using Test
 
     modeslot(layout) = Int[(Int(layout.inv[j]) - 1) % layout.nmodes + 1
         for j in 1:layout.rdim]
+    # `@allocated` has Julia compile the whole top-level expression it is
+    # written in, here this testset, so the allocation checks measure
+    # inside functions
+    applyallocations(z, p, r) =
+        @allocated JosephsonCircuits.applypreconditioner!(z, p, r)
+    solveallocations(z, f, r) = @allocated JosephsonCircuits.trysolve!(z, f, r)
 
     @testset "modecouplingmask" begin
         @test JosephsonCircuits.modecouplingmask(3, Int[]) == Matrix(I, 3, 3)
@@ -521,7 +527,7 @@ using Test
         # Julia 1.11 still allocates the view wrappers each `mul!` of a
         # slice is handed, which later releases elide
         if VERSION >= v"1.12"
-            @test (@allocated JosephsonCircuits.applypreconditioner!(z, pb, r)) == 0
+            @test applyallocations(z, pb, r) == 0
         end
         # in single precision it is a preconditioner
         p32 = mk(FullJacobian(factorization = BlockFactorization(;
@@ -920,8 +926,7 @@ using Test
         # reference it passes its settings in on some Julia releases.
         fk = pk.cache.factorization
         JosephsonCircuits.trysolve!(zk, fk, rk)
-        @test (@allocated JosephsonCircuits.applypreconditioner!(zk, pk, rk)) ==
-            (@allocated JosephsonCircuits.trysolve!(zk, fk, rk))
+        @test applyallocations(zk, pk, rk) == solveallocations(zk, fk, rk)
         @test JosephsonCircuits.escalatepreconditioner!(pk)
         @test pk.factorization isa KLUfactorization
         @test eltype(pk.P) === Float64

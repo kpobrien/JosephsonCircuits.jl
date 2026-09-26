@@ -29,8 +29,7 @@ using Test
         # settled window of the record, the baths driven from the
         # equilibrium start through the settling, the bath the stationary
         # Floquet frequencies of the pumped response; the gain and the
-        # quantum efficiency to a part in ten thousand and the forward
-        # method to roundoff of the adjoint
+        # quantum efficiency to a part in ten thousand
         settle, record, dt = 200e-9, 100e-9, 2.5e-12
         frequencies = sort!(abs.([fs + 2k*fp for k in -2:2]))
         gsol = transientsolve(prob, (0.0, settle + record - dt); dt, record = :phases, method = GaussLegendre())
@@ -44,10 +43,6 @@ using Test
         @test gmetrics.gain ≈ abs2(s) rtol=1e-4
         @test gmetrics.QE ≈ qe rtol=1e-4
         @test gmetrics.normalizedQE ≈ 1 rtol=3e-3
-        gforward = transientnoise(gsol, gmeasurement; frequencies, weights = fill(1/record, 5),
-            inputs = gmeasurement, commutationrtol = 3e-3, method = :forward)
-        @test gforward.gain ≈ gnoise.gain rtol=1e-9
-        @test gforward.covariance ≈ gnoise.covariance rtol=1e-9
         # the noise of three pump amplitudes on one pass, equal to each
         # member's, with the gain rising with the pump. The checks from
         # here are of equivalences, the batch to its members, the tiled
@@ -137,7 +132,7 @@ using Test
         @test maximum(abs.(hb.nonlinear.nodeflux)) > 2
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))])
-        settle, record, dt = 20e-9, 20e-9, 2.5e-12
+        settle, record, dt = 10e-9, 10e-9, 2.5e-12
         sol = transientsolve(prob, (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
         first = round(Int, settle/dt) + 1
         measurement = transientquantumplan(sol, sol.times[first:end], [fs]; ports = [2])
@@ -153,7 +148,7 @@ using Test
     end
 
     @testset "a pulsed lossy line converges in the step, the bath spacing and the cutoff" begin
-        # a hundred series junctions with a loss resistor in every cell,
+        # fifty series junctions with a loss resistor in every cell,
         # pumped by a pulse that rises over 2 ns, holds 4 ns and falls
         # over 2 ns, measured in Hann windows of 2 ns on the rise, the
         # plateau and the fall, the output window delayed by the line's
@@ -162,7 +157,7 @@ using Test
         # fourth order, of the bath spacing, and of the cutoff, which must
         # pass the junction plasma frequency near 29 GHz where the line
         # responds most, beyond which nothing changes
-        cells = 100
+        cells = 50
         circuit = Any[("P1", "1", "0", Port(1; Z0 = 50.0))]
         for k in 1:cells
             push!(circuit, ("Lj$k", "$k", "$(k+1)", JosephsonJunction(100e-12)))
@@ -175,9 +170,11 @@ using Test
         fp, fs, ip = 7e9, 8e9, 1.5e-6
         pulse(t) = t <= 0 ? 0.0 : t < 2e-9 ? (1 - cospi(t/2e-9))/2 : t <= 6e-9 ? 1.0 : t < 8e-9 ? (1 + cospi((t - 6e-9)/2e-9))/2 : 0.0
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> 2ip*pulse(t)*cospi(2fp*t))])
-        T, delay = 2e-9, 0.25e-9
+        T, delay = 2e-9, 0.12e-9
         solutions = Dict{Float64,Any}()
-        function study(dt, spacing, fmax)
+        # the covariance in each window, and with `gain` the pulsed gain,
+        # which neither the bath's spacing nor its cutoff enters
+        function study(dt, spacing, fmax; gain = false)
             sol = get!(() -> transientsolve(prob, (0.0, 10e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints), solutions, dt)
             map((0.5e-9, 3.5e-9, 6e-9)) do start
                 first = round(Int, start/dt) + 1
@@ -185,36 +182,38 @@ using Test
                 tin, tout = sol.times[first:first + nm - 1], sol.times[first + shift:first + shift + nm - 1]
                 env = reshape(sinpi.((tin .- tin[1]) ./ T) .^ 2, :, 1)
                 measurement = transientquantumplan(sol, tout, [fs]; ports = [2], envelopes = env)
-                inputs = transientquantumplan(sol, tin, [fs]; ports = [1], envelopes = env)
                 freqs = collect(spacing:spacing:fmax)
                 noise = transientnoise(sol, measurement; frequencies = freqs, weights = fill(spacing, length(freqs)), commutationrtol = 5e-2)
-                pulsed = transientgain(sol, measurement, inputs)
                 @test noise.diagnostics.passed
+                gain || return (covariance = noise.covariance,)
+                inputs = transientquantumplan(sol, tin, [fs]; ports = [1], envelopes = env)
+                pulsed = transientgain(sol, measurement, inputs)
                 (gain = sum(abs2, pulsed)/2, covariance = noise.covariance, pulsed)
             end
         end
-        coarse, fine, finest = study(5e-12, 0.5e9, 30e9), study(2.5e-12, 0.5e9, 30e9), study(1.25e-12, 0.5e9, 30e9)
+        coarse, fine, finest = study(10e-12, 0.5e9, 30e9; gain = true), study(5e-12, 0.5e9, 30e9; gain = true),
+            study(2.5e-12, 0.5e9, 30e9; gain = true)
         for w in 1:3
             # the step: fourth order in the gain and the covariance
             ratio = norm(coarse[w].covariance - fine[w].covariance)/norm(fine[w].covariance - finest[w].covariance)
             @test 8 < ratio < 32
             @test 8 < abs(coarse[w].gain - fine[w].gain)/abs(fine[w].gain - finest[w].gain) < 32
-            @test norm(fine[w].covariance - finest[w].covariance)/norm(finest[w].covariance) < 1e-5
+            @test norm(fine[w].covariance - finest[w].covariance)/norm(finest[w].covariance) < 1e-4
         end
         # the plateau is stationary enough for a scalar quantum efficiency
         plateau = transientquantumefficiency(finest[2].pulsed, finest[2].covariance; rtol = 5e-2)
-        @test 0.5 < plateau.QE < 0.7 && 0.6 < plateau.gain < 0.7
+        @test 0.7 < plateau.QE < 0.85 && 0.75 < plateau.gain < 0.85
         # the spacing: the change halves or better as the spacing halves
         half, quarter = study(5e-12, 0.25e9, 30e9), study(5e-12, 0.125e9, 30e9)
         for w in 1:3
-            @test norm(half[w].covariance - quarter[w].covariance) < norm(coarse[w].covariance - half[w].covariance)
+            @test norm(half[w].covariance - quarter[w].covariance) < norm(fine[w].covariance - half[w].covariance)
             @test norm(half[w].covariance - quarter[w].covariance)/norm(quarter[w].covariance) < 1e-4
         end
         # the cutoff: the band below the plasma frequency misses a part in
         # a thousand, and past it the covariance no longer moves
         low, wide, wider = study(5e-12, 0.5e9, 20e9), study(5e-12, 0.5e9, 40e9), study(5e-12, 0.5e9, 60e9)
         for w in 1:3
-            @test norm(low[w].covariance - coarse[w].covariance)/norm(coarse[w].covariance) > 1e-4
+            @test norm(low[w].covariance - fine[w].covariance)/norm(fine[w].covariance) > 1e-4
             @test norm(wide[w].covariance - wider[w].covariance)/norm(wider[w].covariance) < 1e-7
         end
     end

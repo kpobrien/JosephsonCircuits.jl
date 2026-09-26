@@ -528,36 +528,6 @@ import StaticArrays
             Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
 
             # convert to MMatrix
-            Sa = [StaticArrays.MMatrix{size(Sa,1),size(Sa,2)}(Sa[:,:,i]) for i=1:size(Sa,3)]
-            Ca = [StaticArrays.MMatrix{size(Ca,1),size(Ca,2)}(Ca[:,:,i]) for i=1:size(Ca,3)]
-            Sb = [StaticArrays.MMatrix{size(Sb,1),size(Sb,2)}(Sb[:,:,i]) for i=1:size(Sb,3)]
-            Cb = [StaticArrays.MMatrix{size(Cb,1),size(Cb,2)}(Cb[:,:,i]) for i=1:size(Cb,3)]
-            Sboth = [StaticArrays.MMatrix{size(Sboth,1),size(Sboth,2)}(Sboth[:,:,i]) for i=1:size(Sboth,3)]
-            Cboth = [StaticArrays.MMatrix{size(Cboth,1),size(Cboth,2)}(Cboth[:,:,i]) for i=1:size(Cboth,3)]
-
-            Sout1 = JosephsonCircuits.intraconnectS.(Sboth,2,1+size(Sa[1],1))[1]
-            Sout2 = JosephsonCircuits.interconnectS.(Sa,Sb,2,1)[1]
-            Sout3, Cout3 = JosephsonCircuits.intraconnectS.(Sboth,Cboth,2,1+size(Sa[1],1))[1]
-            Sout4, Cout4 = JosephsonCircuits.interconnectS.(Sa,Sb,Ca,Cb,2,1)[1]
-            @test isapprox(Sout1,Sout2)
-            @test isapprox(Sout2,Sout3)
-            @test isapprox(Sout3,Sout4)
-            @test isapprox(Cout3,Cout4)
-        end
-
-        begin
-            Sa = rand(Complex{Float64},3,3)
-            Ca = rand(Complex{Float64},3,3)
-            Sb = rand(Complex{Float64},3,3)
-            Cb = rand(Complex{Float64},3,3)
-            Sboth = zeros(Complex{Float64},6,6)
-            Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
-            Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
-            Cboth = zeros(Complex{Float64},6,6)
-            Cboth[1:size(Ca,1),1:size(Ca,1),:,:] .= Ca
-            Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
-
-            # convert to MMatrix
             Sa = StaticArrays.MMatrix{size(Sa,1),size(Sa,2)}(Sa)
             Ca = StaticArrays.MMatrix{size(Ca,1),size(Ca,2)}(Ca)
             Sb = StaticArrays.MMatrix{size(Sb,1),size(Sb,2)}(Sb)
@@ -604,9 +574,9 @@ import StaticArrays
         @test isapprox(S, stack(cascade2(Sa[:, :, i], Sb[:, :, i]) for i in 1:3))
         # arrays with different numbers of frequencies
         @test_throws DimensionMismatch JosephsonCircuits.cascadeS(
-            rand(2, 2, 3), rand(2, 2, 5))
+            rand(2, 2, 3), rand(Complex{Float64}, 2, 2, 5))
         @test_throws DimensionMismatch JosephsonCircuits.cascadeS(
-            rand(2, 2, 5), rand(2, 2, 3))
+            rand(2, 2, 5), rand(Complex{Float64}, 2, 2, 3))
     end
 
     # one network

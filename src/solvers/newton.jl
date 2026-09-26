@@ -307,7 +307,9 @@ function solveonbackend!(fj!::Function, F::AbstractVector, J,
 
     xb = tobackend(backend, x)
     Fb = tobackend(backend, F)
-    info = nlsolve!(fj!, Fb, J, xb; kwargs...)
+    # the residual erased, so that the iteration is compiled once per
+    # vector and Jacobian type rather than once per system
+    info = nlsolve!(ErasedFunction(fj!), Fb, J, xb; kwargs...)
     copyto!(x, tohost(xb))
     copyto!(F, tohost(Fb))
     return info

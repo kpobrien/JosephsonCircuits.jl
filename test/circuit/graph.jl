@@ -146,6 +146,7 @@ end
 @testset "a subnetwork no element connects to ground" begin
     # harmonic balance cannot determine its potential, so both solvers
     # refuse it by name; the transient fixes that potential and solves it
+    # (transient/solve.jl)
     c = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(1e-12)),
         (:c2, 2, 3, Capacitor(1e-12)), (:l2, 2, 3, Inductor(1e-9))])
     psc = compile(c)
@@ -154,6 +155,4 @@ end
     @test_throws ArgumentError hblinsolve(2pi*[4e9, 5e9], c)
     @test_throws ArgumentError hbnlsolve((2pi*5e9,), (4,),
         [(mode = (1,), port = 1, current = 1e-8)], c)
-    s = transientsolve(transientproblem(c), (0.0, 1e-10); dt = 1e-12)
-    @test all(isfinite, s.outgoing)
 end

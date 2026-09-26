@@ -830,9 +830,10 @@ end
 # The scaled node current of the drives and the constant sources of a
 # problem at a time, on the host, for the checks made once at the start;
 # the problem is a condition's, which the system holds only in its
-# injection and its scale
-function hostdrivecurrent(sys::TransientSystem, t, p::TransientProblem = sys.problem, linevalues = zeros(2length(p.lines)),
-        blockwaves = nothing)
+# injection and its scale. The blocks' waves, or nothing, unspecialized,
+# so that a system's checks compile once.
+Base.@nospecializeinfer function hostdrivecurrent(sys::TransientSystem, t, p::TransientProblem = sys.problem,
+        linevalues::Vector{Float64} = zeros(2length(p.lines)), @nospecialize(blockwaves::Union{Nothing,Vector{Float64}} = nothing))
     values = [d.current(t) for d in p.drives]
     all(isfinite, values) || throw(ArgumentError(lazy"a source returned a nonfinite current at t = $(t) s."))
     b = hostsparse(sys.injection)*values .+ (sys.Lscale/phi0) .* p.constantcurrent .+ hostsparse(sys.lineinjection)*linevalues
@@ -851,12 +852,15 @@ end
 # and of each differentiated constraint, `rates`, with `rowscale` and
 # `ratescale` the magnitudes of the terms each of them sums, and
 # `violation` the largest of them relative to its own terms, zero where
-# there are none.
-function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem = sys.problem, linevalues = zeros(2length(p.lines)),
-        blockwaves = nothing, linerates = zeros(2length(p.lines)))
+# there are none. The state, on the backend or a view of a batch's, and
+# the blocks' waves are unspecialized and read on the host, so that a
+# system's check compiles once.
+Base.@nospecializeinfer function transientconsistency(sys::TransientSystem, @nospecialize(x), @nospecialize(v), t,
+        p::TransientProblem = sys.problem, linevalues::Vector{Float64} = zeros(2length(p.lines)),
+        @nospecialize(blockwaves::Union{Nothing,Vector{Float64}} = nothing), linerates::Vector{Float64} = zeros(2length(p.lines)))
     isempty(p.inertialess) && return (; violation = 0.0, rows = zeros(0), rowscale = zeros(0), rates = zeros(0), ratescale = zeros(0))
     G, L, RJ, lmolj = p.G, p.L, p.RJ, p.lmolj
-    xh, vh = Array(x), Array(v)
+    xh, vh = Array(x)::Vector{Float64}, Array(v)::Vector{Float64}
     b = hostdrivecurrent(sys, t, p, linevalues, blockwaves)
     phi = RJ*xh
     hr = hostrelations(sys.relations)

@@ -3,6 +3,10 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+# the bytes `f()` allocates, measured in a function: `@allocated` compiles
+# the code around it, which in a testset is the whole testset
+bytesallocated(f) = @allocated f()
+
 # The design Jacobian of a typed circuit and the sensitivities built on it,
 # against finite differences of the full solve.
 @testset verbose=true "design sensitivities" begin
@@ -37,7 +41,7 @@ using Test
         js() = JosephsonCircuits.designjacobian(syms, sdefs)
         je(); js()
         @test je()[3] == js()[3]
-        @test @allocated(je()) < 2*@allocated(js())
+        @test bytesallocated(je) < 2*bytesallocated(js)
     end
 
     @testset "the derivative of an expression" begin
@@ -216,15 +220,17 @@ using Test
         # and the block moves the pump operating point. The block depends
         # on theta through the derivative it states.
         Z0 = 50.0
+        # the block and its derivative, one closure type for every block
+        seriesS(theta) = w -> (z = 1/(im*w*theta*Z0);
+            [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
+        dS(theta) = w -> (z = 1/(im*w*theta*Z0); d = -2*z/(theta*(z+2)^2);
+            [d -d; -d d])
         function makeblk(theta; analytic = true)
-            seriesS(w) = (z = 1/(im*w*theta*Z0);
-                [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
-            dS(w) = (z = 1/(im*w*theta*Z0); d = -2*z/(theta*(z+2)^2);
-                [d -d; -d d])
             blk = analytic ?
-                ScatteringParameters(seriesS; nports = 2, grounded = false,
-                    derivatives = (theta = dS,)) :
-                ScatteringParameters(seriesS; nports = 2, grounded = false)
+                ScatteringParameters(seriesS(theta); nports = 2,
+                    grounded = false, derivatives = (theta = dS(theta),)) :
+                ScatteringParameters(seriesS(theta); nports = 2,
+                    grounded = false)
             return Circuit(
                 [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :cc => blk,
                  :jj => JosephsonJunction(:Lj),
@@ -251,12 +257,8 @@ using Test
         # three instances of one definition along a line share the
         # parameter, whose pairs make one stamp
         function makeline(theta)
-            seriesS(w) = (z = 1/(im*w*theta*Z0);
-                [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
-            dS(w) = (z = 1/(im*w*theta*Z0); d = -2*z/(theta*(z+2)^2);
-                [d -d; -d d])
-            blk = ScatteringParameters(seriesS; nports = 2,
-                derivatives = (theta = dS,))
+            blk = ScatteringParameters(seriesS(theta); nports = 2,
+                derivatives = (theta = dS(theta),))
             comps = Any[(:p1, 1, 0, Port(1; Z0 = Z0))]
             for k in 1:3
                 push!(comps, (Symbol(:b, k), k, k + 1, blk))

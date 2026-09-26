@@ -369,6 +369,21 @@ function warmupdocumented()
     return nothing
 end
 
+# The same amplifier pumped by two tones. The tone count is in the type of
+# the system, so the pump solve, its preconditioner and the linearized
+# sweep, which takes block factors for two tones, compile again for it.
+function warmuptwotone()
+    circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+        (:cc, 1, 2, Capacitor(100.0e-15)),
+        (:jj, 2, 0, JosephsonJunction(1000.0e-12)),
+        (:cj, 2, 0, Capacitor(1000.0e-15))])
+    ws = 2*pi*(4.5:0.5:5.0)*1e9
+    wp = (2*pi*4.75001*1e9, 2*pi*4.85001*1e9)
+    sources = [(mode = (1, 0), port = 1, current = 0.004e-6),
+        (mode = (0, 1), port = 1, current = 0.004e-6)]
+    return hbsolve(ws, wp, sources, (2, 2), (4, 4), circuit)
+end
+
 # Connecting scattering parameter networks, with symbol and string names,
 # with single matrices and with frequency indexed arrays, through both the
 # graph based `connectS` and the linear system based `solveS`.
@@ -576,6 +591,7 @@ PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
     warmupdocumented()
+    warmuptwotone()
     warmuptransient()
     # The network parameter conversions are deliberately not part of the
     # workload: compiling every conversion for every input shape is a large

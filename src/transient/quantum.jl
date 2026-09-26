@@ -68,12 +68,15 @@ Windows are finite-record mode definitions, not independent white-noise samples.
 Use `gram`, `vacuum` and `commutator` when modes/windows overlap. The plan is
 read-only after construction and has no mutable shared FFT workspace.
 """
-function transientquantumplan(problem, times, coefficients::AbstractMatrix;
+Base.@nospecializeinfer function transientquantumplan(@nospecialize(problem), times,
+        @nospecialize(coefficients::AbstractMatrix);
         ports = fill(porttargets(transientproblemof(problem))[1], size(coefficients, 2)),
         backend::Backend = CPU())
-    p = transientproblemof(problem)
+    # compiled once for a problem, a solution or a batch, and for any
+    # coefficients, which are read as complex numbers on the host
+    p = transientproblemof(problem)::TransientProblem
     ts, dt, fs = transientquantumgrid(times)
-    c = ComplexF64.(Array(coefficients))
+    c = ComplexF64.(Array(coefficients))::Matrix{ComplexF64}
     m = size(c, 2)
     size(c, 1) == length(fs) && m > 0 ||
         throw(DimensionMismatch("Incorrect positive-frequency coefficient shape."))
@@ -109,7 +112,7 @@ function transientquantumplan(problem, times, coefficients::AbstractMatrix;
         tobackend(backend, weights), gram, vacuum, comm, dt)
 end
 
-function transientquantumplan(problem, times, frequencies::AbstractVector;
+Base.@nospecializeinfer function transientquantumplan(@nospecialize(problem), times, frequencies::AbstractVector;
         ports = fill(porttargets(transientproblemof(problem))[1], length(frequencies)),
         envelopes = nothing, backend::Backend = CPU())
     ts, dt, fs = transientquantumgrid(times)

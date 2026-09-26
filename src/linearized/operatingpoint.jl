@@ -667,9 +667,12 @@ The mutable work arrays of one invocation of
 [`calcSsensitivityreverse!`](@ref), allocated once per batch of signal
 frequencies rather than at every frequency. Each thread of
 [`hblinsolve`](@ref) owns its own set; the [`ReverseSensitivity`](@ref)
-itself is shared read only.
+itself is shared read only. The time domain arrays of the transposed
+transform have one dimension per pump tone and one per junction, and
+their type is the parameter, so that the contraction reads them
+concretely.
 """
-struct ReverseSensitivityBuffers
+struct ReverseSensitivityBuffers{A<:Array{Complex{Float64}}}
     P::Vector{Complex{Float64}}
     Q::Vector{Complex{Float64}}
     # the output functional covectors of a chunk of output pairs, and their
@@ -687,8 +690,8 @@ struct ReverseSensitivityBuffers
     # the zero padded input and the single output grid of the transposed
     # transform: the holomorphic and antiholomorphic halves are folded into
     # eta one after the other, so their transforms need not coexist.
-    padded::Array{Complex{Float64}}
-    tgrid::Array{Complex{Float64}}
+    padded::A
+    tgrid::A
     # the covector of one output pair per stored entry of the Josephson plan
     wcov::Vector{Complex{Float64}}
 end

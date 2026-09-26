@@ -72,9 +72,12 @@ function testtransientiq(backend = JosephsonCircuits.CPU())
     end
 end
 
-# A CPU test set, as a function so that including this file in the GPU
-# suite does not run it there.
-function testiqcontract()
+# the main suite runs the CPU backend by including this file; the GPU
+# suite defines TRANSIENTBACKENDTESTS and calls the function with its device
+if !@isdefined(TRANSIENTBACKENDTESTS)
+    testtransientiq(JosephsonCircuits.CPU())
+    # the contract, on the host alone; at the top level rather than in a
+    # function, whose compilation would cost more than its tests
     @testset "I/Q input contract" begin
         t = collect((0:100) .* 1e-12)
         two = iqtestproblem()
@@ -92,12 +95,4 @@ function testiqcontract()
         static = transientiqplan(two, t, [5e9]; duration = 20e-12, backend = JosephsonCircuits.CPU(; static = true))
         @test transientiq(static, ones(1, 101)) ≈ transientiq(p, ones(1, 101)) rtol=1e-13
     end
-    return nothing
-end
-
-# the main suite runs the CPU backend by including this file; the GPU
-# suite defines TRANSIENTBACKENDTESTS and calls the function with its device
-if !@isdefined(TRANSIENTBACKENDTESTS)
-    testtransientiq(JosephsonCircuits.CPU())
-    testiqcontract()
 end
