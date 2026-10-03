@@ -16,6 +16,17 @@ struct Passthrough <: JosephsonCircuits.AbstractPreconditioner end
 JosephsonCircuits.applypreconditioner!(z, ::Passthrough, r) = copyto!(z, r)
 JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
 
+# a window whose rows marked `unread` throw when read, on the host backend
+struct UnreadRows <: AbstractVector{Float64}
+    x::Vector{Float64}
+    unread::BitVector
+end
+Base.size(v::UnreadRows) = size(v.x)
+Base.getindex(v::UnreadRows, i::Int) = v.unread[i] ? error("row $i was read") : v.x[i]
+Base.setindex!(v::UnreadRows, a, i::Int) = (v.x[i] = a)
+JosephsonCircuits.KernelAbstractions.get_backend(::UnreadRows) =
+    JosephsonCircuits.KernelAbstractions.CPU()
+
 # a grounded two port block which is a series impedance `Z` at every
 # frequency, an ideal through when `Z` is zero; the tests build their
 # series blocks here, so that the blocks share one type and their
@@ -745,6 +756,10 @@ seriesblock(Z) = ScatteringParameters(
         # same way at construction
         @test_throws ArgumentError ScatteringParameters([0 1;1 0];
             dcmodel = ScatteringDC([0 2.0; 2.0 0]))          # active
+        # to the same tolerance: a dissipation `I - S S'` of -0.014,
+        # below -atol, though the singular value is within 1 + atol
+        @test_throws ArgumentError ScatteringParameters([0 1;1 0]; atol = 1e-2,
+            dcmodel = ScatteringDC([0 1.007; 1.007 0]))
         @test_throws DimensionMismatch ScatteringParameters([0 1;1 0];
             dcmodel = ScatteringDC(fill(0.0, 3, 3)))         # wrong size
         @test_throws ArgumentError ScatteringDC([0 im; im 0]) # complex
@@ -796,6 +811,21 @@ seriesblock(Z) = ScatteringParameters(
         # conditioned enough that an inverse would not do
         @test cond(A) > 1e6
         @test z[idx] != r[idx]
+
+        # The block in its matrix form, which a device applies, agrees with
+        # the scalar form where the rows it writes over hold a NaN: the
+        # internal residual does not write them, and on a device they hold
+        # whatever the memory did.
+        up = JC.dcupdate(w)
+        nw = length(up.keep)
+        uw, Fw = randn(nw), randn(nw)
+        Fw[iszero.(up.keep)] .= NaN
+        @test any(iszero, up.keep)
+        @test JC.applydcupdate!(copy(Fw), uw, up) ≈ JC.addtransportwindow!(copy(Fw), uw, w)
+        # and does not read them at all
+        Fu = UnreadRows(copy(Fw), iszero.(up.keep))
+        JC.applydcupdate!(Fu, uw, up)
+        @test Fu.x ≈ JC.addtransportwindow!(copy(Fw), uw, w)
     end
 
     # The operating point of a circuit with a direct current block, and the

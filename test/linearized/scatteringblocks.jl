@@ -2256,7 +2256,7 @@ end
         bare = hbsolve(ws3, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
             Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); atol = 1e-14, returnCnoise = true)
         blk3 = LinearizedScattering(s3.linearized, 2pi*fp2; noise = NoiseCovariance(s3.linearized.Cnoise))
-        fit3 = RationalScattering(blk3, 20; band = (4.5e9, 9.5e9), delays = [0.0, len3/vp3], tol = 0.1, noisetol = 0.1)
+        fit3 = RationalScattering(blk3, 16; band = (4.5e9, 9.5e9), delays = [0.0, len3/vp3], tol = 0.1, noisetol = 0.1)
         @test fit3.noise isa NoiseCovariance && fit3.noise.completed && fit3.atol == blk3.atol && fit3.noise.atol == blk3.noise.atol
         # the tables of a solve, declared lossless anew, are checked as
         # any data is, and the device has loss

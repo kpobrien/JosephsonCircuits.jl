@@ -79,8 +79,11 @@ round(error; sigdigits = 3)
 Increase the requested order if the fit misses the data. The fitter can
 remove redundant poles, but more poles do not compensate for insufficient
 frequency coverage or unresolved data. `tol` bounds the accepted fit error;
-`atol` controls physical-contract checks. See [`VectorFitting`](@ref) and
-[`PassivityEnforcement`](@ref) for the algorithm options.
+`atol` controls physical-contract checks. `weights`, one positive number
+for each entry at each sample, weigh the fit: `1 ./ abs.(S)` of samples `S`
+with no vanishing entry fits a small entry, an isolation or a crosstalk,
+to the relative accuracy of the large ones. See [`VectorFitting`](@ref)
+and [`PassivityEnforcement`](@ref) for the algorithm options.
 
 For a nearly lossless device, inspect `I-S*S'` as well as `S`. Noise depends
 on the small difference from unitarity, so a modest scattering error can
@@ -119,9 +122,10 @@ nothing # hide
 ```
 
 The constructor checks stability and the declared noise/passivity contract.
-The passivity calculation searches the largest singular value over
-frequency using a level-set method and numerical tolerances; it is not
-just a check at the supplied samples. The [theory](transienttheory.md#Fitting-measured-data)
+The passivity check searches for the peaks of the largest singular value
+and finds, by a crossing test, every frequency where a singular value
+reaches `sqrt(1 + atol)`, where the dissipation `I - S'S` reaches minus
+the tolerance; it is not just a check at the supplied samples. The [theory](transienttheory.md#Fitting-measured-data)
 describes this calculation.
 
 ## Transmission lines and delay removal

@@ -133,27 +133,132 @@ using Test
         @test S[:, :, 1] ≈ [im*w*L 2R0; 2R0 im*w*L] ./ (im*w*L + 2R0) rtol=1e-12
         @test_throws ArgumentError RationalScattering(fill(a, 1, 1), reshape(u, 1, 2), reshape(-a .* u, 2, 1), Matrix(1.0I, 2, 2); zref = 50.0)
         @test_throws ArgumentError RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2), reshape(-2a .* u, 2, 1), Matrix(1.0I, 2, 2); zref = 50.0)
-        # The passivity test finds the crossings of one by the pencil of
-        # the equations and tests the largest singular value between them,
-        # not at them: a block active below its crossing, S = 2/(s + 1)
-        # with S(0) = 2, is refused, and so is a resonance peaking at
-        # 1.05 over three percent of its frequency, which samples miss;
-        # one peaking at 0.9 is accepted; a lossless block is certified
-        # at more frequencies than its degree, and the pencil is singular
-        # for it
+        # The passivity test finds the crossings of one by the crossing
+        # test and tests the largest singular value between them, not at
+        # them: a block active below its crossing, S = 2/(s + 1) with
+        # S(0) = 2, is refused, and so is a resonance peaking at 1.05
+        # over three percent of its frequency, which samples miss; one
+        # peaking at 0.9 is accepted; a lossless block is certified at
+        # more frequencies than its degree
         @test_throws ArgumentError RationalScattering(fill(-1.0, 1, 1), ones(1, 1), fill(2.0, 1, 1), zeros(1, 1))
         Ar, Br = [-0.05 1.0; -1.0 -0.05], [0.0; 1.0;;]
         @test_throws ArgumentError RationalScattering(Ar, Br, [1.05*0.1 0.0], zeros(1, 1))
         @test RationalScattering(Ar, Br, [0.9*0.1 0.0], zeros(1, 1)) isa ScatteringParameters
-        crossings, _ = JC.passivitycrossings(Ar, Br, [1.05*0.1 0.0], zeros(1, 1))
+        # to the dissipation of its tolerance, as its samples would be: a
+        # peak of 1.007 at zero frequency, a dissipation of -0.014, is
+        # refused at an atol of 1e-2, under one plus that atol
+        @test_throws ArgumentError RationalScattering(fill(-1.0, 1, 1), ones(1, 1), fill(1.007, 1, 1), zeros(1, 1); atol = 1e-2)
+        # the crossings of one in rad/s, as passivityassessment finds them
+        crossingsof(A, B, C, D) = (b = JC.balancedrealization(A, B, C);
+            JC.unitcrossings(b[1], b[2], b[3], D) .* b[4])
+        crossings = crossingsof(Ar, Br, [1.05*0.1 0.0], zeros(1, 1))
         @test length(crossings) == 2 && 0.98 < crossings[1] < 1.0 < crossings[2] < 1.02
-        @test isempty(JC.passivitycrossings(Ar, Br, [0.9*0.1 0.0], zeros(1, 1))[1])
+        @test isempty(crossingsof(Ar, Br, [0.9*0.1 0.0], zeros(1, 1)))
+        # the balancing scales exactly, so a state matrix in real Schur
+        # form, as a fit's is, stays in it: a rotation's two diagonal
+        # entries, scaled by different states' scales, the output of one
+        # far above its input, are still equal
+        let Aq = [-0.3 -2.0 0.0; 2.0 -0.3 0.0; 0.0 0.0 -1.1]
+            @test JC.isquasitriangular(first(JC.balancedrealization(Aq, [0.01 0.0; 0.2 0.9; 0.4 0.3],
+                [40.0 0.3 0.2; 30.0 0.8 0.6])))
+        end
+        # and a state which nothing drives or nothing sees, with no part in
+        # the response, is cleared: one whose only output or input stands
+        # at either end of the exponent range leaves a block of zero
+        # response, which is passive
+        for (Bz, Cz) in ((zeros(1, 1), fill(7e-309, 1, 1)), (fill(1.4e308, 1, 1), zeros(1, 1)))
+            @test RationalScattering(fill(-1.0, 1, 1), Bz, Cz, zeros(1, 1)) isa ScatteringParameters
+        end
+        # but no state with a part in it is scaled out of the response: an
+        # input at floatmax with an output of 7e-309 is 1.26/(s + 1), which
+        # is active and refused, and two inputs at floatmax, whose row's
+        # norm overflows, with an output of 1e-309 peak at 0.254 and are
+        # accepted
+        let Aw = fill(-1.0, 1, 1)
+            @test JC.passivityassessment(Aw, fill(floatmax(), 1, 1), fill(7e-309, 1, 1), zeros(1, 1)).verdict === :active
+            @test_throws ArgumentError RationalScattering(Aw, fill(floatmax(), 1, 1), fill(7e-309, 1, 1), zeros(1, 1))
+            wide = JC.passivityassessment(Aw, fill(floatmax(), 1, 2), [1e-309; 0.0;;], zeros(2, 2))
+            @test wide.verdict === :passive
+            @test wide.lower ≈ sqrt(2)*(floatmax()*1e-309) rtol = 1e-12
+            @test RationalScattering(Aw, fill(floatmax(), 1, 2), [1e-309; 0.0;;], zeros(2, 2)) isa ScatteringParameters
+        end
+        # A state matrix not in Schur form is factored after the balancing,
+        # which scales its couplings with its inputs and outputs: two all
+        # pass sections in cascade, of Q 1e5 at 1 rad/s and of Q 30 at
+        # 1.37 rad/s, a state of each with no input, are lossless at every
+        # frequency, and are accepted as passive and as lossless
+        let section = (w0, Q) -> (k = w0/Q; α = -k/2; β = sqrt(w0^2 - α^2);
+                ([α -β; β α], [sqrt(2k); 0.0;;], [-sqrt(2k) -sqrt(2k)*α/β], ones(1, 1)))
+            (A1, B1, C1, D1), (A2, B2, C2, D2) = section(1.0, 1e5), section(1.37, 30.0)
+            @test RationalScattering([A1 zeros(2, 2); B2*C1 A2], [B1; B2*D1], [D2*C1 C2], D2*D1;
+                noise = Lossless()) isa ScatteringParameters
+        end
+        # Where the feedthrough stands clear of one the crossings come from
+        # the Hamiltonian matrix, which inverts `I - D'D`, and nearer one
+        # from the pencil, which inverts nothing. With a feedthrough of one
+        # half the two agree; with one 1e-6 under one, where the
+        # Hamiltonian's eigenvalues at the crossings can leave the axis,
+        # the crossings found are those of a dense sweep of `|S|`, bisected.
+        let Cr = [1.05*0.1 0.0]
+            An, Bn, Cn, _ = JC.balancedrealization(Ar, Br, Cr)
+            ch = JC.hamiltoniancrossings(An, Bn, Cn, fill(0.5, 1, 1))
+            cp = JC.pencilcrossings(An, Bn, Cn, fill(0.5, 1, 1))
+            @test length(ch) == length(cp) >= 2
+            @test ch ≈ cp rtol = 1e-10
+            Dn = fill(1 - 1e-6, 1, 1)
+            above(w) = abs(only(Dn + Cr*((im*w*I - Ar) \ Br))) > 1
+            grid = range(0.0, 3.0; length = 30001)
+            truth = Float64[]
+            for k in 1:length(grid) - 1
+                a, b = grid[k], grid[k + 1]
+                above(a) == above(b) && continue
+                for _ in 1:60
+                    c = (a + b)/2
+                    above(c) == above(a) ? (a = c) : (b = c)
+                end
+                push!(truth, (a + b)/2)
+            end
+            found = crossingsof(Ar, Br, Cr, Dn)
+            @test !isempty(truth) && length(found) == length(truth)
+            @test found ≈ truth rtol = 1e-8
+        end
+        # The same on 128 resonances between eight ports, whose pencil has
+        # order 528, at which the blocked QZ of LAPACK's ggev3 writes past
+        # the end of its eigenvalue arrays.
+        let npairs = 128, m = 8
+            A = zeros(2npairs, 2npairs)
+            for k in 1:npairs
+                w = 1 + 9*(k - 1)/(npairs - 1)
+                A[2k - 1:2k, 2k - 1:2k] = [-0.02w w; -w -0.02w]
+            end
+            B = [sin(i*j + 1.0) for i in 1:2npairs, j in 1:m]
+            C = [0.05*cos(2i + 3j + 0.5) for i in 1:m, j in 1:2npairs]
+            An, Bn, Cn, _ = JC.balancedrealization(A, B, C)
+            ch = JC.hamiltoniancrossings(An, Bn, Cn, Matrix(0.5I, m, m))
+            cp = JC.pencilcrossings(An, Bn, Cn, Matrix(0.5I, m, m))
+            @test length(ch) == length(cp) >= 2
+            @test ch ≈ cp rtol = 1e-10
+        end
         # nothing is inferred about a rational block's loss, and a declared
         # Lossless() is validated by the norms of the block and its inverse
         @test !JC.provablylossless(block.provider) && JC.losslessnorms(block.provider)
-        @test isnothing(JC.passivitycrossings(block.provider.A, block.provider.B, block.provider.C, block.provider.D)[1])
         @test !JC.losslessnorms(RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2), reshape(-0.5a .* u, 2, 1), zeros(2, 2); zref = 50.0).provider)
         @test_throws ArgumentError RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2), reshape(-0.5a .* u, 2, 1), zeros(2, 2); zref = 50.0, noise = Lossless())
+        # with every squared singular value within atol of one, as a scalar
+        # sample's: (s + d)/(s + 1) dips to d at zero frequency, which a
+        # dissipation of atol - atol^2/2 keeps and one of atol + atol^2/2
+        # breaks
+        for atol in (1e-2, 1e-4)
+            dipping(d) = RationalScattering(fill(-1.0, 1, 1), ones(1, 1), fill(d - 1, 1, 1), ones(1, 1); atol, noise = Lossless())
+            @test dipping(sqrt(1 - atol + atol^2/2)) isa ScatteringParameters
+            @test_throws ArgumentError dipping(sqrt(1 - atol - atol^2/2))
+        end
+        # and bounded from above alone at an atol of one or more, which
+        # bounds no singular value from below: a feedthrough of zero, which
+        # has no inverse, is built
+        for atol in (1.0, 2.0)
+            @test RationalScattering(fill(-1.0, 1, 1), ones(1, 1), fill(0.5, 1, 1), zeros(1, 1); atol, noise = Lossless()) isa ScatteringParameters
+        end
         # The passivity correction solves inequalities, and nonnegative
         # multipliers are only half of what that takes: the correction
         # has to meet the constraints too, since a constraint retired
@@ -236,15 +341,15 @@ using Test
                 @test norm(xq) <= best*(1 + 1e-8)
             end
         end
-        # The passivity test is the largest singular value over every
-        # frequency by the level set iteration, which finds a peak however
-        # narrow: an all pass times a notch or a peak of relative width
-        # 1e-4 to 1e-7, deviating from unitarity by the square of the width
-        # between samples and by one at its center. The peaks are refused
-        # at their true norm of two, the notches accepted, and the notches
+        # The passivity test finds a peak however narrow, by a search at the
+        # poles and the crossing test of its level: an all pass times a
+        # notch or a peak of relative width 1e-4 to 1e-7, deviating from
+        # unitarity by the square of the width between samples and by one at
+        # its center. The peaks are refused at their true norm of two,
+        # declared lossless or not, the notches accepted, and the notches
         # are not certified lossless, so their loss keeps its noise in the
-        # linearized solver: a notch absorbing at 1 rad/s emits the noise
-        # of that loss there.
+        # linearized solver: a notch absorbing at 1 rad/s emits the noise of
+        # that loss there.
         for epsilon in (1e-4, 1e-6, 1e-7), sgn in (-1.0, 1.0)
             An = [0.0 1.0; -1.0 -2epsilon]
             Cn = [0.0 sgn*2epsilon]
@@ -252,34 +357,34 @@ using Test
             Bm = [0.0; 1.0; 1.0;;]
             Cm = [Cn fill(-20.0, 1, 1)]
             Dm = ones(1, 1)
-            worst, where = JC.hinfnorm(Am, Bm, Cm, Dm)
-            @test !JC.losslessnorms(JC.RationalScatteringProvider(Am, Bm, Cm, Dm))
+            (; verdict, lower, frequency) = JC.passivityassessment(Am, Bm, Cm, Dm)
             if sgn > 0
-                @test worst ≈ 2 rtol=1e-6
-                @test where ≈ 1 rtol=1e-6
+                @test verdict === :active
+                @test lower ≈ 2 rtol=1e-6
+                @test frequency ≈ 1 rtol=1e-6
                 @test_throws ArgumentError RationalScattering(Am, Bm, Cm, Dm)
+                @test_throws ArgumentError RationalScattering(Am, Bm, Cm, Dm; noise = Lossless())
             else
-                @test worst ≈ 1 rtol=1e-6
+                @test !JC.losslessnorms(JC.RationalScatteringProvider(Am, Bm, Cm, Dm))
+                @test verdict !== :active
+                @test lower ≈ 1 rtol=1e-6
                 notch = RationalScattering(Am, Bm, Cm, Dm)
                 hbn = hblinsolve([1.0], Circuit([(:p, 1, 0, Port(1)), (:block, 1, notch)]); keyedarrays = false, returnCnoise = true)
                 @test abs(hbn.S[1, 1, 1]) < 1e-6
                 @test real(hbn.Cnoise[1, 1, 1]) ≈ 1/2 rtol=1e-8
             end
         end
-        @test JC.hinfnorm(fill(-1.0, 1, 1), ones(1, 1), fill(2.0, 1, 1), zeros(1, 1))[1] ≈ 2 rtol=1e-8
-        # What the norm search establishes, and what it does not. Its
-        # first value is a lower bound and its third the level its
-        # termination reached, and the question of whether a block is
-        # passive to a tolerance can fall between them, so the assessment
-        # has three answers and not two.
-        #
-        # The lower bound is worth having sharp. A resonance peaks near
-        # its pole's frequency but not at it, and for a narrow one that
-        # difference is larger than the tolerance being tested:
-        # `k/(s^2 + 2 z s + 1)` with `z = 3e-4` and `k` set to put the
-        # exact peak at `1 + 2e-8` evaluates to 1.0000000087 at the pole
-        # frequency itself, and the search around each pole finds the
-        # peak.
+        let twice = JC.passivityassessment(fill(-1.0, 1, 1), ones(1, 1), fill(2.0, 1, 1), zeros(1, 1))
+            @test twice.verdict === :active && twice.frequency == 0 && isinf(twice.upper)
+            @test twice.lower ≈ 2 rtol=1e-8
+        end
+        # A resonance peaks near its pole's frequency but not at it, and for
+        # a narrow one the difference is larger than the tolerance being
+        # tested: `k/(s^2 + 2 z s + 1)` with `z = 3e-4` and `k` set to put
+        # the exact peak at `1 + 2e-8` evaluates to 1.0000000087 at the pole
+        # frequency itself, under the level of an atol of 2e-8,
+        # `sqrt(1 + 2e-8)`, one plus 1e-8, and the search around each pole
+        # finds the peak.
         let z = 3e-4, kk = (1 + 2e-8)*2z*sqrt(1 - z^2)
             Ah = [0.0 1.0; -1.0 -2z]
             Bh = reshape([0.0, kk], 2, 1)
@@ -288,32 +393,26 @@ using Test
             wpk = sqrt(1 - 2z^2)
             peak = abs(only(Dh + Ch*((im*wpk*I - Ah) \ Bh)))
             @test peak ≈ 1 + 2e-8 rtol=1e-9
-            lower, _, level = JC.hinfnorm(Ah, Bh, Ch, Dh)
-            @test lower ≈ peak rtol=1e-12       # the peak itself, not a probe near it
-            # and still a bracket, to the roundoff of evaluating it
-            @test lower <= peak*(1 + 1e-12) && peak <= level
-            verdict, _, _, _ = JC.passivityassessment(Ah, Bh, Ch, Dh; atol = 1e-8)
-            @test verdict === :active
-            @test_throws ArgumentError RationalScattering(Ah, Bh, Ch, Dh; zref = 50.0, atol = 1e-8)
-            # and the enforcement brings it under, correcting it where
-            # its pole peaks rather than contracting the whole block
-            Ae, Be, Ce, De = @test_logs JC.enforcepassivity(
-                Ah, Bh, Ch, Dh, 2pi .* collect(range(0.01, 1.0; length = 200)))
-            @test abs(only(De + Ce*((im*wpk*I - Ae) \ Be))) <= 1 + 1e-8
-            # The level is a bound only where the pencil
-            # resolves the crossings of it. Here it resolves none, the
-            # peak standing over the level by less than roundoff, so the
-            # level is the lower bound inflated by twice the tolerance and
-            # nothing more.
-            @test isempty(JC.passivitycrossings(Ah, Bh, Ch, Dh)[1])
-            @test level ≈ lower*(1 + 2e-8) rtol=1e-12
+            local assessed = JC.passivityassessment(Ah, Bh, Ch, Dh; atol = 2e-8)
+            @test assessed.verdict === :active
+            @test assessed.lower ≈ peak rtol=1e-12       # the peak itself, not a probe near it
+            @test_throws ArgumentError RationalScattering(Ah, Bh, Ch, Dh; zref = 50.0, atol = 2e-8)
+            # The crossing test resolves the crossings of a level only so
+            # far as the roundoff lets their eigenvalues stand apart on the
+            # axis: at one, 2e-8 under the peak, the pair of eigenvalues sits
+            # off the axis by about 6e-8 in theory and by the roundoff of a
+            # nearly double eigenvalue in practice, against an on-axis test
+            # of 2e-8, so that it is resolved or lost with the platform; a
+            # pair that is resolved straddles the peak.
+            atone = crossingsof(Ah, Bh, Ch, Dh)
+            @test isempty(atone) || (length(atone) == 2 && atone[1] < wpk < atone[2])
         end
         # A peak need not be near any pole, so the probe grid has to
         # span the magnitudes of the poles the system has rather than
         # fixed decades: `k s/((s + a)(s + b))` with `a = 2.76e-5`,
         # `b = 1` and `k = (1 + 2e-8)(a + b)` peaks at
         # `sqrt(a b) = 5.3e-3`, decades from both poles, which are
-        # real.
+        # real; at an atol of 2e-8 it stands 1e-8 over the level.
         let aa = 2.7592661119815163e-5, bb = 1.0
             kk = (1 + 2e-8)*(aa + bb)
             Ar2 = [0.0 1.0; -aa*bb -(aa + bb)]
@@ -324,26 +423,37 @@ using Test
             peak2 = abs(only(Dr2 + Cr2*((im*wpk2*I - Ar2) \ Br2)))
             @test peak2 ≈ 1 + 2e-8 rtol=1e-9
             @test all(isreal, eigvals(Ar2))          # both poles real
-            lower2, _, _ = JC.hinfnorm(Ar2, Br2, Cr2, Dr2)
-            @test lower2 ≈ peak2 rtol=1e-9
-            @test JC.passivityassessment(Ar2, Br2, Cr2, Dr2; atol = 1e-8)[1] === :active
+            local assessed2 = JC.passivityassessment(Ar2, Br2, Cr2, Dr2; atol = 2e-8)
+            @test assessed2.verdict === :active
+            @test assessed2.lower ≈ peak2 rtol=1e-9
             @test_throws ArgumentError RationalScattering(Ar2, Br2, Cr2, Dr2;
-                zref = 50.0, atol = 1e-8)
-            Ae2, Be2, Ce2, De2, contraction2 = JC.enforcepassivity(
-                Ar2, Br2, Cr2, Dr2, exp.(range(log(1e-4), log(1e2); length = 101)))
-            @test !isnothing(contraction2)
-            @test abs(only(De2 + Ce2*((im*wpk2*I - Ae2) \ Be2))) <= 1 + 1e-8
+                zref = 50.0, atol = 2e-8)
+        end
+        # A peak no probe sees is found by the crossing test: sixteen ports
+        # of 1.001 (sqrt(7) s + sqrt(3))/((s + 1)(s + 2)), which peaks at
+        # exactly 1.001 at 1 rad/s between the probes, beside a port of a
+        # flat 0.9999, the largest value the probes find, have two distinct
+        # poles and so nine points of grid. The block is refused, and with
+        # its peak at 0.98 built.
+        let m = 16, T = Matrix(1.0I, 16, 16)
+            Am = Matrix(Diagonal(vcat(fill(-1.0, m), fill(-2.0, m))))
+            Bm = hcat(zeros(2m), vcat(T, T))
+            Cm = vcat(zeros(1, 2m), 1.001 .* hcat((sqrt(3) - sqrt(7)) .* T, (2sqrt(7) - sqrt(3)) .* T))
+            Dm = Matrix(Diagonal(vcat(0.9999, zeros(m))))
+            @test_throws ArgumentError RationalScattering(Am, Bm, Cm, Dm)
+            @test RationalScattering(Am, Bm, Cm .* (0.98/1.001), Dm) isa ScatteringParameters
         end
         # A block whose largest singular value is exactly one, which every
-        # lossless block has, cannot be called passive to a tolerance
-        # below the search's own: its level stands at `1 + 2 rtol`. The
-        # assessment says so rather than picking a side.
+        # lossless block has, is passive to any tolerance: `S(-s)^T S(s) = I`
+        # never equals the square of a level above one, so the pencil's
+        # eigenvalues there are the poles and their mirror images, off the
+        # axis, and no crossing is found.
         let Al = fill(-1.0, 1, 1), Bl = ones(1, 1), Cl = fill(-2.0, 1, 1), Dl = ones(1, 1)
             # the all pass (s - 1)/(s + 1), of modulus one everywhere
             @test abs(only(Dl + Cl*((im*0.7*I - Al) \ Bl))) ≈ 1 rtol=1e-14
-            @test JC.passivityassessment(Al, Bl, Cl, Dl; atol = 1e-8)[1] === :indeterminate
-            @test JC.passivityassessment(Al, Bl, Cl, Dl; atol = 1e-6)[1] === :passive
-            @test JC.passivityassessment(Al, Bl, 2 .* Cl, Dl; atol = 1e-8)[1] === :active
+            local allpass = JC.passivityassessment(Al, Bl, Cl, Dl; atol = 1e-8)
+            @test allpass.verdict === :passive && allpass.upper == sqrt(1 + 1e-8)
+            @test JC.passivityassessment(Al, Bl, 2 .* Cl, Dl; atol = 1e-8).verdict === :active
         end
         @test RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2), reshape(-0.5a .* u, 2, 1), zeros(2, 2); zref = 50.0) isa ScatteringParameters
         drive(t) = t <= 0 ? 0.0 : 0.3e-6*sinpi(t/1e-9)^2*sinpi(2*3e9*t)

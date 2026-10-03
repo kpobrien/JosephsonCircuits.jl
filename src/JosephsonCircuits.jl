@@ -590,12 +590,30 @@ function warmuptransient()
     return nothing
 end
 
+# The fit of sampled scattering data to a rational block, through
+# `RationalScattering`: a lossy two port with one real pole, sampled over
+# the band, searched for its order; and the same scaled so that its fit
+# stands above one below the band, which the enforcement corrects before
+# its sweep certifies the fit and the realization is built.
+function warmupfit()
+    a = 2pi*4e9
+    block = RationalScattering(-a .* Matrix(1.0I, 2, 2), a .* Matrix(1.0I, 2, 2), 0.8 .* [0.0 1.0; 1.0 0.0],
+        zeros(2, 2); zref = 50.0)
+    ws = 2pi .* collect(range(1e9, 8e9; length = 40))
+    S = zeros(ComplexF64, 2, 2, length(ws))
+    evaluateprovider!(S, block.provider, ws)
+    RationalScattering(ScatteringParameters((ws, S); nports = 2, zref = 50.0); tol = 1e-6)
+    RationalScattering(ScatteringParameters((ws, 1.26 .* S); nports = 2, zref = 50.0), 4)
+    return nothing
+end
+
 PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
     warmupdocumented()
     warmuptwotone()
     warmuptransient()
+    warmupfit()
     # The network parameter conversions are deliberately not part of the
     # workload: compiling every conversion for every input shape is a large
     # fraction of the total precompile time, while a cold first call of any

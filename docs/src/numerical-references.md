@@ -53,9 +53,22 @@ projection and history interpolation require their own analysis.
   Vector Fitting Method,” *IEEE Microwave and Wireless Components Letters*
   18(6), 383–385 (2008).
   [Paper](https://www.sintef.no/globalassets/project/vectfit/fast_vf_paper.pdf).
+- B. Gustavsen, “An Efficient Residue Perturbation Scheme for Passivity
+  Enforcement of S-Parameter Rational Models,” *IEEE Transactions on
+  Electromagnetic Compatibility* 67(3), 913–920 (2025).
+  [Paper](https://doi.org/10.1109/TEMC.2025.3564403).
+- C. Eckart and G. Young, “The Approximation of One Matrix by Another of
+  Lower Rank,” *Psychometrika* 1(3), 211–218 (1936).
+  [Paper](https://doi.org/10.1007/BF02288367).
+- J. R. Rice and K. H. Usow, “The Lawson Algorithm and Extensions,”
+  *Mathematics of Computation* 22(101), 118–127 (1968).
+  [Paper](https://doi.org/10.1090/S0025-5718-1968-0232137-6).
 
-These cover common-pole relocation, relaxed normalization, and the
-per-entry reduction used to accelerate multiport fitting.
+These cover common-pole relocation, relaxed normalization, the per-entry
+reduction used to accelerate multiport fitting, the perturbation of the
+residues by which passivity is enforced, the rank bound below which the
+order search does not fit, and the reweighted least squares by which it
+does not make passive an order that cannot meet its tolerance.
 
 ## Transfer-matrix norms
 
@@ -64,9 +77,11 @@ of a Transfer Matrix and a Quadratically Convergent Algorithm for Computing
 its L-infinity-norm,” *Systems & Control Letters* 15(1), 1–7 (1990).
 [Author's page and paper](https://web.stanford.edu/~boyd/papers/sv_of_tf.html).
 
-The package uses a level-set/pencil norm calculation for rational-model
-validation, with explicit numerical tolerances. See
-[`passivityassessment`](@ref JosephsonCircuits.passivityassessment) for interpreting its reported bounds.
+The package finds the frequencies where a singular value of a rational
+realization crosses a level from the Hamiltonian matrix or a pencil, as
+in this paper, to validate a realization supplied directly at its
+tolerance. See
+[`passivityassessment`](@ref JosephsonCircuits.passivityassessment) for interpreting its verdicts.
 
 ## Traveling-wave line models
 

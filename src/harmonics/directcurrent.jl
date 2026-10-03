@@ -1475,12 +1475,15 @@ struct DCUpdate{V,I}
 end
 
 # One work item per row of the window: its own entry, kept or not, plus its
-# row of the matrix, plus the constant when this is a residual.
+# row of the matrix, plus the constant when this is a residual. A row which
+# is written over does not read what it held: the internal residual does
+# not write it, and on a device it holds whatever the memory did, a NaN
+# included, which a product with zero would keep.
 @kernel function dcupdatekernel!(Fw, @Const(keep), @Const(rowptr),
         @Const(colval), @Const(nzval), @Const(uw), @Const(c), alpha)
     i = @index(Global)
     @inbounds begin
-        acc = keep[i]*Fw[i] + alpha*c[i]
+        acc = (iszero(keep[i]) ? zero(eltype(Fw)) : keep[i]*Fw[i]) + alpha*c[i]
         for k in rowptr[i]:(rowptr[i+1] - 1)
             acc += nzval[k]*uw[colval[k]]
         end

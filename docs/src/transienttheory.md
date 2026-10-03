@@ -273,17 +273,39 @@ stays within the allowed error. A state-space realization uses the ranks
 of the residue matrices. Explicit delay removal can reduce the rational
 order needed for a long cable or traveling-wave device.
 
+The search for the fewest poles meeting a tolerance starts where the
+samples allow: a fit of `N` poles and a constant combines `N + 1` real
+functions of frequency, so its error is at least what the samples leave
+beyond their best approximation of that rank. An order is made passive
+only where its poles could meet the tolerance: the passivity enforcement
+keeps the poles, and a least squares at them, reweighted toward the
+samples it misses most as in Lawson's algorithm, bounds the error of
+every fit with them from below. The scan stops on measured progress,
+once the order has doubled since the fit's own error last fell by a set
+fraction of itself, which bounds the work on data of a high degree. It
+also stops at a fit with too many states for memory to hold the dense
+matrices of its realization and its passivity enforcement. See
+[Eckart and Young, and Rice and Usow](numerical-references.md#Rational-fitting).
+
 ### Passivity and fit accuracy
 
 For a passive model, the largest singular value of `S(iw)` must not exceed
 one. Enforcement perturbs residues and the direct term at violation
-points. Validation then uses a level-set norm search, rather than relying
-only on a frequency grid. The search locates crossings through a matrix
-pencil without requiring an inverse of `I-D'D`.
+points, found on a frequency grid and by a sweep of the whole frequency
+axis which bounds the fit's dissipation `I-S'S` from below over each
+interval, from its value and derivative at the interval's centre and the
+distances of the poles, so that no band passes between samples. The
+sweep establishes a fit passive to its tolerance, and tests a fit which
+is not enforced as well.
 
-The norm is computed to numerical tolerances; a sample-derived lower bound
-is not an exact certificate at arbitrary precision. See
-[`passivityassessment`](@ref JosephsonCircuits.passivityassessment) for the reported uncertainty and
+A realization supplied directly has no residues to bound, and is tested
+by a search for the peaks of its largest singular value and by the
+crossings of the level `sqrt(1 + atol)`, at which its dissipation `I-S'S`
+reaches `-atol`, found through the Hamiltonian matrix where the direct
+term stands well under the level, and otherwise through a matrix pencil,
+which needs no inverse of `I-D'D`. A peak within the roundoff of the
+level can leave the test undecided, and the block is then accepted; see
+[`passivityassessment`](@ref JosephsonCircuits.passivityassessment) for its verdicts and
 [`PassivityEnforcement`](@ref) for margins. A declared lossless model is
 checked using both the model and its inverse; small apparent loss is not
 a reason to discard noise channels.

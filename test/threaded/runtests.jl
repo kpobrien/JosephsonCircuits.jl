@@ -212,9 +212,37 @@ end
         keyedarrays = false)
     @test long.solverinfo.converged
 
+    # the vector fit's relocation shares the components of the samples
+    # among the threads, each writing its own rows of the weight's system,
+    # where a column's least squares is large enough for that to pay (see
+    # sharedwork): a four port of three resonances, sixteen components,
+    # relocated from twelve poles; and weighted, each entry with a least
+    # squares of its own, in the relocation and in the residue solve
+    xs = collect(range(0.1, 3.0; length = 60))
+    Sr = [sum(cis(q*i + j)/(im*x - complex(-0.1*q, q)) for q in (0.5, 1.5, 2.5))
+        for i in 1:4, j in 1:4, x in xs]
+    Wr = [1 + 0.5*sin(i + 2j + x) for i in 1:4, j in 1:4, x in xs]
+    start = JC.spreadpoles(:linear, xs[1], xs[end], 12)
+    relocated = vcat(JC.relocate(JC.relocationcomponents(Sr), xs, start),
+        JC.relocate(JC.relocationcolumns(Sr, Wr), xs, start; weights = Wr),
+        vec(first(JC.fitcoefficients(Sr, xs, start; weights = Wr))))
+
+    # the certified sweep and the norm search share each generation of
+    # intervals among the threads: sixteen ports, eight two ports lossless
+    # in one direction, `Q diag((1 - s)/(1 + s), 0.5/(s + 1)) Q'`, turned
+    # by an orthogonal matrix, whose sweep takes hundreds of intervals, are
+    # settled in as many and bracketed alike
+    Qr = [cos(0.3) -sin(0.3); sin(0.3) cos(0.3)]
+    Q16 = Matrix(qr(reshape(sin.((1:256).^2), 16, 16)).Q)
+    part = JC.ResidueForm(ComplexF64[-1], reshape(ComplexF64.(Q16*kron(I(8), Qr*[2.0 0; 0 0.5]*Qr')*Q16'), 16, 16, 1),
+        Q16*kron(I(8), Qr*[-1.0 0; 0 0]*Qr')*Q16', 1.0, [Matrix{ComplexF64}(I, 16, 16)])
+    partsweep = JC.passivitysweep(part, 1 + 5e-9, Inf)
+    @test partsweep.verdict === :passive && partsweep.evaluated > 100
+    sweep = [partsweep.evaluated, JC.residuenorm(part; rtol = 1e-8)[[1, 3]]...]
+
     serialize(ARGS[1], (; S = batched.S, Ssensitivity = batched.Ssensitivity,
         Snoise = batched.Snoise, fluxes, finalflux = sol.finalflux,
         tangent = tangent.outgoing, adjoint = adjoint.currents,
         covariance = noise.covariance, gain, longflux = long.nodeflux,
-        pumpedcovariance = pnoise.covariance))
+        pumpedcovariance = pnoise.covariance, relocated, sweep))
 end

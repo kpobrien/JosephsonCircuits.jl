@@ -58,10 +58,9 @@ p=JC.RationalScatteringProvider(A,B,C,D)
 ws=collect(range(0.,20.;length=benchsize(256))); out=zeros(ComplexF64,4,4,length(ws))
 evaluate(x)=JC.evaluateprovider!(x...)
 measure("rational48x4x$(benchsize(256))/evaluate",evaluate,(out,p,ws))
-rf=JC.resolventfactors(A,B)
-CZ=C*rf.Z
+rf=JC.resolventfactors(A,B,C)
 rw=JC.ResolventWorkspace(rf); rdest=zeros(ComplexF64,4,4)
-transfer(x)=JC.transferat!(x[1],x[2],x[3],x[4],3.0,48,x[5])
-measure("rational48x4/transfer",transfer,(rdest,rf,CZ,D,rw))
+transfer(x)=JC.rationaltransfer!(x[1],x[2],x[3],3.0,x[4])
+measure("rational48x4/transfer",transfer,(rdest,rf,D,rw))
 
 measure("ladder8/prepare",front,ladder(8))

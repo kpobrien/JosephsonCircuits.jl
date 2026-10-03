@@ -480,13 +480,13 @@ end
     # through the Schur factors; two workspaces on one set of factors are
     # independent
     A = [-2. 1.;0. -2.]; B = [1. 0.;0. 1.]; C = [0.2 0.1;0. 0.3]; D=zeros(2,2)
-    rf = JC.resolventfactors(A,B)
+    rf = JC.resolventfactors(A,B,C)
     work1 = JC.ResolventWorkspace(rf); work2 = JC.ResolventWorkspace(rf)
     out1 = zeros(ComplexF64,2,2); out2=similar(out1)
     for w in (-3.,0.,1.,4.)
-        JC.rationaltransfer!(out1,rf,C*rf.Z,D,w,work1)
+        JC.rationaltransfer!(out1,rf,D,w,work1)
         saved = copy(out1)
-        JC.rationaltransfer!(out2,rf,C*rf.Z,D,w+1,work2)
+        JC.rationaltransfer!(out2,rf,D,w+1,work2)
         @test out1 == saved
         @test out1 ≈ response(A,B,C,D,w)
         @test out2 ≈ response(A,B,C,D,w+1)
@@ -533,8 +533,87 @@ end
     @test all(isapprox(outsc[:,:,k],dense(w);rtol=1e-10) for (k,w) in enumerate(wr))
     one2 = zeros(ComplexF64,2,2,1)
     @test all(isapprox(JC.evaluateprovider!(one2,p2,[w])[:,:,1],dense(w);rtol=1e-10) for w in wr)
-    @test sort(JC.schureigenvalues(p2.factors.T);by=x->(imag(x),real(x))) ≈
+    @test sort(JC.schureigenvalues(p2.states.T);by=x->(imag(x),real(x))) ≈
         sort(eigvals(A2);by=x->(imag(x),real(x))) rtol=1e-10
+    # a state matrix which is not quasi triangular is brought to its
+    # Schur form: the same realization under a rotation of its states
+    Q = Matrix(qr(reshape(sin.(1:36),6,6)).Q)
+    p3 = JC.RationalScatteringProvider(Q*A2*Q',Q*B2,C2*Q',D2)
+    @test !JC.isquasitriangular(Q*A2*Q')
+    JC.evaluateprovider!(out2,p3,wr)
+    @test all(isapprox(out2[:,:,k],dense(w);rtol=1e-10) for (k,w) in enumerate(wr))
+    # and so is one whose 2 by 2 block is not in the standard form, `b c < 0`
+    # on an equal diagonal: `[-a a; 1 -c]` holds two real eigenvalues, the
+    # small one given by its entries only through a difference which
+    # cancels, against the closed form `0.2 a/(s^2 + (a + c) s + a (c - 1))`
+    for a in (1e12,1e16)
+        c = 1.23456789
+        pn = JC.RationalScatteringProvider([-a a; 1. -c],[0.; 1.;;],[0.2 0.],zeros(1,1))
+        wn = [0.,c-1,1.]
+        Fn = JC.evaluateprovider!(zeros(ComplexF64,1,1,3),pn,wn)
+        @test all(isapprox(Fn[1,1,k],0.2/((im*w)^2/a+(1+c/a)*im*w+(c-1));rtol=1e-14)
+            for (k,w) in enumerate(wn))
+    end
+    # a standard block's pair, `α ± i sqrt(-b c)`, however unequal `b` and `c`
+    @test JC.schureigenvalues([-1. -1e300; 1e-300 -1.]) ≈ [complex(-1.,1.),complex(-1.,-1.)] rtol=4eps()
+    # and one which is not a rotation keeps a frequency its entries give
+    # exactly: `[-a -3; 12 -a]` resonates at 6, with a width of 1e-12 of it,
+    # where `C (sI - A)^-1 B = a (s + a)/((s + a)^2 + 36)` is exactly
+    # `(a + 6i)/(a + 12i)`
+    let a = 1e-12, A = [-a -3.; 12. -a], B = [1.; 0.;;], C = [a 0.]
+        pr = JC.RationalScatteringProvider(A,B,C,zeros(1,1))
+        @test only(JC.evaluateprovider!(zeros(ComplexF64,1,1,1),pr,[6.])) ≈ (a + 6im)/(a + 12im) rtol=1e-13
+    end
+    # a state matrix block diagonal in runs of equal blocks, each pole a
+    # run as a fit's is, is evaluated pole by pole: two runs of rotations,
+    # of either sign of frequency, and a run of real blocks grouped, and a
+    # rotation alone, a residue of rank one, through its states, against a
+    # dense solve
+    Ab = zeros(12,12)
+    for (k,blk) in enumerate(([-0.1 -1.5; 1.5 -0.1], [-0.1 -1.5; 1.5 -0.1], [-0.2 3.0; -3.0 -0.2],
+            [-0.2 3.0; -3.0 -0.2], [-0.05 -1.0; 1.0 -0.05]))
+        Ab[2k-1:2k,2k-1:2k] = blk
+    end
+    Ab[11,11] = Ab[12,12] = -0.7
+    Bb, Cb = sin.((1:12) .+ 2 .* (1:2)'), cos.(3 .* (1:2) .+ (1:12)')
+    pb = JC.RationalScatteringProvider(Ab,Bb,Cb,D2)
+    @test size(pb.groups.columns,2) == 5 && size(pb.states.T,1) == 2
+    JC.evaluateprovider!(out2,pb,wr)
+    @test all(isapprox(out2[:,:,k],response(Ab,Bb,Cb,D2,w);rtol=1e-10) for (k,w) in enumerate(wr))
+    # a resonance of quality factor 1e8 at 5 GHz on two pairs of ports,
+    # against its closed form, grouped and through the Schur factors: the
+    # grouped evaluation's factors `1/(s - a)` are exact however narrow the
+    # resonance, and so is the Schur path's 2 by 2 solve, which divides by
+    # the block's two poles a factor at a time
+    let w0 = 2pi*5e9, g = w0/2e8
+        Ao, Bo, Co = kron(Matrix(1.0I,2,2),[-g -w0; w0 -g]), Matrix(1.0I,4,4), g .* Matrix(1.0I,4,4)
+        po = JC.RationalScatteringProvider(Ao,Bo,Co,zeros(4,4))
+        wo = w0 .+ g .* [-2,-1,-0.3,0,0.3,1,2]
+        Fo = JC.evaluateprovider!(zeros(ComplexF64,4,4,length(wo)),po,wo)
+        function closed(w)
+            zp, zm = 1/complex(g,w-w0), 1/complex(g,w+w0)
+            return g .* kron(Matrix(1.0I,2,2),[(zp+zm)/2 -(zp-zm)/2im; (zp-zm)/2im (zp+zm)/2])
+        end
+        @test size(po.groups.columns,2) == 2 && isempty(po.states.poles)
+        @test all(opnorm(Fo[:,:,k]-closed(w)) < 1e-13 for (k,w) in enumerate(wo))
+        rf = JC.resolventfactors(Ao,Bo,Co)
+        Fs, work = zeros(ComplexF64,4,4), JC.ResolventWorkspace(rf)
+        @test all(opnorm(JC.rationaltransfer!(Fs,rf,zeros(4,4),w,work)-closed(w)) < 1e-13 for w in wo)
+    end
+    # residues of rank one on 20 ports, one pole repeated: the repeated
+    # pole is grouped, and the others, which grouped would each hold the
+    # ports squared for the work of their one state, are evaluated through
+    # their states
+    let n = 20
+        Ar = Diagonal([-(1:n) ./ 4; -n/4])
+        Br, Cr = sin.((1:n+1) .+ 3 .* (1:n)'), cos.(2 .* (1:n) .+ (1:n+1)')
+        Dr = zeros(n,n)
+        pr = JC.RationalScatteringProvider(Matrix(Ar),Br,Cr,Dr)
+        @test size(pr.groups.columns,2) == 1 && size(pr.states.T,1) == n-1
+        wq = [0.0, 0.3, 2.0]
+        Fr = JC.evaluateprovider!(zeros(ComplexF64,n,n,length(wq)),pr,wq)
+        @test all(isapprox(Fr[:,:,k],response(Matrix(Ar),Br,Cr,Dr,w);rtol=1e-10) for (k,w) in enumerate(wq))
+    end
 end
 
 @testset "a pumped block given by its data" begin

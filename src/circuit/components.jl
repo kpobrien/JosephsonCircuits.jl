@@ -1876,14 +1876,16 @@ end
 end
 
 # A stated zero frequency matrix is checked like the block's own data: its
-# size against the block, and passivity to the block's tolerance unless
-# the block declared itself active with a `NoiseCovariance`.
+# size against the block, and passivity to the block's tolerance, the
+# smallest eigenvalue of `I - S S'` no lower than `-atol` (see
+# checkblockcontract), unless the block declared itself active with a
+# `NoiseCovariance`.
 checkdcmodel(::ScatteringLimit, n::Int, noise, atol) = nothing
 function checkdcmodel(m::AbstractDCModel, n::Int, noise, atol)
     S0 = dcscatteringmatrix(m, n)
     if !(noise isa NoiseCovariance)
-        sv = maximum(svdvals(S0); init = 0.0)
-        sv <= 1 + atol || throw(ArgumentError(lazy"the zero frequency scattering matrix has largest singular value $(sv), so it is active at direct current. An active block has to declare its own noise with NoiseCovariance, as it does at every other frequency."))
+        margin = passivitymargin(S0)
+        margin >= -atol || throw(ArgumentError(lazy"the zero frequency scattering matrix is active at direct current: the smallest eigenvalue of I - S S' is $(margin), below -atol for the block's atol of $(atol). An active block has to declare its own noise with NoiseCovariance, as it does at every other frequency."))
     end
     return nothing
 end
@@ -1962,6 +1964,12 @@ function passivitymargin(S::AbstractMatrix)
     M = Matrix{Complex{Float64}}(I, n, n) - S*S'
     return minimum(real.(eigvals(Hermitian(M))))
 end
+
+# The largest singular value at which the dissipation `I - S'S` reaches
+# `-atol`, the passivity a block's data is held to (see
+# checkblockcontract): the level every test of a realization or a fit
+# over frequency holds its largest singular value to.
+passivelevel(atol) = sqrt(1 + atol)
 
 """
     unitaritydeviation(S::AbstractMatrix)
@@ -2115,46 +2123,106 @@ end
 # eigenvectors, which a nearly defective realization, an all pass, has no
 # usable set of. The form stays real, a complex pair of eigenvalues being
 # a 2 by 2 block of its diagonal, so the solve multiplies real entries of
-# `T` into the complex solution.
+# `T` into the complex solution. A state matrix already quasi-upper-
+# triangular, as a fitted block's block diagonal one is, is its own form,
+# `Z` the identity, and `A`, `B` and `C` are held as they are. `poles[k]`
+# is the eigenvalue of `T` at state `k`, a 2 by 2 block's pair laid out on
+# its two states, and `first[k]` the first nonzero row of column `k` of
+# `T`, where the back substitution's update from that column starts, so
+# that a block diagonal `T` is solved in time proportional to the states.
 struct ResolventFactors
-    Z::Matrix{Float64}
     T::Matrix{Float64}
     ZtB::Matrix{Float64}
+    CZ::Matrix{Float64}
+    poles::Vector{ComplexF64}
+    first::Vector{Int}
 end
-function resolventfactors(A, B)
-    F = schur(Matrix{Float64}(A))
-    return ResolventFactors(F.Z, F.T, F.Z'*B)
+function resolventfactors(A, B, C)
+    Am, Bm, Cm = convert(Matrix{Float64}, A), convert(Matrix{Float64}, B), convert(Matrix{Float64}, C)
+    T, ZtB, CZ = isquasitriangular(Am) ? (Am, Bm, Cm) : (F = schur(Am); (F.T, F.Z'*Bm, Cm*F.Z))
+    first = [something(findfirst(!iszero, view(T, 1:k, k)), k) for k in axes(T, 2)]
+    return ResolventFactors(T, ZtB, CZ, schureigenvalues(T), first)
 end
 
-# `x <- (s I - T)^-1 x` for the quasi-upper-triangular `T` of a real Schur
-# form and a complex shift `s`, by back substitution a column of `T` at a
-# time: a 1 by 1 block of its diagonal is a real eigenvalue, and a 2 by 2
-# block, marked by its nonzero subdiagonal entry, a complex pair, solved
-# by the inverse of the shifted block
-function quasitriangularsolve!(x::AbstractVector, T::AbstractMatrix, s::Number)
+# whether `A` is a real Schur form as LAPACK standardizes one: zero below
+# its first subdiagonal, with no two consecutive entries of that nonzero,
+# so that its diagonal blocks are 1 by 1 or 2 by 2, and each 2 by 2 block
+# `[α b; c α]` with `b c < 0`, a complex pair `α ± i sqrt(-b c)`. A 2 by 2
+# block of any other shape can hold two real eigenvalues, which its
+# entries give only through a difference that cancels, so a matrix with
+# one is not taken as its own form.
+function isquasitriangular(A::AbstractMatrix)
+    n = size(A, 1)
+    for j in 1:n, i in j + 2:n
+        iszero(A[i, j]) || return false
+    end
+    for k in 2:n - 1
+        (iszero(A[k, k - 1]) || iszero(A[k + 1, k])) || return false
+    end
+    for k in 2:n
+        iszero(A[k, k - 1]) && continue
+        (A[k - 1, k - 1] == A[k, k] && signbit(A[k - 1, k]) != signbit(A[k, k - 1]) &&
+            !iszero(A[k - 1, k])) || return false
+    end
+    return true
+end
+
+# `X <- ((s I - T)^-1 X')'` for the factors' quasi-upper-triangular `T`
+# and a complex shift `s`, `X` holding a row per port and a column per
+# state: back substitution a block of the diagonal at a time, a 1 by 1
+# block a real eigenvalue and a 2 by 2 block, marked by its nonzero
+# subdiagonal entry, a complex pair, each solved by the inverse of the
+# shifted block for every port at once and then taken out of the columns
+# of the states above it, from the first nonzero row `first` of its
+# columns of `T`. The inverse of a shifted 2 by 2 block is its adjugate
+# over `(s - λ1)(s - λ2)`, divided a factor at a time: expanded, the
+# determinant would lose a narrow resonance's width to the square of the
+# frequency, and overflow where that square does.
+function quasitriangularsolve!(X::AbstractMatrix, rf::ResolventFactors, s::Number)
+    T, poles, first = rf.T, rf.poles, rf.first
     k = size(T, 1)
     @inbounds while k >= 1
         if k > 1 && !iszero(T[k, k - 1])
-            a, b = s - T[k - 1, k - 1], -T[k - 1, k]
-            c, d = -T[k, k - 1], s - T[k, k]
-            det = a*d - b*c
-            x1, x2 = x[k - 1], x[k]
-            y1, y2 = (d*x1 - b*x2)/det, (a*x2 - c*x1)/det
-            x[k - 1], x[k] = y1, y2
-            for j in 1:k - 2
-                x[j] += T[j, k - 1]*y1 + T[j, k]*y2
+            a11, a12, a21, a22 = s - T[k, k], T[k - 1, k], T[k, k - 1], s - T[k - 1, k - 1]
+            f1, f2 = inv(s - poles[k - 1]), inv(s - poles[k])
+            for q in axes(X, 1)
+                x1, x2 = X[q, k - 1], X[q, k]
+                X[q, k - 1], X[q, k] = (a11*x1 + a12*x2)*f1*f2, (a21*x1 + a22*x2)*f1*f2
+            end
+            for j in min(first[k - 1], first[k]):k - 2
+                t1, t2 = T[j, k - 1], T[j, k]
+                for q in axes(X, 1)
+                    X[q, j] += t1*X[q, k - 1] + t2*X[q, k]
+                end
             end
             k -= 2
         else
-            y = x[k]/(s - T[k, k])
-            x[k] = y
-            for j in 1:k - 1
-                x[j] += T[j, k]*y
+            f = inv(s - T[k, k])
+            for q in axes(X, 1)
+                X[q, k] *= f
+            end
+            for j in first[k]:k - 1
+                t = T[j, k]
+                for q in axes(X, 1)
+                    X[q, j] += t*X[q, k]
+                end
             end
             k -= 1
         end
     end
-    return x
+    return X
+end
+
+# the eigenvalues `α ± i sqrt(-b c)` of the standardized 2 by 2 block
+# `[α b; c α]`: a rotation's `|b|` exactly; otherwise the root of the
+# product, rounded twice, wherever the product is a normal number, and
+# beyond that the product of the roots, which neither overflows nor
+# underflows
+function blockpoles(α, b, c)
+    p = abs(b)*abs(c)
+    β = abs(b) == abs(c) ? abs(b) :
+        floatmin(p) <= p <= floatmax(p) ? sqrt(p) : sqrt(abs(b))*sqrt(abs(c))
+    return complex(α, β), complex(α, -β)
 end
 
 # the eigenvalues of a real Schur form, read off its diagonal blocks
@@ -2164,9 +2232,7 @@ function schureigenvalues(T::AbstractMatrix)
     nz = size(T, 1)
     while k <= nz
         if k < nz && !iszero(T[k + 1, k])
-            a, b, c, d = T[k, k], T[k, k + 1], T[k + 1, k], T[k + 1, k + 1]
-            m, q = (a + d)/2, sqrt(complex(((a - d)/2)^2 + b*c))
-            push!(λs, m + q, m - q)
+            push!(λs, blockpoles(T[k, k], T[k, k + 1], T[k + 1, k])...)
             k += 2
         else
             push!(λs, T[k, k])
@@ -2176,32 +2242,126 @@ function schureigenvalues(T::AbstractMatrix)
     return λs
 end
 
-# the scratch of the solves on one set of factors, a column of states per
-# port, which a caller holds so that concurrent callers do not share it
+# The scratch of the solves on one set of factors of a square block, the
+# solution a row per port and a column per state, which a caller holds so
+# that concurrent callers do not share it, and the real and imaginary
+# parts of the solution and of the output, which the output matrix, being
+# real, multiplies as two real products
 struct ResolventWorkspace
     solution::Matrix{Complex{Float64}}
+    re::Matrix{Float64}
+    im::Matrix{Float64}
+    outre::Matrix{Float64}
+    outim::Matrix{Float64}
 end
-ResolventWorkspace(rf::ResolventFactors) =
-    ResolventWorkspace(Matrix{Complex{Float64}}(undef, size(rf.ZtB)))
+function ResolventWorkspace(rf::ResolventFactors)
+    nz, n = size(rf.ZtB)
+    return ResolventWorkspace(Matrix{Complex{Float64}}(undef, n, nz), Matrix{Float64}(undef, n, nz),
+        Matrix{Float64}(undef, n, nz), Matrix{Float64}(undef, n, n), Matrix{Float64}(undef, n, n))
+end
 
-function schurresolvent!(work::ResolventWorkspace, rf::ResolventFactors, w)
-    X = work.solution
-    copyto!(X, rf.ZtB)
-    for q in axes(X, 2)
-        quasitriangularsolve!(view(X, :, q), rf.T, im*w)
+# `work.solution = ((i w I - T)^-1 Z' B)'`
+schurresolvent!(work::ResolventWorkspace, rf::ResolventFactors, w) =
+    quasitriangularsolve!(transpose!(work.solution, rf.ZtB), rf, im*w)
+
+# `work.outre + i work.outim = C Z (i w I - T)^-1 Z' B`, the states' part
+# of the response at `w`
+function resolventoutput!(work::ResolventWorkspace, rf::ResolventFactors, w)
+    X = schurresolvent!(work, rf, w)
+    work.re .= real.(X)
+    work.im .= imag.(X)
+    mul!(work.outre, rf.CZ, transpose(work.re))
+    mul!(work.outim, rf.CZ, transpose(work.im))
+    return work
+end
+
+function rationaltransfer!(dest, rf::ResolventFactors, D, w, work::ResolventWorkspace)
+    resolventoutput!(work, rf, w)
+    dest .= complex.(work.outre, work.outim) .+ D
+    return dest
+end
+
+# The response of a realization whose state matrix is block diagonal in
+# the blocks the fitter writes (see realization), a real pole `a` as `a`
+# and a complex one `a = α + iβ` as `[α -β; β α]`, each pole a run of
+# equal blocks, as many as its residue's rank. Over its columns `c` of
+# `C` and rows `b'` of `B`, a run of real blocks is `P/(s - a)` with
+# `P = sum c b'`, and a run of complex ones `R/(s - a) + conj(R)/(s - conj(a))`
+# with `R = sum (c1 - i c2)(b1 + i b2)'/2`: the fitter's pole-residue form,
+# exact, which is evaluated in the fitter's real basis (basisat!), whose
+# factors `1/(s - a)` lose nothing however narrow the resonance. A
+# frequency then costs the ports squared per pole rather than per state,
+# and a sweep is one product of the coefficients `columns`, an `n x n`
+# matrix a column (`P`, or `Re R` and `Im R`), with the basis. Only runs
+# of two blocks or more are grouped, each column doing the work of as
+# many states; a single block, a residue of rank one, costs the ports
+# squared a frequency through its column or its states alike, and is left
+# to its states, which hold two rows of the ports rather than their
+# square. `poles` is laid out as the basis takes them.
+struct PoleGroups
+    poles::Vector{ComplexF64}
+    columns::Matrix{Float64}
+end
+# the pole groups of a realization and the states left to the Schur path:
+# the single blocks, or every state where `A` is not block diagonal in
+# the fitter's blocks
+function polegroups(A::Matrix{Float64}, B::Matrix{Float64}, C::Matrix{Float64})
+    nz, n = size(A, 1), size(C, 1)
+    ungrouped = (PoleGroups(ComplexF64[], zeros(n*n, 0)), collect(1:nz))
+    # the blocks of the diagonal, real poles and rotations, and nothing
+    # off them
+    starts, poles = Int[], ComplexF64[]
+    k = 1
+    while k <= nz
+        push!(starts, k)
+        if k < nz && !iszero(A[k + 1, k])
+            α, β = A[k, k], A[k + 1, k]
+            A[k + 1, k + 1] == α && A[k, k + 1] == -β && !isrealpole(complex(α, β)) || return ungrouped
+            push!(poles, complex(α, β))
+            k += 2
+        else
+            push!(poles, A[k, k])
+            k += 1
+        end
     end
-    return X
-end
-
-function resolventat!(dest, rf::ResolventFactors, w, work::ResolventWorkspace)
-    mul!(dest, rf.Z, schurresolvent!(work, rf, w))
-    return dest
-end
-function rationaltransfer!(dest, rf::ResolventFactors, CZ, D, w,
-        work::ResolventWorkspace)
-    mul!(dest, CZ, schurresolvent!(work, rf, w))
-    dest .+= D
-    return dest
+    blockof = zeros(Int, nz)
+    for (b, k) in enumerate(starts)
+        blockof[k:(b < length(starts) ? starts[b + 1] - 1 : nz)] .= b
+    end
+    for j in 1:nz, i in 1:nz
+        blockof[i] == blockof[j] || iszero(A[i, j]) || return ungrouped
+    end
+    # the runs of equal poles: a single block's states are left out, and a
+    # longer run takes a column per real pole and two per complex
+    runs, states = UnitRange{Int}[], Int[]
+    b = 1
+    while b <= length(starts)
+        e = b
+        while e < length(starts) && poles[e + 1] == poles[b]
+            e += 1
+        end
+        e > b ? push!(runs, b:e) : append!(states, starts[b]:starts[b] + (isreal(poles[b]) ? 0 : 1))
+        b = e + 1
+    end
+    columns = sum(r -> isreal(poles[first(r)]) ? 1 : 2, runs; init = 0)
+    X = zeros(n*n, columns)
+    layout = ComplexF64[]
+    col = 0
+    for r in runs
+        a, first_ = poles[first(r)], starts[r]
+        if isreal(a)
+            X[:, col + 1] .= vec(C[:, first_]*B[first_, :])
+            push!(layout, a)
+            col += 1
+        else
+            C1, C2, B1, B2 = C[:, first_], C[:, first_ .+ 1], B[first_, :], B[first_ .+ 1, :]
+            X[:, col + 1] .= vec(C1*B1 .+ C2*B2) ./ 2
+            X[:, col + 2] .= vec(C1*B2 .- C2*B1) ./ 2
+            push!(layout, a, conj(a))
+            col += 2
+        end
+    end
+    return PoleGroups(layout, X), states
 end
 
 """
@@ -2213,9 +2373,16 @@ form a vector fit of measured or simulated scattering data takes and the
 one the transient solver realizes in time, `dz/dt = A z + B a`,
 `b = C z + D a` on the incident and reflected power waves. The provider
 holds a copy of the realization and takes the real Schur form of `A`
-when it is built, so a signed angular frequency is evaluated by a
+when it is built, `A` itself where it is already quasi-triangular in
+LAPACK's standard form, so a signed angular frequency is evaluated by a
 quasi-triangular solve on those factors, without forming an inverse;
-the realization is fixed from then on. Built by
+the realization is fixed from then on. A realization whose `A` is block
+diagonal in real poles and rotations `[α -β; β α]`, each pole a run of
+equal blocks as many as its residue's rank, as a fitted block's is, is
+evaluated pole by pole instead, in the fit's pole-residue form, at the
+cost of the ports squared per pole rather than per state, for each pole
+whose residue has rank above one; the Schur form is then taken of the
+states of the others alone. Built by
 [`RationalScattering`](@ref), which validates it.
 """
 struct RationalScatteringProvider <: AbstractMatrixProvider
@@ -2223,47 +2390,72 @@ struct RationalScatteringProvider <: AbstractMatrixProvider
     B::Matrix{Float64}
     C::Matrix{Float64}
     D::Matrix{Float64}
-    # the real Schur form of `A`, and `C Z`, which every evaluation reads
-    factors::ResolventFactors
-    CZ::Matrix{Float64}
+    # what every evaluation reads, either of which may be empty: the runs
+    # of equal poles grouped (see PoleGroups), and the real Schur form of
+    # the other states (see ResolventFactors)
+    groups::PoleGroups
+    states::ResolventFactors
     function RationalScatteringProvider(A::AbstractMatrix, B::AbstractMatrix,
             C::AbstractMatrix, D::AbstractMatrix)
         Am, Bm, Cm, Dm = Matrix{Float64}(A), Matrix{Float64}(B), Matrix{Float64}(C), Matrix{Float64}(D)
-        rf = resolventfactors(Am, Bm)
-        return new(Am, Bm, Cm, Dm, rf, Cm*rf.Z)
+        groups, rest = polegroups(Am, Bm, Cm)
+        states = length(rest) == size(Am, 1) ? resolventfactors(Am, Bm, Cm) :
+            resolventfactors(Am[rest, rest], Bm[rest, :], Cm[:, rest])
+        return new(Am, Bm, Cm, Dm, groups, states)
     end
+end
+
+# `dest[:, :, i] += c (D + G(i ws[i]))`, `G` the grouped poles' part of
+# the response, or `=` where `add` is false; `tile` frequencies to a
+# product
+function addgrouped!(dest::AbstractArray{<:Any,3}, g::PoleGroups, D::Matrix{Float64},
+        ws::AbstractVector, c::Number; tile::Int = 64, add::Bool = true)
+    n, N, L = size(D, 1), length(g.poles), min(tile, length(ws))
+    phi, basis, out = zeros(ComplexF64, N), zeros(N, 2L), zeros(n*n, 2L)
+    for lo in 1:tile:length(ws)
+        ids = lo:min(lo + tile - 1, length(ws))
+        m = length(ids)
+        # the basis's real parts in the first `m` columns and its
+        # imaginary parts in the next, so that one product reads the
+        # coefficients once for both
+        for (j, i) in enumerate(ids)
+            basisat!(phi, g.poles, ws[i])
+            basis[:, j] .= real.(phi)
+            basis[:, m + j] .= imag.(phi)
+        end
+        mul!(view(out, :, 1:2m), g.columns, view(basis, :, 1:2m))
+        @inbounds for (j, i) in enumerate(ids), q in 1:n, r in 1:n
+            e = (q - 1)*n + r
+            value = c*(D[r, q] + complex(out[e, j], out[e, m + j]))
+            dest[r, q, i] = add ? dest[r, q, i] + value : value
+        end
+    end
+    return dest
 end
 providersize(p::RationalScatteringProvider) = size(p.D, 1)
 function evaluateprovider!(dest::AbstractArray{T,3},
         p::RationalScatteringProvider, ws::AbstractVector) where T
     checkdestsize(dest, providersize(p), length(ws))
-    fill!(dest, zero(T))
-    return addrational!(dest, p, ws, 1, Vector{Complex{Float64}}(undef, size(p.A, 1)))
+    return addrational!(dest, p, ws, 1; add = false)
 end
 
-# `dest[:, :, i] += c S(i ws[i])` for the realization of `p`, through its
-# Schur factors, a port's column at a time with `x` the states of one
+# `dest[:, :, i] += c S(i ws[i])`, or `=` where `add` is false, for the
+# realization of `p`: its pole groups and its other states through their
+# Schur factors, each where it has poles, the first with the feedthrough
+# and as `add` says, the second added to it
 function addrational!(dest::AbstractArray{<:Any,3}, p::RationalScatteringProvider,
-        ws::AbstractVector, c::Number, x::AbstractVector)
-    n, nz = size(p.D, 1), size(p.A, 1)
-    Ts, ZtB, CZ = p.factors.T, p.factors.ZtB, p.CZ
-    @inbounds for i in eachindex(ws)
-        s = im*ws[i]
-        for q in 1:n
-            for r in 1:n
-                dest[r, q, i] += c*p.D[r, q]
-            end
-            nz == 0 && continue
-            for k in 1:nz
-                x[k] = ZtB[k, q]
-            end
-            quasitriangularsolve!(x, Ts, s)
-            for k in 1:nz
-                xk = c*x[k]
-                for r in 1:n
-                    dest[r, q, i] += CZ[r, k]*xk
-                end
-            end
+        ws::AbstractVector, c::Number; add::Bool = true)
+    g, rf, n = p.groups, p.states, size(p.D, 1)
+    grouped = !isempty(g.poles)
+    grouped && addgrouped!(dest, g, p.D, ws, c; add)
+    grouped && isempty(rf.poles) && return dest
+    d, add = grouped ? (zero(c), true) : (c, add)
+    work = ResolventWorkspace(rf)
+    for i in eachindex(ws)
+        resolventoutput!(work, rf, ws[i])
+        @inbounds for q in 1:n, r in 1:n
+            value = d*p.D[r, q] + c*complex(work.outre[r, q], work.outim[r, q])
+            dest[r, q, i] = add ? dest[r, q, i] + value : value
         end
     end
     return dest
@@ -2271,177 +2463,115 @@ end
 
 # The passivity of a rational realization over every frequency: its
 # feedthrough, which is its value at infinite frequency, and then the
-# verdict of the level set search for its largest singular value (see
-# passivityassessment), which finds a peak however narrow, since the
-# pencil of a level finds every crossing of it where a sample can miss
-# one. The search decides on a lower bound of the norm, so a block it
-# cannot settle either way is accepted, as a lossless block, whose norm
-# is one, has to be. `normtested` leaves out the search, for a
-# realization the passivity enforcement has just measured by it.
+# verdict of passivityassessment at the level of `atol` (see
+# passivelevel), whose crossing test finds a peak however narrow where a
+# sample can miss one. A block it cannot settle either way is accepted
+# (see RationalScattering). `normtested` leaves the test out,
+# for a fit whose passivity the fitter has tested on its residues (see
+# fitsampled).
 function checkpassive(p::RationalScatteringProvider; atol = 1e-8, normtested::Bool = false)
     A, B, C, D = p.A, p.B, p.C, p.D
     margin = passivitymargin(D)
     margin < -atol && throw(ArgumentError(lazy"The rational scattering block is not passive at infinite frequency: the minimum eigenvalue of I - D*D' is $(margin)."))
     (size(A, 1) == 0 || normtested) && return nothing
-    verdict, worst, level, w = passivityassessment(A, B, C, D; atol = atol)
-    verdict === :active && throw(ArgumentError(lazy"The rational scattering block is not passive: its largest singular value over all frequencies is at least $(worst), at $(w) rad/s, which is above the tolerance $(atol)."))
+    (; verdict, lower, frequency) = passivityassessment(A, B, C, D; atol = atol)
+    verdict === :active && throw(ArgumentError(lazy"The rational scattering block is not passive: its largest singular value over all frequencies is at least $(lower), at $(frequency) rad/s, which is above the tolerance $(atol)."))
     return nothing
 end
 
 # the realization in the frequency unit of the poles, `S(s) = D + C (s/w I - A/w)^(-1) B/w`,
-# with each state scaled to balance its input row and output column, the
-# similarity `A -> T^(-1) A T`, `B -> T^(-1) B`, `C -> C T`, which leaves
-# `S` alone; and the scale
-function balancedrealization(A, B, C)
+# with its states scaled by the similarity `A -> T^(-1) A T`, `B -> T^(-1) B`,
+# `C -> C T`, which leaves `S` alone; and the scale. The scales balance the
+# system matrix `[A B; C 0]` by the iteration of LAPACK's gebal over the
+# states, as SLICOT's TB01ID does for the norm of AB13DD: each state's row,
+# its input and its couplings from the other states, against its column,
+# its output and its couplings to them, the diagonal aside, so that no
+# coupling is scaled out of proportion to the rest of the matrix, whose
+# Schur form would then lose a narrow resonance. A state's scale is
+# doubled or halved while that brings the two norms together, and kept
+# where it takes their sum under `improvement` of what it was; the sweeps
+# over the states end when one changes none, after `sweeps` at most. A
+# state with no column, which no output and no other state sees, or with
+# no row, which no input and no other state drives, has no part in `S`
+# and no scale which balances it: the rest of it is cleared. Each scale
+# is a power of two, which scales exactly, so that a state matrix in real
+# Schur form, as a fit's is, stays in it to the bit and is not factored
+# again. A step's scale and the norms it moves are held in the range
+# gebal holds them in, so that no entry overflows and no row or column
+# of a state with a part in `S` underflows to nothing, which would clear
+# it; a norm of finite entries past floatmax is taken at floatmax, which
+# sets a first step, and the next sweep balances the rest.
+function balancedrealization(A, B, C; improvement::Real = 0.95, sweeps::Integer = 100)
     nz = size(A, 1)
-    wscale = max(maximum(abs, eigvals(A)), floatmin(Float64))
-    An, Bn = A ./ wscale, B ./ wscale
-    t = [(cb = norm(view(C, :, k)); bb = norm(view(Bn, k, :)); cb > 0 && bb > 0 ? sqrt(bb/cb) : cb > 0 ? 1/cb : bb > 0 ? bb : 1.0) for k in 1:nz]
-    return (1 ./ t) .* An .* transpose(t), Bn ./ t, C .* transpose(t), wscale
-end
-
-"""
-    hinfnorm(A, B, C, D; rtol = 1e-8, span = 8.0, refinements = 32,
-        pad = 10.0)
-
-The largest singular value of the real rational matrix
-`S(s) = D + C (s I - A)^(-1) B` over every frequency, by the level set
-iteration of Boyd, Balakrishnan, Bruinsma and Steinbuch: a lower bound
-from the feedthrough, samples spanning the poles' frequencies, and a
-peak search around each pole is raised by a hair to a level, the
-frequencies where a singular value equals the level are the imaginary
-eigenvalues of the pencil of [`passivitycrossings`](@ref) for `S` over
-the level, and the largest singular value between consecutive ones
-raises the bound, until no singular value reaches the level. A peak
-however narrow is found, since the pencil finds every crossing of the
-level, which a sample can miss.
-
-Returns three values: a lower bound on the norm, the frequency in
-rad/s where it was attained, and the level the search established
-nothing reaches, `Inf` where termination established no such level.
-The first value is only the largest value the search evaluated; what
-termination proves is the third. They differ by `2 rtol`, which
-matters wherever the answer is compared against one: at the default
-tolerance a norm returned as `1 - 1e-9` is consistent with a true norm
-of `1 + 1e-8`, so calling a block passive on the first value is
-calling it passive on a lower bound.
-
-`rtol` is not worth pushing far below its default. The level is a
-bound only so far as the pencil resolves the crossings of it, and a
-peak which exceeds a level by less than roundoff brings its two
-crossings together into a nearly double eigenvalue which leaves the
-imaginary axis and is lost: a tolerance below the square root of `eps`
-asks the pencil for a resolution it does not have, and returns a level
-which is not a bound. The converse, a level just above a narrow peak
-whose eigenvalues stand off the axis by less than the pencil resolves,
-reports crossings no midpoint reaches; the level is then raised until
-they go, so it is looser than `2 rtol` above the lower bound.
-
-`span` is how many pole half widths the peak search brackets either
-side of each complex pole, `refinements` how many golden section steps
-refine each bracket, and `pad` how far past the outermost pole
-magnitudes the probe grid extends.
-"""
-function hinfnorm(A, B, C, D; rtol = 1e-8, span::Real = 8.0, refinements::Int = 32,
-        pad::Real = 10.0)
-    An, Bn, Cn, wscale = balancedrealization(A, B, C)
-    # the largest singular value at `w`, through the Schur form of the
-    # balanced realization taken once (see ResolventFactors), and `Inf`
-    # where the realization is not finite, at a pole on the axis
-    rf = resolventfactors(An, Bn)
-    CZ, work, F = Cn*rf.Z, ResolventWorkspace(rf), similar(D, Complex{Float64})
-    sigma = w -> (rationaltransfer!(F, rf, CZ, D, w, work); all(isfinite, F) ? opnorm(F) : Inf)
-    λs = schureigenvalues(rf.T)
-    # The grid spans the magnitudes of the poles the system has, not
-    # fixed decades around one: a peak can lie far from every pole
-    # frequency, as `k s/((s + a)(s + b))` peaking at `sqrt(a b)` shows,
-    # so the grid has to cover the whole range the poles set.
-    mags = [abs(l) for l in λs if abs(l) > 0]
-    glo = isempty(mags) ? 1e-2 : minimum(mags)/pad
-    ghi = isempty(mags) ? 1e2 : maximum(mags)*pad
-    probes = vcat(0.0, [abs(imag(l)) for l in λs if abs(imag(l)) > 0],
-                  exp.(range(log(glo), log(ghi); length = max(9, 2*length(λs)))))
-    sort!(probes)
-    bound, where = opnorm(D), Inf
-    for w in probes
-        s = sigma(w)
-        isfinite(s) || return Inf, w*wscale, Inf
-        s > bound && ((bound, where) = (s, w))
-    end
-    isfinite(bound) || return Inf, where*wscale, Inf
-    # A golden section search sharpens the lower bound: a resonance
-    # peaks near its pole's frequency but not at it, and for a narrow
-    # one the difference exceeds the tolerance being tested against.
-    # This only ever raises a lower bound, so it cannot make the answer
-    # wrong, and the bound is what decides passivity, since the level
-    # cannot be sharpened past the pencil's resolution (see the
-    # docstring). The brackets are a few half widths either side of
-    # each complex pole, plus the span between the neighbours of the
-    # best probe, which covers a peak the grid only straddled -- a real
-    # pole has no resonance of its own, and a peak it takes part in
-    # need not be near it, so the second bracket is the one that covers
-    # it.
-    brackets = Tuple{Float64,Float64}[polebracket(l, span) for l in λs if imag(l) > 0]
-    if isfinite(where)
-        j = searchsortedfirst(probes, where)
-        push!(brackets, (probes[max(j - 1, 1)], probes[min(j + 1, length(probes))]))
-    end
-    for (a, b) in brackets
-        b > a || continue
-        φ = (sqrt(5) - 1)/2
-        u, v = b - φ*(b - a), a + φ*(b - a)
-        fu, fv = sigma(u), sigma(v)
-        for _ in 1:refinements
-            if fu > fv
-                b, v, fv = v, u, fu
-                u = b - φ*(b - a); fu = sigma(u)
-            else
-                a, u, fu = u, v, fv
-                v = a + φ*(b - a); fv = sigma(v)
+    wscale = max(maximum(abs, isquasitriangular(A) ? schureigenvalues(A) : eigvals(A); init = 0.0), floatmin(Float64))
+    An, Bn, Cn = A ./ wscale, B ./ wscale, Matrix{Float64}(C)
+    tiny = 2floatmin(Float64)/eps(Float64)
+    for _ in 1:sweeps
+        changed = false
+        for k in 1:nz
+            c = hypot(norm(view(An, 1:k - 1, k)), norm(view(An, k + 1:nz, k)), norm(view(Cn, :, k)))
+            r = hypot(norm(view(An, k, 1:k - 1)), norm(view(An, k, k + 1:nz)), norm(view(Bn, k, :)))
+            c, r = min(c, floatmax(Float64)), min(r, floatmax(Float64))
+            if iszero(c) || iszero(r)
+                d = An[k, k]
+                if !iszero(r)
+                    view(An, k, :) .= 0
+                    view(Bn, k, :) .= 0
+                    changed = true
+                elseif !iszero(c)
+                    view(An, :, k) .= 0
+                    view(Cn, :, k) .= 0
+                    changed = true
+                end
+                An[k, k] = d
+                continue
             end
+            f, s = 1.0, c + r
+            while c < r/2 && max(f, c) < 1/tiny && r > tiny
+                f, c, r = 2f, 2c, r/2
+            end
+            while c/2 >= r && r < 1/tiny && min(f, c) > tiny
+                f, c, r = f/2, c/2, 2r
+            end
+            c + r < improvement*s || continue
+            changed = true
+            d = An[k, k]
+            view(An, k, :) ./= f
+            view(An, :, k) .*= f
+            An[k, k] = d
+            view(Bn, k, :) ./= f
+            view(Cn, :, k) .*= f
         end
-        isfinite(fu) && isfinite(fv) || return Inf, a*wscale, Inf
-        fu > bound && ((bound, where) = (fu, u))
-        fv > bound && ((bound, where) = (fv, v))
+        changed || break
     end
-    # the level the search ends on, once nothing reaches it, and how far
-    # above the bound the next level stands
-    ceiling = Inf
-    excess = 2rtol
-    for iteration in 1:100
-        level = (1 + excess)*bound
-        # the pencil at a level above the bound is regular, a singular
-        # value equal to the level everywhere being impossible, so its
-        # eigenvalues are taken as they come: a nearly lossless block only
-        # scales the pencil's determinant by a small constant, and a
-        # singular value test on it would mistake that for singularity and
-        # miss a peak between the samples
-        crossings = pencilcrossings(An, Bn, Cn ./ level, D ./ level; singulartest = false)
-        if length(crossings) < 2
-            # no singular value reaches the level, anywhere
-            ceiling = level
-            break
-        end
-        raised = false
-        for k in 1:length(crossings) - 1
-            w = (crossings[k] + crossings[k + 1])/2
-            s = sigma(w)
-            isfinite(s) || return Inf, w*wscale, Inf
-            s > bound*(1 + rtol) && ((bound, where, raised) = (s, w, true))
-        end
-        # Crossings of a level which no midpoint between them reaches are
-        # either a peak the midpoints miss or the pencil's resolution: just
-        # above a narrow peak the two eigenvalues it would have on the axis
-        # stand off it by less than the pencil resolves, and are taken for
-        # crossings. Either way the level is raised, doubling its excess
-        # over the bound, until the pencil finds no crossing of it, which
-        # establishes a level, looser than `2 rtol` above the bound; a
-        # level the response is found to reach raises the bound instead,
-        # and the search goes on from there.
-        excess = raised ? 2rtol : 2excess
-    end
-    return bound, where*wscale, ceiling
+    return An, Bn, Cn, wscale
 end
+
+# The poles once each. An n-port's fit repeats every pole once per port
+# among the eigenvalues of its state matrix, and a probe or a bracket
+# repeated is work repeated; eigenvalues within the square root of eps of
+# each other, relative to their size, are the same pole.
+function distinctpoles(poles; tol::Real = sqrt(eps()))
+    out = ComplexF64[]
+    for l in sort(complex.(poles); by = x -> (imag(x), real(x)))
+        (isempty(out) || abs(l - last(out)) > tol*abs(l)) && push!(out, l)
+    end
+    return out
+end
+
+# The searches for where a rational block peaks, passivityassessment's and
+# the grid of the passivity enforcement, bracket each complex pole over
+# `polespan` of its half widths either side, and spread their grids over
+# the poles' magnitudes to `gridpad` times past the outermost either side.
+const polespan = 8.0
+const gridpad = 10.0
+# the golden section steps which refine each of passivityassessment's
+# brackets
+const peakrefinements = 32
+# how far under a level the feedthrough must stand for the crossings of the
+# level to be taken from the Hamiltonian matrix rather than the pencil (see
+# unitcrossings)
+const hamiltonianmargin = 1e-3
 
 # The span of `span` half widths either side of the complex pole `l`,
 # where its resonance peaks: a resonance narrower than the spacing of a
@@ -2453,84 +2583,164 @@ function polebracket(l, span::Real)
 end
 
 """
-    passivityassessment(A, B, C, D; atol = 1e-8, rtol = 1e-8)
+    passivityassessment(A, B, C, D; atol = 1e-8)
 
 Whether the real rational block `S(s) = D + C (s I - A)^(-1) B` is
-passive to within `atol`, as `(:passive, :active, :indeterminate)`,
-together with the lower bound on its largest singular value over all
-frequencies, the level the search ended at, and the frequency in rad/s
-where the lower bound was attained.
+passive to within `atol`, its dissipation `I - S'S` no lower than
+`-atol` at any frequency, the tolerance a block's data is held to: its
+largest singular value at most `sqrt(1 + atol)`, the level. The answer
+is the named tuple `(; verdict, lower, upper, frequency)`: `verdict` one
+of `:passive`, `:active` and `:indeterminate`, `lower` the largest
+singular value found, at `frequency` in rad/s, and `upper` a level no
+singular value reaches, `sqrt(1 + atol)` where the block is passive and
+`Inf` where none was established.
 
-Three answers rather than two, because [`hinfnorm`](@ref) returns two
-numbers which straddle the truth and the question can fall between them.
-A block is `:active` when even the lower bound exceeds `1 + atol`, which
-settles it; `:passive` when the level does not, which also settles it,
-the level being what the search's termination establishes. In between
-nothing is settled: the block may be passive or may not, and the caller
-is told so rather than given whichever bound suits.
+The largest singular value is sought where a peak can stand: at the
+feedthrough, at zero, at the frequency of each pole and on a grid
+spanning the poles' magnitudes, and by a golden section search either
+side of each complex pole and between the neighbours of the best sample,
+since a narrow resonance peaks near its pole but not at it. A peak can
+be narrower than any search finds, so the frequencies where a singular
+value equals the level are found as well, as the imaginary eigenvalues
+of the Hamiltonian matrix of `S` over that level where the feedthrough
+stands well under it, and otherwise of a pencil which inverts nothing,
+so that a feedthrough at the level is no obstacle (Boyd and
+Balakrishnan), and the largest singular value between consecutive
+crossings is measured. A block is `:active` where a value found exceeds
+the level, which settles it, and `:passive` where none does and the
+level has no crossing, which settles it too.
 
-The middle case is not rare. A lossless block has a largest singular
-value of exactly one, so its level stands at `1 + 2 rtol` and it is
-`:indeterminate` at any `atol` below that. Callers which must decide
-regardless decide on the lower bound, and this makes that choice
-explicit rather than implicit in a two valued answer.
+Otherwise it is `:indeterminate`. The crossing test resolves a pair of
+crossings only so far as the roundoff lets their eigenvalues stand apart
+on the axis: a peak above the level by less than that brings its two
+crossings together into a nearly double eigenvalue which leaves the
+axis, and a narrow resonance under the level can leave eigenvalues near
+enough to the axis to be taken for crossings no value between them
+reaches. The caller is told so rather than given a side. The frequency
+axis alone is assessed: the stability of `A`, which passivity needs as
+well, is the caller's to check.
 """
-function passivityassessment(A, B, C, D; atol = 1e-8, rtol = 1e-8)
-    lower, where, level = hinfnorm(A, B, C, D; rtol = rtol)
-    verdict = if !isfinite(level) || !isfinite(lower)
-        lower > 1 + atol ? :active : :indeterminate
-    elseif lower > 1 + atol
-        :active
-    elseif level <= 1 + atol
-        :passive
-    else
-        :indeterminate
-    end
-    return verdict, lower, level, where
-end
-
-"""
-    passivitycrossings(A, B, C, D)
-
-The frequencies in rad/s at which a singular value of the real rational
-scattering matrix `S(s) = D + C (s I - A)^(-1) B` equals one, sorted,
-and the scale of the poles: the finite eigenvalues on the imaginary axis
-of the pencil of the equations `i w x = A x + B u`, `-i w y = A' y + C' w`,
-`w = C x + D u`, `u = B' y + D' w`, which say `S(i w)' S(i w) u = u`,
-whose matrices are formed without inverting `I - D' D`, so a feedthrough
-on the unit circle is no obstacle. Returns `nothing` for the crossings
-when the pencil is singular, which is when a singular value is one at
-every frequency, as a lossless block's are. The pencil for `S` over a
-level finds the crossings of that level, which is how [`hinfnorm`](@ref)
-finds the largest singular value.
-"""
-function passivitycrossings(A, B, C, D)
+function passivityassessment(A, B, C, D; atol::Real = 1e-8)
+    level = passivelevel(atol)
     An, Bn, Cn, wscale = balancedrealization(A, B, C)
-    crossings = pencilcrossings(An, Bn, Cn, D)
-    return isnothing(crossings) ? nothing : crossings .* wscale, wscale
+    # the largest singular value at `w` in the unit of the balanced
+    # realization, through its Schur form taken once (see
+    # ResolventFactors), and `Inf` where the realization is not finite, at
+    # a pole on the axis
+    rf = resolventfactors(An, Bn, Cn)
+    work, F = ResolventWorkspace(rf), similar(D, Complex{Float64})
+    sigma = w -> (rationaltransfer!(F, rf, D, w, work); all(isfinite, F) ? opnorm(F) : Inf)
+    worst, where = opnorm(D), Inf
+    # The grid spans the magnitudes of the poles the system has, not
+    # fixed decades around one: a peak can lie far from every pole
+    # frequency, as `k s/((s + a)(s + b))` peaking at `sqrt(a b)` shows.
+    # It has two points per distinct pole, nine at least, and the probes
+    # at the poles' frequencies and the brackets below are taken once per
+    # distinct pole as well: a multiport's states repeat a pole once per
+    # rank of its residue, which adds no peak to find.
+    distinct = distinctpoles(rf.poles)
+    mags = [abs(l) for l in rf.poles if abs(l) > 0]
+    glo = isempty(mags) ? 1e-2 : minimum(mags)/gridpad
+    ghi = isempty(mags) ? 1e2 : maximum(mags)*gridpad
+    probes = sort!(vcat(0.0, [abs(imag(l)) for l in distinct if abs(imag(l)) > 0],
+        exp.(range(log(glo), log(ghi); length = max(9, 2*length(distinct))))))
+    for w in probes
+        s = sigma(w)
+        s > worst && ((worst, where) = (s, w))
+    end
+    # A golden section search around each complex pole, and between the
+    # neighbours of the best probe, which covers a peak the grid only
+    # straddled: a real pole has no resonance of its own, and a peak it
+    # takes part in need not be near it.
+    brackets = Tuple{Float64,Float64}[polebracket(l, polespan) for l in distinct if imag(l) > 0]
+    if isfinite(where)
+        j = searchsortedfirst(probes, where)
+        push!(brackets, (probes[max(j - 1, 1)], probes[min(j + 1, length(probes))]))
+    end
+    for (a, b) in brackets
+        b > a || continue
+        φ = (sqrt(5) - 1)/2
+        u, v = b - φ*(b - a), a + φ*(b - a)
+        fu, fv = sigma(u), sigma(v)
+        for _ in 1:peakrefinements
+            if fu > fv
+                b, v, fv = v, u, fu
+                u = b - φ*(b - a); fu = sigma(u)
+            else
+                a, u, fu = u, v, fv
+                v = a + φ*(b - a); fv = sigma(v)
+            end
+        end
+        fu > worst && ((worst, where) = (fu, u))
+        fv > worst && ((worst, where) = (fv, v))
+    end
+    worst > level && return (; verdict = :active, lower = worst, upper = Inf, frequency = where*wscale)
+    # The pencil at a level above every value found is regular, a
+    # singular value equal to the level everywhere being impossible.
+    # Between consecutive crossings as many singular values stand above
+    # the level at every frequency, and below the first and past the last
+    # none do, the value at zero and the feedthrough having been measured.
+    found = unitcrossings(An, Bn, Cn ./ level, D ./ level)
+    for k in 1:length(found) - 1
+        w = (found[k] + found[k + 1])/2
+        s = sigma(w)
+        s > worst && ((worst, where) = (s, w))
+    end
+    worst > level && return (; verdict = :active, lower = worst, upper = Inf, frequency = where*wscale)
+    passive = isempty(found) && !isnan(worst)
+    return (; verdict = passive ? :passive : :indeterminate, lower = worst, upper = passive ? level : Inf,
+        frequency = where*wscale)
 end
 
-# the crossings of one in the units of the balanced realization, or
-# `nothing` for a singular pencil
-function pencilcrossings(An, Bn, Cn, D; singulartest::Bool = true)
+# The frequencies, in the unit of the balanced realization, at which a
+# singular value of `S(s) = D + Cn (s I - An)^(-1) Bn` equals one, sorted:
+# the imaginary eigenvalues of the Hamiltonian matrix of `S` where the
+# feedthrough stands at least `hamiltonianmargin` under one, and otherwise
+# the finite eigenvalues on the imaginary axis of the pencil of the
+# equations `i w x = A x + B u`, `-i w y = A' y + C' w`, `w = C x + D u`,
+# `u = B' y + D' w`, which say `S(i w)' S(i w) u = u`. The Hamiltonian
+# matrix inverts `I - D' D` and `I - D D'`: it is a standard eigenproblem
+# of twice the states, several times faster than the pencil's generalized
+# one of twice the states and ports and accurate while those inverses are
+# well conditioned, but as the feedthrough nears one it moves the
+# eigenvalues at the crossings off the axis and loses them. The pencil's
+# matrices are formed without inverting anything, so a feedthrough on the
+# unit circle is no obstacle to it. The crossings of `S` over a level are
+# the crossings of that level.
+function unitcrossings(An, Bn, Cn, D)
+    1 - opnorm(D) >= hamiltonianmargin && return hamiltoniancrossings(An, Bn, Cn, D)
+    return pencilcrossings(An, Bn, Cn, D)
+end
+
+# the crossings of one by the imaginary eigenvalues of the Hamiltonian
+# matrix of the bounded real lemma, for a feedthrough under one
+function hamiltoniancrossings(An, Bn, Cn, D)
+    R = cholesky(Symmetric(I - transpose(D)*D))
+    Q = cholesky(Symmetric(I - D*transpose(D)))
+    F = An + Bn*(R \ (transpose(D)*Cn))
+    H = [F Bn*(R \ transpose(Bn)); -transpose(Cn)*(Q \ Cn) -transpose(F)]
+    return axiscrossings(eigvals(H))
+end
+
+# the crossings of one by the pencil
+function pencilcrossings(An, Bn, Cn, D)
     nz, m = size(An, 1), size(D, 1)
     Z = zeros
     H = [An Z(nz, nz) Bn Z(nz, m); Z(nz, nz) transpose(An) Z(nz, m) transpose(Cn);
         Cn Z(m, nz) D -Matrix(1.0I, m, m); Z(m, nz) transpose(Bn) -Matrix(1.0I, m, m) transpose(D)]
     E = Matrix(Diagonal(vcat(ones(nz), -ones(nz), zeros(2m))))
-    # a singular pencil, one whose determinant vanishes at every point,
-    # has no meaningful eigenvalues: it is told by its rank at two points
-    # off the axis
-    if singulartest
-        for l0 in (complex(0.7, 1.3), complex(-1.1, 0.4))
-            sv = svdvals(l0 .* E .- H)
-            sv[end] <= 1e-10*sv[1] && return nothing
-        end
-    end
-    lambda = eigvals(H, E)
+    # the eigenvalues by LAPACK's ggev, whose QZ is unblocked: the blocked
+    # QZ of ggev3, which eigvals(H, E) calls, writes past the end of its
+    # eigenvalue arrays at some orders of this pencil
+    alphar, alphai, beta = LAPACK.ggev!('N', 'N', H, E)
+    return axiscrossings(complex.(alphar, alphai) ./ beta)
+end
+
+# the frequencies of the finite eigenvalues on the imaginary axis, a
+# crossing and its conjugate being one
+function axiscrossings(lambda)
     finite = [l for l in lambda if isfinite(real(l)) && isfinite(imag(l)) && abs(l) <= 1e8]
     crossings = sort!([abs(imag(l)) for l in finite if abs(real(l)) <= 1e-8*(abs(l) + 1)])
-    # a crossing and its conjugate are one
     merged = Float64[]
     for w in crossings
         (isempty(merged) || w - last(merged) > 1e-9*(w + 1)) && push!(merged, w)
@@ -2547,12 +2757,18 @@ realization `S(s) = D + C (s I - A)^(-1) B` of a passive rational
 multiport, with `A` the `nz` by `nz` state matrix, `B` `nz` by `nports`,
 `C` `nports` by `nz` and `D` `nports` by `nports`, all real and finite,
 `A` stable. The block is validated as passive to `atol` over every
-frequency, by the level set search for its largest singular value (see
-[`passivityassessment`](@ref)), and it is rejected otherwise, unless it
+frequency, its dissipation `I - S'S` no lower than `-atol` as its
+samples would be, by a search for its peaks and the crossing test of
+the level `sqrt(1 + atol)` (see [`passivityassessment`](@ref)), and it
+is rejected where a singular value is found above that level, unless it
 states its noise with a [`NoiseCovariance`](@ref), which is how an
 active block, an amplifier given by its scattering parameters, declares
-it; declared [`Lossless`](@ref), it is held to one singular value of one
-at every frequency by the same search on it and on its inverse.
+it; declared [`Lossless`](@ref), it is held to singular values whose
+squares stand within `atol` of one at every frequency, by the same test
+on it and on its inverse. A block the test cannot settle either way is
+accepted: the crossing test cannot tell a peak above the level by less
+than its roundoff from one just under it, and a lossless block, within
+`atol` of the level at every frequency, often leaves it undecided.
 Stability is required of every realization. It is evaluated by the harmonic balance solvers
 at every frequency and realized in time by the transient solver with
 its states, so the two describe the same block, and its noise is the
@@ -2565,9 +2781,9 @@ RationalScattering(A, B, C, D; zref = 50.0, grounded::Bool = true, noise = Passi
     rationalblock(A, B, C, D; zref, grounded, noise, atol)
 
 # The block of a realization, validated as the constructor above says.
-# `normtested` is for a realization whose largest singular value the
-# passivity enforcement has just brought under one by the same search,
-# which the validation would repeat; its feedthrough is still checked.
+# `normtested` is for a fit whose passivity the fitter has tested on its
+# residues (see fitsampled), which the validation would repeat; its
+# feedthrough is still checked.
 function rationalblock(A, B, C, D; zref, grounded::Bool, noise, atol::Real,
         normtested::Bool = false)
     Am, Bm, Cm, Dm = Matrix{Float64}(A), Matrix{Float64}(B), Matrix{Float64}(C), Matrix{Float64}(D)
@@ -2576,8 +2792,9 @@ function rationalblock(A, B, C, D; zref, grounded::Bool, noise, atol::Real,
         lazy"the realization needs A of size (nz, nz), B (nz, nports), C (nports, nz) and D (nports, nports); got $(size(Am)), $(size(Bm)), $(size(Cm)), $(size(Dm))."))
     all(M -> all(isfinite, M), (Am, Bm, Cm, Dm)) || throw(ArgumentError("the realization must be finite."))
     provider = RationalScatteringProvider(Am, Bm, Cm, Dm)
-    # the eigenvalues are read off the Schur form the provider holds
-    abscissa = maximum(real, schureigenvalues(provider.factors.T); init = -Inf)
+    # the eigenvalues are the poles the provider holds, in its groups and
+    # its Schur factors
+    abscissa = maximum(real, [provider.groups.poles; provider.states.poles]; init = -Inf)
     abscissa < 0 || throw(ArgumentError(
         lazy"the realization is unstable: the largest real part of an eigenvalue of A is $(abscissa) per second."))
     return checkedblock(provider, n, zrefvector(zref, n), grounded, noise,
@@ -2660,25 +2877,33 @@ provablylossless(b::ScatteringParameters) = unitaritybound(b.provider) <= b.atol
 provablylossless(p::AbstractMatrixProvider; atol::Real = 1e-8) = unitaritybound(p) <= atol
 
 # A rational block is lossless when every singular value of `S` is one at
-# every frequency: the largest at most one, by the largest singular value
-# over all frequencies, and the smallest at least one, by the largest
-# singular value of `S^(-1)` over all frequencies, which is a rational
-# block of its own when the feedthrough is invertible, and without an
-# invertible feedthrough the block is not lossless. Both are found by the
-# level set iteration, which finds a peak or a notch however narrow. No
-# test of the coefficients of `I - S(-s)' S(s)` can: a notch of relative
-# width `eps` has coefficients of order `eps^2` there and reaches one at
-# its center, so only the values on the axis tell. Nothing is inferred
-# about a rational block by default: it keeps the channels of its loss,
-# however small, and only a declaration of `Lossless()` is validated,
-# which this can only refuse.
+# every frequency: the largest at most one, which is its passivity, and
+# the smallest at least one, which is the largest singular value of
+# `S^(-1)` at most one, a rational block of its own when the feedthrough
+# is invertible; without an invertible feedthrough the block is not
+# lossless. Declared lossless to `atol`, every squared singular value
+# stands within `atol` of one, as a scalar sample's does: the largest
+# singular value at most `sqrt(1 + atol)`, the level of `atol` (see
+# passivelevel), to which checkpassive holds every block that does not
+# state its noise, or the fitter a fit (see rationalblock), and the
+# smallest at least `sqrt(1 - atol)`, the inverse's largest at most
+# `1/sqrt(1 - atol)`, the level of `atol/(1 - atol)`; an `atol` of one or
+# more bounds nothing from below. This holds the smallest, with the
+# feedthrough's unitarity, and refuses the inverse where
+# passivityassessment finds a value above its level, whose crossing test
+# finds a notch however narrow. No test of the coefficients of
+# `I - S(-s)' S(s)` can: a notch of relative width `eps` has coefficients
+# of order `eps^2` there and reaches one at its center, so only the
+# values on the axis tell. Nothing is inferred about a rational block by
+# default: it keeps the channels of its loss, however small, and only a
+# declaration of `Lossless()` is validated, which this can only refuse.
 function losslessnorms(p::RationalScatteringProvider; atol = 1e-8)
-    nz = size(p.A, 1)
     unitaritydeviation(p.D) <= atol || return false
-    nz == 0 && return true
-    hinfnorm(p.A, p.B, p.C, p.D)[1] <= 1 + atol || return false
+    (size(p.A, 1) == 0 || atol >= 1) && return true
+    inverse = atol/(1 - atol)
     Dinv = inv(p.D)
-    return hinfnorm(p.A - p.B*Dinv*p.C, p.B*Dinv, -Dinv*p.C, Dinv)[1] <= 1 + atol
+    return passivityassessment(p.A - p.B*Dinv*p.C, p.B*Dinv, -Dinv*p.C, Dinv;
+        atol = inverse).lower <= passivelevel(inverse)
 end
 
 # The contract of a block between and beyond its samples, where its data
@@ -2690,7 +2915,7 @@ function checkbeyondsamples(block::ScatteringParameters; normtested::Bool = fals
     p, noise, atol = block.provider, block.noise, block.atol
     if p isa RationalScatteringProvider
         noise isa NoiseCovariance || checkpassive(p; atol, normtested)
-        (noise isa Lossless && !losslessnorms(p; atol = atol)) && throw(ArgumentError(lazy"noise = Lossless() says the scattering matrix is unitary at every frequency, but this rational block's largest singular value over all frequencies, or its inverse's, exceeds one by more than its atol of $(atol). Use the default Passive() noise model, which gives a dissipative block the noise its loss requires."))
+        (noise isa Lossless && !losslessnorms(p; atol = atol)) && throw(ArgumentError(lazy"noise = Lossless() says the scattering matrix is unitary at every frequency, but this rational block's smallest singular value falls below sqrt(1 - atol) on the frequency axis, infinite frequency included, for its atol of $(atol). Use the default Passive() noise model, which gives a dissipative block the noise its loss requires."))
     elseif noise isa Lossless && isstored(p)
         bound = unitaritybound(p)
         bound <= atol || throw(ArgumentError(lazy"noise = Lossless() says the scattering matrix is unitary at every frequency, but this block's data is unitary only at its samples: $(beyondsamples(p, bound, atol)). Use the default Passive() noise model, which gives a dissipative block the noise its loss requires."))
@@ -3547,10 +3772,8 @@ providersize(p::ModulatedRationalProvider) = size(p.cosine.D, 1)
 function evaluateprovider!(dest::AbstractArray{T,3},
         p::ModulatedRationalProvider, ws::AbstractVector) where T
     checkdestsize(dest, providersize(p), length(ws))
-    fill!(dest, zero(T))
-    x = Vector{Complex{Float64}}(undef, max(size(p.cosine.A, 1), size(p.sine.A, 1)))
-    addrational!(dest, p.cosine, ws, 1, x)
-    return addrational!(dest, p.sine, ws, im, x)
+    addrational!(dest, p.cosine, ws, 1; add = false)
+    return addrational!(dest, p.sine, ws, im)
 end
 
 # whether every harmonic of a pumped block has a realization in time

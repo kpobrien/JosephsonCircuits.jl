@@ -34,6 +34,24 @@ using Test
         end
         return S
     end
+    # the frequencies and samples of a lossy line two centimetres long at
+    # `K` frequencies spread evenly in the logarithm from 1 kHz to 20 GHz:
+    # diffusion through its resistance at the low end, skin effect and
+    # dielectric loss above, a turn of delay at the top; no rational
+    # function, so its fit needs poles over every decade
+    function lossyline(K)
+        local fl = exp.(range(log(1e3), log(20e9); length = K))
+        local Sl = zeros(ComplexF64, 2, 2, K)
+        for (k, f) in enumerate(fl)
+            local z = 2e4 + (1 + im)*2e-3*sqrt(f) + im*2pi*f*4e-7
+            local y = im*2pi*f*1.6e-10*(1 - 2e-3im)
+            local zc, g = sqrt(z/y), 0.02*sqrt(z*y)
+            local a, b, c = cosh(g), zc*sinh(g), sinh(g)/zc
+            local den = 2a + b/50 + 50c
+            Sl[:, :, k] .= [(b/50 - 50c)/den 2/den; 2/den (b/50 - 50c)/den]
+        end
+        return fl, Sl
+    end
     # the scattering data of an RLC two-port, tabulated as the
     # linearized solver gives it, fitted by vector fitting at its
     # three poles and at more: the fit is exact, the poles the RLC's,
@@ -70,6 +88,38 @@ using Test
     raw = RationalScattering(data, 4; passivity = nothing)
     @test size(raw.provider.A) == (3, 3)
     @test densemax(raw.provider) <= 1 + 1e-10
+    # its check runs the enforcement's sweep within the enforcement's time,
+    # and refuses a fit the sweep has not settled by then: this one, which
+    # takes intervals to settle, given none
+    let ws = 2pi .* fs
+        local p, Rr, Dr = JC.vectorfit(hb.S, ws, 4, VectorFitting())
+        local sp = JC.residuespaces(p, Rr, 1e-12)
+        @test isnothing(JC.checkrawpassive(p, Rr, Dr, ws, sp; atol = 1e-8))
+        @test_throws ArgumentError JC.checkrawpassive(p, Rr, Dr, ws, sp; atol = 1e-8, maxtime = 0.0)
+    end
+    # and refused where the sweep of its residues finds it above one: a
+    # lossy two port's samples raised by a quarter stay under one over the
+    # band, and their exact fit stands above it below the band, as the
+    # realization shows
+    let w4 = 2pi*4e9, gs = collect(range(1e9, 8e9; length = 40)),
+            lossy = RationalScattering(-w4 .* Matrix(1.0I, 2, 2), w4 .* Matrix(1.0I, 2, 2),
+                0.8 .* [0.0 1.0; 1.0 0.0], zeros(2, 2); zref = 50.0),
+            Sl = JC.evaluateprovider!(zeros(ComplexF64, 2, 2, length(gs)), lossy.provider, 2pi .* gs),
+            lifted = ScatteringParameters((2pi .* gs, 1.26 .* Sl); nports = 2, zref = 50.0)
+        @test densemax(RationalScattering(lifted, 2; passivity = nothing, atol = 0.1).provider) > 1.005
+        @test_throws ArgumentError RationalScattering(lifted, 2; passivity = nothing)
+        # Weighted, the correction's metric counts against the memory
+        # `maxstates` stands for, and a budget of the fit's own two states
+        # leaves it none: refused before the metric is formed
+        local weighed = [1.0 + 0.1i + 0.2j for i in 1:2, j in 1:2, _ in gs]
+        @test_throws ArgumentError RationalScattering(lifted, 2; weights = weighed, maxstates = 2)
+        @test RationalScattering(lifted, 2; weights = weighed) isa ScatteringParameters
+        # and weights whose squares underflow leave an entry's metric
+        # singular, which is refused as a fit that cannot be made passive
+        local tiny = copy(weighed)
+        tiny[1, :, :] .= 1e-170
+        @test_throws ArgumentError RationalScattering(lifted, 2; weights = tiny)
+    end
     @test_throws ArgumentError RationalScattering(data, 4; frequencies = reverse(fs))
     @test_throws ArgumentError RationalScattering(fitted, 4)
     @test_throws ArgumentError RationalScattering(data, 0)
@@ -83,20 +133,29 @@ using Test
     @test_throws ArgumentError PassivityEnforcement(margin = Inf)
     @test_throws ArgumentError PassivityEnforcement(rounds = 0)
     @test_throws ArgumentError PassivityEnforcement(scalelimit = 0.5)
-    @test_throws ArgumentError PassivityEnforcement(rtol = 0.0)
+    @test_throws ArgumentError PassivityEnforcement(regularization = 0.0)
+    @test_throws ArgumentError PassivityEnforcement(maxtime = NaN)
     @test_throws ArgumentError VectorFitting(pruneslack = -0.5)
     @test_throws ArgumentError VectorFitting(iterations = 0)
+    # a start is a spacing by name, or poles which can start a fit:
+    # finite, stable, and each complex one with its conjugate
+    for bad in (:geometric, 3, ComplexF64[], [-1.0, NaN], [0.0, -1.0], [complex(1.0, 1.0), complex(1.0, -1.0)],
+            [complex(-1.0, 1.0)], [complex(-1.0, 1.0), complex(-1.0, -1.1)])
+        @test_throws ArgumentError VectorFitting(start = bad)
+    end
     @test_throws ArgumentError RationalScattering(data, 3; tol = -1.0)
     # A fixed order is held to its data as the search is, against a
     # tolerance of its own: two poles miss this RLC, which has three,
-    # and are refused unless a tolerance that loose is asked for, the
-    # fit returned then warning of the contraction it was made passive by
+    # and are refused unless a tolerance that loose is asked for; the fit
+    # returned is made passive by its corrections alone, with no
+    # contraction to warn of
     @test_throws ArgumentError RationalScattering(data, 2)
-    short = @test_logs (:warn,) RationalScattering(data, 2; tol = 1.0)
+    short = @test_logs RationalScattering(data, 2; tol = 1.0)
     @test 1e-2 < JC.relativefiterror(short, hb.S, fs) <= 1.0
+    @test densemax(short.provider) <= 1 + 2e-8
     for kw in ((; passivity = PassivityEnforcement(margin = 1e-9, rounds = 40, scalelimit = 0.1)),
-            (; passivity = PassivityEnforcement(density = 40, rtol = 1e-7)),
-            (; fitting = VectorFitting(pruneslack = 0.0, settletol = 1e-12, stallpatience = 10)),
+            (; passivity = PassivityEnforcement(regularization = 1e-10)),
+            (; fitting = VectorFitting(pruneslack = 0.0, stallpatience = 10)),
             (; fitting = VectorFitting(pruneslack = 1.0, iterations = 60)))
         tuned = RationalScattering(data, 3; kw...)
         JC.evaluateprovider!(fit, tuned.provider, 2pi .* fs)
@@ -125,35 +184,6 @@ using Test
     # and the fit is no worse for it, the statement being the truth
     JC.evaluateprovider!(fit, P, 2pi .* fs)
     @test maximum(abs.(fit .- hb.S)) < 1e-8
-    # The passivity correction holds a stated value at zero frequency,
-    # rather than imposing it in the residue solve and then walking
-    # away from it. `S(0) = D + C X0` with `X0 = (-A)^-1 B`, so a
-    # perturbation holds it exactly when `dC X0 + dD = 0`, which is
-    # linear and is eliminated before the inequalities are solved; the
-    # answer is then the least change which holds it and not the least
-    # change which nearly does. This resonance needs correcting, and
-    # correcting it without the condition moves its value at zero by
-    # nine parts in a hundred.
-    Ae = [-0.25 1.0; -1.0 -0.25]
-    Be = [1.0 0.0; 0.0 1.0]
-    Ce = [0.35 0.0; 0.0 0.35]
-    De = [0.0 0.0; 0.0 0.0]
-    wse = collect(range(0.05, 4.0; length = 160))
-    S0e = real.(response(Ae, Be, Ce, De, 0.0))
-    @test first(JC.hinfnorm(Ae, Be, Ce, De)) > 1.3
-    @test opnorm(S0e) < 1
-    # the enforcement returns the contraction its end applied, which the
-    # caller warns of for a fit it returns
-    held = JC.enforcepassivity(Ae, Be, Ce, De, wse; dc = S0e)
-    @test !isnothing(held[5])
-    @test real.(response(held[1:4]..., 0.0)) ≈ S0e atol=1e-12
-    # passive to the norm search's own tolerance, twice its rtol, at
-    # which the enforcement decides
-    @test densemax(held[1:4]...) <= 1 + 2e-8
-    free = JC.enforcepassivity(Ae, Be, Ce, De, wse)
-    @test !isnothing(free[5])
-    @test densemax(free[1:4]...) <= 1 + 2e-8
-    @test maximum(abs, real.(response(free[1:4]..., 0.0)) .- S0e) > 0.05
     # Contracting toward a statement is a different step from
     # contracting toward nothing, and the step is found on the path
     # rather than derived from a bound: the norm along the path is a
@@ -174,74 +204,10 @@ using Test
     # the resolution of the step is the caller's; a coarse one still
     # returns a step which measures under the target
     @test JC.contractionstep(τ -> 1.001*τ, 1.0; tol = 1e-3) ≈ 1/1.001 atol=1e-3
-    let Aa = fill(-1.0, 1, 1), Ba = ones(1, 1), Ca = fill(-0.501, 1, 1),
-        Da = fill(1.001, 1, 1), S0a = fill(0.5, 1, 1)
-        @test first(JC.hinfnorm(Aa, Ba, Ca, Da)) > 1
-        got = JC.enforcepassivity(Aa, Ba, Ca, Da, [0.001, 0.01, 0.1]; dc = S0a)
-        @test densemax(got[1:4]...) <= 1 + 2e-8
-        @test only(real.(response(got[1:4]..., 0.0))) ≈ 0.5 atol=1e-12
-        # and an anchor of unit norm is contracted toward, not
-        # refused: `-1.001 + 2.001/(s + 1)` is anchored at
-        # `S(0) = 1`, and `t = 2/2.001` takes it to
-        # `(1 - s)/(1 + s)`, exactly all pass, holding the anchor
-        got1 = JC.enforcepassivity(fill(-1.0, 1, 1), ones(1, 1), fill(2.001, 1, 1),
-            fill(-1.001, 1, 1), [0.1, 1.0, 10.0]; dc = ones(1, 1))
-        @test densemax(got1[1:4]...) <= 1 + 2e-8
-        @test only(real.(response(got1[1:4]..., 0.0))) ≈ 1 atol=1e-10
-    end
-    # A violation narrower than the grid the enforcement sweeps, a high Q
-    # resonance standing above one, is found where its pole is and
-    # corrected there: the fit comes back passive with no contraction,
-    # and away from the resonance its response is where it was, where a
-    # sweep which saw nothing left a contraction of the whole block, or
-    # a refusal
-    Sat(A, B, C, D, w) = only(response(A, B, C, D, w))
-    for peak in (1.002, 1.05)
-        Ar, Br = [0.0 1.0; -1.0 -2e-4], reshape([0.0, 1.0], 2, 1)
-        Cr, Dr = reshape([0.0, (peak - 0.5)*2e-4], 1, 2), fill(0.5, 1, 1)
-        fixed = JC.enforcepassivity(Ar, Br, Cr, Dr, collect(range(0.5, 1.5; length = 401)))
-        @test isnothing(fixed[5])
-        @test densemax(fixed[1:4]...) <= 1 + 2e-8
-        @test maximum(abs(Sat(fixed[1:4]..., w) - Sat(Ar, Br, Cr, Dr, w)) for w in (0.6, 0.9, 1.1, 1.4)) < 1e-4
-    end
-    # The correction is assembled one output port block at a time,
-    # which rests on the normal matrix being the same block for
-    # every port: restricted to port `i`'s own unknowns the
-    # perturbation reads `[X(w)' I]`, and that does not depend on
-    # `i`. The property itself is tested.
-    let Ab = [-0.25 1.0; -1.0 -0.25], Bb = [1.0 0.0; 0.0 1.0], nzb = 2, nb = 2
-        blocks = JC.portblocks(nb, nzb)
-        @test length(blocks) == nb
-        @test sort(vcat(blocks...)) == 1:(nb*nzb + nb*nb)   # a partition
-        for w in (0.3, 1.0, 2.5)
-            X = (im*w*I - Ab) \ Bb
-            M = zeros(ComplexF64, nb*nb, nb*nzb + nb*nb)
-            for i in 1:nb, j in 1:nb
-                row = (i - 1)*nb + j
-                for k in 1:nzb
-                    M[row, (k - 1)*nb + i] = X[k, j]
-                end
-                M[row, nb*nzb + (i - 1)*nb + j] = 1.0
-            end
-            first = real.(transpose(M[:, blocks[1]])*M[:, blocks[1]])
-            for i in 2:nb
-                @test real.(transpose(M[:, blocks[i]])*M[:, blocks[i]]) ≈ first atol=1e-12
-            end
-        end
-    end
-    # and the correction it produces is feasible and makes the block
-    # passive, on a resonance which needs one
-    let Ad = [-0.25 1.0; -1.0 -0.25], Bd = [1.0 0.0; 0.0 1.0],
-        Cd2 = [0.35 0.0; 0.0 0.35], Dd = [0.0 0.0; 0.0 0.0],
-        wsd = collect(range(0.05, 4.0; length = 60))
-        @test first(JC.hinfnorm(Ad, Bd, Cd2, Dd)) > 1
-        got = JC.enforcepassivity(Ad, Bd, Cd2, Dd, wsd)
-        @test densemax(got[1:4]...) <= 1 + 2e-8
-        S0d = real.(response(Ad, Bd, Cd2, Dd, 0.0))
-        held = JC.enforcepassivity(Ad, Bd, Cd2, Dd, wsd; dc = S0d)
-        @test densemax(held[1:4]...) <= 1 + 2e-8
-        @test real.(response(held[1:4]..., 0.0)) ≈ S0d atol=1e-12
-    end
+    # and on a measure which curves, as a contraction toward a statement
+    # of nearly unit norm does, the search reaches the boundary, the far
+    # end of its bracket moving as well as the near one
+    @test JC.contractionstep(τ -> 1 - 3e-8 + 0.0098τ^2, 1 + 5e-9) ≈ sqrt(3.5e-8/0.0098) rtol=1e-6
     # A statement of unit norm, which a through, an open and a short
     # all are, pins the norm of any fit meeting it at one: there is
     # nothing to contract away, and contracting toward anything else
@@ -329,9 +295,8 @@ using Test
     # `vectorfit` is the fit and not the enforcement. Samples of
     # `1.5 - 1.2/(s + 1)` over a low band have an exact one pole fit
     # whose constant term is 1.5, and the fit returns it: bringing a
-    # constant term under one is the enforcement's work, since no
-    # perturbation over a band reaches infinite frequency, and it is
-    # done for the caller who asks for it rather than to every fit.
+    # constant term under one is part of making the fit passive, done
+    # for the caller who asks for it rather than to every fit.
     wsc = 2pi .* collect(range(0.01, 0.3; length = 40))
     Sc = zeros(ComplexF64, 1, 1, length(wsc))
     for (k, w) in enumerate(wsc)
@@ -370,6 +335,102 @@ using Test
         for it in 1:12]
     @test all(k -> errsr[k + 1] <= errsr[k]*(1 + 1e-12), 1:length(errsr) - 1)
     @test minimum(errsr) == errsr[end]
+    # The rounds go on while the fit improves, whatever its poles do: the
+    # lossy line at 500 samples and 24 poles spread like them has its best
+    # fit at the eighth round for four rounds, while the change from one
+    # round's sorted poles to the next's stays at several times their
+    # size, and then a third closer by the twentieth.
+    let (fl, Sl) = lossyline(500)
+        xl = fl ./ sqrt(fl[1]*fl[end])
+        startl = JC.spreadpoles(:log, xl[1], xl[end], 24)
+        lineerror(fitting) = JC.fiterror(Sl, xl, JC.converge(Sl, xl, copy(startl), fitting))
+        @test lineerror(VectorFitting()) <= 0.8*lineerror(VectorFitting(iterations = 9))
+    end
+    # Weights weigh each entry at each sample. A weight the same at every
+    # sample of an entry scales it: the fit so weighted, which relocates
+    # on the entries with a least squares for each, is the fit of the
+    # scaled samples, which relocates on their singular components.
+    let (fl, Sl) = lossyline(200), a = [1.0 30.0; 0.5 2.0]
+        local wl = 2pi .* fl
+        local pw, Rw, Dw = JC.vectorfit(Sl, wl, 12, VectorFitting(); weights = repeat(a, 1, 1, length(fl)))
+        local ps, Rs, Ds = JC.vectorfit(a .* Sl, wl, 12, VectorFitting())
+        @test length(pw) == length(ps)
+        local responses(p, R, D) = [D[i, j] + sum(R[i, j, q]/(im*w - p[q]) for q in eachindex(p)) for i in 1:2, j in 1:2, w in wl]
+        @test a .* responses(pw, Rw, Dw) ≈ responses(ps, Rs, Ds) rtol = 1e-8
+        # At fixed poles each residue solve is the least squares of its own
+        # measure: the weighted residues fit closer in the weighted rms, the
+        # plain ones in the plain rms.
+        local W = 1 ./ abs.(Sl)
+        local weighted = JC.residualerrors(Sl, wl, ps, JC.fitresidues(Sl, wl, ps; weights = W)...; weights = W)
+        local plain = JC.residualerrors(Sl, wl, ps, JC.fitresidues(Sl, wl, ps)...; weights = W)
+        @test weighted[2] < plain[2]
+        @test JC.residualerrors(Sl, wl, ps, JC.fitresidues(Sl, wl, ps; weights = W)...)[2] >
+            JC.residualerrors(Sl, wl, ps, JC.fitresidues(Sl, wl, ps)...)[2]
+        # The weights reach the public fit, whose error is the weighted
+        # one, and are refused unless one positive weight is given for
+        # each entry at each sample.
+        local line = ScatteringParameters((wl, Sl); nports = 2, zref = 50.0)
+        local weightedfit = RationalScattering(line, 12; weights = W)
+        @test JC.relativefiterror(weightedfit, Sl, fl; weights = W) <= 1e-2
+        @test_throws ArgumentError RationalScattering(line, 12; weights = W[:, :, 2:end])
+        @test_throws ArgumentError RationalScattering(line, 12; weights = -W)
+        # Only the weights' ratios weigh: scaled by 1e-200 the fit is the
+        # same, and weights the same everywhere weigh nothing, the fit
+        # without weights.
+        @test JC.relativefiterror(RationalScattering(line, 12; weights = 1e-200 .* W), Sl, fl; weights = W) ≈
+            JC.relativefiterror(weightedfit, Sl, fl; weights = W) rtol = 1e-6
+        @test RationalScattering(line, 12; weights = fill(3.0, size(W))).provider.A == RationalScattering(line, 12).provider.A
+    end
+    # The relocation runs on the singular components of the entries,
+    # which have the entries' Gram matrix, all the relaxed weight reads,
+    # so they relocate the poles as the entries do: the RLC's four
+    # entries are three functions, its transmissions being equal.
+    let entries = reshape(permutedims(hb.S, (3, 1, 2)), length(fs), 4),
+        comps = JC.relocationcomponents(hb.S), xr = 2pi .* fs ./ sqrt(2pi*fs[1]*2pi*fs[end])
+        @test size(comps, 2) == 3
+        byorder(p) = sort(p; by = x -> (imag(x), real(x)))
+        start = ComplexF64[complex(-0.01w, s*w) for w in range(xr[1], xr[end]; length = 3) for s in (1, -1)]
+        @test byorder(JC.relocate(comps, xr, start)) ≈ byorder(JC.relocate(entries, xr, start)) rtol = 1e-10
+    end
+    # A round of the relocation then costs in proportion to the
+    # components rather than to the entries: the delay tiled over an
+    # eight port and scaled to the same Gram matrix has sixteen times the
+    # entries and still one component, and a round allocates what the
+    # two port's does, beyond the measurement of its iterate, which reads
+    # every entry.
+    function roundalloc(S)
+        once, twice = VectorFitting(iterations = 1), VectorFitting(iterations = 2)
+        JC.converge(S, xsr, copy(startr), once)
+        JC.converge(S, xsr, copy(startr), twice)
+        JC.fiterror(S, xsr, startr)
+        return (@allocated JC.converge(S, xsr, copy(startr), twice)) -
+            (@allocated JC.converge(S, xsr, copy(startr), once)) - (@allocated JC.fiterror(S, xsr, startr))
+    end
+    @test roundalloc(repeat(Sdr ./ 4, 4, 4, 1)) <= 1.1*roundalloc(Sdr)
+    # The relocation starts where `start` puts it. Three resonances
+    # decades apart, sampled evenly in the logarithm of the frequency:
+    # from their own poles, given in rad/s in either order of each pair,
+    # the fit is exact with no relocation, and from pairs spread evenly
+    # in the logarithm it is nearly so after one round, where the linear
+    # spread, one pair in the lowest four decades, is not yet there. A
+    # start with a count other than the fit's is refused, and so is one
+    # given to the order search, which fits many orders.
+    let ws = 2pi .* exp.(range(log(1e2), log(1e8); length = 100)),
+        a = [complex(-0.1w0, s*w0) for w0 in 2pi .* [1e3, 1e5, 1e7] for s in (1, -1)]
+        Sw = reshape([sum(0.1*abs(imag(p))/(im*w - p) for p in a) for w in ws], 1, 1, :)
+        wref = sqrt(ws[1]*ws[end])
+        errorfrom(f) = JC.fiterror(Sw, ws ./ wref, JC.vectorfit(Sw, ws, 6, f)[1] ./ wref)
+        @test errorfrom(VectorFitting(start = a, iterations = 1)) < 1e-13
+        @test errorfrom(VectorFitting(start = reverse(a), iterations = 1)) < 1e-13
+        @test errorfrom(VectorFitting(start = :log, iterations = 1)) < 1e-9 < errorfrom(VectorFitting(iterations = 1))
+        # half the pairs spread each way, as VFdriver starts, relocate
+        # to the resonances as well, and the order search starts every
+        # order so
+        @test errorfrom(VectorFitting(start = :linlog)) < 1e-13
+        @test size(RationalScattering(data; tol = 1e-6, fitting = VectorFitting(start = :linlog)).provider.A) == (3, 3)
+        @test_throws ArgumentError JC.vectorfit(Sw, ws, 4, VectorFitting(start = a))
+        @test_throws ArgumentError RationalScattering(data; tol = 1e-6, fitting = VectorFitting(start = expected))
+    end
     # The order can be searched for instead of given: the fewest poles
     # which hold the error over the samples under a tolerance, as a
     # fraction of the largest response. This RLC is exact at three
@@ -398,11 +459,14 @@ using Test
             Sq[:, :, k] .= [0.2 0.9; 0.9 0.2] ./ (1 + im*x)
         end
         res, Dq = JC.fitresidues(Sq, xq, ps)
-        byhand = maximum(eachindex(xq)) do k
-            opnorm(Dq .+ sum(res[:, :, q] ./ (im*xq[k] - ps[q]) for q in eachindex(ps)) .-
-                   view(Sq, :, :, k))
-        end
+        deviation(k) = Dq .+ sum(res[:, :, q] ./ (im*xq[k] - ps[q]) for q in eachindex(ps)) .-
+            view(Sq, :, :, k)
+        byhand = maximum(k -> opnorm(deviation(k)), eachindex(xq))
         @test JC.fiterror(Sq, xq, ps) ≈ byhand
+        # and the rms over every entry and sample the pruning holds as
+        # well comes from the same residue solve
+        @test collect(JC.fiterrors(Sq, xq, ps)) ≈
+            [byhand, sqrt(sum(k -> sum(abs2, deviation(k)), eachindex(xq))/length(Sq))]
         # and the condition is carried, so the error reported is the
         # error of the fit that will be built
         resd, Dd = JC.fitresidues(Sq, xq, ps; dc = [0.1 0.8; 0.8 0.1])
@@ -457,6 +521,21 @@ using Test
         @test JC.fiterror(hb.S, xr, coalesced; dc = thru) ≈
             JC.fiterror(hb.S, xr, distinct; dc = thru) rtol = 1e-8
     end
+    # Poles 1e-10 apart take coefficients of 1e10 which cancel to the
+    # error, so the tiles the samples are screened by round differently
+    # from each sample's own residual by as much as the error: the
+    # screened largest norm is still the largest of every sample's.
+    let xe = collect(range(0.01, 3.0; length = 129)), pe = ComplexF64[-1, -1 - 1e-10]
+        Se = repeat(reshape(1 ./ (1 .+ im .* xe).^2, 1, 1, :), 2, 2, 1)
+        X, M = JC.fitcoefficients(Se, xe, pe)
+        K = length(xe)
+        er, ei = zeros(4), zeros(4)
+        every = maximum(1:K) do k
+            mul!(er, X, view(M, k, :)); mul!(ei, X, view(M, K + k, :))
+            opnorm(reshape(complex.(er, ei) .- vec(Se[:, :, k]), 2, 2))
+        end
+        @test JC.fiterror(Se, xe, pe) ≈ every rtol = 1e-12
+    end
     # and the window is real, not hypothetical: a pure delay is
     # passive and irrational, so no order fits it exactly and the
     # error is not monotone in the order, with orders which fit
@@ -481,8 +560,25 @@ using Test
         for slack in (0.0, 0.05, 0.5)
             kept = JC.prunepoles(Sdelay, xd, copy(settled), VectorFitting(pruneslack = slack))
             @test length(kept) <= length(settled)
-            @test JC.fiterror(Sdelay, xd, kept) <= (1 + slack)*base + JC.roundoff(Sdelay)
+            @test JC.fiterror(Sdelay, xd, kept) <= (1 + slack)*base + JC.fitroundoff*JC.largestopnorm(Sdelay)
         end
+    end
+    # The pruning holds the rms error as well as the largest: the largest
+    # can be pinned by one feature no pole set follows, here a corrupted
+    # sample, and would let a pole the data needs go unseen. A strong
+    # resonance and a weak broad one, with one sample off by more than
+    # the weak one's height: dropping the weak one leaves the largest
+    # error at the corrupted sample and more than doubles the rms, and
+    # it is kept.
+    let xw = collect(range(0.5, 2.0; length = 100)), weak = complex(-0.2, 1.4)
+        Sw = zeros(ComplexF64, 1, 1, length(xw))
+        for (k, x) in enumerate(xw)
+            Sw[1, 1, k] = 0.2 + 0.05/(im*x - complex(-0.05, 0.8)) + 0.05/(im*x - complex(-0.05, -0.8)) +
+                0.006/(im*x - weak) + 0.006/(im*x - conj(weak))
+        end
+        Sw[1, 1, 30] += 0.05
+        kept, _, _ = JC.vectorfit(Sw, xw, 4, VectorFitting())
+        @test length(kept) == 4 && minimum(abs.(kept .- weak)) < 0.05*abs(weak)
     end
     reach = np -> try
         JC.relativefiterror(RationalScattering(delayed, np; tol = 1e3), Sdelay, gs)
@@ -568,6 +664,29 @@ using Test
     # sampled, so thinning the samples does not change it
     @test JC.supporteddegree(hb.S[:, :, 1:2:end], 2pi .* fs[1:2:end], 1e-12) ==
           JC.supporteddegree(hb.S, 2pi .* fs, 1e-12)
+    # The samples bound the order from below: a fit of N poles and a
+    # constant combines N + 1 real functions of frequency, so its error is
+    # at least what the samples leave beyond their best approximation of
+    # that rank. Samples of a four port with six poles in three pairs and
+    # residues of full rank have rank seven, and six is the fewest poles
+    # any fit to roundoff can have.
+    let n = 4, ps = ComplexF64[-0.1 + 1im, -0.1 - 1im, -0.05 + 2.5im, -0.05 - 2.5im, -0.2 + 4im, -0.2 - 4im]
+        Rs = [reshape(sin.((1:n^2) .* (k + 1)) .+ im .* cos.((1:n^2) .* (2k + 3)), n, n) for k in 1:3]
+        D0 = reshape(cos.(1:n^2), n, n)./10
+        wx = collect(range(0.1, 6.0; length = 80))
+        Sx = [D0[i, j] + sum(Rs[k][i, j]/(im*w - ps[2k - 1]) + conj(Rs[k][i, j])/(im*w - ps[2k]) for k in 1:3)
+            for i in 1:n, j in 1:n, w in wx]
+        @test JC.fewestpoles(JC.relocationcomponents(Sx), Sx, 1e-10) == 6
+        # Four poles miss the third pair, and no fit with them comes
+        # closer than the bound of the weighted least squares on the
+        # components: not their least squares fit on the samples, nor
+        # one with other residues.
+        p4, r4, d4 = JC.vectorfit(Sx, wx, 4, VectorFitting())
+        bound = JC.deviationfloor(JC.relocationcomponents(Sx), wx, p4, n, Inf)
+        worst(R, D) = maximum(k -> opnorm(D .+ sum(R[:, :, p]./(im*wx[k] - p4[p]) for p in eachindex(p4)) .- Sx[:, :, k]), eachindex(wx))
+        @test 0 < bound <= JC.fiterrors(Sx, wx, p4)[1]
+        @test bound <= worst(r4 .+ 0.1 .* randn(ComplexF64, size(r4)), d4 .+ 0.1 .* randn(n, n))
+    end
     # a tolerance the data cannot support names the degree it carries
     cannot = try
         RationalScattering(data; tol = 1e-16); ""
@@ -575,11 +694,18 @@ using Test
         sprint(showerror, e)
     end
     @test occursin("determine a degree of about", cannot)
-    # Below the degree the samples determine, an order which produces
-    # no fit has too few poles, and the search goes on past it: six
+    # the refusal of a fit or a search as its message, empty where it fits
+    message(args...; kw...) = try
+        RationalScattering(args...; kw...); ""
+    catch e
+        e isa ArgumentError || rethrow()
+        sprint(showerror, e)
+    end
+    # The search goes on past orders which miss the tolerance: six
     # coupled resonators between two ports, whose samples determine a
-    # degree of about twelve and whose orders seven to eleven are all
-    # refused, are fitted at thirteen.
+    # degree of about twelve and whose lower orders all miss, are fitted
+    # at thirteen, with thirteen states; a maxstates of ten ends the scan
+    # at the first order whose fit has more, and says so.
     let comps = Any[(:p1, 1, 0, Port(1))]
         for r in 1:6
             C0 = 1/((2pi*5e9*(1 + 0.02*(r - 3.5)))^2*1e-9)
@@ -591,20 +717,62 @@ using Test
         Sc = hblinsolve(2pi .* fc, Circuit(comps); keyedarrays = false).S
         chain = ScatteringParameters((2pi .* fc, Sc); nports = 2, zref = 50.0)
         @test JC.relativefiterror(RationalScattering(chain; tol = 1e-6), Sc, fc) <= 1e-6
-        # A search which misses names the closest fit and why the orders
-        # which could not be fitted failed, since that is a different
-        # problem from a tolerance too tight; one in which no order
-        # produced a fit says that, and has no closest fit to name.
-        message(; kw...) = try
-            RationalScattering(chain; tol = 1e-6, kw...); ""
-        catch e
-            e isa ArgumentError || rethrow()
-            sprint(showerror, e)
-        end
-        missed = message(minpoles = 5, maxpoles = 12)
-        @test occursin("closest was", missed) && occursin("could not be fitted at all", missed)
-        none = message(minpoles = 7, maxpoles = 11)
-        @test occursin("could be fitted at all", none) && !occursin("closest", none)
+        @test occursin(r"The scan ended at \d+ poles, whose fit has \d+ states, more than maxstates = 10",
+            message(chain; tol = 1e-6, maxstates = 10))
+        # The relocation ends when its error has settled, `stallpatience`
+        # rounds in a row lowering it by less than a thousandth of
+        # itself. The chain at 200 samples with a noise of 1e-3, at 18
+        # poles, settles in three rounds, and the next five change its
+        # error by 4e-4 of itself at most: the relocation returns the best
+        # of those eight rounds, as it does with the rule off and the
+        # rounds cut to seven. A patience longer than the rounds carries it
+        # on through the slow descent after, to a closer fit.
+        fn = collect(range(4e9, 6e9; length = 200))
+        Sn = hblinsolve(2pi .* fn, Circuit(comps); keyedarrays = false).S
+        k = reshape(1:length(Sn), size(Sn))
+        Sn .+= 1e-3 .* complex.(sin.(1.3 .* k .^ 2), cos.(0.7 .* k .^ 2 .+ 1))
+        xn = 2pi .* fn ./ sqrt(2pi*fn[1]*2pi*fn[end])
+        startn = JC.spreadpoles(:linear, first(xn), last(xn), 18)
+        settled = JC.converge(Sn, xn, copy(startn), VectorFitting())
+        @test settled == JC.converge(Sn, xn, copy(startn), VectorFitting(stallpatience = 30, iterations = 7))
+        @test JC.fiterror(Sn, xn, JC.converge(Sn, xn, copy(startn), VectorFitting(stallpatience = 30))) <=
+            (1 - 5e-3)*JC.fiterror(Sn, xn, settled)
+    end
+    # A search which misses names how near it came, and why the orders
+    # which could not be fitted failed, since that is a different
+    # problem from a tolerance too tight: the RLC sampled at eight
+    # frequencies fits at every order up to seven and at none above,
+    # which would need more samples than there are. At a tolerance of
+    # 1e-16 no order comes near enough to be made passive, and the
+    # nearest is named by the bound which refused it. One in which no
+    # order produced a fit says that, and has no closest fit to name.
+    # Below the degree the samples determine, an order which produces no
+    # fit has too few poles for the data and the search goes on past it;
+    # past the degree four such orders in a row end it: a constant six
+    # port, of degree six, which no order fits since a constant
+    # reproduces it, is searched from four poles to ten.
+    missed = message(data; tol = 1e-16, minpoles = 4, maxpoles = 9, frequencies = fs[1:30:end])
+    @test occursin("misses the data by at least", missed) && occursin("could not be fitted at all", missed)
+    # A ripple of 1e-4 on the RLC puts a tolerance of 1e-6 out of reach
+    # and the degree the samples determine at the pencil's size, so the
+    # scan to twice it would fit every order to 240; it ends instead once
+    # the order has doubled since the fit's own error last fell by a
+    # tenth, and says so, and with a maxpoles it scans to that. Every
+    # order's fit keeps three poles, six states, so a maxstates of five
+    # ends the scan where it starts, and refuses a fixed order.
+    let ripple = [1e-4*cis(k^2 + 3i + 5j) for i in 1:2, j in 1:2, k in eachindex(fs)]
+        noisy = ScatteringParameters((2pi .* fs, hb.S .+ ripple); nports = 2, zref = 50.0, atol = 1e-3)
+        @test occursin("The scan ended at", message(noisy; tol = 1e-6))
+        walled = message(noisy; tol = 1e-6, maxpoles = 12)
+        @test occursin("between 4 and 12 poles", walled) && !occursin("The scan ended", walled)
+        @test occursin("where the scan starts, has 6 states", message(noisy; tol = 1e-6, maxpoles = 12, maxstates = 5))
+        @test occursin("more than maxstates = 5", message(noisy, 6; tol = 1.0, maxstates = 5))
+        @test isempty(message(noisy, 6; tol = 1.0, maxstates = 6))
+    end
+    let fc = collect(range(0.1, 1.0; length = 21))
+        @test JC.supporteddegree(repeat(Matrix{ComplexF64}(0.3I, 6, 6), 1, 1, 21), 2pi .* fc, 1e-12) == 6
+        none = message(ScatteringParameters(Matrix(0.3I, 6, 6)); tol = 1e-6, frequencies = fc)
+        @test occursin("between 4 and 10 poles could be fitted at all", none) && !occursin("closest", none)
     end
     # A block may be active, at zero frequency as at any other, so long
     # as it declares its own noise; without one an active statement is
@@ -639,18 +807,11 @@ using Test
         @test abs(Sa[2, 1, 2]) > 1
         @test_throws ArgumentError JC.checkpassive(ampfit.provider)
     end
-    # A feedthrough over one which the stated value cannot be
-    # contracted toward: both are positive here, so every step along
-    # the path moves away from one rather than toward it, and there is
-    # no step. The same feedthrough with the opposite sign is repaired
-    # exactly, which is the case above.
-    @test_throws ArgumentError JC.enforcepassivity(fill(-1.0, 1, 1), ones(1, 1),
-        fill(0.1, 1, 1), fill(1.001, 1, 1), [0.1, 1.0]; dc = ones(1, 1))
-    # The constant term is the model at infinite frequency, which no
-    # perturbation over a band of frequencies can reach, so a fit whose
-    # constant term is active cannot be enforced passive at all. It is
-    # brought under one before the residues are fitted, and the
-    # residues then fitted to what is left.
+    # The constant term is the model at infinite frequency. One above one
+    # is brought under one before the residues are fitted, and the
+    # residues then fitted to what is left over the samples, where the
+    # enforcement would contract the whole fit, or refuse it beyond its
+    # `scalelimit`.
     @test JC.passiveconstant([0.5 0.0; 0.0 0.25])[2] == false
     @test JC.passiveconstant([0.5 0.0; 0.0 0.25])[1] == [0.5 0.0; 0.0 0.25]
     # a block which is lossless at infinite frequency has a unitary
@@ -692,13 +853,14 @@ using Test
     # axis and not merely at the samples, though to the accuracy of
     # the norm search and not exactly: it decides on the largest
     # singular value that search evaluated, which is a lower bound,
-    # and the level the search ends at stands `2 rtol` above it. The
-    # analytic case among the norm tests above pins that gap. A
-    # block whose largest singular value exceeds one is active, and a
-    # transient built on it grows without bound, so a nearly passive
-    # fit is scaled the rest of the way rather than returned as it is.
+    # and the level the search ends at stands `2 rtol` above it, or that
+    # times a power of two where the crossing test cannot resolve a peak
+    # (the norm tests of test/transient/system.jl). A block whose largest
+    # singular value exceeds one is active, and a transient built on it
+    # grows without bound, so a nearly passive fit is scaled the rest of
+    # the way rather than returned as it is.
     # The near lossless case is the one which needs it: there the
-    # enforcement's own level of `1 + atol/2` sits above the block's
+    # enforcement's own level of `sqrt(1 + atol)` sits above the block's
     # entire dissipation. Whether a given fit is contracted, which
     # warns, or refused, which throws into the catch below, turns on
     # the roundoff of the norm search, so the logs are captured
@@ -724,9 +886,6 @@ using Test
             end
             q = f.provider
             @test densemax(q) <= 1 + 2e-8
-            # and the level, which is what termination establishes, is
-            # over one by no more than the search's own tolerance
-            @test JC.hinfnorm(q.A, q.B, q.C, q.D)[3] <= 1 + 4e-8
         end
     end
     # a network which is a perfect open at one port and a perfect
@@ -756,6 +915,34 @@ using Test
         @test sort(eigvals(f2.provider.A); by = imag) ≈ [-0.1 - im, -0.1 + im] rtol=1e-8
     end
     @test_throws ArgumentError RationalScattering(ScatteringParameters(fill(0.3, 1, 1)), 2; frequencies = range(0.1, 1.0; length = 21))
+    # A strictly proper fit, as the parts of a pumped block's conversions
+    # are, holds its constant at zero in the relocation and the pruning as
+    # well as in its residues, so that its poles are chosen for the fit it
+    # returns: data which vanishes at infinite frequency, sampled over a
+    # band that ends before it decays, with resonances in it, two poles
+    # above it and a delay turning its phase by most of a radian over it,
+    # fits at eight poles to within 1e-7 of its largest value.
+    let xs = collect(range(0.3, 3.0; length = 200)),
+            G = reshape([0.1*(0.2/(im*x - complex(-0.05, 1.3)) + 0.2/(im*x - complex(-0.05, -1.3)) +
+                0.1/(im*x - complex(-0.1, 0.6)) + 0.1/(im*x - complex(-0.1, -0.6)) + 12/(im*x + 30) +
+                36/(im*x + 90))*cis(-0.3x) for x in xs], 1, 1, :),
+            (pp, Rp, Dp) = JC.vectorfit(G, xs, 8, VectorFitting(); proper = true, lastpole = :keep)
+        @test iszero(Dp)
+        @test maximum(k -> abs(G[1, 1, k] - sum(Rp[1, 1, p]/(im*xs[k] - pp[p]) for p in eachindex(pp))),
+            eachindex(xs)) <= 1e-7*maximum(abs, G)
+    end
+    # A pole pair near the real axis, `-1 ± 1.1e-6 i`, whose two functions
+    # of the real basis differ by the pair's small imaginary part: formed
+    # without the difference of the pole's term and its conjugate's, as the
+    # sweep forms them, the residue solve at the exact poles reproduces
+    # `0.1 + 0.8/((1 + s)^2 + b^2)` to the roundoff, as its realization
+    # evaluates it
+    let b = 1.1e-6, xs = collect(range(0.01, 10.0; length = 400)),
+            Sb = reshape([complex(0.1 + 0.8/((1 + im*x)^2 + b^2)) for x in xs], 1, 1, :),
+            pb = ComplexF64[complex(-1, b), complex(-1, -b)], (Rb, Db) = JC.fitresidues(Sb, xs, pb),
+            qb = JC.RationalScatteringProvider(JC.realization(pb, Rb, 1)..., Db)
+        @test maximum(abs, JC.evaluateprovider!(zeros(ComplexF64, 1, 1, length(xs)), qb, xs) .- Sb) <= 1e-14
+    end
     # a three port, whose nine entries are eliminated one by one in the
     # fit, so nothing the size of every entry's every sample is formed
     tee = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:r1, 1, 4, Resistor(20.0)), (:p2, 2, 0, Port(2; Z0 = 50.0)), (:r2, 2, 4, Resistor(20.0)),
@@ -970,5 +1157,549 @@ end
     for count in (8, 9)
         o = hblinsolve(collect(range(0.01, 2.0; length = count)), c; keyedarrays = false)
         @test maximum(abs, abs.(o.S) .- 1) < 1e-10
+    end
+end
+
+# The passivity correction is the least change of the residues and the
+# constant over the samples, solved in the residues' own coordinates at
+# the frequency scaled to the band, where the problem carries no unit.
+@testset "the passivity correction is the least change of the residues" begin
+    JC = JosephsonCircuits
+    response(A, B, C, D, w) = D .+ C*((im*w*I - A) \ B)
+    # the largest singular value sampled densely past the poles and
+    # across every resonance, independent of the norm search
+    function densemax(A, B, C, D)
+        poles = eigvals(A)
+        mags = filter(>(0), abs.(poles))
+        ws = vcat(0.0, exp.(range(log(minimum(mags)/100), log(maximum(mags)*100); length = 4000)))
+        for l in unique(round.(poles; sigdigits = 10))
+            imag(l) > 0 && append!(ws, imag(l) .+ abs(real(l)) .* range(-8, 8; length = 401))
+        end
+        return maximum(w -> opnorm(response(A, B, C, D, w)), ws)
+    end
+    densemax(p::JC.RationalScatteringProvider) = densemax(p.A, p.B, p.C, p.D)
+    # the poles and residues of a small realization, the form the fit
+    # hands the enforcement
+    function poleresidues(A, B, C)
+        λ, V = eigen(A)
+        W = inv(V)
+        return ComplexF64.(λ), ComplexF64.(cat([C*V[:, k]*transpose(W[k, :])*B for k in eachindex(λ)]...; dims = 3))
+    end
+    realized(poles, R, D) = (JC.realization(poles, R, size(D, 1))..., D)
+    # `nl` coupled lines of ten lumped sections, ports at both ends,
+    # nearly lossless (a dissipation of about 1e-6)
+    function lumpedlines(nl)
+        node(l, k) = (l - 1)*11 + k + 1
+        L, Cs = 50.0*10e-12, 10e-12/50.0
+        comps = Any[]
+        for l in 1:nl
+            push!(comps, (Symbol(:pa, l), node(l, 0), 0, Port(l; Z0 = 50.0)))
+            push!(comps, (Symbol(:pb, l), node(l, 10), 0, Port(nl + l; Z0 = 50.0)))
+            for k in 1:10
+                push!(comps, (Symbol(:L, l, :_, k), node(l, k - 1), node(l, k), Inductor(L*(1 + 0.03l))))
+                push!(comps, (Symbol(:G, l, :_, k), node(l, k), 0, Resistor(5e4)))
+                push!(comps, (Symbol(:C, l, :_, k), node(l, k), 0, Capacitor(Cs*(k == 10 ? 0.5 : 1.0))))
+                l < nl && push!(comps, (Symbol(:Cm, l, :_, k), node(l, k), node(l + 1, k), Capacitor(0.15Cs)))
+            end
+            push!(comps, (Symbol(:C0, l), node(l, 0), 0, Capacitor(0.5Cs)))
+        end
+        return Circuit(comps)
+    end
+    fs = collect(range(20e9/400, 20e9; length = 400))
+    S2 = hblinsolve(2pi .* fs, lumpedlines(1); keyedarrays = false).S
+    # At twenty poles the raw fit of the line is good to 2e-10 and its
+    # only violations lie above the band, where its norm reaches 1.075:
+    # the least change removing them costs next to nothing in band, and
+    # carries no unit of frequency.
+    f2 = RationalScattering(ScatteringParameters((2pi .* fs, S2); nports = 2, zref = 50.0), 20; tol = 1.0)
+    e2 = JC.relativefiterror(f2, S2, fs)
+    @test e2 < 1e-5
+    # the largest spectral norm over the samples, found with a singular
+    # value decomposition only where the Frobenius norm allows it to be
+    # the largest, is the largest of them all
+    M = randn(ComplexF64, 5, 5, 200) .* reshape(exp.(range(-3, 3; length = 200)), 1, 1, :)
+    @test JC.largestopnorm(M) == maximum(k -> opnorm(M[:, :, k]), axes(M, 3))
+    @test densemax(f2.provider) <= 1 + 2e-8
+    # the fit's state matrix is block diagonal in real poles and
+    # rotations, its residues of rank two, and a frequency is evaluated
+    # pole by pole
+    @test isempty(f2.provider.states.poles)
+    # the same responses a billion times lower in frequency: the same fit
+    f2s = RationalScattering(ScatteringParameters((2pi .* fs .* 1e-9, S2); nports = 2, zref = 50.0), 20; tol = 1.0)
+    @test JC.relativefiterror(f2s, S2, fs .* 1e-9) ≈ e2 rtol = 1e-2
+    # The data is reciprocal and so is the raw fit; the correction keeps
+    # it so to within the fit's own error, beyond the band as well, where
+    # nothing in the samples holds it.
+    wo = 2pi .* exp.(range(log(fs[1]/10), log(fs[end]*10); length = 200))
+    F = zeros(ComplexF64, 2, 2, length(wo))
+    JC.evaluateprovider!(F, f2.provider, wo)
+    @test maximum(k -> opnorm(F[:, :, k] - transpose(F[:, :, k])), axes(F, 3)) <= e2
+    # Two coupled lines at twenty-four poles, whose first correction
+    # would leave the constant term with a singular value of 1.013 were
+    # it left alone, which no sweep over the band sees: the constant is
+    # constrained in every round.
+    S4 = hblinsolve(2pi .* fs, lumpedlines(2); keyedarrays = false).S
+    f4 = RationalScattering(ScatteringParameters((2pi .* fs, S4); nports = 4, zref = 50.0), 24; tol = 1e-2)
+    @test densemax(f4.provider) <= 1 + 2e-8
+    # At forty poles the same lines' fit is active only above the band, where
+    # a change costs little over the samples and moves the response freely:
+    # each round's correction pushes points above one that an earlier round
+    # brought under, unless those stay constrained. They do, so the rounds
+    # end on a passive fit, near the raw one, rather than on a contraction.
+    f40 = RationalScattering(ScatteringParameters((2pi .* fs, S4); nports = 4, zref = 50.0), 40; tol = 1.0)
+    @test JC.relativefiterror(f40, S4, fs) <= 2e-6
+    # Eight lines at forty poles meet new violations above the band round
+    # after round, fewer and smaller, and are passive after about forty:
+    # the rounds the default allows, where fewer would end on a contraction.
+    S8 = hblinsolve(2pi .* fs, lumpedlines(4); keyedarrays = false).S
+    f8 = RationalScattering(ScatteringParameters((2pi .* fs, S8); nports = 8, zref = 50.0), 40; tol = 1.0)
+    @test JC.relativefiterror(f8, S8, fs) <= 3e-4
+    # The certificate is the sweep that settles every interval of the axis
+    # by a bound across it (see passivitysweep). Its bands are the crossing
+    # test's, on the raw fit of the two lines at twenty-four poles and on
+    # the same fit turned by an orthogonal matrix on the left, which keeps
+    # its singular values and makes it nonreciprocal: every band between
+    # two crossings where the response stands above the level meets one of
+    # the sweep's, and every band of the sweep meets one of those.
+    level = 1 + 5e-9
+    ws4 = 2pi .* fs
+    p4, R4, D4 = JC.vectorfit(S4, ws4, 24, VectorFitting(); constanttol = 1e-8, constantmargin = 1e-6)
+    Q4 = [cos(0.4) -sin(0.4) 0 0; sin(0.4) cos(0.4) 0 0; 0 0 cos(1.1) sin(1.1); 0 0 -sin(1.1) cos(1.1)]
+    for (Rk, Dk) in ((R4, D4), (stack(Q4*R4[:, :, k] for k in axes(R4, 3)), Q4*D4))
+        form = JC.ResidueForm(p4, Rk, Dk, sqrt(ws4[1]*ws4[end]), JC.residuespaces(p4, Rk, 1e-12))
+        sweep = JC.passivitysweep(form, level, Inf)
+        @test sweep.verdict === :active
+        A4, B4, C4 = JC.realization(form)
+        An4, Bn4, Cn4, w4 = JC.balancedrealization(A4, B4, C4 ./ level)
+        crossed = JC.unitcrossings(An4, Bn4, Cn4, form.D ./ level) .* w4
+        F4, phi4 = zeros(ComplexF64, 4, 4), zeros(ComplexF64, length(form.poles))
+        edges = vcat(0.0, crossed)
+        above = [(edges[k], edges[k + 1]) for k in 1:length(edges) - 1
+            if opnorm(JC.responseat!(F4, form, (edges[k] + edges[k + 1])/2, phi4)) > level]
+        meets(a, b) = a[1] <= b[2] && b[1] <= a[2]
+        @test !isempty(above)
+        @test all(b -> any(s -> meets(s, b), sweep.bands), above)
+        @test all(s -> any(b -> meets(s, b), above), sweep.bands)
+    end
+    # A band narrower than any grid: a resonance of half width 1e-9 whose
+    # peak stands 1e-7 above one, found at its level and settled above it.
+    let d = 1e-9, R = zeros(ComplexF64, 2, 2, 2)
+        R[1, 1, 1] = R[1, 1, 2] = (0.5 + 1e-7)*d
+        narrow = JC.ResidueForm(ComplexF64[complex(-d, 1), complex(-d, -1)], R, [0.5 0.0; 0.0 0.2], 1.0,
+            [Matrix{ComplexF64}(I, 2, 2) for _ in 1:2])
+        sweep = JC.passivitysweep(narrow, level, Inf)
+        @test sweep.verdict === :active && any(b -> b[1] <= 1 <= b[2], sweep.bands)
+        @test JC.passivitysweep(narrow, 1 + 2e-7, Inf).verdict === :passive
+    end
+    # A band reaching past the poles into the variable `1/x`: a constant at
+    # `1 - 1e-6` and `0.5/(s + 1)` on the first port, whose magnitude
+    # squared, `(1 - 1e-6 + 0.5/(1 + x^2))^2 + (0.5 x/(1 + x^2))^2`, stands
+    # above the level until about `x = 790`.
+    let tail = JC.ResidueForm(ComplexF64[-1], reshape(ComplexF64[0.5 0; 0 0], 2, 2, 1), [1 - 1e-6 0.0; 0.0 0.3],
+            1.0, [Matrix{ComplexF64}(I, 2, 2)])
+        sweep = JC.passivitysweep(tail, level, Inf)
+        @test sweep.verdict === :active
+        @test all(x -> any(b -> b[1] <= x <= b[2], sweep.bands), (10.0, 100.0, 700.0))
+    end
+    # The roundoff allowance counts a pole pair's terms before they cancel.
+    # The pair -1 +- 1.1e-6 i with coefficients [0, 1/2.2e-6] has as its
+    # second basis function i (u - v), whose terms stand six orders of
+    # magnitude above it at the frequency one and past the poles: at an
+    # interval there, in x and in the tail's 1/x, the dissipation's ends
+    # are within the allowance of a 256-bit evaluation.
+    let pp = ComplexF64[complex(-1, 1.1e-6), complex(-1, -1.1e-6)], Rp = zeros(ComplexF64, 1, 1, 2)
+        Rp[1, 1, 1], Rp[1, 1, 2] = complex(0, 1/2.2e-6), complex(0, -1/2.2e-6)
+        pair = JC.ResidueForm(pp, Rp, fill(0.8660254, 1, 1), 1.0, [ones(ComplexF64, 1, 1) for _ in 1:2])
+        work = JC.SweepWork(pair)
+        setprecision(BigFloat, 256) do
+            for (c, tail) in ((1.0, false), (0.02, true))
+                h = 1e-9*c
+                M, roundoff, _ = JC.expand!(work, pair, c, h, tail)
+                q = Complex{BigFloat}(pair.poles[1])
+                term(a) = tail ? (big(c)/(im - a*big(c)), im/(im - a*big(c))^2) : (1/(im*big(c) - a), -im/(im*big(c) - a)^2)
+                (u, du), (v, dv) = term(q), term(conj(q))
+                X1, X2 = big(pair.X[1, 1, 1]), big(pair.X[1, 1, 2])
+                S0 = big(pair.D[1, 1]) + X1*(u + v) + X2*im*(u - v)
+                S1 = X1*(du + dv) + X2*im*(du - dv)
+                @test abs(real(work.P0[1, 1]) - (1 - abs2(S0))) + h*abs(2real(conj(S0)*S1) - 2real(work.G[1, 1])) <= roundoff
+            end
+            # and the pair's functions are formed without the difference of
+            # its terms, so the response there is accurate to its own
+            # roundoff, where the difference erred by 3.6e-11
+            u, v = 1/(im*big(1.0) - Complex{BigFloat}(pp[1])), 1/(im*big(1.0) - Complex{BigFloat}(pp[2]))
+            exact = big(pair.D[1, 1]) + big(pair.X[1, 1, 1])*(u + v) + big(pair.X[1, 1, 2])*im*(u - v)
+            @test abs(JC.responseat!(zeros(ComplexF64, 1, 1), pair, 1.0, zeros(ComplexF64, 2))[1, 1] - exact) <= 1e-14
+        end
+    end
+    # An all pass, `(1 - s)/(1 + s)`, dissipates nothing at any frequency:
+    # it is settled at a level above one, and at one it is not, where it has
+    # nothing to spare and the sweep halves until its time runs out.
+    allpass = JC.ResidueForm(ComplexF64[-1], fill(2.0 + 0im, 1, 1, 1), fill(-1.0, 1, 1), 1.0, [ones(ComplexF64, 1, 1)])
+    @test JC.passivitysweep(allpass, 1 + 1e-6, Inf).verdict === :passive
+    @test JC.passivitysweep(allpass, 1.0, time_ns() + 1e7).verdict !== :passive
+    # Three ports lossless in some directions at every frequency and lossy
+    # in the others, `Q diag(...) Q'`, whose first-order bound dips along
+    # the lossless directions until the intervals are narrow: the bound to
+    # second order settles them in a tenth of the intervals, with one
+    # lossless direction, `(1 - s)/(1 + s)` beside `0.5/(s + 1)` and
+    # `0.25/(s + 1)`, where its test takes the basis of the lossless span,
+    # and with two, `(2 - s)/(2 + s)` in place of the second, where it takes
+    # that of the lossy one and tests along both. A resonance of half width
+    # 1e-4 at 0.7 along the first direction, lifting it 2e-8 above one, is
+    # found, its band about the resonance, and one lifting it 2e-9, under
+    # the level, is settled; the bracket of the norm holds the peak of a
+    # fine grid.
+    let Q = Matrix(qr(reshape(sin.((1:9).^2), 3, 3)).Q), u = Q[:, 1], level = 1 + 5e-9
+        turned(d) = Q*Diagonal(d)*Q'
+        for (poles, X, D) in ((ComplexF64[-1], [turned([2.0, 0.5, 0.25])], turned([-1.0, 0, 0])),
+                (ComplexF64[-1, -2], [turned([2.0, 0, 0.5]), turned([0, 4.0, 0])], turned([-1.0, -1, 0])))
+            form(p, extra...) = JC.ResidueForm(p, ComplexF64.(cat(X..., extra...; dims = 3)), D, 1.0,
+                [Matrix{ComplexF64}(I, 3, 3) for _ in p])
+            @test JC.passivitysweep(form(poles), level, Inf).evaluated < 2000
+            for (lift, verdict) in ((2e-8, :active), (2e-9, :passive))
+                R = lift*1e-4*(1 - 0.7im)/(1 + 0.7im)
+                bumped = form(vcat(poles, complex(-1e-4, 0.7), complex(-1e-4, -0.7)), R .* (u*u'), conj(R) .* (u*u'))
+                sweep = JC.passivitysweep(bumped, level, Inf)
+                @test sweep.verdict === verdict
+                @test all(b -> b[1] <= 0.7 <= b[2], sweep.bands)
+                F, phi = zeros(ComplexF64, 3, 3), zeros(ComplexF64, length(bumped.poles))
+                peak = maximum(x -> opnorm(JC.responseat!(F, bumped, x, phi)), range(0.698, 0.702; length = 4001))
+                lower, _, ceiling = JC.residuenorm(bumped; rtol = 1e-8)
+                @test lower <= peak*(1 + 1e-12) && peak <= ceiling <= lower*(1 + 2e-8)
+            end
+        end
+    end
+    # The test to second order works in the arrays of its work: on sixteen
+    # ports, eight two ports lossless in one direction,
+    # `Q diag((1 - s)/(1 + s), 0.5/(s + 1)) Q'`, turned by an orthogonal
+    # matrix, an attempt which settles an interval the first order leaves
+    # allocates less than one of the form's matrices, the LAPACK routines'
+    # workspace.
+    let Qr = [cos(0.3) -sin(0.3); sin(0.3) cos(0.3)], Q16 = Matrix(qr(reshape(sin.((1:256).^2), 16, 16)).Q)
+        part = JC.ResidueForm(ComplexF64[-1], reshape(ComplexF64.(Q16*kron(I(8), Qr*[2.0 0; 0 0.5]*Qr')*Q16'), 16, 16, 1),
+            Q16*kron(I(8), Qr*[-1.0 0; 0 0]*Qr')*Q16', 1.0, [Matrix{ComplexF64}(I, 16, 16)])
+        work, level, c, h = JC.SweepWork(part), 1 + 5e-9, 0.15, 0.003
+        function attempt()
+            M, roundoff, magnitude, e = JC.expand!(work, part, c, h, false)
+            shift, allowance = JC.testshift(work, h, M, roundoff, magnitude, level)
+            return JC.settled(work, h, shift),
+                JC.secondorder!(work, part, c, h, false, (level - 1)*(level + 1), allowance, e, h^2*M/64)
+        end
+        @test attempt() == (false, true)
+        attemptbytes() = @allocated attempt()
+        @test attemptbytes() < sizeof(ComplexF64)*16^2
+    end
+    # A lossless form is settled by the bound of its dissipation over the
+    # whole axis, from its residues and constant, before any interval, and
+    # its norm with it: an all pass of two poles turned by an orthogonal
+    # matrix, and two lossless sections whose projectors do not commute,
+    # `(I - 2P/(s + 1))(I - 6Q/(s + 3))`, at six ports. A form 1e-7 above one
+    # at zero frequency with a unitary constant is not settled by it, and
+    # the sweep finds it active.
+    let n = 6, Q = Matrix(qr(reshape(sin.((1:36).^2), 6, 6)).Q)
+        U, V = Matrix(qr(reshape(cos.((1:18).^2), 6, 3)).Q), Matrix(qr(reshape(sin.((2:13).^2), 6, 2)).Q)
+        P, Pq = U*U', V*V'
+        spaces = [Matrix{ComplexF64}(I, n, n) for _ in 1:2]
+        cascade = JC.ResidueForm(ComplexF64[-1, -3], ComplexF64.(cat(4Q, -12Q; dims = 3)), Q, 1.0, spaces)
+        sections = JC.ResidueForm(ComplexF64[-1, -3], ComplexF64.(cat(-2P + 6P*Pq, -6Pq - 6P*Pq; dims = 3)),
+            Matrix(1.0I, n, n), 1.0, spaces)
+        for form in (cascade, sections)
+            sweep = JC.passivitysweep(form, 1 + 5e-9, Inf)
+            @test sweep.verdict === :passive && sweep.evaluated == 0
+            lower, _, ceiling = JC.residuenorm(form; rtol = 1e-8)
+            @test 1 - 1e-12 <= lower <= ceiling <= 1 + 2e-8
+        end
+        active = JC.ResidueForm(ComplexF64[-1], fill(-(2 + 1e-7) + 0im, 1, 1, 1), fill(1.0, 1, 1), 1.0, [ones(ComplexF64, 1, 1)])
+        @test JC.passivitysweep(active, 1 + 5e-9, Inf).verdict === :active
+    end
+    # A lossless fit, whose largest singular value stands at one throughout,
+    # is settled before any interval: three coupled resonators between
+    # matched ports, fitted at their six poles, are certified with no time
+    # for intervals at all, and are passive on a dense grid.
+    let comps = Any[(:p1, 1, 0, Port(1; Z0 = 50.0)), (:p2, 3, 0, Port(2; Z0 = 50.0))]
+        for r in 1:3
+            push!(comps, (Symbol(:L, r), r, 0, Inductor(1e-9)),
+                (Symbol(:C, r), r, 0, Capacitor(1/((2pi*5e9*(1 + 0.02*(r - 2)))^2*1e-9))))
+            r < 3 && push!(comps, (Symbol(:Cc, r), r, r + 1, Capacitor(0.08e-12)))
+        end
+        fc = collect(range(4e9, 6e9; length = 100))
+        Sc = hblinsolve(2pi .* fc, Circuit(comps); keyedarrays = false).S
+        chain = RationalScattering(ScatteringParameters((2pi .* fc, Sc); nports = 2, zref = 50.0), 6;
+            tol = 1e-6, passivity = PassivityEnforcement(maxtime = 0.0))
+        @test densemax(chain.provider) <= 1 + 5e-9
+    end
+    # The norm the enforcement decides on is found by the same bounds, the
+    # response at each interval's centre raising a lower bound until every
+    # interval stands under it times `1 + rtol`; its bracket agrees with
+    # the crossing test of passivityassessment on the realization, which
+    # finds the form active a part in a million under the lower bound and
+    # passive as far over the ceiling, on the raw fit, turned or not, and
+    # on an all pass, which touches one at every frequency.
+    for (Rk, Dk) in ((R4, D4), (stack(Q4*R4[:, :, k] for k in axes(R4, 3)), Q4*D4))
+        form = JC.ResidueForm(p4, Rk, Dk, sqrt(ws4[1]*ws4[end]), JC.residuespaces(p4, Rk, 1e-12))
+        lower, _, ceiling = JC.residuenorm(form; rtol = 1e-8)
+        A, B, C = JC.realization(form)
+        verdictat(level) = JC.passivityassessment(A, B, C ./ level, form.D ./ level; atol = 0.0).verdict
+        @test verdictat(lower*(1 - 1e-6)) === :active && verdictat(ceiling*(1 + 1e-6)) === :passive
+        @test ceiling <= lower*(1 + 1e-8)
+    end
+    lower, _, ceiling = JC.residuenorm(allpass; rtol = 1e-8)
+    @test lower <= 1 + 1e-15 && 1 <= ceiling <= 1 + 2e-8
+    # A level, or a tolerance, within the roundoff of the norm leaves
+    # centres which halving cannot settle, standing within the roundoff of
+    # the level where the remainder over the interval is within it too:
+    # they belong to a band, or count their bound toward the ceiling,
+    # rather than halving on until the time runs out. The all pass, one at
+    # every frequency, swept at 1 + 1e-15 and its norm searched to 1e-15 of
+    # itself, whose ceiling is then looser than the roundoff, but found.
+    tight = JC.passivitysweep(allpass, 1 + 1e-15, time_ns() + 1e10)
+    @test tight.verdict === :indeterminate && tight.evaluated < 100
+    tightnorm = JC.residuenorm(allpass; rtol = 1e-15, deadline = time_ns() + 1e10)
+    @test tightnorm[1] ≈ 1 atol = 1e-15
+    @test tightnorm[1] <= tightnorm[3] < Inf
+    # and a fit the sweep cannot settle in the time allowed is refused:
+    # a resonance of half width 0.01 peaking at 0.9, which the bound over the
+    # whole axis leaves to the intervals; the norm search, out of time as
+    # well, leaves it no ceiling, so that a contraction it measures is
+    # refused rather than accepted on the intervals it reached
+    @test_throws ArgumentError JC.enforcepassivity(ComplexF64[complex(-0.01, 1), complex(-0.01, -1)],
+        fill(0.009 + 0im, 1, 1, 2), zeros(1, 1), [0.1, 1.0, 10.0], PassivityEnforcement(maxtime = 0.0))
+    @test isinf(last(JC.residuenorm(JC.ResidueForm(ComplexF64[complex(-0.01, 1), complex(-0.01, -1)],
+        fill(0.009 + 0im, 1, 1, 2), zeros(1, 1), 1.0, [ones(ComplexF64, 1, 1) for _ in 1:2]); rtol = 1e-8,
+        deadline = 0)))
+    # A resonance at 1e-16 of the scaled frequency, far under the samples,
+    # peaking at 1.006: the norm search halves an interval down to the
+    # floating-point resolution of its centre, so that its ceiling closes
+    # on the peak, and a fit is accepted only where its ceiling stands
+    # under the level, so that the fit returned stays under one there as
+    # well. The norm alone, of 1.0001e-16/(s + 1e-16) beside a pole at -1
+    # with no residue, is bracketed to rtol about its value.
+    let p = ComplexF64[complex(-2.643763489844016e-17, 1e-16), complex(-2.643763489844016e-17, -1e-16), -1.0],
+            R = reshape(ComplexF64[complex(2.556635034502508e-17, 1.1121039570931664e-17),
+                complex(2.556635034502508e-17, -1.1121039570931664e-17), 1e-3], 1, 1, 3)
+        Rk, Dk, _ = JC.enforcepassivity(p, R, fill(0.025214912183540387, 1, 1), [0.1, 1.0, 10.0])
+        @test maximum(w -> abs(Dk[1, 1] + sum(Rk[1, 1, k]/(im*w - p[k]) for k in 1:3)),
+            range(0.0, 3e-16; length = 3001)) <= 1 + 1e-8
+        tiny = JC.ResidueForm(ComplexF64[-1e-16, -1.0], reshape(ComplexF64[1.0001e-16, 0.0], 1, 1, 2), zeros(1, 1), 1.0,
+            [ones(ComplexF64, 1, 1) for _ in 1:2])
+        lower, _, ceiling = JC.residuenorm(tiny; rtol = 1e-8)
+        @test lower <= 1.0001 <= ceiling <= lower*(1 + 2e-8)
+    end
+    # A value stated at zero frequency is held exactly by the correction:
+    # the change there is linear in the unknowns and is eliminated before
+    # the inequalities are solved, so the answer is the least change which
+    # holds it. This resonance needs correcting, and correcting it without
+    # the statement moves its value at zero by nine parts in a hundred.
+    Ae, Be, Ce = [-0.25 1.0; -1.0 -0.25], [1.0 0.0; 0.0 1.0], [0.35 0.0; 0.0 0.35]
+    pe, Re = poleresidues(Ae, Be, Ce)
+    wse = collect(range(0.05, 4.0; length = 160))
+    S0e = real.(response(Ae, Be, Ce, zeros(2, 2), 0.0))
+    @test JC.passivityassessment(Ae, Be, Ce, zeros(2, 2)).lower > 1.3
+    Rh, Dh, _ = JC.enforcepassivity(pe, Re, zeros(2, 2), wse; dc = S0e)
+    @test densemax(realized(pe, Rh, Dh)...) <= 1 + 2e-8
+    @test real.(response(realized(pe, Rh, Dh)..., 0.0)) ≈ S0e atol = 1e-12
+    Rf, Df, _ = JC.enforcepassivity(pe, Re, zeros(2, 2), wse)
+    @test densemax(realized(pe, Rf, Df)...) <= 1 + 2e-8
+    @test maximum(abs, real.(response(realized(pe, Rf, Df)..., 0.0)) .- S0e) > 0.05
+    # A constant term within the tolerance above one is left to the rounds,
+    # which correct it where it stands above their level, and to nothing
+    # else: a series resonator to ground, an open at both ends of the axis
+    # whose samples stand above one by half the tolerance, with a leakage
+    # stating its value at zero frequency 2e-7 under one, fits at three
+    # poles as closely as its raw fit, its constant at one to the fit's
+    # roundoff and its statement held.
+    let gs = collect(range(0.5e9, 10e9; length = 300)), Rl = 5e8,
+            Sr = reshape([(1 + 5e-9)*(Z - 50)/(Z + 50) for Z in (5.0 .+ im .* 2pi .* gs .* 2e-9 .+
+                1 ./ (im .* 2pi .* gs .* 0.5e-12))], 1, 1, :),
+            open = ScatteringParameters((2pi .* gs, Sr); nports = 1, zref = 50.0,
+                dcmodel = ScatteringDC(fill((Rl - 50)/(Rl + 50), 1, 1)))
+        @test JC.relativefiterror(RationalScattering(open, 3), Sr, gs) <= 1e-6
+    end
+    # The rounds hold a fit to the dissipation its samples and constant term
+    # are held to, `I - S'S` no lower than `-atol`: a constant term above
+    # `sqrt(1 + atol)` but under one plus half of `atol`, whose samples meet
+    # their tolerance, is corrected rather than refused by the constructor
+    let atol = 1e-3, xs = collect(range(0.1, 10.0; length = 80)),
+            Sd = reshape(ComplexF64[1 + atol/2 - atol^2/10 - 0.2/(1 + im*x) for x in xs], 1, 1, :)
+        local fitd = RationalScattering(ScatteringParameters((xs, Sd); nports = 1, zref = 50.0, atol), 1; atol, tol = 0.01)
+        @test JC.passivitymargin(fitd.provider.D) >= -atol
+        @test JC.relativefiterror(fitd, Sd, xs ./ 2pi) <= 1e-3
+    end
+    # A fit held at a value of unit norm at zero frequency, where the rounds
+    # end uncertified: the all pass (s - 1)/(s + 1), held at -1 there, with a
+    # bump of 1e-6 or 1e-7 at the frequency 3, where it stands at 0.8 + 0.6i,
+    # enforced in one round. The norm search resolves under the margin to
+    # the level, and the contraction toward the held value aims at the
+    # level, since no point of its path has a ceiling under one: the fit
+    # returned holds -1 at zero frequency and stays under 1 + atol.
+    for delta in (1e-6, 1e-7)
+        q = complex(-0.1, 3.0)
+        r = delta*(0.8 + 0.6im)*0.1
+        p = ComplexF64[-1.0, q, conj(q)]
+        R = reshape(ComplexF64[-2.0, r, conj(r)], 1, 1, 3)
+        at(Rk, Dk, w) = Dk[1, 1] + sum(Rk[1, 1, k]/(im*w - p[k]) for k in 1:3)
+        D = fill(-1 - real(at(R, zeros(1, 1), 0.0)), 1, 1)
+        Rk, Dk, _ = JC.enforcepassivity(p, R, D, collect(range(0.1, 10.0; length = 100)),
+            PassivityEnforcement(rounds = 1); dc = fill(-1.0, 1, 1))
+        @test real(at(Rk, Dk, 0.0)) ≈ -1 atol = 1e-12
+        @test maximum(w -> abs(at(Rk, Dk, w)), range(0.0, 12.0; length = 12001)) <= 1 + 1e-8
+    end
+    # The rank of each residue is decided once, and the enforcement and the
+    # realization take the residues within the same spaces, so that the
+    # block realized is the one made passive. Two nearly equal poles whose
+    # residues nearly cancel on the first port, `diag(100, -0.5)` and
+    # `diag(-100, 0)`, and `diag(0, 1.2)` at the first: the `-0.5` is under
+    # the `ranktol` of 0.01 of its residue, and without it the second port
+    # is `1.2/(s + 1)`, active, where with it the port is `0.7/(s + 1)`.
+    let pc = ComplexF64[-1, -1 - 1e-4, -1], Rc = zeros(ComplexF64, 2, 2, 3)
+        Rc[:, :, 1] = Diagonal([100, -0.5])
+        Rc[:, :, 2] = Diagonal([-100, 0])
+        Rc[:, :, 3] = Diagonal([0, 1.2])
+        spaces = JC.residuespaces(pc, Rc, 0.01)
+        Rk, Dk, _ = JC.enforcepassivity(pc, Rc, zeros(2, 2), wse; spaces)
+        A, B, C = JC.realization(pc, Rk, 2; spaces)
+        @test size(A, 1) == 3
+        @test densemax(A, B, C, Dk) <= 1 + 2e-8
+    end
+    # Where every residue has full rank the metric of the least change is
+    # the basis's Gram matrix repeated for each unknown of a port's row, and
+    # is factored as that; its solves agree with the whole normal matrix's,
+    # a value held at zero or not.
+    let pm = ComplexF64[-0.4, -0.2 + 2im, -0.2 - 2im], Rm = zeros(ComplexF64, 3, 3, 3)
+        Rm[:, :, 1] = [1.0 0.3 0.1; 0.3 -0.7 0.2; 0.1 0.2 0.5]
+        Rm[:, :, 2] = [0.5+0.1im 0.2im 0.1; 0.2im -0.3 0.4im; 0.1 0.4im 0.6-0.2im]
+        Rm[:, :, 3] = conj.(Rm[:, :, 2])
+        form = JC.ResidueForm(pm, Rm, zeros(3, 3), 1.0, JC.residuespaces(pm, Rm, 1e-12))
+        blocks, nu = JC.correctioncoordinates(form)
+        xm = exp.(range(log(0.01), log(100.0); length = 60))
+        G = [sin(3i + j) for i in 1:nu, j in 1:5]
+        for dcm in (JC.nodc, ones(3, 3))
+            metric = JC.correctionmetric(form, blocks, nu, xm, 1e-8, dcm)
+            @test metric.stride == 3
+            along(f, X) = JC.alongbasis(f, X, metric.stride)
+            Zf = isnothing(metric.Z) ? identity : X -> along(Y -> metric.Z*Y, X)
+            Ztf = isnothing(metric.Z) ? identity : X -> along(Y -> transpose(metric.Z)*Y, X)
+            factored = Zf(along(Y -> transpose(only(metric.L)) \ Y, along(Y -> only(metric.L) \ Y, Ztf(G))))
+            H = JC.correctiongram(blocks, nu, pm, xm)
+            H[diagind(H)] .+= 1e-8*tr(H)/nu
+            Z = Matrix(1.0I, nu, nu)
+            if !isempty(dcm)
+                phi0 = JC.basisat!(zeros(ComplexF64, 3), pm, 0.0)
+                E = zeros(3, nu)
+                for (c, cols, M) in blocks
+                    E[:, cols] .+= real(c == 0 ? 1.0 : phi0[c]) .* M
+                end
+                Z = nullspace(E)
+            end
+            @test factored ≈ Z*((transpose(Z)*H*Z) \ (transpose(Z)*G)) rtol = 1e-9
+        end
+        # Weighted, each entry has a Gram matrix of its own and each port a
+        # normal matrix: the factored solves agree with the normal matrix
+        # formed from the unknowns' responses at every sample, each squared
+        # and weighed by its entry's weight there, for residues of full
+        # rank, factored entry by entry, and of rank one, port by port.
+        Wm = [1 + 0.5*sin(i + 2j + 0.3k) for i in 1:3, j in 1:3, k in eachindex(xm)]
+        Rone = zeros(ComplexF64, 3, 3, 3)
+        Rone[:, :, 1] = [1.0, 0.3, -0.5]*transpose([1.0, 0.3, -0.5])
+        Rone[:, :, 2] = [0.5 + 0.2im, 0.1, 0.4im]*transpose([0.5 + 0.2im, 0.1, 0.4im])
+        Rone[:, :, 3] = conj.(Rone[:, :, 2])
+        for (Rw, stride) in ((Rm, 3), (Rone, 1)), dcm in (JC.nodc, ones(3, 3))
+            formw = JC.ResidueForm(pm, Rw, zeros(3, 3), 1.0, JC.residuespaces(pm, Rw, 1e-12))
+            blocksw, nuw = JC.correctioncoordinates(formw)
+            metric = JC.correctionmetric(formw, blocksw, nuw, xm, 0.0, dcm, Wm)
+            @test metric.stride == stride
+            along(f, X) = JC.alongbasis(f, X, stride)
+            Gw = [sin(3i + j) for i in 1:nuw, j in 1:5]
+            Z = Matrix(1.0I, nuw, nuw)
+            if !isempty(dcm)
+                phi0 = JC.basisat!(zeros(ComplexF64, 3), pm, 0.0)
+                E = zeros(3, nuw)
+                for (c, cols, M) in blocksw
+                    E[:, cols] .+= real(c == 0 ? 1.0 : phi0[c]) .* M
+                end
+                Z = nullspace(E)
+            end
+            Ztw = isnothing(metric.Z) ? Gw : along(Y -> transpose(metric.Z)*Y, Gw)
+            g, phi = zeros(ComplexF64, nuw), zeros(ComplexF64, 3)
+            for i in 1:3
+                H = zeros(nuw, nuw)
+                for (k, x) in enumerate(xm), j in 1:3
+                    JC.coordinateresponse!(g, blocksw, JC.basisat!(phi, pm, x), Matrix(1.0I, 3, 3)[:, j])
+                    H .+= Wm[i, j, k]^2 .* real.(conj.(g) .* transpose(g))
+                end
+                solved = JC.portsolve(metric, i, JC.portsolve(metric, i, Ztw); adjoint = true)
+                isnothing(metric.Z) || (solved = along(Y -> metric.Z*Y, solved))
+                @test solved ≈ Z*((transpose(Z)*H*Z) \ (transpose(Z)*Gw)) rtol = 1e-8
+            end
+        end
+    end
+    # and a value stated at zero frequency is held through the rank decided,
+    # the constant taking back what a residue loses there, for a real pole
+    # and a pair: `diag(0.5, 0.1)` at a `ranktol` of 0.3 keeps its first
+    # direction alone
+    for pd in (ComplexF64[-1], ComplexF64[-1 + 2im, -1 - 2im])
+        Rd = zeros(ComplexF64, 2, 2, length(pd))
+        Rd[:, :, 1] = Diagonal(length(pd) == 1 ? [0.5, 0.1] : [0.5 + 0.2im, 0.1 + 0.1im])
+        length(pd) == 2 && (Rd[:, :, 2] = conj.(Rd[:, :, 1]))
+        S0d = -real.(sum(Rd[:, :, k] ./ pd[k] for k in eachindex(pd)))
+        spaces = JC.residuespaces(pd, Rd, 0.3)
+        Rk, Dk, _ = JC.enforcepassivity(pd, Rd, zeros(2, 2), [0.1, 1.0, 10.0]; dc = S0d, spaces)
+        A, B, C = JC.realization(pd, Rk, 2; spaces)
+        @test size(A, 1) == length(pd)
+        @test real.(response(A, B, C, Dk, 0.0)) ≈ S0d atol = 1e-14
+    end
+    # A feedthrough above one is brought under first, toward the value
+    # stated at zero where there is one, which holds it: `S -> S0 + t (S -
+    # S0)`. `-0.501/(s + 1) + 1.001` is anchored at 0.5; and an anchor of
+    # unit norm is contracted toward, not refused: `-1.001 + 2.001/(s + 1)`
+    # anchored at 1 goes at `t = 2/2.001` to the all pass
+    # `(1 - s)/(1 + s)`, holding it.
+    pa, Ra = poleresidues(fill(-1.0, 1, 1), ones(1, 1), fill(-0.501, 1, 1))
+    Rg, Dg, _ = JC.enforcepassivity(pa, Ra, fill(1.001, 1, 1), [0.001, 0.01, 0.1]; dc = fill(0.5, 1, 1))
+    @test densemax(realized(pa, Rg, Dg)...) <= 1 + 2e-8
+    @test only(real.(response(realized(pa, Rg, Dg)..., 0.0))) ≈ 0.5 atol = 1e-12
+    p1, R1 = poleresidues(fill(-1.0, 1, 1), ones(1, 1), fill(2.001, 1, 1))
+    Ru, Du, _ = JC.enforcepassivity(p1, R1, fill(-1.001, 1, 1), [0.1, 1.0, 10.0]; dc = ones(1, 1))
+    @test densemax(realized(p1, Ru, Du)...) <= 1 + 2e-8
+    @test only(real.(response(realized(p1, Ru, Du)..., 0.0))) ≈ 1 atol = 1e-10
+    # A feedthrough over one which the stated value cannot be contracted
+    # toward: both are positive, so every step along the path moves away
+    # from one, and there is no step. The same feedthrough with the
+    # opposite sign is repaired exactly, as above.
+    pz, Rz = poleresidues(fill(-1.0, 1, 1), ones(1, 1), fill(0.1, 1, 1))
+    @test_throws ArgumentError JC.enforcepassivity(pz, Rz, fill(1.001, 1, 1), [0.1, 1.0]; dc = ones(1, 1))
+    # A resonance whose peak stands 2e-8 above one, `k/(s^2 + 2 z s + 1)`
+    # with `z = 3e-4`, is brought under where it peaks, with no
+    # contraction to warn of; and a peak decades from both of its real
+    # poles, `k s/((s + a)(s + b))` peaking at `sqrt(a b)`, is found and
+    # brought under there.
+    let z = 3e-4, kk = (1 + 2e-8)*2z*sqrt(1 - z^2), wpk = sqrt(1 - 2z^2)
+        Ah, Bh, Ch = [0.0 1.0; -1.0 -2z], reshape([0.0, kk], 2, 1), reshape([1.0, 0.0], 1, 2)
+        ph, Rh = poleresidues(Ah, Bh, Ch)
+        Rp, Dp, contraction = @test_logs JC.enforcepassivity(ph, Rh, zeros(1, 1),
+            2pi .* collect(range(0.01, 1.0; length = 200)))
+        @test isnothing(contraction)
+        @test abs(only(response(realized(ph, Rp, Dp)..., wpk))) <= 1
+    end
+    let aa = 2.7592661119815163e-5, bb = 1.0
+        Ar2, Br2 = [0.0 1.0; -aa*bb -(aa + bb)], reshape([0.0, 1.0], 2, 1)
+        Cr2 = reshape([0.0, (1 + 2e-8)*(aa + bb)], 1, 2)
+        p2, R2 = poleresidues(Ar2, Br2, Cr2)
+        Rq, Dq, _ = JC.enforcepassivity(p2, R2, zeros(1, 1), exp.(range(log(1e-4), log(1e2); length = 101)))
+        @test abs(only(response(realized(p2, Rq, Dq)..., sqrt(aa*bb)))) <= 1
+        @test JC.passivityassessment(realized(p2, Rq, Dq)...; atol = 0.0).lower <= 1
+    end
+    # and a violation narrower than the sweep's grid, a high Q resonance
+    # above one, is corrected where it is, without a contraction, and
+    # leaves the response away from it where it was
+    for peak in (1.002, 1.05)
+        Ar, Br = [0.0 1.0; -1.0 -2e-4], reshape([0.0, 1.0], 2, 1)
+        Cr, Dr = reshape([0.0, (peak - 0.5)*2e-4], 1, 2), fill(0.5, 1, 1)
+        pr, Rr = poleresidues(Ar, Br, Cr)
+        R2, D2, contraction = JC.enforcepassivity(pr, Rr, Dr, collect(range(0.5, 1.5; length = 401)))
+        @test isnothing(contraction)
+        @test densemax(realized(pr, R2, D2)...) <= 1 + 2e-8
+        @test maximum(abs(only(response(realized(pr, R2, D2)..., w)) - only(response(Ar, Br, Cr, Dr, w)))
+            for w in (0.6, 0.9, 1.1, 1.4)) < 1e-4
     end
 end
