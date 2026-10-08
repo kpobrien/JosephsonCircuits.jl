@@ -14,8 +14,8 @@ quadratures(M) = reduce(vcat, [reduce(hcat, [quadratureblock(M[j, k]) for k in a
 function twoportnoise(c; method = :adjoint)
     n, T = 512, 1e-9
     sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-    plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
-    return transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method), plan
+    plan = transientquantumplan(sol, sol.times, [2pi*3e9, 2pi*3e9]; ports = [1, 2])
+    return transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan, method), plan
 end
 
 # The pumped amplifier `c`, its pump ramped on at port 1 over 2 ns,
@@ -32,9 +32,9 @@ function pumpednoise(c; fp = 4.75e9, fs = 4.7e9, ip = 0.00565e-6)
     sol = transientsolve(transientproblem(c; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))]),
         (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
     first = round(Int, settle/dt) + 1
-    plan = transientquantumplan(sol, sol.times[first:end], [fs])
-    frequencies = sort!(abs.([fs + 2k*fp for k in -2:2]))
-    noise = transientnoise(sol, plan; frequencies, weights = fill(1/record, 5), inputs = plan, commutationrtol = 3e-3)
+    plan = transientquantumplan(sol, sol.times[first:end], [2pi*fs])
+    frequencies = sort!(abs.([2pi*(fs + 2k*fp) for k in -2:2]))
+    noise = transientnoise(sol, plan; frequencies, weights = fill(2pi/record, 5), inputs = plan, commutationrtol = 3e-3)
     metrics = transientquantumefficiency(noise.gain, noise.covariance; rtol = 3e-3)
     return (; noise, metrics, gain = abs2(hb.linearized.S((0,), 1, (0,), 1, 1)), QE = hb.linearized.QE((0,), 1, (0,), 1, 1),
         Cnoise = hb.linearized.Cnoise((0,), 1, (0,), 1, 1))
@@ -62,15 +62,15 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         offsets = (0.0, h*gc.c[1], h*gc.c[2])
         for nt in (31, 64)
             times = 2.7e-9 .+ h .* (0:nt - 1)
-            fs = (1:fld(nt - 1, 2)) ./ (nt*h)
+            ws = 2pi .* (1:fld(nt - 1, 2)) ./ (nt*h)
             kept = [sin(r + 0.7k + 1.9s) for r in 1:3, k in 1:nt, s in 1:3]
-            sums = zeros(3, 2length(fs))
-            for (j, f) in enumerate(fs), s in 1:3, k in 1:nt
-                arg = 2f*(times[k] + offsets[s] - reference)
-                sums[:, j] .+= kept[:, k, s] .* cospi(arg)
-                sums[:, length(fs) + j] .+= kept[:, k, s] .* sinpi(arg)
+            sums = zeros(3, 2length(ws))
+            for (j, w) in enumerate(ws), s in 1:3, k in 1:nt
+                arg = w*(times[k] + offsets[s] - reference)
+                sums[:, j] .+= kept[:, k, s] .* cos(arg)
+                sums[:, length(ws) + j] .+= kept[:, k, s] .* sin(arg)
             end
-            @test JC.bincontraction(kept, fs, times, h, offsets, reference) ≈
+            @test JC.bincontraction(kept, ws, times, h, offsets, reference) ≈
                 sums rtol=1e-12
         end
     end
@@ -83,7 +83,7 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         prob = transientproblem(c)
         n, T = 512, 1e-9
         sol = transientsolve(prob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
-        plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
+        plan = transientquantumplan(sol, sol.times, [2pi*3e9, 2pi*3e9]; ports = [1, 2])
         hb = hblinsolve(2pi*[3e9], c; keyedarrays = false, returnSnoise = true, returnCnoise = true)
         S = hb.S[:, :, 1]
         expected = zeros(4, 4)
@@ -92,19 +92,22 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
             expected[(2j - 1):2j, (2k - 1):2k] .= [real(s) imag(s); -imag(s) real(s)]
         end
         # the default bath is every positive bin of the record at the
-        # weight 1/T, bounded by a cutoff; the frequencies given replace it
-        bins = collect((1:fld(n - 1, 2)) ./ T)
+        # weight 2pi/T, bounded by a cutoff; the frequencies given replace it
+        bins = collect(2pi .* (1:fld(n - 1, 2)) ./ T)
         complete = transientnoise(sol, plan; inputs = plan)
-        @test complete.covariance ≈ transientnoise(sol, plan; frequencies = bins, weights = fill(1/T, length(bins)), inputs = plan).covariance rtol=1e-12
-        below = bins[bins .<= 10e9]
-        @test transientnoise(sol, plan; cutoff = 10e9).covariance ≈
-            transientnoise(sol, plan; frequencies = below, weights = fill(1/T, length(below))).covariance rtol=1e-12
-        @test_throws ArgumentError transientnoise(sol, plan; weights = [1/T])
-        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9])
-        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], cutoff = 1e9)
-        @test_throws ArgumentError transientnoise(sol, plan; cutoff = 1e8)
-        forward = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method = :forward)
-        adjoint = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
+        @test complete.covariance ≈ transientnoise(sol, plan; frequencies = bins, weights = fill(2pi/T, length(bins)), inputs = plan).covariance rtol=1e-12
+        below = bins[bins .<= 2pi*10e9]
+        @test transientnoise(sol, plan; cutoff = 2pi*10e9).covariance ≈
+            transientnoise(sol, plan; frequencies = below, weights = fill(2pi/T, length(below))).covariance rtol=1e-12
+        @test_throws ArgumentError transientnoise(sol, plan; weights = [2pi/T])
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2pi*3e9])
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], cutoff = 2pi*1e9)
+        @test_throws ArgumentError transientnoise(sol, plan; cutoff = 2pi*1e8)
+        # a cutoff at a bin keeps it, whichever way the two round in
+        # rad/s: 30 GHz is the 720th bin of a 24 ns record
+        @test length(first(JC.recordbath((times = zeros(9600), dt = 2.5e-12), 2pi*30e9))) == 720
+        forward = transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan, method = :forward)
+        adjoint = transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan)
         for r in (forward, adjoint)
             @test r.diagnostics.passed
             @test r.covariance ≈ plan.vacuum rtol=1e-5 atol=1e-6
@@ -122,8 +125,8 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         # of the record leaves the passive two port at the vacuum
         tsol = transientsolve(prob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = Trapezoidal())
         @test transientnoise(tsol, plan).covariance ≈ plan.vacuum rtol=1e-10
-        tforward = transientnoise(tsol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method = :forward)
-        tadjoint = transientnoise(tsol, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
+        tforward = transientnoise(tsol, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan, method = :forward)
+        tadjoint = transientnoise(tsol, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan)
         for r in (tforward, tadjoint)
             @test r.diagnostics.passed
             @test r.covariance ≈ plan.vacuum rtol=1e-5 atol=1e-6
@@ -135,6 +138,26 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         end
         @test tadjoint.covariance ≈ tforward.covariance rtol=1e-10
         @test tadjoint.gain ≈ tforward.gain rtol=1e-10
+        # each direction of the forward method is a waveform at one bath,
+        # so on a junction chain of a given size its bytes grow with the
+        # baths rather than their square: 34 baths against 10 allocate
+        # less than six times as much, linear growth 3.4, quadratic 11.6
+        function forwardbytes(k)
+            m, h = 128, 1e-12
+            fc = Any[("P1", "1", "0", Port(1; Z0 = 50.0))]
+            for i in 1:64
+                push!(fc, ("J$(i)", "$(i)", "$(i + 1)", JosephsonJunction(100e-12)), ("C$(i)", "$(i)", "0", Capacitor(30e-15)))
+                i % (64 ÷ k) == 0 && push!(fc, ("R$(i)", "$(i)", "0", Resistor(1e4)))
+            end
+            push!(fc, ("C65", "65", "0", Capacitor(30e-15)), ("P2", "65", "0", Port(2; Z0 = 50.0)))
+            fsol = transientsolve(transientproblem(Circuit(fc)), (0.0, (m - 1)*h); dt = h, record = :phases)
+            fplan = transientquantumplan(fsol, fsol.times, [2pi*4/(m*h)]; ports = [2])
+            run() = transientnoise(fsol, fplan; frequencies = [2pi*j/(m*h) for j in 1:4], weights = fill(2pi/(m*h), 4),
+                method = :forward)
+            run()
+            return @allocated run()
+        end
+        @test forwardbytes(32) < 6*forwardbytes(8)
         # the noise and the gain step on the factorization they are given,
         # as the solve and the responses do, so a reuse keeps the system
         # a solve on it built
@@ -142,7 +165,7 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         kept = TransientReuse()
         ksol = transientsolve(prob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases, factorization = klu, reuse = kept)
         ksys = kept.system
-        @test transientnoise(ksol, plan; frequencies = [3e9], weights = [1/T], factorization = klu, reuse = kept).covariance ≈
+        @test transientnoise(ksol, plan; frequencies = [2pi*3e9], weights = [2pi/T], factorization = klu, reuse = kept).covariance ≈
             adjoint.covariance rtol=1e-12
         @test transientgain(ksol, plan, plan; factorization = klu, reuse = kept) isa Matrix{Float64}
         @test kept.system === ksys
@@ -153,13 +176,13 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         pulsed = transientgain(sol, plan, plan)
         @test pulsed ≈ adjoint.gain rtol=6e-2
         long = transientsolve(prob, (0.0, 4T*(4n - 1)/(4n)); dt = T/n, record = :phases)
-        longplan = transientquantumplan(long, long.times, [3e9, 3e9]; ports = [1, 2])
+        longplan = transientquantumplan(long, long.times, [2pi*3e9, 2pi*3e9]; ports = [1, 2])
         @test transientgain(long, longplan, longplan) ≈ expected rtol=2e-2
         @test norm(transientgain(long, longplan, longplan) .- expected) < norm(pulsed .- expected)
         # the probe has the support of its window: a window measured
         # before the input window starts sees nothing of it
-        before = transientquantumplan(sol, sol.times[1:64], [1/(64*sol.dt)])
-        after = transientquantumplan(sol, sol.times[65:128], [1/(64*sol.dt)])
+        before = transientquantumplan(sol, sol.times[1:64], [2pi/(64*sol.dt)])
+        after = transientquantumplan(sol, sol.times[65:128], [2pi/(64*sol.dt)])
         @test all(iszero, transientgain(sol, before, after))
         @test !all(iszero, transientgain(sol, after, before))
         # warm loss: the occupation weights the covariance and not the
@@ -170,8 +193,8 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
                 ((:p1, 2), (:p2, 2), (:c1, 2), (:c2, 2), Ground)])
         baths = transientnoisebaths(transientproblem(hot))
         @test [b.temperature for b in baths.channels] == [0.0, 0.0, 0.3]
-        warm = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T],
-            baths = JC.TransientNoiseBaths(prob, baths.channels))
+        warm = transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T],
+            baths = JC.TransientNoiseBaths(prob, baths.channels, baths.groups))
         hbhot = hblinsolve(2pi*[3e9], hot; keyedarrays = false, returnSnoise = true, returnCnoise = true)
         @test warm.commutator ≈ adjoint.commutator rtol=1e-10
         @test warm.diagnostics.passed
@@ -186,7 +209,7 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         # the port terminations at their own temperature, the vacuum here,
         # as the linearized solver does, so the two solvers agree at that
         # temperature
-        atemp = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], baths = transientnoisebaths(prob; temperature = 0.3))
+        atemp = transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], baths = transientnoisebaths(prob; temperature = 0.3))
         hbtemp = hblinsolve(2pi*[3e9], c; keyedarrays = false, returnCnoise = true, temperature = 0.3)
         total = S*S'/2 + hbtemp.Cnoise[:, :, 1]
         expectedtotal = zeros(4, 4)
@@ -207,8 +230,8 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         wprob = transientproblem(warmports)
         @test [b.temperature for b in transientnoisebaths(wprob).channels] == [0.05, 0.3, 0.0]
         wsol = transientsolve(wprob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
-        wplan = transientquantumplan(wsol, wsol.times, [3e9, 3e9]; ports = [1, 2])
-        wnoise = transientnoise(wsol, wplan; frequencies = [3e9], weights = [1/T])
+        wplan = transientquantumplan(wsol, wsol.times, [2pi*3e9, 2pi*3e9]; ports = [1, 2])
+        wnoise = transientnoise(wsol, wplan; frequencies = [2pi*3e9], weights = [2pi/T])
         hbwarmports = hblinsolve(2pi*[3e9], warmports; keyedarrays = false, returnVout = true, returnCnoise = true)
         @test wnoise.diagnostics.passed
         @test wnoise.covariance ≈ quadratures(hbwarmports.Vout[:, :, 1]) rtol=1e-6
@@ -219,12 +242,12 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
             ("Lj1", "1", "0", JosephsonJunction(1e-9))]); sources = [TransientSource(1, 1e-6)])
         ms = transientsolve(moving, (0.0, T*(n - 1)/n); dt = T/n, record = :phases,
             initialstate = transientstate(moving; voltage = [50e-6]))
-        mplan = transientquantumplan(ms, ms.times, [3e9])
-        @test_throws ArgumentError transientnoise(ms, mplan; frequencies = [3e9], weights = [1/T])
-        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2e9], weights = [1/T], inputs = plan)
-        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9], weights = [2/T], inputs = plan)
-        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], method = :other)
-        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], baths = transientnoisebaths(transientproblem(hot)))
+        mplan = transientquantumplan(ms, ms.times, [2pi*3e9])
+        @test_throws ArgumentError transientnoise(ms, mplan; frequencies = [2pi*3e9], weights = [2pi/T])
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2pi*2e9], weights = [2pi/T], inputs = plan)
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [4pi/T], inputs = plan)
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], method = :other)
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], baths = transientnoisebaths(transientproblem(hot)))
     end
 
     @testset "scattering blocks as baths" begin
@@ -306,9 +329,9 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         c = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)),
             (:line, 1, 2, TransmissionLine(60.0, tau*3e8; vp = 3e8)), (:c2, 2, 0, Capacitor(0.4e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-        plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
-        adjoint = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
-        forward = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method = :forward)
+        plan = transientquantumplan(sol, sol.times, [2pi*3e9, 2pi*3e9]; ports = [1, 2])
+        adjoint = transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan)
+        forward = transientnoise(sol, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan, method = :forward)
         hb = hblinsolve(2pi*[3e9], c; keyedarrays = false)
         @test adjoint.diagnostics.passed
         @test adjoint.covariance ≈ plan.vacuum rtol=1e-6
@@ -322,6 +345,23 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         @test j.noise.diagnostics.passed
         @test j.metrics.gain ≈ j.gain rtol=1e-5
         @test j.metrics.QE ≈ j.QE rtol=1e-5
+        # the prehistory's term is accumulated in place, so the noise of
+        # the line over every bin of a record allocates about as much at
+        # eight times the delay: its histories grow by a few columns of
+        # the ports, where a copy per frequency and sample grows with the
+        # bins times the delay
+        function prehistorybytes(delay)
+            m, h = 256, 1e-12
+            lc = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)),
+                (:line, 1, 2, TransmissionLine(60.0, delay*h*3e8; vp = 3e8)), (:c2, 2, 0, Capacitor(0.4e-12)),
+                (:p2, 2, 0, Port(2; Z0 = 50.0))])
+            lsol = transientsolve(transientproblem(lc), (0.0, (m - 1)*h); dt = h, record = :phases)
+            lplan = transientquantumplan(lsol, lsol.times, [2pi*8/(m*h), 2pi*8/(m*h)]; ports = [1, 2])
+            run() = transientnoise(lsol, lplan)
+            run()
+            return @allocated run()
+        end
+        @test prehistorybytes(128) < 2*prehistorybytes(16)
     end
 
     @testset "the stationary operator carries the lines on their own rows" begin
@@ -366,16 +406,21 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
             end
         end
         # cold and passive, each leaves the vacuum the vacuum and has the
-        # linearized solver's gain
+        # linearized solver's gain; the forward method, whose prehistory
+        # of each port covers its own line's reads alone, two lines of
+        # different delays in the cascade, agrees with the adjoint
         n, T = 256, 0.5e-9
         for c in (cascade, behind, lifted)
             sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
-            plan = transientquantumplan(sol, sol.times, [4e9, 4e9]; ports = [1, 2])
-            noise = transientnoise(sol, plan; frequencies = [4e9], weights = [1/T], inputs = plan)
+            plan = transientquantumplan(sol, sol.times, [2pi*4e9, 2pi*4e9]; ports = [1, 2])
+            noise = transientnoise(sol, plan; frequencies = [2pi*4e9], weights = [2pi/T], inputs = plan)
             hb = hblinsolve(2pi*[4e9], c; keyedarrays = false)
             @test noise.diagnostics.passed
             @test noise.covariance ≈ plan.vacuum rtol=1e-6
             @test noise.gain ≈ quadratures(hb.S[:, :, 1]) rtol=1e-6
+            forward = transientnoise(sol, plan; frequencies = [2pi*4e9], weights = [2pi/T], inputs = plan, method = :forward)
+            @test forward.covariance ≈ noise.covariance rtol=1e-10
+            @test forward.gain ≈ noise.gain rtol=1e-10
         end
     end
 
@@ -411,8 +456,8 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         ramp(t) = t <= 0 ? 0.0 : t >= 0.4e-9 ? 1.0 : (1 - cospi(t/0.4e-9))/2
         problems = [transientproblem(base; sources = [TransientSource(1, let ip = ip; t -> 2ip*ramp(t)*cospi(2fp*t); end)]) for ip in (0.0, 1e-9, 2e-9)]
         batch = transientsolve(problems, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
-        plan = transientquantumplan(batch, batch.times, [3/T]; ports = [2])
-        args = (; frequencies = [2/T, 3/T, 4/T], weights = fill(1/T, 3), inputs = plan)
+        plan = transientquantumplan(batch, batch.times, [2pi*3/T]; ports = [2])
+        args = (; frequencies = 2pi .* [2/T, 3/T, 4/T], weights = fill(2pi/T, 3), inputs = plan)
         whole = transientnoise(batch, plan; args...)
         wholeforward = transientnoise(batch, plan; args..., method = :forward)
         JC.noisememorybudget[] = 1
@@ -494,7 +539,7 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         # feedthrough of opposite signs at the two ports gives a loss
         # matrix with imaginary off-diagonal entries, which does not
         mixed(noise) = RationalScattering(-al .* Matrix(1.0I, 2, 2), al .* Matrix(1.0I, 2, 2), 0.6 .* [0.0 1.0; 1.0 0.0], [0.3 0.0; 0.0 -0.3]; zref = 50.0, noise)
-        _, K = JosephsonCircuits.groupcovariance(transientnoisebaths(transientproblem(mk(mixed(Passive())))), (channels = 3:4, block = 1), 3e9)
+        _, K = JosephsonCircuits.groupcovariance(transientnoisebaths(transientproblem(mk(mixed(Passive())))), (channels = 3:4, block = 1), 2pi*3e9)
         @test abs(imag(K[1, 2])) > 0.1
         nm, _ = twoportnoise(mk(mixed(Passive())))
         @test nm.diagnostics.passed
@@ -518,8 +563,8 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         one(b) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)), (:b, 1, b)])
         function noiseone(c)
             sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-            plan1 = transientquantumplan(sol, sol.times, [3e9]; ports = [1])
-            return transientnoise(sol, plan1; frequencies = [3e9], weights = [1/T], inputs = plan1), plan1
+            plan1 = transientquantumplan(sol, sol.times, [2pi*3e9]; ports = [1])
+            return transientnoise(sol, plan1; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan1), plan1
         end
         @test length(transientnoisebaths(transientproblem(one(notch(Passive()))))) == 2
         ncold, plan1 = noiseone(one(notch(Passive())))
@@ -557,11 +602,11 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         biased = transientstate(dc; voltage = [25e-6, 25e-6], linecurrents = [0.5e-6])
         ds = transientsolve(dc, (0.0, T*(n - 1)/n); dt, record = :phases, method = GaussLegendre(), initialstate = biased, rtol = 1e-12, atol = 1e-13)
         @test maximum(abs.(ds.voltage .- 25e-6)) < 1e-15
-        plan = transientquantumplan(ds, ds.times, [3e9, 3e9]; ports = [1, 2])
-        nd = transientnoise(ds, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
+        plan = transientquantumplan(ds, ds.times, [2pi*3e9, 2pi*3e9]; ports = [1, 2])
+        nd = transientnoise(ds, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan)
         @test nd.covariance ≈ plan.vacuum rtol=1e-6
         @test_throws ArgumentError transientnoise(transientsolve(dc, (0.0, T*(n - 1)/n); dt, record = :phases, method = GaussLegendre(),
-            initialstate = transientstate(dc; voltage = [25e-6, 25e-6], linecurrents = [0.0])), plan; frequencies = [3e9], weights = [1/T])
+            initialstate = transientstate(dc; voltage = [25e-6, 25e-6], linecurrents = [0.0])), plan; frequencies = [2pi*3e9], weights = [2pi/T])
         al = 2pi*2e9
         lossy = RationalScattering(-al .* Matrix(1.0I, 2, 2), al .* Matrix(1.0I, 2, 2), 0.6 .* [0.0 1.0; 1.0 0.0], [0.3 0.0; 0.0 -0.3]; zref = 50.0)
         blockc = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)), (:b, 1, 2, lossy), (:c2, 2, 0, Capacitor(0.3e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
@@ -572,11 +617,11 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         rest = transientstate(bdc; voltage = vb)
         bs = transientsolve(bdc, (0.0, T*(n - 1)/n); dt, record = :phases, method = GaussLegendre(), initialstate = rest, rtol = 1e-12, atol = 1e-13)
         @test maximum(abs.(bs.voltage .- vb)) < 1e-6*maximum(abs, vb)
-        nb = transientnoise(bs, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
+        nb = transientnoise(bs, plan; frequencies = [2pi*3e9], weights = [2pi/T], inputs = plan)
         @test nb.covariance ≈ plan.vacuum rtol=1e-6
         moved = TransientState(rest.flux, rest.rate, rest.waves, rest.wavesdt, rest.blockstates .* 0.5)
         @test_throws ArgumentError transientnoise(transientsolve(bdc, (0.0, T*(n - 1)/n); dt, record = :phases, method = GaussLegendre(),
-            initialstate = moved), plan; frequencies = [3e9], weights = [1/T])
+            initialstate = moved), plan; frequencies = [2pi*3e9], weights = [2pi/T])
     end
 
     @testset "a fitted block has the noise of the circuit it was fitted to" begin
@@ -670,8 +715,8 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
             (:c1, 1, 0, Capacitor(0.3e-12)), (:r, 1, 0, Resistor(500.0; temperature = 0.1)), (:b, 1, 2, amp([1.5 0.0; 0.0 2.5G])),
             (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0, termination = MatchedTermination(temperature = 0.3)))])
         wsol = transientsolve(transientproblem(warm), (0.0, 1e-9*511/512); dt = 1e-9/512, record = :phases, method = GaussLegendre())
-        wplan = transientquantumplan(wsol, wsol.times, [3e9, 3e9]; ports = [1, 2])
-        args = (; frequencies = [2.9e9, 3e9, 3.1e9], weights = fill(1e9, 3))
+        wplan = transientquantumplan(wsol, wsol.times, [2pi*3e9, 2pi*3e9]; ports = [1, 2])
+        args = (; frequencies = 2pi .* [2.9e9, 3e9, 3.1e9], weights = fill(2pi*1e9, 3))
         whole = transientnoise(wsol, wplan; args...)
         JC.noisememorybudget[] = 1
         tiled = try
@@ -724,7 +769,7 @@ refactorbytes(op, w) = @allocated JosephsonCircuits.stationaryfactor!(op, w)
         rolloff(w) = [0.0 0.0; g0*w0/(w0 + im*w) 0.0]
         rolloffnoise(w) = (K = I - rolloff(w)*rolloff(w)'; [0.525*abs(K[1, 1]) 0.0; 0.0 0.525*abs(K[2, 2]) + 0.05])
         ampfit = RationalScattering(ScatteringParameters(rolloff; nports = 2, zref = 50.0, noise = NoiseCovariance(rolloffnoise)), 4;
-            frequencies = collect(range(0.1e9, 40e9; length = 300)))
+            frequencies = 2pi .* collect(range(0.1e9, 40e9; length = 300)))
         nr, plan = twoportnoise(mk(ampfit))
         hbr = hblinsolve(2pi*[3e9], mk(ampfit); keyedarrays = false, returnCnoise = true, returnCM = true)
         @test abs(hbr.S[2, 1, 1]) > 3

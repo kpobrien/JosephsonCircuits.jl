@@ -61,6 +61,20 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
                 [0.0, 0.0], JosephsonCircuits.sparse([1, 1, 2, 2],
                 [1, 2, 1, 2], [1.3, 0.5, 0.1, 1.2]), [0.1, 1.2]; rtol)
         end
+
+        # a residual whose norm is not finite, from an entry or from finite
+        # entries whose norm overflows, scales no relative tolerance: the
+        # solve ends at the start, not converged, without a step. Erased
+        # as the solver itself calls it, so nothing is compiled for it
+        for bad in (Inf, NaN, 1.5e308)
+            info = JosephsonCircuits.nlsolve!(
+                JosephsonCircuits.ErasedFunction((F, J, x) -> (isnothing(F) ||
+                    fill!(F, bad); nothing)),
+                zeros(2), sparse([1.0 0.0; 0.0 1.0]), zeros(2); rtol = 1e-6)
+            @test !info.converged
+            @test info.reason === :nonfinite
+            @test info.iterations == 0
+        end
     end
 
     @testset verbose=true "nlsolve klu error" begin

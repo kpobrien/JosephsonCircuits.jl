@@ -170,11 +170,13 @@ end
 
 Return `true` if the matrix `M` is unitary, `M ∈ U(n)`, and `false` otherwise.
 
-Tests if `M` satisfies the condition `M*M'==I` where `I` is the identity
-matrix.
+Tests if `M` is square and satisfies the condition `M*M'==I` where `I` is
+the identity matrix. A rectangular matrix with orthonormal rows, such as
+`[1 0]`, is not unitary.
 
 """
 function is_unitary(M)
+    size(M, 1) == size(M, 2) || return false
     return isapprox(M * adjoint(M), I(size(M, 1)))
 end
 
@@ -184,11 +186,13 @@ end
 Return `true` if the matrix `M` is orthogonal, `M ∈ O(n)`, and `false`
 otherwise.
 
-Tests if `M` satisfies the condition `M*transpose(M)==I` where `I` is the
-identity matrix.
+Tests if `M` is square and satisfies the condition `M*transpose(M)==I`
+where `I` is the identity matrix. A rectangular matrix with orthonormal
+rows, such as `[1 0]`, is not orthogonal.
 
 """
 function is_orthogonal(M)
+    size(M, 1) == size(M, 2) || return false
     return isapprox(M * transpose(M), I(size(M, 1)))
 end
 
@@ -547,6 +551,14 @@ function is_cptp_ladder_block(X, Y; atol::Real = 0,
     return is_cptp(Omega, X, Y; hbar = 1, atol = atol, rtol = rtol)
 end
 
+"""
+    rand_positive_definite(T, n::Integer)
+    rand_positive_definite(n::Integer)
+
+A random `n` by `n` positive definite matrix of element type `T` (`Float64`
+by default), `A*A'` for a random matrix `A`; see
+[`rand_positive_semi_definite`](@ref).
+"""
 function rand_positive_definite(T, n::Integer)
     A = rand(T, n, n)
     return A * A'
@@ -556,6 +568,14 @@ function rand_positive_definite(n::Integer)
     return rand_positive_definite(Float64, n)
 end
 
+"""
+    rand_unitary(T, n::Integer)
+    rand_unitary(n::Integer)
+
+A random `n` by `n` unitary matrix, the exponential of the skew-Hermitian
+part of a random matrix of element type `T` (`ComplexF64` by default); see
+[`is_unitary`](@ref).
+"""
 function rand_unitary(T, n::Integer)
     A = rand(T, n, n)
     # make a skew-Hermitian matrix
@@ -567,6 +587,12 @@ function rand_unitary(n::Integer)
     return rand_unitary(Complex{Float64}, n)
 end
 
+"""
+    rand_orthogonal(n::Integer)
+
+A random `n` by `n` orthogonal matrix, [`rand_unitary`](@ref) of a real
+matrix.
+"""
 function rand_orthogonal(n::Integer)
     return rand_unitary(Float64, n)
 end
@@ -761,6 +787,12 @@ function rand_conjugate_symplectic_block(n::Integer)
     return rand_conjugate_symplectic_block(Complex{Float64}, n)
 end
 
+"""
+    rand_conjugate_symplectic_pair(T, n::Integer)
+    rand_conjugate_symplectic_pair(n::Integer)
+
+The pair ordered form of [`rand_conjugate_symplectic_block`](@ref).
+"""
 function rand_conjugate_symplectic_pair(T, n::Integer)
     return block_to_pair(rand_conjugate_symplectic_block(T, n))
 end
@@ -893,6 +925,15 @@ function rand_pseudo_unitary_pair(T, n::Integer)
     return cayley_transform(K, M)
 end
 
+"""
+    cayley_transform(Omega, M)
+
+The Cayley transform `(I + Omega*M)*inv(I - Omega*M)`, which takes `Omega*M`
+of the Lie algebra of the group preserving the form `Omega` to a member of
+that group: a symplectic matrix for the symplectic form and a symmetric `M`,
+a pseudo-unitary one for an indefinite Hermitian form and a skew-Hermitian
+`M`, as the random matrices of these groups are made.
+"""
 function cayley_transform(Omega, M)
     n = size(M, 1)
     S = (I(n) + Omega * M) * inv(I(n) - Omega * M)
@@ -1814,15 +1855,39 @@ function scattering_to_quadrature_block(S_scattering::AbstractMatrix, w)
         zeros(quadraturetype(eltype(S_scattering)), 2 * n, 2 * m), S_scattering, w)
 end
 
+"""
+    scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
+
+In place version of [`scattering_to_quadrature_pair`](@ref), writing into
+`S_symplectic`.
+"""
 scattering_to_quadrature_pair!(S_symplectic::AbstractArray,
     S_scattering::AbstractArray, w::AbstractVector) =
     scattering_to_quadrature!(S_symplectic, S_scattering, w, pairops)
+"""
+    scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
+
+In place version of [`scattering_to_quadrature_block`](@ref), writing into
+`S_symplectic`.
+"""
 scattering_to_quadrature_block!(S_symplectic::AbstractArray,
     S_scattering::AbstractArray, w::AbstractVector) =
     scattering_to_quadrature!(S_symplectic, S_scattering, w, blockops)
+"""
+    scattering_to_ladder_pair!(S_bogoliubov, S_scattering, w)
+
+In place version of [`scattering_to_ladder_pair`](@ref), writing into
+`S_bogoliubov`.
+"""
 scattering_to_ladder_pair!(S_bogoliubov::AbstractArray,
     S_scattering::AbstractArray, w::AbstractVector) =
     scattering_to_ladder!(S_bogoliubov, S_scattering, w, pairops)
+"""
+    scattering_to_ladder_block!(S_bogoliubov, S_scattering, w)
+
+In place version of [`scattering_to_ladder_block`](@ref), writing into
+`S_bogoliubov`.
+"""
 scattering_to_ladder_block!(S_bogoliubov::AbstractArray,
     S_scattering::AbstractArray, w::AbstractVector) =
     scattering_to_ladder!(S_bogoliubov, S_scattering, w, blockops)
@@ -1916,18 +1981,46 @@ function quadrature_to_scattering_block(S_symplectic::AbstractArray, w)
         S_symplectic, w; atol = 0, rtol = 0)
 end
 
+"""
+    ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol = 0,
+        rtol = ...)
+
+In place version of [`ladder_to_scattering_pair`](@ref), writing into
+`S_scattering`.
+"""
 ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol::Real=0,
     rtol::Real=defaultrtol(S_bogoliubov, atol)) =
     ladder_to_scattering!(S_scattering, S_bogoliubov, w, pairops;
         atol = atol, rtol = rtol)
+"""
+    ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol = 0,
+        rtol = ...)
+
+In place version of [`ladder_to_scattering_block`](@ref), writing into
+`S_scattering`.
+"""
 ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol::Real=0,
     rtol::Real=defaultrtol(S_bogoliubov, atol)) =
     ladder_to_scattering!(S_scattering, S_bogoliubov, w, blockops;
         atol = atol, rtol = rtol)
+"""
+    quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol = 0,
+        rtol = ...)
+
+In place version of [`quadrature_to_scattering_pair`](@ref), writing into
+`S_scattering`.
+"""
 quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol::Real=0,
     rtol::Real=defaultrtol(S_symplectic, atol)) =
     quadrature_to_scattering!(S_scattering, S_symplectic, w, pairops;
         atol = atol, rtol = rtol)
+"""
+    quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol = 0,
+        rtol = ...)
+
+In place version of [`quadrature_to_scattering_block`](@ref), writing into
+`S_scattering`.
+"""
 quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol::Real=0,
     rtol::Real=defaultrtol(S_symplectic, atol)) =
     quadrature_to_scattering!(S_scattering, S_symplectic, w, blockops;
@@ -2513,8 +2606,10 @@ end
 function cholesky_williamson(M::AbstractArray)
     # a pivoted Cholesky factorization with error checking off, robust
     # against small negative eigenvalues from rounding, of the matrix taken
-    # as symmetric
-    C = cholesky(Symmetric(M), RowMaximum(); check=false)
+    # as symmetric, in its dense form: the pivoted factorization is
+    # LAPACK's, which a structured matrix such as a `Diagonal` does not
+    # reach on every Julia version
+    C = cholesky(Symmetric(convert(Matrix, M)), RowMaximum(); check=false)
 
     # the pivoted factorization sometimes reports a rank one larger than
     # the true (even) rank; an odd rank is reduced by one and the reduced
@@ -2544,21 +2639,13 @@ function cholesky_williamson(M::AbstractArray)
     return L, rankL
 end
 
+# the sparse factorization of a positive definite matrix, of full rank; a
+# matrix it does not factorize, semidefinite or indefinite, takes the rank
+# revealing dense path, so that both storages accept the same matrices
 function cholesky_williamson(M::SparseMatrixCSC)
-    C = cholesky(M,check = false)
-
-    L = Matrix(sparse(C.L)[invperm(C.p), :])
-    rankL = size(M, 1)
-
-    # if the factorization reports failure, check that L*L' still
-    # reproduces the matrix
-    if !issuccess(C)
-        if !isapprox(M, L * L')
-            error(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite.")
-        end
-    end
-
-    return L, rankL
+    C = cholesky(M; check = false)
+    issuccess(C) || return cholesky_williamson(Matrix(M))
+    return Matrix(sparse(C.L)[invperm(C.p), :]), size(M, 1)
 end
 
 function symplectic_complement(Omega, S1)
@@ -2613,6 +2700,12 @@ function symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
     return Q
 end
 
+"""
+    symplectic_normal_form_block(A::AbstractMatrix{<:Real})
+
+The block ordered form of [`symplectic_normal_form_pair`](@ref): `A` is in
+block order and `Ω` the block ordered symplectic form.
+"""
 function symplectic_normal_form_block(A::AbstractMatrix{<:Real})
     Q = symplectic_normal_form_pair(block_to_pair(A))
     return pair_to_block(Q)
@@ -2700,8 +2793,9 @@ matrix `M` such that `M == W*Diagonal(Λ)*transpose(W)` where `M` satisfies
 element type, and zero when `atol` is given); its symmetric part
 `(M + transpose(M))/2` is factorized.
 
-They are returned as the tuple `(Λ, W)`, with `Λ` the singular values of
-`M` in decreasing order. `W` is `U*sqrt(Z)` for the singular value
+They are returned as the named tuple `(Λ, W)`, with `Λ` the singular
+values of `M` in decreasing order, as for a real `M`. `W` is `U*sqrt(Z)`
+for the singular value
 decomposition `M = U*Diagonal(Λ)*V'` and the unitary `Z = U'*conj(V)`,
 whose square root is taken with its eigenvalues rotated away from the
 branch cut by [`optimum_eigenvalue_angle`](@ref).
@@ -2722,7 +2816,7 @@ function autonne_takagi(M::AbstractMatrix; atol::Real = 0,
     # and 1.11, so the plain matrix is factorized
     F = svd(symmetricpart(Matrix(M), atol, rtol))
     # an empty matrix has nothing to rotate
-    isempty(F.S) && return F.S, F.U
+    isempty(F.S) && return (Λ = F.S, W = F.U)
     # this is how Chebotarev and Teretenkov 2014 define Z
     Z = F.U' * transpose(F.Vt)
 
@@ -2735,7 +2829,7 @@ function autonne_takagi(M::AbstractMatrix; atol::Real = 0,
     invshifto2 = exp(-im * optimum_rotation / 2)
     Zsqrt = invshifto2 * E.vectors * Diagonal(sqrt.(shift .* E.values)) * E.vectors'
     W = F.U * Zsqrt
-    return F.S, W
+    return (Λ = F.S, W = W)
 end
 
 
@@ -2747,16 +2841,16 @@ Return a vector `Λ` and a unitary matrix `W` for input matrix `M` such that
 `M = transpose(M)`, to the tolerances `atol` and `rtol` as for a complex
 `M`; its symmetric part is factorized.
 
-They are returned as the named tuple `(Λ = Λ, M = W)`, with `Λ` the
-magnitudes of the eigenvalues of `M` in increasing order and each column of
-`W` the eigenvector times `1` or `im`, the square root of the sign of its
-eigenvalue (`1` for a zero eigenvalue).
+They are returned as the named tuple `(Λ, W)`, as for a complex `M`, with
+`Λ` the magnitudes of the eigenvalues of `M` in decreasing order and each
+column of `W` the eigenvector times `1` or `im`, the square root of the
+sign of its eigenvalue (`1` for a zero eigenvalue).
 
 """
 function autonne_takagi(M::AbstractMatrix{<:Real}; atol::Real = 0,
         rtol::Real = approxrtol(eltype(M), atol))
 
-    F = eigen(Symmetric(symmetricpart(M, atol, rtol)); sortby=abs)
+    F = eigen(Symmetric(symmetricpart(M, atol, rtol)); sortby = λ -> -abs(λ))
 
     # M = V*Diagonal(λ)*transpose(V) with V real orthogonal, so each column
     # of V times the square root of the sign of its eigenvalue, 1 or im,
@@ -2765,7 +2859,7 @@ function autonne_takagi(M::AbstractMatrix{<:Real}; atol::Real = 0,
     T = eltype(F.values)
     phases = [λ < zero(λ) ? Complex(zero(T), one(T)) : Complex(one(T), zero(T))
         for λ in F.values]
-    return (Λ=abs.(F.values), M=F.vectors * Diagonal(phases))
+    return (Λ = abs.(F.values), W = F.vectors * Diagonal(phases))
 
 end
 
@@ -2839,6 +2933,13 @@ function bloch_messiah_block(S::AbstractMatrix{<:Real})
 
 end
 
+"""
+    bloch_messiah_pair(S::AbstractMatrix{<:Real})
+
+The pair ordered form of [`bloch_messiah_block`](@ref): `S`, the factors
+and `D` are in pair order, and the factors symplectic with respect to the
+pair ordered symplectic form.
+"""
 function bloch_messiah_pair(S::AbstractMatrix{<:Real})
     F = bloch_messiah_block(pair_to_block(S))
     return (O=block_to_pair(F.O), D=block_to_pair(F.D),
@@ -2875,26 +2976,42 @@ function pre_iwasawa_block(S::AbstractMatrix)
         error(lazy"A must be symplectic.")
     end
 
-    # partition the symplectic matrix S
-    # S = [A B; C D]
-    A = view(S, 1:n, 1:n)
-    B = view(S, 1:n, n+1:2*n)
-    C = view(S, n+1:2*n, 1:n)
-    D = view(S, n+1:2*n, n+1:2*n)
+    # partition the symplectic matrix S = [S11 S12; S21 S22]
+    S11 = view(S, 1:n, 1:n)
+    S12 = view(S, 1:n, n+1:2*n)
+    S21 = view(S, n+1:2*n, 1:n)
+    S22 = view(S, n+1:2*n, n+1:2*n)
 
-    A0 = sqrt(A * transpose(A) + B * transpose(B))
+    # the first block row of S has full rank, so for a real S the matrix
+    # under the root is symmetric positive definite, whose principal root
+    # is that of its eigendecomposition; for a complex S it is complex
+    # symmetric, and takes the general root
+    G = S11 * transpose(S11) + S12 * transpose(S12)
+    A0 = eltype(S) <: Real ? Matrix(sqrt(Symmetric(G))) : sqrt(G)
     invA0 = inv(A0)
-    C0 = (C * transpose(A) + D * transpose(B)) * invA0
-    X = invA0 * A
-    Y = invA0 * B
+    C0 = (S21 * transpose(S11) + S22 * transpose(S12)) * invA0
+    X = invA0 * S11
+    Y = invA0 * S12
 
-    E = [I(n) 0*I(n); C0*invA0 I(n)]
-    D = [A0 0*I(n); 0*I(n) invA0]
+    # the factors in the element type of the root: E the identity with
+    # C0*inv(A0) below its diagonal, and D block diagonal
+    T = eltype(A0)
+    E = Matrix{T}(I, 2*n, 2*n)
+    mul!(view(E, n+1:2*n, 1:n), C0, invA0)
+    D = zeros(T, 2*n, 2*n)
+    D[1:n, 1:n] .= A0
+    D[n+1:2*n, n+1:2*n] .= invA0
     F = [X Y; -Y X]
 
     return (E=E, D=D, F=F)
 end
 
+"""
+    pre_iwasawa_pair(S::AbstractMatrix)
+
+The pair ordered form of [`pre_iwasawa_block`](@ref): `S` and the factors
+are in pair order.
+"""
 function pre_iwasawa_pair(S::AbstractMatrix)
     F = pre_iwasawa_block(pair_to_block(S))
     return (E=block_to_pair(F.E), D=block_to_pair(F.D),
@@ -2979,12 +3096,25 @@ function iwasawa_block(S::AbstractMatrix)
     return (K=K, A=A, N=N)
 end
 
+"""
+    iwasawa_pair(S::AbstractMatrix)
+
+The pair ordered form of [`iwasawa_block`](@ref): `S` and the factors are
+in pair order.
+"""
 function iwasawa_pair(S::AbstractMatrix)
     F = iwasawa_block(pair_to_block(S))
     return (K=block_to_pair(F.K), A=block_to_pair(F.A),
         N=block_to_pair(F.N))
 end
 
+"""
+    iwasawa_bogoliubov_pair(S::AbstractMatrix)
+
+The Iwasawa decomposition [`iwasawa_block`](@ref) of the Bogoliubov matrix
+`S` of the ladder operators in pair order, through its quadrature form:
+the factors are Bogoliubov matrices in pair order.
+"""
 function iwasawa_bogoliubov_pair(S::AbstractMatrix)
     F = iwasawa_block(ladder_to_quadrature_block(pair_to_block(S)))
     return (
@@ -2994,6 +3124,13 @@ function iwasawa_bogoliubov_pair(S::AbstractMatrix)
     )
 end
 
+"""
+    iwasawa_bogoliubov_block(S::AbstractMatrix)
+
+The Iwasawa decomposition [`iwasawa_block`](@ref) of the Bogoliubov matrix
+`S` of the ladder operators in block order, through its quadrature form:
+the factors are Bogoliubov matrices in block order.
+"""
 function iwasawa_bogoliubov_block(S::AbstractMatrix)
     F = iwasawa_block(ladder_to_quadrature_block(S))
     return (
@@ -3204,8 +3341,9 @@ ports for a square `S`.
 `S` is passive when none of its singular values exceeds one. A singular
 value above one by no more than `max(atol, rtol)`, as rounding leaves those
 of a lossless `S`, is taken as one; beyond that `S` is refused. The default
-`rtol` is the smaller dimension of `S` times the machine epsilon of its
-element type, and zero when `atol` is given.
+`rtol` is that of `isapprox` and [`is_unitary`](@ref), the square root of
+the machine epsilon of the element type of `S`, and zero when `atol` is
+given.
 
 # Examples
 ```jldoctest
@@ -3227,7 +3365,7 @@ true
 [5] B. Szőkefalvi-Nagy, “Sur les contractions de l’espace de Hilbert,”
     ACTA SCIENTIARUM MATHEMATICARUM, vol. 15, pp. 87–92, 1954.
 """
-function halmos_dilation(S; atol::Real = 0, rtol::Real = defaultrtol(S, atol))
+function halmos_dilation(S; atol::Real = 0, rtol::Real = approxrtol(eltype(S), atol))
     n, m = size(S)
     k = min(n, m)
 

@@ -60,12 +60,14 @@ bytesallocated(f) = @allocated f()
         @test d(log(a), :a, defs) ≈ 0.5
         @test d(inv(a), :a, defs) ≈ -0.25
         @test d(1/(1 + im*a), :a, defs) ≈ -im/(1 + 2im)^2
-        # a value which does not depend on the parameter collapses to zero
+        # a value which does not depend on the parameter collapses to zero,
+        # a frequency dependent leaf among them
         @test CV.derivative(CV.tocv(b) + 1, :a) == CV.Constant(0)
+        @test d(FrequencyDependent(w -> 1.0), :a, defs) == 0
         # an undefined parameter in the derivative is refused, as is a
-        # frequency dependent value
+        # direction which depends on the frequency
         @test_throws ArgumentError d(a*b, :a, Dict(a => 2.0))
-        @test_throws ArgumentError d(FrequencyDependent(w -> 1.0), :a, defs)
+        @test_throws ArgumentError d(a*FrequencyDependent(w -> 1.0), :a, defs)
     end
 
     @testset "designjacobian" begin
@@ -93,6 +95,71 @@ bytesallocated(f) = @allocated f()
         @test JK == J[:, [jL, jC]]
         # a parameter left undefined is an error, not a garbage derivative
         @test_throws ArgumentError JosephsonCircuits.designjacobian(circuit, Dict(L => 1e-9))
+    end
+
+    @testset "a parameter defined in terms of another" begin
+        # one capacitor written in a name defined by an expression in the
+        # design parameter, one in the parameter itself: the derivative
+        # follows the definition by the chain rule, 2 and 1, whichever
+        # spelling names the parameters, and the sensitivity of the whole
+        # solve is the finite difference of the definitions
+        JosephsonCircuits.@params C0 Cd
+        two(c1, c2) = Circuit([(:p, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(c1)),
+            (:c2, 1, 0, Capacitor(c2))])
+        spellings = (
+            (two(:Cd, :C0), Dict(:Cd => 2*C0, :C0 => 1e-12)),
+            (two("Cd", "C0"), Dict("Cd" => 2*C0, "C0" => 1e-12)),
+            (two(Cd, C0), Dict(Cd => 2*C0, C0 => 1e-12)))
+        wl, wpl = [2*pi*2e9], (2*pi*1e9,)
+        srcl = [(mode = (1,), port = 1, current = 0.0)]
+        opts = (; returnQE = false, returnCM = false)
+        Sat(c, defs, x) = Array(hbsolve(wl, wpl, srcl, (1,), (1,), c,
+            merge(Dict{Any,Any}(defs), Dict{Any,Any}(:C0 => x)); opts...).linearized.S)
+        c, defs = first(spellings)
+        h = 1e-6*1e-12
+        fd = vec((Sat(c, defs, 1e-12 + h) .- Sat(c, defs, 1e-12 - h))./(2*h))
+        for (c, defs) in spellings
+            names, _, J = JosephsonCircuits.designjacobian(c, defs)
+            @test names == ["p/termination", "c1", "c2"] && J == ComplexF64[0; 2; 1;;]
+            # the derived name is no default parameter of its own
+            r = designsensitivities(c, defs, wl, wpl, srcl, (1,), (1,); opts...)
+            @test collect(JosephsonCircuits.AxisKeys.axiskeys(r.dSdp, :parameter)) == [:C0]
+            @test norm(vec(Array(r.dSdp)) .- fd)/norm(fd) < 1e-6
+        end
+    end
+
+    @testset "a frequency dependent value beside a design parameter" begin
+        # a lossy dielectric written as a closure of the frequency, which no
+        # parameter moves, beside the coupling capacitance which is the
+        # design parameter: it is no row of the Jacobian, and the solve's
+        # sensitivity is the finite difference; a frequency dependent value
+        # which the parameter moves is refused
+        JosephsonCircuits.@params Cc
+        lossy = FrequencyDependent(w -> 1000e-15*(1 - 1e-4im*sign(w)))
+        jpa(cj) = Circuit([(:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(Cc)),
+            (:jj, 2, 0, JosephsonJunction(1000e-12)), (:cj, 2, 0, Capacitor(cj))])
+        defs = Dict(Cc => 100e-15)
+        @test JosephsonCircuits.designjacobian(jpa(lossy), defs)[1] ==
+            ["p1/termination", "cc", "jj"]
+        r = designsensitivities(jpa(lossy), defs, ws, wp, src, (2,), (8,))
+        fd = fdS(jpa(lossy), defs, Cc)
+        @test norm(vec(Array(r.dSdp)) .- fd)/norm(fd) < 1e-4
+        @test_throws ArgumentError JosephsonCircuits.designjacobian(
+            jpa(:Cj), Dict(Cc => 100e-15, :Cj => Cc*lossy/(100e-15)))
+    end
+
+    @testset "plain arrays" begin
+        # with keyedarrays = false the derivative is the solve's own plain
+        # scattering sensitivity, whose component axis is the parameters
+        c = Circuit([(:p1, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(:C1)),
+            (:c2, 1, 0, Capacitor(:C2))])
+        defs = Dict(:C1 => 1e-12, :C2 => 2e-12)
+        args = (2*pi*[3e9, 4e9], (2*pi*5e9,),
+            [(mode = (1,), port = 1, current = 0.0)], (0,), (1,))
+        keyed = designsensitivities(c, defs, args...)
+        plain = designsensitivities(c, defs, args...; keyedarrays = false)
+        @test plain.dSdp isa Array{ComplexF64,4} && size(plain.dSdp) == (1, 1, 2, 2)
+        @test vec(plain.dSdp) == vec(Array(keyed.dSdp))
     end
 
     @testset "designsensitivities matches full-solve finite differences" begin
@@ -185,6 +252,42 @@ bytesallocated(f) = @allocated f()
         end
     end
 
+    @testset "the residual columns of a shared parameter merge sparse" begin
+        # the pump of a chain solved once, then the sweep with the pairs of
+        # parameters which each move the junctions, or the capacitors, of
+        # two cells: the residual derivative columns of a parameter's pairs
+        # merge into one and stay sparse, so the bytes of the sweep grow in
+        # proportion to the chain
+        function sweep(n)
+            c = compile(Circuit(vcat(Any[("P1", "1", "0", Port(1))],
+                Any[x for i in 1:n for x in (
+                    ("Lj$i", "$i", "$(i + 1)", JosephsonJunction(100e-12)),
+                    ("C$i", "$i", "0", Capacitor(40e-15)))],
+                Any[("R2", "$(n + 1)", "0", Resistor(50.0))])))
+            K = cld(n, 2)
+            pairs = vcat([("Lj$i", cld(i, 2), 1/100e-12 + 0im) for i in 1:n],
+                [("C$i", K + cld(i, 2), 1/40e-15 + 0im) for i in 1:n])
+            nl = hbnlsolve((2*pi*7e9,), (8,), [(mode = (1,), port = 1,
+                current = 1e-8)], c; returnoperatingpoint = true,
+                keyedarrays = false)
+            op = nl.operatingpoint
+            dF = JosephsonCircuits.calcresidualsensitivity(op, c,
+                numericmatrices(c, Dict(); Nmodes = op.Nmodes),
+                [JosephsonCircuits.componentindex(c, p[1]) for p in pairs],
+                [p[3] for p in pairs])
+            return () -> hblinsolve([2*pi*5e9], c; nonlinear = nl,
+                nbatches = 1, keyedarrays = false, sensitivitypairs = pairs,
+                nsensitivityparameters = 2K, sensitivityresidual = dF,
+                returnSsensitivity = true)
+        end
+        function bytes(n)
+            run = sweep(n)
+            run()
+            return @allocated run()
+        end
+        @test bytes(512) < 6*bytes(128)
+    end
+
     @testset "reverse contraction agrees with forward" begin
         # the reverse contraction accumulates the operating point shift into
         # the same design parameter slots as the forward one
@@ -212,6 +315,25 @@ bytesallocated(f) = @allocated f()
         fd = fdS(circuit, defs, :R)
         mine = vec(Array(r.dSdp(parameter = :R)))
         @test norm(mine .- fd)/norm(fd) < 1e-4
+    end
+
+    @testset "the reference impedance of a port which owns no termination" begin
+        # both ports normalize their waves to the design parameter R and own
+        # no termination: the first is loaded by a resistor of R, the second
+        # by a fixed one, so R moves the first port's load and both ports'
+        # normalizations, which the sensitivities carry as stamps with no
+        # entries, one per port
+        circuit = Circuit(Any[
+            ("P1", "1", "0", Port(1; Z0 = :R, termination = nothing)),
+            ("R1", "1", "0", Resistor(:R)), ("C1", "1", "2", Capacitor(100e-15)),
+            ("Lj1", "2", "0", JosephsonJunction(1000e-12)),
+            ("C2", "2", "0", Capacitor(1000e-15)), ("C3", "2", "3", Capacitor(10e-15)),
+            ("P2", "3", "0", Port(2; Z0 = :R, termination = nothing)),
+            ("R2", "3", "0", Resistor(50.0))])
+        defs = Dict(:R => 50.0)
+        r = designsensitivities(circuit, defs, ws, wp, src, (2,), (8,))
+        fd = fdS(circuit, defs, :R)
+        @test norm(vec(Array(r.dSdp)) .- fd)/norm(fd) < 1e-4
     end
 
     @testset "scattering block design parameters" begin
@@ -244,7 +366,8 @@ bytesallocated(f) = @allocated f()
         defs = Dict(:Lj => 1000.0e-12)
         circuit = makeblk(theta)
         # the block's parameter is among the defaults, beside the defined one
-        r = designsensitivities(circuit, defs, ws, wp, src, (2,), (8,))
+        r = designsensitivities(circuit, defs, ws, wp, src, (2,), (8,);
+            sensitivitymode = :forward)
         @test collect(JosephsonCircuits.AxisKeys.axiskeys(r.dSdp, :parameter)) == [:Lj, :theta]
         fdL = fdS(circuit, defs, :Lj)
         @test norm(vec(Array(r.dSdp(parameter = :Lj))) .- fdL)/norm(fdL) < 1e-4
@@ -270,7 +393,7 @@ bytesallocated(f) = @allocated f()
             return Circuit(comps)
         end
         rl = designsensitivities(makeline(theta), defs, ws, wp, src, (2,),
-            (8,); parameters = (:theta,))
+            (8,); parameters = (:theta,), sensitivitymode = :forward)
         Sp = hbsolve(ws, wp, src, (2,), (8,), makeline(theta + h), defs).linearized.S
         Sm = hbsolve(ws, wp, src, (2,), (8,), makeline(theta - h), defs).linearized.S
         fdl = vec((Array(Sp) .- Array(Sm))./(2h))
@@ -284,9 +407,70 @@ bytesallocated(f) = @allocated f()
         @test collect(JosephsonCircuits.AxisKeys.axiskeys(rp.dSdp, :parameter)) == [:Lj]
         @test all(isfinite, Array(rp.dSdp))
 
-        # the reverse contraction rejects block parameters
-        @test_throws ArgumentError designsensitivities(circuit, defs, ws, wp,
-            src, (2,), (8,); sensitivitymode = :reverse)
+        # the reverse order takes the residual column of a block parameter
+        # as it takes a component's, the three instances' merged into one,
+        # and agrees with the forward order
+        for (c, q, fw) in ((circuit, nothing, r), (makeline(theta), (:theta,), rl))
+            rv = designsensitivities(c, defs, ws, wp, src, (2,), (8,);
+                parameters = q, sensitivitymode = :reverse)
+            @test isapprox(Array(rv.dSdp), Array(fw.dSdp); rtol = 1e-10)
+        end
+    end
+
+    @testset "the block pairs of many blocks and parameters" begin
+        # a line of instances of one block, which states derivatives for
+        # two parameters, among as many parameters as blocks: each block
+        # pairs with its two, in the order of the parameters, and its
+        # derivatives are read once, so the bytes grow in proportion to
+        # the line
+        seriesS(theta) = w -> (z = 1/(im*w*theta*50.0);
+            [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
+        blk = ScatteringParameters(seriesS(1e-12); nports = 2,
+            derivatives = (thetb = seriesS(2e-12), theta = seriesS(3e-12)))
+        line(n) = compile(Circuit(vcat(Any[(:p1, 1, 0, Port(1))],
+            Any[(Symbol(:b, k), k, k + 1, blk) for k in 1:n],
+            Any[(:r2, n + 1, 0, Resistor(50.0))])))
+        names(n) = [:theta; [Symbol(:c, k) for k in 2:(n - 1)]; :thetb]
+        pairs = JosephsonCircuits.designblockjacobian(line(3), names(3))
+        @test [(p[1], p[2]) for p in pairs] ==
+            [("b$k", j) for k in 1:3 for j in (1, 3)]
+        function bytes(n)
+            c, q = line(n), names(n)
+            run() = JosephsonCircuits.designblockjacobian(c, q)
+            run()
+            return @allocated run()
+        end
+        @test bytes(128) < 6*bytes(32)
+    end
+
+    @testset "many block parameters take the reverse order" begin
+        # a fifty ohm line of instances of one series inductance block
+        # ending in a pumped junction resonator, each block its own
+        # parameter through a block pair: past eight parameters per output
+        # port and mode pair the default order is the reverse one, whose
+        # cost does not grow with the parameters, so the bytes grow in
+        # proportion to the line
+        seriesL(L) = w -> (z = im*w*L/50.0;
+            [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
+        dseriesL(L) = w -> (z = im*w*L/50.0; d = 2im*w/(50.0*(z+2)^2);
+            [d -d; -d d])
+        blk = ScatteringParameters(seriesL(1e-9); nports = 2)
+        dblk = ScatteringParameters(dseriesL(1e-9); nports = 2)
+        function bytes(n)
+            c = compile(Circuit(vcat(Any[(:p1, 1, 0, Port(1))],
+                Any[x for k in 1:n for x in ((Symbol(:b, k), k, k + 1, blk),
+                    (Symbol(:c, k), k + 1, 0, Capacitor(400e-15)))],
+                Any[(:cc, n + 1, n + 2, Capacitor(100e-15)),
+                    (:jj, n + 2, 0, JosephsonJunction(1000e-12)),
+                    (:cj, n + 2, 0, Capacitor(1000e-15))])))
+            pairs = [("b$k", k, dblk) for k in 1:n]
+            run() = hbsolve(ws[1:1], wp, src, (2,), (8,), c;
+                sensitivityblockpairs = pairs, nsensitivityparameters = n,
+                returnSsensitivity = true, keyedarrays = false, nbatches = 1)
+            run()
+            return @allocated run()
+        end
+        @test bytes(512) < 6*bytes(128)
     end
 
     @testset "a pumped block among the components" begin
@@ -340,11 +524,16 @@ bytesallocated(f) = @allocated f()
         opts = (; dc = true, threewavemixing = true, fourwavemixing = true)
         defs = Dict(:Lj => 1000.0e-12)
         r = designsensitivities(makeres(R), defs, ws, wp, srcdc, (2,), (8,);
-            parameters = (:R,), opts...)
+            parameters = (:R,), sensitivitymode = :forward, opts...)
         h = 1e-6*R
         Sp = hbsolve(ws, wp, srcdc, (2,), (8,), makeres(R + h), defs; opts...).linearized.S
         Sm = hbsolve(ws, wp, srcdc, (2,), (8,), makeres(R - h), defs; opts...).linearized.S
         fd = vec((Array(Sp) .- Array(Sm))./(2h))
         @test norm(vec(Array(r.dSdp(parameter = :R))) .- fd)/norm(fd) < 1e-4
+        # the reverse order, through the block's column in the canonical
+        # coordinates, its zero frequency rows included, agrees
+        rv = designsensitivities(makeres(R), defs, ws, wp, srcdc, (2,), (8,);
+            parameters = (:R,), sensitivitymode = :reverse, opts...)
+        @test isapprox(Array(rv.dSdp), Array(r.dSdp); rtol = 1e-10)
     end
 end

@@ -21,6 +21,9 @@ using JosephsonCircuits
         # integer values unwrap as floating point numbers
         @test JosephsonCircuits.unwrap([0, 7, 1]) ≈ [0, 7 - 2pi, 1]
 
+        # a keyword it does not take, such as `dim` for `dims`, is refused
+        @test_throws MethodError JosephsonCircuits.unwrap([0.0, 7.0]; dim = 1)
+
         @test isapprox(
             JosephsonCircuits.unwrap!(zeros(10,10);dims=1),
             zeros(10,10),

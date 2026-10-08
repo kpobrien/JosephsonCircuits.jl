@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: elaborate
 using LinearAlgebra
 using Test
 
@@ -441,11 +442,6 @@ using Test
         @test_throws ArgumentError Circuit([:sub => inner], Any[])
         # identifiers with the path separator
         @test_throws ArgumentError Circuit(["a/b" => Inductor(1e-9)], Any[])
-        # Instance passthrough and override rejection
-        c = Circuit([:l => Instance(Inductor(1e-9))], [((:l, 1), Ground)])
-        @test JosephsonCircuits.instancedefinition(elaborate(c), 1) isa Inductor
-        @test_throws ArgumentError Instance(Inductor(1e-9);
-            thermal_bindings = (:body => :t1,))
         # recursion
         comps = Pair{Symbol,Any}[]
         rec = Circuit(comps, Any[],
@@ -736,7 +732,7 @@ using Test
         @test nmu.portimpedances == [50.0]
         @test nmu.portenvironmentindices == [0]
         # and both resistors are still internal noise channels
-        @test [cu.componentnames[i] for i in nmu.noiseportimpedanceindices] ==
+        @test [cu.componentnames[i] for i in JC.noiseindices(cu, nmu.vvn)] ==
             ["r1", "r2"]
         # A port owning a matched environment beside a device resistor of
         # the same value is loaded twice. That is legal and occasionally
@@ -867,7 +863,7 @@ using Test
         @test nm.portimpedances == [50.0]
         @test cc.componentnames[only(nm.portenvironmentindices)] ==
             "p1/termination"
-        @test [cc.componentnames[i] for i in nm.noiseportimpedanceindices] ==
+        @test [cc.componentnames[i] for i in JC.noiseindices(cc, nm.vvn)] ==
             ["rload"]
         @test nm.Gnm[1,1] == 1/50 + 1/100
 
@@ -982,11 +978,7 @@ using Test
             JosephsonCircuits.scatteringblockindex(ci, "7/port1") == 1
     end
 
-    @testset "voltage sources and ground requirement" begin
-        c = Circuit([:v => VoltageSource(1.0), :r => Resistor(50.0)],
-            [((:v, 1), (:r, 1)), ((:v, 2), (:r, 2), Ground)])
-        @test_throws ComponentNotSupportedError compile(c)
-        # no ground
+    @testset "ground requirement" begin
         cng = Circuit([:l => Inductor(1e-9), :c => Capacitor(1e-12)],
             [((:l, 1), (:c, 1)), ((:l, 2), (:c, 2))])
         @test_throws ArgumentError compile(cng)

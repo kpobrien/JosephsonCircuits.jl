@@ -28,9 +28,9 @@ resistances complex.
 # Fields
 - `circuit`: the [`CompiledCircuit`](@ref).
 - `capacitors`, `resistors`, `inductors`, `junctions`, `mutualinductors`:
-    the values of each group, in the compiled group order. The current
-    sources and the nonlinear inductors are read from `values` by the
-    assembly, so they have no group here.
+    the values of each group, in the compiled group order, every nonlinear
+    inductor's among the junctions. The current sources are read from
+    `values`, so they have no group here.
 - `values`: the flat component table, resolved to numbers.
 """
 struct BoundCircuit{TC,TR,TL,TJ,TK}
@@ -60,11 +60,10 @@ end
 # values are real runs on the code compiled for real values whatever
 # table they came in. A group with a value which is not a plain number
 # (symbolic, or a frequency dependent provider) keeps the promotion of the
-# types present, with the inverse of each when `checkinverse` is set; a
-# value which is neither a number nor symbolic (`nothing`, a string, a name
-# defined as a name) is refused there, by the component `names` gives it.
-function grouptype(values, idx, checkinverse::Bool,
-        names = eachindex(values))
+# types present and of their inverses; a value which is neither a number
+# nor symbolic (`nothing`, a string, a name defined as a name) is refused
+# there, by the component `names` gives it.
+function grouptype(values, idx, names = eachindex(values))
     isempty(idx) && return Float64
     complex = false
     plain = true
@@ -86,7 +85,7 @@ function grouptype(values, idx, checkinverse::Bool,
         valuetype = promote_type(valuetype, typeof(v))
         # the inverse too: the conductance of a symbolic resistance is a
         # different expression type from the resistance itself
-        checkinverse && (valuetype = promote_type(valuetype, typeof(1/v)))
+        valuetype = promote_type(valuetype, typeof(1/v))
     end
     return valuetype
 end
@@ -181,11 +180,11 @@ function bindvalues(c::CompiledCircuit, values)
     length(values) == ncomponents(c) || throw(DimensionMismatch(
         "componenttypes and componentvalues should have the same length"))
     names = c.componentnames
-    TC = grouptype(values, c.capacitors, true, names)
-    TL = grouptype(values, c.inductors, true, names)
-    TR = grouptype(values, c.resistors, true, names)
-    TJ = grouptype(values, c.junctions, true, names)
-    TK = grouptype(values, c.mutualinductors, true, names)
+    TC = grouptype(values, c.capacitors, names)
+    TL = grouptype(values, c.inductors, names)
+    TR = grouptype(values, c.resistors, names)
+    TJ = grouptype(values, c.junctions, names)
+    TK = grouptype(values, c.mutualinductors, names)
     return BoundCircuit(c,
         gather(TC, values, c.capacitors),
         gather(TR, values, c.resistors),
@@ -281,9 +280,9 @@ function assemblenodal!(nzval::Vector, seen::Vector{Bool},
     # The first contribution to a position is assigned and later ones are
     # added to it, rather than accumulating onto a zero, as `sparse` does
     # when it combines duplicates. This is what makes it work for element
-    # types with no zero: an empty group, whose element type is `Nothing`,
-    # and a circuit whose values are still symbolic, which must reach the
-    # diagnostic naming the undefined value rather than fail here.
+    # types with no zero, a circuit whose values are still symbolic, which
+    # must reach the diagnostic naming the undefined value rather than fail
+    # here.
     fill!(seen, false)
     @inbounds for k in eachindex(plan.dest)
         v = values[plan.src[k]]
@@ -504,8 +503,8 @@ end
 Build the [`MutualStampPlan`](@ref) of a compiled circuit and its graph, and
 return it with the sorted branches the couplings touch. The sign of each
 coupling's stamps carries it from the terminal order the netlist declared
-to the orientation the graph gave its two branches. Throws if a coupling
-names a component which is not an inductor.
+to the orientation the graph gave its two branches. A coupling names two
+inductors, which the parse of the circuit holds it to.
 """
 function mutualstampplan(c::CompiledCircuit)
     topology = c.topology
@@ -513,10 +512,6 @@ function mutualstampplan(c::CompiledCircuit)
     from, to = isempty(c.couplings) ? (Int[], Int[]) :
         branchendpoints(topology.Rbn, topology.Nbranches)
     for (n, (_, i, j)) in enumerate(c.couplings)
-        for k in (i, j)
-            c.componenttypes[k] === :L || throw(ArgumentError(
-                lazy"Mutual coupling coefficient K must couple two inductors. $(c.componentnames[k]) is not an inductor."))
-        end
         e1 = (c.nodeindices[1,i], c.nodeindices[2,i])
         e2 = (c.nodeindices[1,j], c.nodeindices[2,j])
         b1, b2 = topology.edge2indexdict[e1], topology.edge2indexdict[e2]
@@ -577,10 +572,10 @@ end
 Everything about a circuit's matrices which depends on its topology but not
 on its values, for one mode count.
 
-Holds the nodal, branch and mutual stamp plans, the ports, the noise
-candidates and the mode expanded incidence matrix. Rebinding at new
-component values reuses all of it; only the values are refilled. See
-[`circuitmatrixplan`](@ref) and [`assemblematrices`](@ref).
+Holds the nodal, branch and mutual stamp plans, the ports and the mode
+expanded incidence matrix. Rebinding at new component values reuses all of
+it; only the values are refilled. See [`circuitmatrixplan`](@ref) and
+[`assemblematrices`](@ref).
 
 A plan depends on the compiled circuit alone; the scratch of a refill is a
 [`CircuitMatrixWorkspace`](@ref), one per solve.
@@ -595,7 +590,6 @@ struct CircuitMatrixPlan{Ti<:Integer}
     invinductance::InverseInductancePlan{Ti}
     mutual::MutualStampPlan{Ti}
     ports::Vector{CompiledPort}
-    noisecandidates::Vector{Int}
     Rbnm::SparseMatrixCSC{Int,Int}
 end
 
@@ -623,8 +617,7 @@ together, because an environment is realized as an ordinary resistor.
         inductance,
         junctionstampplan(c, topology.edge2indexdict, topology.Nbranches),
         inverseinductanceplan(topology, inductance.nzind, coupled),
-        mutual, orderedports(c), noisecandidates(c),
-        diagrepeat(topology.Rbn, Nmodes))
+        mutual, orderedports(c), diagrepeat(topology.Rbn, Nmodes))
 end
 
 """
@@ -635,9 +628,8 @@ patterns of `plan`.
 
 The assembly of [`numericmatrices`](@ref) and of the solvers: every stamp,
 the mutual inductances included, on the plan's patterns and resolved
-couplings and ports, so that only the values, the solver scale and the
-noise channels are read at an assembly. The numeric types are the bound
-circuit's.
+couplings and ports, so that only the values and the solver scale are
+read at an assembly. The numeric types are the bound circuit's.
 """
 function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     c = plan.circuit
@@ -654,7 +646,6 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     Gnm = assemblenodal(TR, plan.conductance, b.resistors, Nmodes)
     Lb = assemblebranch(TL, plan.inductance, b.inductors,
         combine_reciprocal_sum, 1)
-    Lbm = Nmodes == 1 ? copy(Lb) : diagrepeat(Lb, Nmodes)
     Ljb = assemblebranch(TJ, plan.junction, b.junctions, nothing, 1)
     Ljbm = Nmodes == 1 ? copy(Ljb) : diagrepeat(Ljb, Nmodes)
 
@@ -669,11 +660,10 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     portindices = [p.component for p in plan.ports]
     portnumbers = [p.number for p in plan.ports]
     portimpedances = portreferenceimpedances(plan.ports, vvn)
-    noiseportimpedanceindices = noiseindices(c, vvn, plan.noisecandidates)
 
-    return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm,
+    return CircuitMatrices(Cnm, Gnm, Lb, Ljb, Ljbm, Mb, invLnm,
         plan.Rbnm, portindices, portnumbers, portimpedances,
-        [p.environment for p in plan.ports], noiseportimpedanceindices, Lmean, vvn)
+        [p.environment for p in plan.ports], Lmean, vvn)
 end
 
 # === the same matrices at new values ===
@@ -776,8 +766,8 @@ function assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
     checkfrequencyindependent(b)
     refillnodal!(nm.Cnm, plan.capacitance, b.capacitors, work.capacitance, Nmodes)
     refillnodal!(nm.Gnm, plan.conductance, b.resistors, work.conductance, Nmodes)
-    refillbranch!(nm.Lb, nm.Lbm, plan.inductance, b.inductors,
-        work.inductor_seen, combine_reciprocal_sum, Nmodes)
+    assemblebranch!(nm.Lb.nzval, work.inductor_seen, plan.inductance,
+        b.inductors, combine_reciprocal_sum)
     refillbranch!(nm.Ljb, nm.Ljbm, plan.junction, b.junctions, nothing,
         nothing, Nmodes)
     mutualvalues!(work.mutualvalues, plan.mutual, b.mutualinductors,
@@ -790,31 +780,32 @@ function assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
     refillnodal!(nm.invLnm, plan.invinductance.stamp, work.invL,
         work.invinductance, Nmodes)
     Lmean = inductancemean(b)
-    return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Lbm, nm.Ljb, nm.Ljbm,
+    return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Ljb, nm.Ljbm,
         nm.Mb, nm.invLnm, nm.Rbnm, nm.portindices, nm.portnumbers,
         portreferenceimpedances(plan.ports, vvn), nm.portenvironmentindices,
-        noiseindices(c, vvn, plan.noisecandidates), Lmean, vvn)
+        Lmean, vvn)
 end
 
 # === the scattering blocks of a compiled circuit ===
 
 """
     scatteringstampsystem(blocks::Vector{CompiledScatteringBlock}, Nmodes;
-        auxoffset, Ntotal, scale = 1.0, modeoffsets = nothing, iscale = 1.0)
+        auxoffset, Ntotal, scale = 1.0, modeoffsets, iscale = 1.0)
 
 The stamp system of the compiled scattering blocks of a circuit.
 
-A compiled block is one instance carrying its own terminal map, so this
-needs no regrouping and none of the checks which the per port form does: a
-block cannot be missing a port, cannot repeat one, and cannot be confused
-with another instance of the same definition. `modeoffsets` are the
-frequency offsets of the modes, which a pumped block's coupling between
-them reads, and `iscale` the scale of the auxiliary port current unknowns;
-see [`scatteringstampsystem`](@ref).
+A compiled block is one instance carrying its own terminal map, so the
+blocks need no regrouping and no check: a block cannot be missing a port,
+cannot repeat one, and cannot be confused with another instance of the
+same definition. The auxiliary port currents of each block follow those
+of the block before it, from `auxoffset`. `modeoffsets` are the frequency
+offsets of the modes, which a pumped block's coupling between them reads,
+and `iscale` the scale of the auxiliary port current unknowns; see
+[`scatteringstampsystem`](@ref).
 """
 function scatteringstampsystem(blocks::Vector{CompiledScatteringBlock},
     Nmodes::Integer; auxoffset::Integer, Ntotal::Integer,
-    scale::Real = 1.0, modeoffsets = nothing, iscale::Real = 1.0)
+    scale::Real = 1.0, modeoffsets, iscale::Real = 1.0)
 
     isempty(blocks) && return nothing
     stamped = StampedScatteringBlock[]

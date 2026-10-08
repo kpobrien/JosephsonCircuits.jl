@@ -15,10 +15,10 @@ makedocs(
     sitename = "JosephsonCircuits.jl",
     doctest = false,
     remotes = nothing,
-    # The developer appendix and the index of legacy anchors are longer.
-    # Public API pages retain the normal size limit.
+    # The developer appendix is longer. Public API pages retain the normal
+    # size limit.
     format = Documenter.HTML(disable_git = true, edit_link = nothing,
         repolink = "https://github.com/kpobrien/JosephsonCircuits.jl",
-        size_threshold_ignore = ["reference.md", "api/internals.md"]),
+        size_threshold_ignore = ["api/internals.md"]),
     pages = docpages,
 )

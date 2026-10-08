@@ -44,6 +44,9 @@ using Test
         @test JosephsonCircuits.exportnetlist(split).netlist == reference
         @test JosephsonCircuits.exportnetlist(before; jj = false).netlist ==
             JosephsonCircuits.exportnetlist(split; jj = false).netlist
+        # the jj model takes the subgap product it is given
+        @test endswith(JosephsonCircuits.exportnetlist(before; vm = 0.1).netlist,
+            "force=1,vm=0.1)")
     end
 
     @testset "the jj model's conditions" begin

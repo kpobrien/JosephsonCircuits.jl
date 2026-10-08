@@ -381,13 +381,16 @@ Returns an [`IterationInfo`](@ref) with per-iteration diagnostics:
 (step lengths; `NaN` marks an accepted candidate), `backtracks` (trial
 evaluations after each iteration's first), `andersonaccepted` (true when
 the taken step lies on the curved path), and `reason`, why the iteration
-ended: `:converged`, `:iterations`, `:linesearch` (no decrease at all, or
-two consecutive steps short of the Armijo condition), or `:progress` (the
+ended: `:converged`, `:iterations`, `:linesearch` (no decrease at all,
+two consecutive steps short of the Armijo condition, or a direction which
+is not a descent direction, or whose merit or slope is not finite, which
+the factorization of an approximate Jacobian can give), `:progress` (the
 residual stopped coming down, or comes down too slowly to reach the
 tolerance within the steps left, and its rate is not improving,
 [`residualstalled`](@ref); a first such judgement is given a fresh
-history, and the attempt ends if the stall persists over it); see
-[`stallmessage`](@ref).
+history, and the attempt ends if the stall persists over it), or
+`:nonfinite` (the residual norm at the initial point is not finite, and
+no step is taken); see [`stallmessage`](@ref).
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::AbstractVector{T}; iterations = 1000, atol = 1e-8, rtol = 0.0,
@@ -484,12 +487,13 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         # is refreshed and no Jacobian is ever evaluated at a final point.
         # `rtol` adds the relative test beside the absolute one, satisfied
         # when either holds; at `rtol = 0` the tolerance is exactly `atol`
-        # and nothing already measured moves. See `nlsolvekrylov!`.
+        # and nothing already measured moves. See `nlsolvekrylov!`. A
+        # residual whose norm is not finite ends the attempt here too.
         residual!(F, x)
-        converged = attempt == 1 ? tracestart!(tr, F, atol, rtol) :
+        ended = attempt == 1 ? tracestart!(tr, F, atol, rtol) :
             tracerestart!(tr, F)
         # only a point from which a step will be taken needs a Jacobian
-        if !converged && steps < iterations
+        if !ended && steps < iterations
             fj!(nothing, J, x)
             tryfactorize!(cache, factorization, J)
         end
@@ -503,7 +507,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         # perform Newton's method with linesearch based on Nocedal and Wright
         # chapter 3 section 5.
         while steps < iterations
-            tr.converged && break
+            ended && break
             steps += 1
 
             # F and x are consistent here, and cache.factorization matches
@@ -533,9 +537,8 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             # claim, not the true directional derivative
             dϕ0dα = real(dot(F, J, deltax))
 
-            # check before the Armijo tests below, which would otherwise run
-            # with an invalid slope (the trial-step helpers validate too, but
-            # only on their paths).
+            # check before the Armijo tests below and the line search, which
+            # take the merit and the slope as valid.
             #
             # a non-finite merit, or a search direction which is not a descent
             # direction, is a numerical outcome of this solve rather than a

@@ -129,11 +129,10 @@ QRfactorization(; kwargs...) = QRfactorization(NamedTuple(kwargs))
 
 How the Newton-Krylov solver preconditions its linear solves: one of the
 mode coupling family, [`BlockDiagonal`](@ref), [`FullJacobian`](@ref),
-[`HarmonicBand`](@ref), [`MeasuredBand`](@ref), [`Clusters`](@ref),
-[`CoupledModes`](@ref) and [`CouplingMask`](@ref), each built with a
-factorization, [`Automatic`](@ref), which picks among them by the problem
-and the memory, or [`Floquet`](@ref), a deflation wrapping one of them. The
-solver builds
+[`HarmonicBand`](@ref), [`MeasuredBand`](@ref), [`Clusters`](@ref) and
+[`CouplingMask`](@ref), each built with a factorization,
+[`Automatic`](@ref), which picks among them by the problem and the memory,
+or [`Floquet`](@ref), a deflation wrapping one of them. The solver builds
 the runtime preconditioner from the value.
 """
 abstract type AbstractPreconditionerSpec end
@@ -187,19 +186,26 @@ FullJacobian(; factorization::MaybeFactorization = nothing) =
     HarmonicBand(p; factorization = nothing)
 
 The couplings whose harmonic offset is within `p`, an `Integer` number of
-offset shells or a per tone tuple of bounds; see [`modebandmask`](@ref).
-Grown on escalation by one shell, or to the next offset each tone's grid
+offset shells or a per tone tuple of integer bounds, held as `Int`s
+whatever integers they are written in; see [`modebandmask`](@ref). Grown
+on escalation by one shell, or to the next offset each tone's grid
 realizes.
 """
 struct HarmonicBand <: AbstractModeCoupling
-    p::Union{Integer,Tuple{Vararg{Integer}}}
+    p::Union{Int,Tuple{Vararg{Int}}}
     factorization::MaybeFactorization
+    # the bound in one integer type, which the band mask, the measured
+    # band and the escalation compare and dispatch on
+    function HarmonicBand(p, factorization::MaybeFactorization)
+        p isa Union{Integer,Tuple{Vararg{Integer}}} || throw(ArgumentError(
+            lazy"the bandwidth `p` = $(p) must be an Integer or a tuple of Integers."))
+        all(>=(0), p) || throw(ArgumentError(
+            lazy"the bandwidth `p` = $(p) must be nonnegative."))
+        return new(p isa Integer ? Int(p) : map(Int, p), factorization)
+    end
 end
-function HarmonicBand(p; factorization::MaybeFactorization = nothing)
-    all(>=(0), p) || throw(ArgumentError(
-        lazy"the bandwidth `p` = $(p) must be nonnegative."))
-    return HarmonicBand(p, factorization)
-end
+HarmonicBand(p; factorization::MaybeFactorization = nothing) =
+    HarmonicBand(p, factorization)
 
 """
     MeasuredBand(; tol = 1e-2, budget = 0.25, factorization = nothing)
@@ -266,23 +272,14 @@ an explicit [`BlockDiagonal`](@ref). See [`resolveautomatic`](@ref).
 struct Automatic <: AbstractModeCoupling end
 
 """
-    CoupledModes(indices; factorization = nothing)
-
-Exactly these modes coupled in full, the rest on the mode diagonal; see
-[`modecouplingmask`](@ref).
-"""
-struct CoupledModes <: AbstractModeCoupling
-    indices::Vector{Int}
-    factorization::MaybeFactorization
-end
-CoupledModes(indices::AbstractVector{<:Integer}; factorization::MaybeFactorization = nothing) =
-    CoupledModes(sort!(unique(Vector{Int}(indices))), factorization)
-
-"""
     CouplingMask(mask; factorization = nothing)
 
-The couplings selected by an `Nmodes` by `Nmodes` `Bool` matrix, the block
-coupling column mode `m2` into row mode `m1` kept where `mask[m1, m2]`.
+The mode coupling set given in full: `mask` is a square `Bool` matrix over
+the retained modes of the solve, in the order of the `modes` of its
+[`NonlinearHB`](@ref), and the block of the Jacobian coupling column mode
+`m2` into row mode `m1` is kept where `mask[m1, m2]`. Every other member
+of the family is a mask of this kind ([`couplingmask`](@ref)); this one
+takes it as written, for a structure the others do not express.
 """
 struct CouplingMask <: AbstractModeCoupling
     mask::Matrix{Bool}
@@ -295,41 +292,34 @@ function CouplingMask(mask::AbstractMatrix{Bool}; factorization::MaybeFactorizat
 end
 
 """
-    Floquet(inner = BlockDiagonal(); size = 20, harvest = 4, ritz = 0,
-        candidates = 3*size, ranktol = nothing, benefittol = 1e-6,
-        cycleharvest = true)
+    Floquet(inner = BlockDiagonal(); size = 20, harvest = 4,
+        candidates = 3*size, ranktol = nothing, benefittol = 1e-6)
 
 The preconditioner `inner` wrapped in a [`FloquetPreconditioner`](@ref):
 the residual-image deflation with physical candidates. `harvest` is the
-number of singular directions per harvest, `ritz` the harmonic Ritz
-directions on top of it, `candidates` the size of the candidate bank,
-`ranktol` the rank tolerance of the residual image (`nothing` for the
-precision's default) and `benefittol` the predicted improvement below
-which a candidate is not built in; `cycleharvest` harvests every GMRES
-cycle rather than the last.
+number of singular directions taken from every GMRES restart cycle,
+`candidates` the size of the candidate bank, `ranktol` the rank tolerance
+of the residual image (`nothing` for the precision's default) and
+`benefittol` the predicted improvement below which a candidate is not
+built in.
 """
 struct Floquet <: AbstractPreconditionerSpec
     inner::AbstractPreconditionerSpec
     size::Int
     harvest::Int
-    ritz::Int
     candidates::Int
     ranktol::Union{Nothing,Float64}
     benefittol::Float64
-    cycleharvest::Bool
 end
 function Floquet(inner::AbstractPreconditionerSpec = BlockDiagonal();
-    size::Integer = 20, harvest::Integer = 4, ritz::Integer = 0,
+    size::Integer = 20, harvest::Integer = 4,
     candidates::Integer = 3*size, ranktol::Union{Nothing,Real} = nothing,
-    benefittol::Real = 1e-6, cycleharvest::Bool = true)
-    # the same checks the runtime constructor makes, so a bad value is
-    # refused where it is written rather than deep inside the solve
+    benefittol::Real = 1e-6)
+    # a bad value is refused where it is written rather than deep inside
+    # the solve
     size >= 1 || throw(ArgumentError(lazy"`size` = $(size) must be at least 1."))
-    harvest >= 0 || throw(ArgumentError(
-        lazy"`harvest` = $(harvest) must be nonnegative."))
-    ritz >= 0 || throw(ArgumentError(lazy"`ritz` = $(ritz) must be nonnegative."))
-    harvest + ritz >= 1 || throw(ArgumentError(
-        "`harvest` and `ritz` cannot both be zero; the harvest would produce no candidates."))
+    harvest >= 1 || throw(ArgumentError(
+        lazy"`harvest` = $(harvest) must be at least 1; a harvest of none produces no candidates."))
     candidates >= size || throw(ArgumentError(
         lazy"`candidates` = $(candidates) must be at least `size` = $(size)."))
     isnothing(ranktol) || ranktol > 0 || throw(ArgumentError(
@@ -338,36 +328,25 @@ function Floquet(inner::AbstractPreconditionerSpec = BlockDiagonal();
         lazy"`benefittol` = $(benefittol) must be nonnegative."))
     inner isa AbstractModeCoupling || throw(ArgumentError(
         "a deflation wraps a mode coupling preconditioner, not another deflation."))
-    return Floquet(inner, Int(size), Int(harvest), Int(ritz), Int(candidates),
-        ranktol, Float64(benefittol), cycleharvest)
+    return Floquet(inner, Int(size), Int(harvest), Int(candidates),
+        ranktol, Float64(benefittol))
 end
-
-"""
-    withfactorization(s, f)
-
-The mode coupling set `s` with its factorization replaced by `f` where it
-had none. An [`Automatic`](@ref) is returned unchanged: it carries no
-factorization, and the member it resolves to takes the backend's default
-(`resolveautomatic`).
-"""
-withfactorization(s::AbstractModeCoupling, f) =
-    isnothing(s.factorization) ? setfactorization(s, f) : s
-withfactorization(s::Automatic, f) = s
 
 """
     setfactorization(s::AbstractModeCoupling, f)
 
 The mode coupling set `s` with its factorization replaced by `f`, whatever
-it carried: what a preconditioner applies to its coupling set when it
-changes the factorization it is built with, so that the set always
-carries the factorization of its factors. Defined for the sets a
-preconditioner holds; `MeasuredBand` and `Clusters` are rewritten into
-one of them when it is built.
+it carried. A preconditioner holds its coupling set so: built from the set
+it is asked for with the factorization that set carries or the backend's
+default, and rebuilt with each factorization it changes to, so that the
+set always carries the factorization of its factors. Defined for the sets
+a preconditioner holds; `MeasuredBand` and `Clusters` are rewritten into
+one of them when it is built, and an [`Automatic`](@ref) is resolved to
+one before (`resolveautomatic`).
 """
 setfactorization(s::BlockDiagonal, f) = BlockDiagonal(f)
 setfactorization(s::FullJacobian, f) = FullJacobian(f)
 setfactorization(s::HarmonicBand, f) = HarmonicBand(s.p, f)
-setfactorization(s::CoupledModes, f) = CoupledModes(s.indices, f)
 setfactorization(s::CouplingMask, f) = CouplingMask(s.mask, f)
 
 # ---------------------------------------------------------------- the refresh policy
@@ -410,10 +389,13 @@ struct Probe end
 
 Rebuild the preconditioner only when it is forced: a linear solve which
 makes progress but misses its tolerance, a direction which is not a
-descent direction, a line search which finds no decrease, or a successful
-escalation. A stagnated solve is not retried and does not rebuild; its
-step is replaced by the preconditioner solve. The slow-solve report to the
-preconditioner ([`stalled!`](@ref)) is off as well, so a [`Clusters`](@ref)
+descent direction, a line search which finds no decrease where the rebuild
+can change the step, a successful escalation, or the recovery of a
+residual history which has stalled ([`residualstalled`](@ref)), which
+takes exact Newton steps from a rebuilt preconditioner. A stagnated solve
+is not retried and does not rebuild; its step is replaced by the
+preconditioner solve. The slow-solve report to the preconditioner
+([`stalled!`](@ref)) is off as well, so a [`Clusters`](@ref)
 preconditioner never remeasures under this policy. A frozen
 preconditioner, for when a deflation ([`Floquet`](@ref)) is to carry the
 solve across the Newton path against a base built once.
@@ -480,28 +462,32 @@ struct Backtracking
     c1::Float64
     maxbacktracks::Int
     maxfailures::Int
-end
-function Backtracking(; interpolate::Bool = true, safeguardlow::Real = 0.1,
-    safeguardhigh::Real = 0.5, c1::Real = 1e-4, maxbacktracks::Integer = 10,
-    maxfailures::Integer = 2)
     # the bounds the Armijo test and the safeguarded fits need, refused
-    # here rather than inside a solve; for the exact Newton step
-    # dϕ0 = -2ϕ0, so a c1 of one half or more could never accept the full
-    # step
-    0 < safeguardlow < 1//2 || throw(ArgumentError(
-        lazy"`safeguardlow` = $(safeguardlow) must be in (0, 1/2)."))
-    safeguardlow < safeguardhigh < 1 || throw(ArgumentError(
-        lazy"`safeguardhigh` = $(safeguardhigh) must satisfy `safeguardlow` < `safeguardhigh` < 1."))
-    0 < c1 < 1//2 || throw(ArgumentError(
-        lazy"`c1` = $(c1) must be in (0, 1/2) for the Newton merit function."))
-    maxbacktracks >= 0 || throw(ArgumentError(
-        lazy"`maxbacktracks` = $(maxbacktracks) must be nonnegative."))
-    maxfailures >= 1 || throw(ArgumentError(
-        lazy"`maxfailures` = $(maxfailures) must be at least 1."))
-    return Backtracking(interpolate, Float64(safeguardlow),
-        Float64(safeguardhigh), Float64(c1), Int(maxbacktracks),
-        Int(maxfailures))
+    # here rather than inside a solve, and so for every value the line
+    # search is handed, which does not check them again; for the exact
+    # Newton step dϕ0 = -2ϕ0, so a c1 of one half or more could never
+    # accept the full step
+    function Backtracking(interpolate::Bool, safeguardlow::Real,
+        safeguardhigh::Real, c1::Real, maxbacktracks::Integer,
+        maxfailures::Integer)
+        0 < safeguardlow < 1//2 || throw(ArgumentError(
+            lazy"`safeguardlow` = $(safeguardlow) must be in (0, 1/2)."))
+        safeguardlow < safeguardhigh < 1 || throw(ArgumentError(
+            lazy"`safeguardhigh` = $(safeguardhigh) must satisfy `safeguardlow` < `safeguardhigh` < 1."))
+        0 < c1 < 1//2 || throw(ArgumentError(
+            lazy"`c1` = $(c1) must be in (0, 1/2) for the Newton merit function."))
+        maxbacktracks >= 0 || throw(ArgumentError(
+            lazy"`maxbacktracks` = $(maxbacktracks) must be nonnegative."))
+        maxfailures >= 1 || throw(ArgumentError(
+            lazy"`maxfailures` = $(maxfailures) must be at least 1."))
+        return new(interpolate, safeguardlow, safeguardhigh, c1,
+            maxbacktracks, maxfailures)
+    end
 end
+Backtracking(; interpolate::Bool = true, safeguardlow::Real = 0.1,
+    safeguardhigh::Real = 0.5, c1::Real = 1e-4, maxbacktracks::Integer = 10,
+    maxfailures::Integer = 2) = Backtracking(interpolate, safeguardlow,
+    safeguardhigh, c1, maxbacktracks, maxfailures)
 
 # ---------------------------------------------------------------- the methods
 
@@ -522,18 +508,20 @@ abstract type AbstractHBNonlinearSolver end
 
 Jacobian-free Newton-Krylov with the mode coupling preconditioner: the
 default. `preconditioner` is an [`AbstractPreconditionerSpec`](@ref); the
-default [`Automatic`](@ref) picks the full Jacobian for one tone and,
-for more, the set whose factors fit in memory. `linearsolver` is a
-[`GMRES`](@ref) or a [`KrylovJL`](@ref)
-solver, `refresh` [`Always`](@ref) (the default), [`Probe`](@ref) (which
-rebuilds the preconditioner only when a measured probe says a rebuild
-pays, at the price of a solve path which depends on measured times and so can differ
+default [`Automatic`](@ref) picks the full Jacobian for one tone and, for
+more, the set whose factors fit in memory. `linearsolver` is a
+[`GMRES`](@ref) or a [`KrylovJL`](@ref) solver, `refresh`
+[`Always`](@ref) (the default), [`Probe`](@ref) (which rebuilds the
+preconditioner only when a measured probe says a rebuild pays, at the
+price of a solve path which depends on measured times and so can differ
 between two runs) or [`Never`](@ref). `escalate` allows a preconditioner
-which fails to reach its tolerance to be grown (a band by one offset per
-tone, any other set to the full Jacobian; see
-[`escalatepreconditioner!`](@ref)), within the memory the grown factors
-are predicted to take; a refused escalation is recorded and the solve
-carries on.
+which fails to reach its tolerance to be grown, within the memory the
+grown factors are predicted to take: the full set with its factors in less
+precision than the iteration, as the default single precision block
+factors of two or more tones are, to the iteration's precision; a band by
+one offset per tone; any other set to the full Jacobian (see
+[`escalatepreconditioner!`](@ref)). A refused escalation is recorded and
+the solve carries on.
 
 The solve ends promptly when it cannot succeed and says why, in the
 `reason` of its [`IterationInfo`](@ref): `:iterations` when the Newton
@@ -541,28 +529,34 @@ steps are spent; `:work` when the Arnoldi steps exceed `iterations`
 restart lengths, so that a preconditioner which runs every linear solve to
 its limit cannot turn the step budget into hours; `:linesearch` when no
 sufficient decrease can be found (a step with no decrease at all is
-retried once from a rebuilt preconditioner and ends the solve if it fails
+retried once from a rebuilt preconditioner when the rebuild can change it,
+see [`nlsolvekrylov!`](@ref), and ends the solve otherwise or if it fails
 again, as does a direction which is still not a descent direction after
 the exact rescue, or two consecutive steps short of the Armijo
 condition); `:progress` when the residual history stopped coming down or
 comes down too slowly to reach the tolerance within the remaining
 budget, its rate is not improving and it is not accelerating, after one
 recovery which rebuilds the preconditioner and takes exact Newton steps
-from then on ([`residualstalled`](@ref)). A stall outside the Newton
+from then on ([`residualstalled`](@ref)); `:nonfinite` when the residual
+norm at the initial point is not finite. A stall outside the Newton
 basin is the continuation problem [`Staged`](@ref) exists for.
 `linesearch` is the [`Backtracking`](@ref) which chooses the length of
 every step, interpolating by default; halving
 (`Backtracking(interpolate = false)`) suits an inexact preconditioner
-such as [`BlockDiagonal`](@ref). `precision` is the floating
-point type of the iteration: the system on the backend, the Krylov
-vectors, and the factors of a sparse preconditioner; the residual
-tolerance is raised to the rounding floor of the source in that
-precision, as `atol` describes.
+such as [`BlockDiagonal`](@ref). `precision` is the floating point type of
+the iteration: the system on the backend, the Krylov vectors, and the
+matrix the preconditioner assembles and factorizes, except that KLU and
+UMFPACK factorize in double precision whatever they are handed, and a
+[`CUDSSFactorization`](@ref) or a [`BlockFactorization`](@ref) with a
+`precision` of its own holds its factors in that
+([`factorizationprecision`](@ref)). The residual tolerance is raised to
+the rounding floor of the source in that precision, as `atol` describes.
 
 The forcing sequence (Eisenstat-Walker choice 2 clamped to `[1e-10, 0.9]`,
-starting at 0.3) and the stagnation threshold (a solve which does not
-bring the linear residual below 0.9 of the residual norm) are fixed; see
-[`nlsolvekrylov!`](@ref).
+starting at 0.3), the thresholds of a stagnated and of a slow linear solve
+and the floor of the linear solves are keywords of
+[`nlsolvekrylov!`](@ref), with these defaults, rather than options of the
+method.
 """
 struct NewtonKrylov{T<:AbstractFloat} <: AbstractHBNonlinearSolver
     # the precision is the one parameter kept: it sets the element types of
@@ -699,11 +693,10 @@ end
     solverprecision(m::AbstractHBNonlinearSolver)
 
 The floating point type the method iterates in: `Float64` for every method
-but [`NewtonKrylov`](@ref), whose `precision` it is, and the inner method's
-for [`Staged`](@ref).
+but [`NewtonKrylov`](@ref), whose `precision` it is. A [`Staged`](@ref)
+method solves its stages with its inner method, which is the one asked.
 """
 solverprecision(m::NewtonKrylov) = m.precision
-solverprecision(m::Staged) = solverprecision(m.inner)
 solverprecision(::AbstractHBNonlinearSolver) = Float64
 
 """
@@ -770,7 +763,6 @@ end
 struct ExternalSolver{F} <: AbstractHBNonlinearSolver
     f::F
 end
-ExternalSolver(f::Function) = ExternalSolver{typeof(f)}(f)
 
 # === the canonical forms of the solver inputs ===
 #

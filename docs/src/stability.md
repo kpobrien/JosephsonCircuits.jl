@@ -236,9 +236,11 @@ that frequency shift.
 
 ## [A long line](@id stability-line)
 
-The benchmark's resonantly phase matched traveling-wave amplifier, a
-line of 256 junctions loaded by resonators near the pump, pumped as the
-benchmark pumps it. Its least damped modes, each once:
+A resonantly phase matched traveling-wave amplifier of 256 junctions,
+pumped at 7.12 GHz with a current coefficient of 1.85 µA. Each cell is
+loaded by a resonator near the pump, where the
+[JTWPA example](recipes/traveling-wave.md) loads every fourth. Its least
+damped modes, each once:
 
 ```@example stabilityline
 using JosephsonCircuits
@@ -524,14 +526,11 @@ number of line-history coordinates.
 | Zero profiles or `internalonly[k]` | The mode may be internal to a block or line. It is not necessarily absent or harmless, and profile matching cannot follow it |
 | Orbit initialization or algebraic consistency fails | Check HB convergence, circuit/definition identity, source reconstruction, and a supported transient realization; do not simply loosen the check to admit a different orbit |
 | The recorded orbit does not close accurately over a period | Refine HB harmonics and time steps and check the model/drive agreement before treating its map as a Floquet map |
-| A GPU eigensolver is unavailable | Use `Monodromy()` with its default CPU backend; the device path requires CUDA.jl 5.6 or newer and a CUDA runtime with cuSOLVER 11.7.1 or newer, which CUDA.jl checks at the eigensolve |
+| A GPU eigensolver is unavailable | Use `Monodromy()` with its default CPU backend; the device path requires a CUDA runtime with cuSOLVER 11.7.1 or newer, which CUDA.jl checks at the eigensolve |
 
 A mode hidden in a transmission line, with no node/junction or
 rational-state content, is placed by the waves leaving the line's ports;
-its exported profile is zero. On the device, the selected left vectors
-recovered from the full right-eigenvector basis are checked against their
-residuals, and a defective or ill-conditioned spectrum is solved by the
-CPU Schur path instead.
+its exported profile is zero.
 
 ## How the period map works
 

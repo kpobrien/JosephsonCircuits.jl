@@ -57,7 +57,6 @@ struct PoleBlock
     ref::Vector{Int}
     currentbase::Int
     filters::Vector{PoleFilter}
-    path::String
 end
 
 polenstates(p::RationalScatteringProvider) = size(p.A, 1)
@@ -98,13 +97,7 @@ polezero(p::CallableMatrixProvider) = poleproviderresponse(p, 0.0+0im)
 function poleproviderresponse(p::CallableMatrixProvider, s)
     p.form == :matrix && return p.f.f(s)
     value = zeros(ComplexF64, p.n, p.n)
-    if p.form == :inplace
-        p.f.f(value, s)
-    else
-        for q in 1:p.n, r in 1:p.n
-            value[r,q] = p.f.f(r, q, s)
-        end
-    end
+    p.f.f(value, s)
     return value
 end
 
@@ -184,26 +177,31 @@ function poleblocks(psc, omega, m, base)
             base += polenstates(d.provider)*m
         end
         push!(blocks, PoleBlock(d, cb.signalnodes .- 1, cb.refnodes .- 1,
-            currentbase, filters, cb.path))
+            currentbase, filters))
     end
     return blocks, base
 end
 
-# Native (unscaled-frequency) polynomial stamps. Columns are node flux,
-# Lscale*port current and Lscale*filter state, with harmonic fastest.
-function stampoleblocks!(K, G, blocks, modes, m, Lscale, scale)
+# Native (unscaled-frequency) polynomial stamps, added to K and G, which
+# are returned. Columns are node flux, Lscale*port current and
+# Lscale*filter state, with harmonic fastest. The stamps are gathered as
+# triplets and summed into both at once, since an entry inserted into a
+# sparse matrix moves every entry after it.
+function stampoleblocks(K, G, blocks, modes, m, Lscale, scale)
+    Kstamps = (Int[], Int[], ComplexF64[])
+    Gstamps = (Int[], Int[], ComplexF64[])
     modeindex = Dict(only(mode) => i for (i, mode) in enumerate(modes))
     for b in blocks
         d, base = b.definition, b.currentbase
         for q in 1:d.nports, a in 1:m
             r = base + (q-1)*m + a
             root = sqrt(d.zref[q])
-            K[r, r] -= root
+            stamp!(Kstamps, r, r, -root)
             for (node, sign) in ((b.signal[q], 1), (b.ref[q], -1))
                 node == 0 && continue
                 col = (node-1)*m + a
-                K[col, r] += sign
-                G[r, col] += sign*Lscale/root
+                stamp!(Kstamps, col, r, sign)
+                stamp!(Gstamps, r, col, sign*Lscale/root)
             end
         end
         for filter in b.filters
@@ -216,16 +214,16 @@ function stampoleblocks!(K, G, blocks, modes, m, Lscale, scale)
                 Ab, Bb, Cb = polebalanced(p, scale)
                 for a in 1:m, j in 1:nz
                     r = zb + (j-1)*m + a
-                    G[r, r] += 1
+                    stamp!(Gstamps, r, r, 1)
                     for k in 1:nz
-                        K[r, zb + (k-1)*m + a] -= Ab[j,k]
+                        stamp!(Kstamps, r, zb + (k-1)*m + a, -Ab[j,k])
                     end
                     for q in 1:d.nports
                         root = sqrt(d.zref[q])
-                        K[r, base + (q-1)*m + a] -= Bb[j,q]*root/2
+                        stamp!(Kstamps, r, base + (q-1)*m + a, -(Bb[j,q]*root/2))
                         for (node, sign) in ((b.signal[q], 1), (b.ref[q], -1))
                             node == 0 && continue
-                            G[r, (node-1)*m + a] -= sign*Lscale*Bb[j,q]/(2root)
+                            stamp!(Gstamps, r, (node-1)*m + a, -(sign*Lscale*Bb[j,q]/(2root)))
                         end
                     end
                 end
@@ -237,21 +235,31 @@ function stampoleblocks!(K, G, blocks, modes, m, Lscale, scale)
                     r = base + (rport-1)*m + out
                     for q in 1:d.nports
                         root = sqrt(d.zref[q])
-                        K[r, base + (q-1)*m + a] -= weight*D[rport,q]*root
+                        stamp!(Kstamps, r, base + (q-1)*m + a, -(weight*D[rport,q]*root))
                         for (node, sign) in ((b.signal[q], 1), (b.ref[q], -1))
                             node == 0 && continue
-                            G[r, (node-1)*m + a] -= sign*weight*D[rport,q]*Lscale/root
+                            stamp!(Gstamps, r, (node-1)*m + a, -(sign*weight*D[rport,q]*Lscale/root))
                         end
                     end
                     if rational
                         for k in 1:nz
-                            K[r, zb + (k-1)*m + a] -= 2weight*Cb[rport,k]
+                            stamp!(Kstamps, r, zb + (k-1)*m + a, -(2weight*Cb[rport,k]))
                         end
                     end
                 end
             end
         end
     end
+    # a circuit without blocks has no stamps and keeps its matrices
+    n = size(K, 1)
+    Ks = isempty(first(Kstamps)) ? K : K + sparse(Kstamps..., n, n)
+    Gs = isempty(first(Gstamps)) ? G : G + sparse(Gstamps..., n, n)
+    return Ks, Gs
+end
+
+# one term of a sum of stamps held as triplets
+function stamp!((rows, cols, vals), i, j, v)
+    push!(rows, i); push!(cols, j); push!(vals, v)
     return nothing
 end
 

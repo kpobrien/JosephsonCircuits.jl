@@ -1,6 +1,7 @@
 using JosephsonCircuits
 using LinearAlgebra
 using Random
+using SparseArrays
 using Test
 
 # Direct current through resistors. The harmonic balance state is periodic
@@ -379,7 +380,7 @@ seriesblock(Z) = ScatteringParameters(
 
             # a least squares solution, which exists whether or not the rows
             # fix an absolute potential
-            v = pinv(t.Y) * t.j
+            v = pinv(Matrix(t.Y)) * t.j
 
             # the residual of the rows vanishes at that solution
             Fv = similar(v)
@@ -410,7 +411,7 @@ seriesblock(Z) = ScatteringParameters(
         t = agrees(cg, [(mode=(0,), port=1, current=Idc),
                         (mode=(0,), port=2, current=-Idc)])
         # it reaches ground, so the rows already fix an absolute potential
-        @test isfinite(cond(t.Y))
+        @test isfinite(cond(Matrix(t.Y)))
 
         # a floating island, where only differences are physical: the rows
         # say exactly that, and are singular by one direction
@@ -421,7 +422,7 @@ seriesblock(Z) = ScatteringParameters(
             [[(:p1,1),(:ca,1)], [(:p1,2),(:cb,1)],
              [(:ca,2),(:cb,2), Ground]])
         t = agrees(cf, [(mode=(0,), port=1, current=Idc)])
-        @test rank(t.Y) == size(t.Y, 1) - 1
+        @test rank(Matrix(t.Y)) == size(t.Y, 1) - 1
         @test isapprox(t.Y * ones(size(t.Y, 2)), zeros(size(t.Y, 1));
             atol = 1e-12*maximum(abs, t.Y))
     end
@@ -774,10 +775,10 @@ seriesblock(Z) = ScatteringParameters(
 
     # The preconditioner solves the direct current subsystem exactly and
     # writes the answer over whatever the inner preconditioner guessed at
-    # those coordinates. On a device the same factors and the same
-    # substitutions run there rather than the window crossing the bus, so
-    # the two paths are the same arithmetic; here the host path is checked
-    # against the factorization it is meant to reproduce.
+    # those coordinates. On a device a subsystem this small is solved there,
+    # through dense factors of the same matrix, rather than the window
+    # crossing the bus; here the host path is checked against the sparse
+    # factorization it is meant to reproduce.
     @testset "the preconditioner solves the block exactly" begin
         JC = JosephsonCircuits
         Rb, Rbig, Idc = 100.0, 1.0e9, 1.0e-6
@@ -806,10 +807,11 @@ seriesblock(Z) = ScatteringParameters(
         @test z[rest] == r[rest]
         # and the subsystem's own are its exact solution
         A = JC.dcsubsystem(w)
-        @test z[idx] == A \ r[idx]
+        @test z[idx] == JC.kluordered(A) \ r[idx]
+        @test A*z[idx] ≈ r[idx]
         # which is a real solve and not the identity: this subsystem is ill
         # conditioned enough that an inverse would not do
-        @test cond(A) > 1e6
+        @test cond(Matrix(A)) > 1e6
         @test z[idx] != r[idx]
 
         # The block in its matrix form, which a device applies, agrees with
@@ -826,6 +828,30 @@ seriesblock(Z) = ScatteringParameters(
         Fu = UnreadRows(copy(Fw), iszero.(up.keep))
         JC.applydcupdate!(Fu, uw, up)
         @test Fu.x ≈ JC.addtransportwindow!(copy(Fw), uw, w)
+    end
+
+    @testset "the held point is recognized through a view of the canonical state" begin
+        # the solve hands the system views of its canonical state: the
+        # residual sets the point through one, and the preconditioner's
+        # update sets it again through another. That point is the one the
+        # system holds, so what was evaluated there stays, and a point which
+        # moved is set.
+        JC = JosephsonCircuits
+        c = Circuit([(:p1, 1, 0, Port(1)), (:r, 1, 2, Resistor(20.0)),
+            (:jj, 2, 0, JosephsonJunction(1e-9)),
+            (:c2, 2, 0, Capacitor(1e-12))])
+        d = hbnlsolve(ws, (1,), [(mode = (1,), port = 1, current = 2e-6),
+            (mode = (0,), port = 1, current = 1e-7)], c, Dict{Any,Any}();
+            keyedarrays = false, dc = true, odd = true, returnsystem = true)
+        sys, L = d.sys, d.canonicalwork.layout
+        u = 0.1 .* sin.(1:JC.canonicaldim(L))
+        JC.residual!(zeros(L.rdim), JC.setpoint!(sys, JC.internalpart(u, L)))
+        JC.cosphimatrix(sys)
+        JC.setpoint!(sys, JC.internalpart(copy(u), L))
+        @test sys.sincurrent[] && sys.cosfdcurrent[]
+        u[1] += 0.01
+        JC.setpoint!(sys, JC.internalpart(u, L))
+        @test !sys.sincurrent[] && sys.xr == JC.internalpart(u, L)
     end
 
     # The operating point of a circuit with a direct current block, and the
@@ -866,30 +892,14 @@ seriesblock(Z) = ScatteringParameters(
         @test !iszero(dFr[end, 1])
 
         dx = JC.calcnodefluxsensitivity(op, dFr)
-        dv = JC.dcvoltagesensitivity(op, dFr)
 
         # against a central difference of a re-solve, in the same relative
         # parameter the sensitivity is taken in
         h = 1e-6
         sp = go(R2*(1+h)); sm = go(R2*(1-h))
-        fdv = (sp.dcnodevoltage .- sm.dcnodevoltage)./(2h)
         fdflux = (sp.nodeflux .- sm.nodeflux)./(2h)
-        @test isapprox(vec(dv), fdv; rtol = 1e-5, atol = 1e-12)
         @test isapprox(dx, fdflux; rtol = 1e-4,
             atol = 1e-8*maximum(abs, fdflux))
-
-        # the analytic value: two resistors in parallel carry the direct
-        # current, so d(R1||R2)/dlog(R2) is R2*R1^2/(R1+R2)^2
-        @test isapprox(maximum(abs, dv), Idc*R2*R1^2/(R1+R2)^2; rtol = 1e-6)
-
-        # a circuit with no block still answers, and has no voltages
-        plain = hbnlsolve(wp, (4,),
-            [(mode=(1,), port=1, current=Iac)], mk(R2), Dict{Any,Any}();
-            dc = true, odd = true, even = true, keyedarrays = false,
-            method = Newton(), returnoperatingpoint = true)
-        @test isnothing(plain.operatingpoint.dc)
-        @test isnothing(JC.dcvoltagesensitivity(plain.operatingpoint,
-            zeros(1,1)))
     end
 
     # The whole analysis, not just the nonlinear solve: `hbsolve` runs the
@@ -981,7 +991,7 @@ seriesblock(Z) = ScatteringParameters(
 
         # a two component block whose rows say only that the difference is
         # fixed: the sum is a direction no equation sees
-        singular = [1.0 -1.0; -1.0 1.0]
+        singular = sparse([1.0 -1.0; -1.0 1.0])
         L = JC.compositelayout(JC.ModeLayout([true], 4), [(0,)]; nvdc = nc)
         function work(Y, j)
             t = JC.TransportRows(plan, Y, j, real.coupling)
@@ -1045,5 +1055,111 @@ seriesblock(Z) = ScatteringParameters(
         @test hbnlsolve(ws, (1,), acsrc, c, Dict{Any,Any}();
             keyedarrays = false, dc = true, odd = true,
             returnoperatingpoint = true).solverinfo.converged
+    end
+
+    # The direct current subsystem has one unknown per floating island and
+    # one per block port current, so a chain of capacitively coupled
+    # islands, or a cascade of blocks, makes it as long as the circuit. It
+    # is assembled, classified and factorized sparse, block by block of its
+    # pattern, so a fourfold step allocates four times as much, not the
+    # sixteen or more of a dense subsystem's square or cube. The block's
+    # matrix form, which the canonical Jacobian and a device read off the
+    # residual, takes as many passes over it for the long chains as for the
+    # short ones.
+    @testset "a long chain of islands or of blocks" begin
+        islandchain(n) = Circuit(vcat(
+            Any[(:p1, 1, 0, Port(1; Z0 = 50.0)), (:r2, 2n, 0, Resistor(50.0))],
+            [(Symbol(:j, k), 2k - 1, 2k, JosephsonJunction(100e-12)) for k in 1:n],
+            [(Symbol(:ca, k), 2k - 1, 0, Capacitor(40e-15)) for k in 1:n],
+            [(Symbol(:cb, k), 2k, 0, Capacitor(40e-15)) for k in 1:n],
+            [(Symbol(:cc, k), 2k, 2k + 1, Capacitor(1e-12)) for k in 1:n-1]))
+        blockchain(n) = Circuit(vcat(
+            Any[(:p1, 1, 0, Port(1; Z0 = 50.0)), (:r2, 2n + 1, 0, Resistor(50.0))],
+            [(Symbol(:t, k), 2k - 1, 2k, seriesblock(10.0)) for k in 1:n],
+            [(Symbol(:j, k), 2k, 2k + 1, JosephsonJunction(100e-12)) for k in 1:n],
+            [(Symbol(:c, k), 2k + 1, 0, Capacitor(40e-15)) for k in 1:n]))
+        # the bytes of the setup after a warm call, and the passes the
+        # block's matrix form takes
+        function measure(make, n)
+            c = JosephsonCircuits.compile(make(n))
+            run() = hbnlsolve(ws, (1,), [(mode = (0,), port = 1, current = 1e-7)],
+                c, Dict{Any,Any}(); keyedarrays = false, dc = true, odd = true,
+                returnsystem = true)
+            passes = length(first(JosephsonCircuits.dcprobes(run().canonicalwork)))
+            return @allocated(run()), passes
+        end
+        for make in (islandchain, blockchain)
+            (b64, p64), (b256, p256) = measure(make, 64), measure(make, 256)
+            @test b256 < 6*b64
+            @test p256 == p64
+        end
+    end
+
+    # A floating chain of resistors longer than the blocks the subsystem
+    # decomposes by their singular values, so it is classified by sparse QR.
+    # Its common voltage is a gauge and is pinned: driven across a port of
+    # its own, the chain carries the drop of its resistance in parallel with
+    # the port's environment. Driven at one end alone, the current has
+    # nowhere to go, and it is refused.
+    @testset "a long floating chain is classified by sparse QR" begin
+        m, R, Z0, Idc = 80, 10.0, 50.0, 1.0e-6
+        chain(extra...) = Circuit(vcat(Any[(:p1, 1, m, Port(1; Z0 = Z0))],
+            [(Symbol(:r, k), k, k + 1, Resistor(R)) for k in 1:m-1],
+            [(Symbol(:c, k), k, 0, Capacitor(1e-12)) for k in 1:m], Any[extra...]))
+        sol = dcsolve(chain(), [(mode = (0,), port = 1, current = Idc)])
+        @test sol.solverinfo.converged
+        v = sol.dcnodevoltage
+        Rc = (m - 1)*R
+        @test isapprox(maximum(v) - minimum(v), Idc*Z0*Rc/(Z0 + Rc); rtol = 1e-9)
+        @test_throws ArgumentError dcsolve(chain((:i, 0, 1, CurrentSource(Idc))),
+            [(mode = (1,), port = 1, current = 1e-13)])
+    end
+
+    # The rank of the direct current subsystem is decided in the circuit's
+    # units. In the solver's an average voltage is V/phi0 and a block current
+    # I Lscale/phi0, and equilibrating the matrix as it stands leaves a row
+    # which mixes the two far out of balance, so that a well posed subsystem
+    # can be taken for a singular one. A resistor between a port and a
+    # resistive one port block: its subsystem, put in the circuit's units by
+    # the plan's voltage scale and equilibrated, has the singular values of
+    # the same equations written from the element values in volts and in
+    # amperes times the reference impedance. And a circuit of bias resistors
+    # from 114 ohm to 260 Mohm around two near-through sections, nonsingular,
+    # which was refused: a current driven through it develops its I*R.
+    @testset "the rank is decided in the circuit's units" begin
+        JC = JosephsonCircuits
+        Zp, R, Rb, z = 50.0, 30.0, 80.0, 50.0
+        load = ScatteringParameters(fill((Rb - z)/(Rb + z) + 0im, 1, 1); zref = z)
+        c = Circuit([(:p1, 1, 0, Port(1; Z0 = Zp)), (:c1, 1, 0, Capacitor(1e-12)),
+            (:c2, 2, 0, Capacitor(1e-12)), (:r, 1, 2, Resistor(R)), (:b, 2, load)])
+        w = hbnlsolve(ws, (1,), [(mode = (0,), port = 1, current = 1e-9)], c,
+            Dict{Any,Any}(); keyedarrays = false, dc = true, odd = true,
+            returnsystem = true).canonicalwork
+        B, _, _ = JC.equilibrate(JC.dcsubsystem(w), JC.nvoltages(w.transport),
+            w.transport.plan.voltagescale)
+        # Kirchhoff's law at the two nodes and the block's relation
+        # (1 - S) V/sqrt(z) - (1 + S) sqrt(z) I = 0, in V1, V2 and Z0*I, with
+        # Z0 the reference impedance, here the port's
+        S, Z0 = (Rb - z)/(Rb + z), Zp
+        M = [Z0/Zp + Z0/R  -Z0/R  0.0;
+             -Z0/R  Z0/R  1.0;
+             0.0  (1 - S)/sqrt(z)  -(1 + S)*sqrt(z)/Z0]
+        Mb, _, _ = JC.equilibrate(sparse(M), 0, 1.0)
+        @test svdvals(Matrix(B)) ≈ svdvals(Matrix(Mb)) rtol = 1e-10
+
+        I = 1e-9
+        bias = Circuit(vcat(Any[(:p1, 1, 0, Port(1; Z0 = 50.0))],
+            [(Symbol(:c, k), k, 0, Capacitor(1e-12)) for k in 1:6],
+            Any[(:r7, 2, 3, Resistor(34185.0)), (:r8, 2, 6, Resistor(800733.0)),
+            (:t9, 4, 2, seriesblock(0.019)), (:t10, 2, 5, seriesblock(0.038)),
+            (:r11, 6, 1, Resistor(113.74)), (:r12, 4, 2, Resistor(2.5752e8)),
+            (:i5, 0, 5, CurrentSource(I))]))
+        sol = dcsolve(bias, [(mode = (1,), port = 1, current = 1e-13)])
+        @test sol.solverinfo.converged
+        # the source's current has one way to ground: through t10, r8, r11
+        # and the port
+        names = JC.compile(bias).nodenames
+        v = Dict(n => sol.dcnodevoltage[k - 1] for (k, n) in enumerate(names) if k > 1)
+        @test v["2"] - v["6"] ≈ I*800733.0 rtol = 1e-8
     end
 end

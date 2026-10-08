@@ -148,7 +148,8 @@ their keys.
     (logarithmic) perturbation of each component in `sensitivitynames`, or
     of each design parameter when the sensitivity pair interface is used,
     at a fixed pump operating point or including the shift of the operating
-    point when `sensitivityoperatingpoint = true`.
+    point: by default from [`hbsolve`](@ref) (`sensitivityoperatingpoint`),
+    and from [`hblinsolve`](@ref) when it is given `sensitivityresidual`.
 - `QE`: the quantum efficiency at each combination of port, mode and
     frequency: `abs2(S[i,j])/(2*Vout[i,i])`, the photon gain over twice the
     noise at the output, with every input in its state, the input `j`
@@ -167,8 +168,10 @@ their keys.
     back toward the device there. Its axes are those of `CM`.
 - `nodeflux`: the node fluxes resulting from a unit current source at each
     port and mode.
-- `nodefluxadjoint`: the node fluxes of the adjoint (time reversed
-    modulation) problem.
+- `nodefluxadjoint`: the node fluxes of the adjoint problem, the
+    transposed linearized system driven by a unit current source at each
+    port and mode, which the noise outputs read (see
+    [`assemblesystemmatrix!`](@ref)).
 - `voltage`: the node voltages resulting from a unit current source at
     each port and mode.
 - `voltageadjoint`: the node voltages of the adjoint problem.
@@ -266,7 +269,8 @@ const _DOC_RTOL = """
 - `rtol = 0.0`: a relative residual tolerance; the nonlinear solve is
     converged when `norm(F) <= max(atol, rtol*norm(F0))` with `F0` the
     initial residual. It applies to the direct and Krylov methods; a
-    `Staged` method holds its stages to `atol` and ignores it."""
+    `Staged` method ignores it, holding its final solve to `atol` and its
+    interior stages to its own `interioratol`."""
 
 const _DOC_WARNNOTCONVERGED = """
 - `warnnotconverged = true`: warn when the nonlinear solve does not
@@ -284,8 +288,9 @@ const _DOC_METHOD = """
     approximation, with Anderson acceleration), [`Staged`](@ref) (source
     continuation on an adaptively grown harmonic grid, see
     [`stagedhbnlsolve`](@ref), the strategy for operating points the
-    direct methods fail outright and the one that distinguishes a hard
-    operating point from a nonexistent one) or [`ExternalSolver`](@ref)."""
+    direct methods fail outright; a search which ends without the point
+    reports where it stalled, which does not prove that no operating point
+    exists) or [`ExternalSolver`](@ref)."""
 
 const _DOC_RETURNS = """
 - `returnS = true`: return the scattering parameters of the linearized
@@ -303,8 +308,8 @@ const _DOC_RETURNS = """
 - `returnnodeflux = false`, `returnvoltage = false`: return the node fluxes
     and voltages of the linearized solve.
 - `returnnodefluxadjoint = false`, `returnvoltageadjoint = false`: return
-    the node fluxes and voltages of the adjoint (time reversed modulation)
-    linearized solve.
+    the node fluxes and voltages of the adjoint linearized solve, the
+    transposed system driven at each port and mode.
 - `keyedarrays = true`: return the outputs as keyed arrays with named,
     labeled axes rather than plain arrays."""
 
@@ -351,8 +356,8 @@ const _DOC_SENSMODE = """
     components outnumber the output port and mode pairs eight times over,
     or when the forward order's stamps, a value per stored entry of the
     linearized system per component, would exceed
-    [`FORWARDSENSITIVITYSTAMPBYTES`](@ref), and none is a scattering block
-    parameter, which `:reverse` does not take. Both support any number of
+    [`FORWARDSENSITIVITYSTAMPBYTES`](@ref). Both take the parameters of
+    scattering blocks as they take components, and support any number of
     pumps."""
 
 const _DOC_SSENS = """
@@ -386,22 +391,32 @@ const _DOC_LINBACKEND = """
     the whole adjoint solution copied back."""
 
 """
-    checksweepoptions(psc, backend, factorization, temperature,
-        sensitivitynames, sensitivitypairs, sensitivityblockpairs,
-        nsensitivityparameters, sensitivitymode, returnSsensitivity)
-
-Refuse, before the pump is solved, the options of the sweep which
-[`hblinsolve`](@ref) would refuse only after it: a temperature which is
-not finite and nonnegative, an unknown `sensitivitymode`, sensitivity
-pairs without `nsensitivityparameters` or beside `sensitivitynames`, a
-[`CUDSSFactorization`](@ref) for a sweep on the host, and, when the
-sensitivities are asked for, a component named for one which is not a
-capacitor, an inductor, a resistor or a junction.
-"""
-function checksweepoptions(psc::CompiledCircuit, backend, factorization,
+    checksweepoptions(w, nbatches, psc, backend, factorization,
         temperature, sensitivitynames, sensitivitypairs,
         sensitivityblockpairs, nsensitivityparameters, sensitivitymode,
+        returnSsensitivity)
+
+Refuse the inputs and options of the sweep which do not need the pump
+before anything is built: [`hblinsolve`](@ref) checks them first, and
+[`hbsolve`](@ref) before it solves the pump. Refused are signal
+frequencies which are not finite or none at all, fewer than one batch, a
+temperature which is not finite and nonnegative, an unknown
+`sensitivitymode`, sensitivity pairs without `nsensitivityparameters` or
+beside `sensitivitynames`, a [`CUDSSFactorization`](@ref) for a sweep on
+the host, a [`QRfactorization`](@ref), whose factors have no transposed
+solve ([`trysolvetranspose!`](@ref)) for the outputs which read the noise,
+the sensitivities or the adjoint node outputs, and, when the
+sensitivities are asked for, a component named for one which is not a
+capacitor, an inductor, a resistor or a junction, where a pair may also
+name a port which owns no termination.
+"""
+function checksweepoptions(w, nbatches, psc::CompiledCircuit, backend,
+        factorization, temperature, sensitivitynames, sensitivitypairs,
+        sensitivityblockpairs, nsensitivityparameters, sensitivitymode,
         returnSsensitivity::Bool)
+    all(isfinite, w) || throw(ArgumentError("All signal frequencies must be finite."))
+    isempty(w) && throw(ArgumentError("At least one signal frequency is required."))
+    nbatches >= 1 || throw(ArgumentError(lazy"`nbatches` = $(nbatches) must be at least 1."))
     checktemperature(temperature, "the keyword `temperature`")
     sensitivitymode in (:auto, :forward, :reverse) || throw(ArgumentError(
         lazy"sensitivitymode must be :auto, :forward or :reverse, not $(sensitivitymode)."))
@@ -413,15 +428,27 @@ function checksweepoptions(psc::CompiledCircuit, backend, factorization,
     end
     if returnSsensitivity
         for name in Iterators.flatten((sensitivitynames,
-                (t[1] for t in sensitivitypairs)))
-            i = componentindex(psc, name)
+                (t[1] for t in sensitivitypairs
+                    if !unterminatedport(psc, t[1]))))
+            i = sensitivitycomponentindex(psc, name)
             psc.componenttypes[i] in (:C, :L, :R, :Lj) || throw(ArgumentError(
                 lazy"Sensitivities are only supported for C, L, R, and Lj components, not $(psc.componenttypes[i]), the type of $(psc.componentnames[i])."))
         end
     end
     factorization isa CUDSSFactorization && backend isa CPU &&
         throw(ArgumentError(lazy"the sweep runs on the host on the backend $(backend), and CUDSSFactorization factorizes on a device; leave `factorization` to its default or pass a host factorization such as KLUfactorization()."))
+    factorization isa QRfactorization && throw(ArgumentError(
+        "the sweep solves the transposed system on the factors of each frequency, which QRfactorization() does not provide; leave `factorization` to its default or pass KLUfactorization() or LUfactorization()."))
     return nothing
+end
+
+# the flat index of the component a sensitivity names; a scattering block
+# has no scalar value to perturb and is named through a block derivative
+function sensitivitycomponentindex(psc::CompiledCircuit, name)
+    haskey(psc.componentnamedict, string(name)) ||
+        iszero(scatteringblockindex(psc, name)) || throw(ArgumentError(
+        lazy"Sensitivities with respect to scattering blocks require a block derivative; got $(name) as a plain component."))
+    return componentindex(psc, name)
 end
 
 """
@@ -501,17 +528,27 @@ nonzero frequencies instead.
 
 # Keywords
 - `dc = false`: retain the zero frequency mode in the nonlinear solve. A
-    `CurrentSource` component of the netlist is a constant current, out
-    of its first terminal and into its second, which drives this mode; a
-    nonzero one without the mode is an error.
-- `threewavemixing = false`: retain the even pump harmonics, which are
-    what three wave mixing processes couple through.
-- `fourwavemixing = true`: retain the odd pump harmonics.
-- `maxpumpintermodorder = Inf`: keep only the pump modes whose harmonic
-    indices have an absolute sum of at most this order, a diamond
-    truncation of the multi-pump Fourier space.
+    [`CurrentSource`](@ref) component of the netlist drives this mode with
+    a constant current through itself from its first terminal to its
+    second: it draws the current from the node at its first terminal and
+    delivers it to the node at its second, the opposite sense of a port
+    source, which injects its current into the port's first (positive)
+    terminal. A nonzero one without the mode is an error.
+- `threewavemixing = false`: retain the even pump harmonics in the
+    nonlinear solve, which are what three wave mixing processes couple
+    through, and the signal modes offset from the signal by odd pump
+    harmonics, the idlers of three wave mixing.
+- `fourwavemixing = true`: retain the odd pump harmonics in the nonlinear
+    solve, and the signal modes offset by even pump harmonics, the idlers
+    of four wave mixing.
+- `maxpumpintermodorder = Inf`: keep a pump mode which mixes two or more
+    pumps only when its absolute harmonic indices sum to at most this
+    order. Every harmonic of a single pump is kept up to its count in
+    `Npumpharmonics` whatever the order, so with one pump it removes
+    nothing (see [`truncfreqs`](@ref)).
 - `maxmodulationintermodorder = Inf`: the same truncation for the signal
-    modes.
+    modes, every offset by the harmonics of a single pump kept up to its
+    cap in `maxmodulationharmonics`.
 - `Nevaluationharmonics = map(i -> 2i, Npumpharmonics)`: the
     harmonics of each pump on the grid where the nonlinearity is sampled,
     at least `Npumpharmonics`; twice the retained set by default, which
@@ -533,8 +570,8 @@ $(_DOC_FTOL)
 $(_DOC_RTOL)
 $(_DOC_METHOD)
 - `x0 = nothing`: an initial value for the node fluxes of the nonlinear
-    solve, used by the direct and Krylov methods; a `Staged` method builds
-    its own warm starts and ignores it.
+    solve, used by the direct and Krylov methods; a `Staged` method warm
+    starts each stage from the last and refuses it.
 $(_DOC_WARNNOTCONVERGED)
 $(_DOC_NBATCHES)
 $(_DOC_RETURNS)
@@ -554,19 +591,20 @@ $(_DOC_SENSMODE)
     operating point contribution is identically zero and is skipped.
 $(_DOC_SSENS)
 - `factorization = nothing`: the factorization of the linearized solve at
-    each signal frequency. `nothing` chooses by the number of tones and
-    the memory, by the same kind of rule [`Automatic`](@ref) applies to
-    the nonlinear solve (but in double precision, and counting one system
-    per host batch): the backend's sparse factorization
-    ([`KLUfactorization`](@ref) on the host, [`CUDSSFactorization`](@ref)
-    on a device) for one tone, and [`BlockFactorization`](@ref), the dense
-    node blocks of the multi-tone system with BLAS-3 arithmetic, for two
-    or more tones when its factors fit in half the free memory
-    ([`linearizedfactorization`](@ref)). Any of them can be given
-    explicitly; on a device the choice also picks the solver of the
-    batch, cuDSS for a sparse factorization and the batched block
-    factorization for a `BlockFactorization`. The nonlinear solve's
-    factorization is an option of its `method`.
+    each signal frequency. `nothing` takes the backend's sparse
+    factorization for one tone, [`KLUfactorization`](@ref) on the host and
+    cuDSS ([`CUDSSFactorization`](@ref)) on a device, and for two or more
+    tones [`BlockFactorization`](@ref), the dense node blocks of the
+    multi-tone system with BLAS-3 arithmetic, when its factors fit in half
+    the free memory ([`linearizedfactorization`](@ref)). Any of them can
+    be given explicitly. The block factorization pivots only within its
+    dense blocks and stops at a singular one: chosen by `nothing`, the
+    sweep then runs again on the sparse factorization, and given
+    explicitly it throws. On a device the choice also picks the
+    solver of the batch, cuDSS for a sparse factorization and the batched
+    block factorization for a `BlockFactorization`.
+    [`QRfactorization`](@ref) is refused (see [`hblinsolve`](@ref)). The
+    nonlinear solve's factorization is an option of its `method`.
     The precision of the linearized solutions is the factorization's:
     `BlockFactorization(precision = Float32, refine = false)` solves each
     signal frequency entirely in single precision (see
@@ -608,11 +646,12 @@ end
         Npumpharmonics::NTuple{N,Int}, psc::CompiledCircuit,
         circuitdefs::Dict{Any,Any}; kwargs...)
 
-The general method on a compiled circuit `psc`, with
-the inputs in their canonical forms ([`sweepfrequencies`](@ref),
-[`tonefrequencies`](@ref), [`sourcetable`](@ref),
-[`definitiontable`](@ref)). It takes every keyword of the general
-method.
+The method on a compiled circuit `psc` with the inputs in their
+canonical forms ([`sweepfrequencies`](@ref), [`tonefrequencies`](@ref),
+[`sourcetable`](@ref), [`definitiontable`](@ref)). The method on a
+`Circuit` converts its inputs and calls this one, so that the solve is
+compiled once for every way of writing them; it takes the keywords
+documented for that method.
 """
 function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     sources::Vector{SourceTuple{N}},
@@ -649,23 +688,32 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     returnZsensitivityadjoint = nothing,
     factorization = nothing, backend = CPU()) where {N,M}
 
-    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    # the deprecations of this call, the symbolic frequency variable here
+    # and the keywords below, warn together; in circuit/legacy.jl
+    deprecations = String[]
     isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
-        circuitdefs, symfreqvar, :hbsolve))
+        circuitdefs, symfreqvar, deprecations))
 
     # the signal modes are modulation harmonics of each pump tone, so there
     # is one count per tone; checked before the pump is solved, as is every
     # input of the sweep which does not need the pump
     M == N || throw(ArgumentError(lazy"`Nmodulationharmonics` = $(Nmodulationharmonics) gives $(M) tones but there are $(N) pump frequencies."))
-    checksweepinputs(ws, nbatches)
-    checksweepoptions(psc, backend, factorization, temperature,
-        sensitivitynames, sensitivitypairs, sensitivityblockpairs,
-        nsensitivityparameters, sensitivitymode, returnSsensitivity)
+    # the continuation warm starts each of its stages from the last, so a
+    # start has nothing to apply to
+    method isa Staged && !isnothing(x0) && throw(ArgumentError(
+        "`method = Staged()` warm starts each stage from the last and takes no `x0`; solve with the method of its stages to start from a point."))
+    checksweepoptions(ws, nbatches, psc, backend, factorization,
+        temperature, sensitivitynames, sensitivitypairs,
+        sensitivityblockpairs, nsensitivityparameters, sensitivitymode,
+        returnSsensitivity)
 
-    # the deprecated keywords warn, whichever method solves the pump, and
-    # `ftol` is read as `atol`; in circuit/legacy.jl
-    atol = deprecatedsolverkeywords(:hbsolve, atol; ftol,
+    # the deprecated keywords join them whichever method solves the pump,
+    # and `ftol` is read as `atol`
+    atol = deprecatedsolverkeywords(deprecations, atol; ftol,
         switchofflinesearchtol, alphamin, maxpumpharmonics)
+    removedimpedancekeywords(deprecations; returnZ, returnZadjoint,
+        returnZsensitivity, returnZsensitivityadjoint)
+    warndeprecations(deprecations, :hbsolve)
 
     # the pump modes: harmonics of each pump and their intermodulation
     # products, truncated, with the conjugate (negative frequency) modes
@@ -772,10 +820,7 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
         sensitivitylabels = sensitivitylabels,
         sensitivityresidual = sensitivityresidual,
         sensitivitymode = sensitivitymode,
-        returnSsensitivity = returnSsensitivity, returnZ = returnZ,
-        returnZadjoint = returnZadjoint,
-        returnZsensitivity = returnZsensitivity,
-        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        returnSsensitivity = returnSsensitivity,
         factorization = factorization, backend = backend)
 
     return HB(nonlinear, linearized)

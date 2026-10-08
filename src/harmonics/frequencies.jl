@@ -41,55 +41,31 @@ Base.@propagate_inbounds Base.getindex(D::ModeDifferences, i::Int,
     j::Int) = D.modes[i] .- D.modes[j]
 
 """
-    ModeIndices{N} <: AbstractMatrix{Int}
-
-The index matrix of [`hbmatind`](@ref) without aliasing, computed when an
-entry is read rather than stored: the position of the mode difference of
-each pair in the frequency domain array of the untruncated grid, negative
-for a conjugate and zero for a difference the grid does not hold.
-
-# Fields
-- `differences`: the [`ModeDifferences`](@ref) of the modes.
-- `modesdict`: the position of each mode of the untruncated grid.
-- `Nt`: the time samples of each dimension of the grid.
-"""
-struct ModeIndices{N} <: AbstractMatrix{Int}
-    differences::ModeDifferences{N}
-    modesdict::Dict{NTuple{N,Int},Int}
-    Nt::NTuple{N,Int}
-end
-
-Base.size(M::ModeIndices) = size(M.differences)
-Base.@propagate_inbounds Base.getindex(M::ModeIndices, i::Int, j::Int) =
-    storedmodeindex(M.modesdict, M.differences[i, j], M.Nt, false)
-
-"""
     FourierIndices(vectomatmap::Vector{Int}, conjsourceindices::Vector{Int},
         conjtargetindices::Vector{Int}, hbmatmodes::ModeDifferences{N},
-        hbmatindices::ModeIndices{N}, hbconjmatindices::Matrix{Int})
+        hbconjmatindices::Matrix{Int})
 
 A simple structure to hold time and frequency domain information for the
 signals, particularly the indices for converting between the node flux vectors
-and matrices. The `hbmatmodes` and `hbmatindices` matrices are built from the
-differences of the modes and describe the coupling between the modes (the
-derivative of the residual with respect to the node fluxes), while the
-`hbconjmatindices` matrix is built from the sums of the modes, aliased back
-onto the sampled grid, and describes the coupling between the modes and the
-complex conjugates of the modes (the derivative of the residual with respect
-to the complex conjugates of the node fluxes).
+and matrices. The `hbmatmodes` matrix holds the differences of the modes,
+which describe the coupling between the modes (the derivative of the residual
+with respect to the node fluxes), while the `hbconjmatindices` matrix is built
+from the sums of the modes, aliased back onto the sampled grid, and describes
+the coupling between the modes and the complex conjugates of the modes (the
+derivative of the residual with respect to the complex conjugates of the node
+fluxes).
 
-The first two are computed entry by entry when read
-([`ModeDifferences`](@ref), [`ModeIndices`](@ref)): a solve reads the
-differences to alias them and to select the preconditioner's bands, and
-the unaliased indices only for the holomorphic Jacobian, which collects
-them. See also [`fourierindices`](@ref).
+The differences are computed entry by entry when read
+([`ModeDifferences`](@ref)): a solve places them on the sampled grid with
+[`hbmatindices`](@ref), with aliasing for the exact Jacobian and without it
+for the holomorphic one, and selects the preconditioner's bands by them.
+See also [`fourierindices`](@ref).
 """
 struct FourierIndices{N}
     vectomatmap::Vector{Int}
     conjsourceindices::Vector{Int}
     conjtargetindices::Vector{Int}
     hbmatmodes::ModeDifferences{N}
-    hbmatindices::ModeIndices{N}
     hbconjmatindices::Matrix{Int}
 end
 
@@ -106,11 +82,8 @@ function fourierindices(freq::Frequencies)
 
     freqindexmap, conjsourceindices, conjtargetindices =
         calcphiindices(freq, conjsym(freq))
-    # the differences of the modes and their unaliased positions, read from
-    # the untruncated grid as `hbmatind` reads them
+    # the differences of the modes, computed when an entry is read
     Amatrixmodes = ModeDifferences(freq.modes)
-    grid = calcfreqs(freq.Nharmonics, freq.Nw, freq.Nt)
-    Amatrixindices = ModeIndices(Amatrixmodes, modeindexdict(grid), grid.Nt)
     Amatrixconjindices = hbconjmatind(freq)
 
     return FourierIndices(
@@ -118,7 +91,6 @@ function fourierindices(freq::Frequencies)
         conjsourceindices,
         conjtargetindices,
         Amatrixmodes,
-        Amatrixindices,
         Amatrixconjindices,
     )
 end
@@ -402,40 +374,6 @@ function calcmodefreqs(w::NTuple{N,Any},modes::Vector{NTuple{N,Int}}) where N
 end
 
 """
-    visualizefreqs(w::NTuple{N,Any}, freq::Frequencies{N})
-
-Create a vector or array containing the mixing products for visualization
-purposes.
-
-# Examples
-```jldoctest
-w = (1.1,1.2)
-freq = JosephsonCircuits.truncfreqs(
-    JosephsonCircuits.calcfreqsrdft((3,3)),
-        dc=true, odd=true, even=true, maxintermodorder=3,
-)
-JosephsonCircuits.visualizefreqs(w,freq)
-
-# output
-4×7 Matrix{Float64}:
- 0.0  1.2  2.4  3.6  -3.6  -2.4  -1.2
- 1.1  2.3  3.5  0.0   0.0  -1.3  -0.1
- 2.2  3.4  0.0  0.0   0.0   0.0   1.0
- 3.3  0.0  0.0  0.0   0.0   0.0   0.0
-```
-"""
-function visualizefreqs(w::NTuple{N,Any}, freq::Frequencies{N}) where N
-    wmodes = calcmodefreqs(w,freq.modes)
-
-    s = zeros(eltype(wmodes),freq.Nw)
-    for (i,coord) in enumerate(freq.coords)
-        s[coord] = wmodes[i]
-    end
-
-    return s
-end
-
-"""
     conjsym(Nw::NTuple{N, Int}, Nt::NTuple{N, Int})
 
 Calculate the conjugate symmetries in the multi-dimensional frequency domain
@@ -471,89 +409,6 @@ function conjsym(frequencies::Frequencies{N}) where N
 end
 
 """
-    printsymmetries(Nw::NTuple{N, Int}, Nt::NTuple{N, Int})
-
-Print the conjugate symmetries in the multi-dimensional DFT or RDFT from the
-dimensions of the signal in the frequency domain and the time domain. Negative numbers
-indicate that element is the complex conjugate of the corresponding positive
-number. A zero indicates that element has no corresponding complex conjugate.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.printsymmetries((3,),(4,))
-3-element Vector{Int64}:
- 0
- 0
- 0
-
-julia> JosephsonCircuits.printsymmetries((4,),(4,))
-4-element Vector{Int64}:
-  0
-  1
-  0
- -1
-
-julia> JosephsonCircuits.printsymmetries((3,3),(4,3))
-3×3 Matrix{Int64}:
- 0  1  -1
- 0  0   0
- 0  2  -2
-
-julia> JosephsonCircuits.printsymmetries((4,3),(4,3))
-4×3 Matrix{Int64}:
-  0   2  -2
-  1   3   5
-  0   4  -4
- -1  -5  -3
-```
-"""
-function printsymmetries(Nw::NTuple{N, Int}, Nt::NTuple{N, Int}) where N
-
-    d=conjsym(Nw,Nt)
-
-    z=zeros(Int,Nw)
-    i = 1
-    for (key,val) in sort(OrderedCollections.OrderedDict(d))
-        z[key] = i
-        z[val] = -i
-        i+=1
-    end
-    return z
-end
-
-"""
-    printsymmetries(freq::Frequencies)
-
-See  [`printsymmetries`](@ref).
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsrdft((2,)))
-3-element Vector{Int64}:
- 0
- 0
- 0
-
-julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsdft((2,)))
-5-element Vector{Int64}:
-  0
-  1
-  2
- -2
- -1
-
-julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsrdft((2,2)))
-3×5 Matrix{Int64}:
- 0  1  2  -2  -1
- 0  0  0   0   0
- 0  0  0   0   0
-```
-"""
-function printsymmetries(freq::Frequencies)
-    return printsymmetries(freq.Nw, freq.Nt)
-end
-
-"""
     calcphiindices(frequencies::Frequencies{N},
         conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}})
 
@@ -577,8 +432,8 @@ vector to `conjtargetindices` in the array then complex conjugated.
 
 # Examples
 ```jldoctest
-freq = JosephsonCircuits.Frequencies{2}((4, 3), (5, 7), (8, 7), CartesianIndex{2}[CartesianIndex(2, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(3, 2), CartesianIndex(2, 3), CartesianIndex(1, 4), CartesianIndex(2, 6), CartesianIndex(3, 7)], [(1, 0), (3, 0), (0, 1), (2, 1), (1, 2), (0, 3), (1, -2), (2, -1)])
-conjsymdict = Dict{CartesianIndex{2}, CartesianIndex{2}}(CartesianIndex(5, 4) => CartesianIndex(5, 5), CartesianIndex(1, 3) => CartesianIndex(1, 6), CartesianIndex(5, 2) => CartesianIndex(5, 7), CartesianIndex(1, 4) => CartesianIndex(1, 5), CartesianIndex(1, 2) => CartesianIndex(1, 7), CartesianIndex(5, 3) => CartesianIndex(5, 6))
+freq = JosephsonCircuits.Frequencies{2}((4, 3), (5, 7), (9, 7), CartesianIndex{2}[CartesianIndex(2, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(3, 2), CartesianIndex(2, 3), CartesianIndex(1, 4), CartesianIndex(2, 6), CartesianIndex(3, 7)], [(1, 0), (3, 0), (0, 1), (2, 1), (1, 2), (0, 3), (1, -2), (2, -1)])
+conjsymdict = Dict{CartesianIndex{2}, CartesianIndex{2}}(CartesianIndex(1, 2) => CartesianIndex(1, 7), CartesianIndex(1, 3) => CartesianIndex(1, 6), CartesianIndex(1, 4) => CartesianIndex(1, 5))
 JosephsonCircuits.calcphiindices(freq, conjsymdict)
 
 # output
@@ -824,85 +679,33 @@ function applyrelationnl!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
     return nothing
 end
 
-applyrelationnl!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T},
-    ::AbstractArray{T}, relations, coefficients, trig, ::Nothing,
-    ::Nothing) where T = fd
-
 """
-    hbmatind(truncfrequencies::Frequencies{N}; alias = false)
+    hbmatindices(frequencies::Frequencies{N},
+        Amatrixmodes::AbstractMatrix{NTuple{N,Int}}; alias::Bool = false)
 
-With `alias = true` a difference mode which falls outside the sampled grid
-is aliased back onto it by the periodicity of the discrete transform
-([`aliasmode`](@ref)) rather than dropped; the linearized solver uses
-`alias = false`, which makes the assembled matrix an explicit truncation.
-Returns the modes of the harmonic balance matrix and a matrix describing
-which indices of the frequency domain matrix (from the RFFT) to pull out and
-use in it. A negative
-index means we take the complex conjugate of that element. A zero index means
-that term is not present, so skip it. The harmonic balance matrix describes
-the coupling between different frequency modes.
+The index matrix of the harmonic balance matrix, which describes the
+coupling between the modes: for the mode difference of each pair of modes
+in `Amatrixmodes` (the [`ModeDifferences`](@ref) of the retained modes),
+the element of the frequency domain array of the untruncated grid
+`frequencies` (from the RFFT or FFT) that coupling reads. A negative index
+means the complex conjugate of that element is taken, and a zero index
+that the term is not present, so it is skipped. With `alias = true` a
+difference which falls outside the sampled grid is aliased back onto it by
+the periodicity of the discrete transform ([`aliasmode`](@ref)) rather than
+dropped; the linearized solver uses `alias = false`, which makes the
+assembled matrix an explicit truncation. The differences are an argument
+so that a solve which needs the indices both with and without aliasing
+forms them once.
 
 # Examples
 ```jldoctest
-julia> freq = JosephsonCircuits.calcfreqsrdft((5,));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(freq;dc=false,odd=true,even=false,maxintermodorder=2)))[2]
-3×3 Matrix{Int64}:
- 1  -3  -5
- 3   1  -3
- 5   3   1
-
-julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[2]
-4×4 Matrix{Int64}:
- 1  -2  -3  -4
- 2   1  -2  -3
- 3   2   1  -2
- 4   3   2   1
-
-julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[1]
-7×7 Matrix{Tuple{Int64, Int64}}:
- (0, 0)   (-1, 0)  (-2, 0)   (0, -1)  (-1, -1)  (0, -2)  (-1, 1)
- (1, 0)   (0, 0)   (-1, 0)   (1, -1)  (0, -1)   (1, -2)  (0, 1)
- (2, 0)   (1, 0)   (0, 0)    (2, -1)  (1, -1)   (2, -2)  (1, 1)
- (0, 1)   (-1, 1)  (-2, 1)   (0, 0)   (-1, 0)   (0, -1)  (-1, 2)
- (1, 1)   (0, 1)   (-1, 1)   (1, 0)   (0, 0)    (1, -1)  (0, 2)
- (0, 2)   (-1, 2)  (-2, 2)   (0, 1)   (-1, 1)   (0, 0)   (-1, 3)
- (1, -1)  (0, -1)  (-1, -1)  (1, -2)  (0, -2)   (1, -3)  (0, 0)
-
-julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[2]
-7×7 Matrix{Int64}:
-  1   -2   -3  13   -5  10  -14
-  2    1   -2  14   13  11    4
-  3    2    1  15   14  12    5
-  4  -14  -15   1   -2  13  -11
-  5    4  -14   2    1  14    7
-  7  -11  -12   4  -14   1    0
- 14   13   -5  11   10   0    1
-```
-"""
-function hbmatind(truncfrequencies::Frequencies{N}; alias::Bool = false) where N
-    frequencies = calcfreqs(truncfrequencies.Nharmonics,
-        truncfrequencies.Nw, truncfrequencies.Nt)
-    return hbmatind(frequencies, truncfrequencies; alias = alias)
-end
-
-"""
-    hbmatind(frequencies::Frequencies{N},
-        truncfrequencies::Frequencies{N}; alias::Bool = false)
-
-Returns the modes of the harmonic balance matrix and a matrix describing
-which indices of the frequency domain matrix (from the RFFT or FFT) to pull
-out and use in it. A negative index means we take the complex conjugate of that element. A zero
-index means that term is not present, so skip it. The harmonic balance matrix
-describes the coupling between different frequency modes.
-
-# Examples
-```jldoctest
-pumpfreq = JosephsonCircuits.truncfreqs(
-    JosephsonCircuits.calcfreqsrdft((4,)))
+pumpfreq = JosephsonCircuits.calcfreqsrdft((4,))
 signalfreq = JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsdft((4,));
     dc=false,odd=true,even=false,maxintermodorder=2,
 )
-JosephsonCircuits.hbmatind(pumpfreq, signalfreq)[2]
+JosephsonCircuits.hbmatindices(pumpfreq,
+    JosephsonCircuits.ModeDifferences(signalfreq.modes))
 
 # output
 4×4 Matrix{Int64}:
@@ -912,13 +715,13 @@ JosephsonCircuits.hbmatind(pumpfreq, signalfreq)[2]
  -3  -5  3   1
 ```
 ```jldoctest
-pumpfreq = JosephsonCircuits.truncfreqs(
-    JosephsonCircuits.calcfreqsrdft((4,)))
+pumpfreq = JosephsonCircuits.calcfreqsrdft((4,))
 signalfreq = JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsdft((4,));
     dc=false,odd=true,even=false,maxintermodorder=2,
 )
-JosephsonCircuits.hbmatind(pumpfreq, signalfreq;alias = true)[2]
+JosephsonCircuits.hbmatindices(pumpfreq,
+    JosephsonCircuits.ModeDifferences(signalfreq.modes); alias = true)
 
 # output
 4×4 Matrix{Int64}:
@@ -927,29 +730,6 @@ JosephsonCircuits.hbmatind(pumpfreq, signalfreq;alias = true)[2]
  -5   4   1  -3
  -3  -5   3   1
 ```
-"""
-function hbmatind(frequencies::Frequencies{N},
-    truncfrequencies::Frequencies{N}; alias::Bool = false) where N
-
-    truncmodes = truncfrequencies.modes
-
-    # the mode difference of each pair of modes, which is the mode the
-    # Fourier coefficient coupling them is read from
-    Amatrixmodes = [truncmodes[i] .- truncmodes[j]
-        for i in eachindex(truncmodes), j in eachindex(truncmodes)]
-
-    return Amatrixmodes, hbmatindices(frequencies, Amatrixmodes;
-        alias = alias)
-end
-
-"""
-    hbmatindices(frequencies::Frequencies{N},
-        Amatrixmodes::AbstractMatrix{NTuple{N,Int}}; alias::Bool = false)
-
-The index matrix of [`hbmatind`](@ref) for the mode differences
-`Amatrixmodes` it returns, read from the untruncated grid `frequencies`,
-so that a solve which needs the indices both with and without aliasing
-forms the differences once.
 """
 function hbmatindices(frequencies::Frequencies{N},
     Amatrixmodes::AbstractMatrix{NTuple{N,Int}}; alias::Bool = false) where N
@@ -1071,7 +851,7 @@ sampled grid, and describes the coupling between the modes and the
 complex conjugates of the modes (the derivative of the residual with
 respect to the complex conjugates of the node fluxes). A negative index
 means we take the complex conjugate of that element. A zero index means
-that term is not present, so skip it. See also [`hbmatind`](@ref).
+that term is not present, so skip it. See also [`hbmatindices`](@ref).
 
 # Examples
 ```jldoctest
@@ -1099,7 +879,7 @@ matrix, which is built from the sums of the modes
 `truncfrequencies.modes[i] + truncfrequencies.modes[j]`, aliased back
 onto the sampled grid described by `frequencies`. A negative index means
 we take the complex conjugate of that element. A zero index means that
-term is not present, so skip it. See also [`hbmatind`](@ref).
+term is not present, so skip it. See also [`hbmatindices`](@ref).
 """
 function hbconjmatind(frequencies::Frequencies{N},
     truncfrequencies::Frequencies{N}) where N

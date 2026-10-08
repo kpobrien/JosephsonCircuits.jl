@@ -5,11 +5,28 @@ Bias a SQUID through a mutual inductor and apply a pump near twice its resonance
 Requires `JosephsonCircuits` and `Plots`. The optional comparison uses
 WRspice through `XicTools_jll`, or a local WRspice installation.
 
-Figures and timings come from the original reference run using 16 threads
-on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
-and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
-
 Circuit and parameters from [Yamamoto et al. (2008)](https://doi.org/10.1063/1.2964182).
+A resonator, `lr` and `cr`, ends in a SQUID of the junctions `jj1` and
+`jj2` and the loop inductance `ll`; port 2, of 1 kΩ, drives the bias line
+`ldc`, coupled to `ll` by `k1`, with the direct current and the pump:
+
+```text
+ 1          2          3                 4
+ o---[cc]---o---[lr]---o-------[ll]------o
+ |          |          |                 |
+[p1]      [cr]   [jj1 || cj1]      [jj2 || cj2]
+ |          |          |                 |
+ o----------o----------o-----------------o
+ 0
+
+ 5
+ o
+ |
+[p2 || ldc]      ldc coupled to ll by k1
+ |
+ o
+ 0
+```
 
 ```@example fluxpump
 using JosephsonCircuits
@@ -52,7 +69,7 @@ nothing # hide
 The full sweep and plotting commands continue this setup:
 
 ```julia
-@time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
+jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
     Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 @assert jpapumpon.nonlinear.solverinfo.converged
 
@@ -71,10 +88,6 @@ plot(
     ylabel="Gain (dB)",
     label="JosephsonCircuits.jl",
 )
-```
-
-```
-  0.015623 seconds (22.07 k allocations: 80.082 MiB)
 ```
 
 ## A small executable check
@@ -102,17 +115,13 @@ using XicTools_jll
 wswrspice=2*pi*(9.7:0.005:9.8)*1e9
 n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[0.0,wp[1]],[Idc,2*Ip],[(0,1)],[(0,5),(0,5)];trise=10e-9,tstop=600e-9);
-@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
 S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
 
 # plot the output
 plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     label="WRspice",
     seriestype=:scatter)
-```
-
-```
-283.557011 seconds (26.76 k allocations: 7.205 GiB, 0.66% gc time)
 ```
 
 ![Flux pumped JPA simulation with JosephsonCircuits.jl and WRspice](../assets/examples/jpa_flux_pumped_WRspice.png)
@@ -128,7 +137,7 @@ Ip=0.0
 Npumpharmonics = (1,)
 Nmodulationharmonics = (1,)
 
-@time for (k,Idc) in enumerate(currentvals)
+for (k,Idc) in enumerate(currentvals)
     sources = [
           (mode=(0,),port=2,current=Idc),
           (mode=(1,),port=2,current=Ip),
@@ -147,10 +156,6 @@ plot(
     ylabel="frequency (GHz)",
     title="S11 (dB), pump off",
 )
-```
-
-```
-0.219279 seconds (3.27 M allocations: 639.981 MiB, 20.84% gc time)
 ```
 
 ![JPA frequency vs DC bias current](../assets/examples/jpa_vs_bias_current.png)

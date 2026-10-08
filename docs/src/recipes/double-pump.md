@@ -5,9 +5,17 @@ Drive the JPA with two independent strong tones and inspect the response between
 Requires `JosephsonCircuits` and `Plots`. The optional comparison uses
 WRspice through `XicTools_jll`, or a local WRspice installation.
 
-Figures and timings come from the original reference run using 16 threads
-on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
-and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
+The JPA of the [first example](jpa.md), both pumps driving port 1:
+
+```text
+ 1                  2
+ o------[cc]--------o--------+
+ |                  |        |
+[p1]              [jj]     [cj]
+ |                  |        |
+ o------------------o--------+
+ 0
+```
 
 ```@example doublepump
 using JosephsonCircuits
@@ -40,7 +48,7 @@ nothing # hide
 The full frequency sweep and plot use this setup:
 
 ```julia
-@time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
+jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
     Npumpharmonics, circuit);
 @assert jpa.nonlinear.solverinfo.converged
 
@@ -59,10 +67,6 @@ plot(
     xlabel="Frequency (GHz)",
     ylabel="S11 (dB)",
 )
-```
-
-```
-  0.182720 seconds (12.70 k allocations: 713.087 MiB)
 ```
 
 ## A small executable check
@@ -88,16 +92,12 @@ wswrspice=2*pi*(4.5:0.01:5.0)*1e9
 n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[wp[1],wp[2]],[2*Ip,2*Ip],(0,1),[(0,1),(0,1)]);
 
-@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
 S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes,stepsperperiod = 50000);
 
 plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     label="WRspice",
     seriestype=:scatter)
-```
-
-```
- 15.782862 seconds (32.80 k allocations: 509.192 MiB, 0.39% gc time)
 ```
 
 ![Double pumped JPA simulation with JosephsonCircuits.jl and WRspice](../assets/examples/jpa_double_pumped_WRspice.png)

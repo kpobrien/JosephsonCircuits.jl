@@ -10,6 +10,16 @@ The port owns a matched 50 Ω termination. A coupling capacitor connects it
 to a junction shunted by a capacitor. Node `0` is ground; node `2` is the
 junction node.
 
+```text
+ 1                  2
+ o------[cc]--------o--------+
+ |                  |        |
+[p1]              [jj]     [cj]
+ |                  |        |
+ o------------------o--------+
+ 0
+```
+
 ```@example quickstart
 using JosephsonCircuits
 
@@ -59,6 +69,25 @@ Before using the result quantitatively, increase the pump and modulation
 harmonic limits and compare the gain. Refine the nonlinear evaluation grid
 separately if necessary. See [convergence](harmonicbalance.md#Checking-convergence).
 
+## Check against a closed form
+
+With the pump off the circuit is linear: the junction is an inductance of
+1 nH, and the port sees `Z = 1/(iωCc) + 1/(iωCj + 1/(iωLj))`, which
+reflects `(Z - 50)/(Z + 50)`. The linear solve gives the same. `Z` is real
+at the resonance `1/(2π sqrt(Lj (Cc + Cj)))`, 4.80 GHz; the pump sits just
+below it.
+
+```@example quickstart
+off = hblinsolve(ws, circuit)
+S11off = off.S(outputmode = (0,), outputport = 1, inputmode = (0,),
+    inputport = 1, freqindex = :)
+Z(w) = 1/(im*w*100e-15) + 1/(im*w*1000e-15 + 1/(im*w*1000e-12))
+closed = [(Z(w) - 50)/(Z(w) + 50) for w in ws]
+@assert isapprox(S11off, closed; atol = 1e-12)
+(difference = maximum(abs.(S11off .- closed)),
+    resonance = 1/(2pi*sqrt(1000e-12*(100e-15 + 1000e-15))))
+```
+
 To plot the result, install `Plots` and continue in the same session:
 
 ```julia
@@ -74,8 +103,8 @@ the factor of two. The smooth ramp starts the circuit at rest.
 
 ```@example quickstart
 ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
-pump(t) = 2Icoeff*ramp(t)*cospi(2fp*t)
-problem = transientproblem(circuit; sources = [TransientSource(1, pump)])
+pump(Icoeff, fp) = t -> 2Icoeff*ramp(t)*cospi(2fp*t)
+problem = transientproblem(circuit; sources = [TransientSource(1, pump(Icoeff, fp))])
 solution = transientsolve(problem, (0.0, 5e-9); dt = 2.5e-12)
 @assert all(isfinite, solution.voltage) # hide
 (size(solution.voltage, 1), first(solution.times), last(solution.times))

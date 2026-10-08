@@ -4,11 +4,35 @@ Build a resonant-phase-matched JTWPA from repeated cells. Inspect forward and re
 
 The plotting code requires `Plots` in addition to `JosephsonCircuits`.
 
-Figures and timings come from the original reference run using 16 threads
-on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
-and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
+Circuit parameters from C. Macklin, K. O'Brien, D. Hover, M. E. Schwartz,
+V. Bolkhovsky, X. Zhang, W. D. Oliver, and I. Siddiqi,
+[“A near–quantum-limited Josephson traveling-wave parametric amplifier”](https://www.science.org/doi/10.1126/science.aaa8525),
+*Science* 350, 307–310 (2015); the harmonic limits are this simulation's.
+A chain of `Nj - 1` cells between two 50 Ω ports, each a junction `jj`
+shunted by `cj` with its capacitance to ground `cg` at its input; every
+`pmrpitch`-th cell couples a resonator, `cr` and `lr`, through `cc` and
+has `Cg - Cc` to ground, and the first cell and the end have `Cg/2`:
 
-Circuit parameters from [the source publication](https://www.science.org/doi/10.1126/science.aaa8525).
+```text
+ 1            2            3                    2048
+ o--[cell1]---o--[cell2]---o-- ... --[cell2047]--o
+ |                                               |
+[p1]                                      [cend || p2]
+ |                                               |
+ o-----------------------------------------------o
+ 0
+
+ jjcell                       pmrcell
+ 1                  2         1                  2
+ o---[jj || cj]-----o         o---[jj || cj]-----o
+ |                            |
+[cg]                          +-------[cc]-------o 3
+ |                            |                  |
+ o 0                        [cg]           [cr || lr]
+                              |                  |
+                              o------------------o
+                              0
+```
 
 ```@example rpm
 using JosephsonCircuits
@@ -76,7 +100,7 @@ sources = [(mode=(1,),port=1,current=Ip)]
 Npumpharmonics = (20,)
 Nmodulationharmonics = (10,)
 
-@time rpm = hbsolve(ws, wp, sources, Nmodulationharmonics,
+rpm = hbsolve(ws, wp, sources, Nmodulationharmonics,
     Npumpharmonics, circuit)
 @assert rpm.nonlinear.solverinfo.converged
 
@@ -131,10 +155,6 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3, p4, layout = (2, 2))
 ```
 
-```
-  2.959010 seconds (257.75 k allocations: 2.392 GiB, 0.21% gc time)
-```
-
 ![JTWPA simulation](../assets/examples/uniform.png)
 
 ## A small executable check
@@ -150,4 +170,33 @@ small = hbsolve(2pi .* [5e9, 6e9, 8e9], (2pi*7.12e9,),
 @assert all(isfinite, small.linearized.S)
 @assert maximum(abs.(abs.(small.linearized.CM) .- 1)) < 1e-5
 nothing # hide
+```
+
+With the pump off the line is linear, and its transmission is that of the
+product of its cells' chain matrices: a shunt admittance at each cell's
+input node, `cg` and in a resonator cell `cc` to the resonator, then the
+junction, its inductance at zero phase in parallel with `cj`, in series.
+The solver and the product agree to roundoff, here for the 32-node line
+and to about 2e-12 for the full one:
+
+```@example rpm
+series(Z) = [1 Z; 0 1]
+shunt(Y) = [1 0; Y 1]
+function rpmS21(w; Nj = 2048, pmrpitch = 4)
+    junction = series(1/(1/(im*w*Lj) + im*w*Cj))
+    resonator = 1/(1/(im*w*Cc) + 1/(im*w*Cr + 1/(im*w*Lr)))
+    T = shunt(im*w*Cg/2)*junction
+    for i in 2:Nj-1
+        Y = mod(i, pmrpitch) == pmrpitch÷2 ? im*w*(Cg - Cc) + resonator : im*w*Cg
+        T = T*shunt(Y)*junction
+    end
+    T = T*shunt(im*w*Cg/2)
+    # the transmission between the two 50 ohm ports
+    return 2/(T[1, 1] + T[1, 2]/50 + T[2, 1]*50 + T[2, 2])
+end
+ws = 2pi .* [5e9, 6e9, 8e9]
+S21 = hblinsolve(ws, rpmcircuit(Nj = 32)).S((0,), 2, (0,), 1, :)
+chain = [rpmS21(w; Nj = 32) for w in ws]
+@assert isapprox(S21, chain; atol = 1e-12)
+(solver = S21, chain = chain)
 ```

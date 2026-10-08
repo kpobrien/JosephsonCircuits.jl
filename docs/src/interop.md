@@ -2,7 +2,7 @@
 
 The harmonic-balance problem exposes residuals, derivatives, and linear
 operators for external numerical solvers. The core interface requires no
-extension. `KrylovJL` is enabled by loading Krylov.jl, and
+extension. `JosephsonCircuits.KrylovJL` is enabled by loading Krylov.jl, and
 `SciMLBase.NonlinearProblem(prob)` by loading SciMLBase.
 
 This page first constructs a complete problem. The optional examples below
@@ -89,7 +89,7 @@ solver, rather than writing the loop yourself:
 ```julia
 using Krylov
 hbnlsolve(wp, Nharmonics, sources, circuit;
-    method = NewtonKrylov(linearsolver = KrylovJL(:fgmres)))
+    method = NewtonKrylov(linearsolver = JosephsonCircuits.KrylovJL(:fgmres)))
 ```
 
 `GMRES()` is the default. Only the linear solve changes: the
@@ -217,7 +217,8 @@ and derivative at a new point. The
 ## Testing
 
 The interoperability tests live in their own environment so the main test
-suite carries no resolve or precompile cost for Krylov.jl or SciMLBase:
+suite carries no resolve or precompile cost for Krylov.jl, SciMLBase or
+Symbolics:
 
 ```
 julia test/interop/runtests.jl

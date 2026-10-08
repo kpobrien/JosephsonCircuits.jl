@@ -79,11 +79,10 @@ which a preconditioner implements when it has something to say:
 | `pointmoved!(pc)` | nothing | a deflation, whose pair goes stale |
 | `stalled!(pc)` | nothing | `Clusters`, which remeasures |
 | `escalatepreconditioner!(pc)` | `false` | mode coupling, a deflation deferring it |
-| `harvest!(pc, ws, out)` | nothing | a deflation |
-| `usescycleharvest(pc)`, `harvestcycle!(pc, ws, j)` | `false`, nothing | a deflation reading every cycle |
-| `seeddeflation!(pc, X; ...)` | nothing | a deflation taking physical candidates |
+| `usescycleharvest(pc)`, `harvestcycle!(pc, ws, j)` | `false`, nothing | a deflation |
 | `isexactpreconditioner(pc)` | `false` | an exact factorization |
-| `deflationsize`, `candidatecount`, `deflationrebuilds` | `0`, `0`, `0` | a deflation |
+| `hasnewcandidates(pc)` | `false` | a deflation with candidates its last build did not take in |
+| `deflationsize`, `deflationrebuilds` | `0`, `0` | a deflation |
 | `deflationproducts` | `0` | a deflation, a cluster probe |
 
 A preconditioner which wraps another subtypes
@@ -104,9 +103,8 @@ coordinates, at a different size or under a correction. Subtypes define
 inner preconditioner unless the wrapper defines it, so escalation,
 deflation and its diagnostics reach the inner one through any number of
 wrappers. A wrapper which changes coordinates must define the hooks whose
-arguments carry vectors of its own coordinates (`harvest!`,
-`harvestcycle!`, `seeddeflation!`) if the inner preconditioner reads them
-in its own.
+arguments carry vectors of its own coordinates (`harvestcycle!`) if the
+inner preconditioner reads them in its own.
 """
 abstract type AbstractWrappedPreconditioner <: AbstractPreconditioner end
 
@@ -218,11 +216,11 @@ Base.@kwdef struct KrylovSolveInfo
     # wall time applying the preconditioner, which tells a weaker and cheaper
     # preconditioner from a worse one when the iteration counts look alike
     precondtime::Float64
-    # exact operator products: those the linear solve took (Arnoldi steps,
-    # the residual recomputed at every restart, a warm start) and, in the
-    # running count `deflationproducts`, those the preconditioner took
-    # itself, for a deflation's builds and a cluster probe; Arnoldi steps
-    # alone understate the cost of a restart
+    # exact operator products: those the linear solve took (Arnoldi steps
+    # and the residual recomputed at every restart) and, in the running
+    # count `deflationproducts`, those the preconditioner took itself, for
+    # a deflation's builds and a cluster probe; Arnoldi steps alone
+    # understate the cost of a restart
     products::Int
     deflationproducts::Int
 end
@@ -249,13 +247,11 @@ end
 # completed then
 """
     with(k::KrylovSolveInfo; fields...)
-    with(k::IterationInfo; fields...)
 
 A copy of the record with the named fields replaced: the step outcome
-filled in after the line search, an escalation marked after the solve, the
-drive fraction of a stage.
+filled in after the line search, an escalation marked after the solve.
 """
-function with(k::Union{KrylovSolveInfo,IterationInfo}; kwargs...)
+function with(k::KrylovSolveInfo; kwargs...)
     T = typeof(k)
     for name in keys(kwargs)
         hasfield(T, name) || throw(ArgumentError(
@@ -313,14 +309,15 @@ LinearAlgebra.mul!(z::AbstractVector, pc::AbstractPreconditioner,
 
 Make the preconditioner `pc` a better approximation of the Jacobian, at greater
 cost, and return `true`; return `false` when it cannot be improved further.
-Called by [`nlsolvekrylov!`](@ref) after repeated linear solves which fail to
-reach the forcing tolerance, the symptom of a preconditioner too crude for
-the problem (stagnation alone is deliberately not the trigger). The default method
-returns `false`, which is correct for any preconditioner that is already exact
-or has no cheaper/costlier settings. A preconditioner which can grow must
-also refuse when the grown factors would not fit in memory: the driver
-records the refusal and carries on with what it has rather than let a
-rescue exhaust the machine.
+Called by [`nlsolvekrylov!`](@ref), when its method's `escalate` is on,
+after every linear solve which fails to reach the forcing tolerance, the
+symptom of a preconditioner too crude for the problem (stagnation alone is
+deliberately not the trigger). The default method returns `false`, which is
+correct for any preconditioner that is already exact or has no
+cheaper/costlier settings. A preconditioner which can grow must also refuse
+when the grown factors would not fit in memory: the driver records the
+refusal and carries on with what it has rather than let a rescue exhaust the
+machine.
 """
 escalatepreconditioner!(::AbstractPreconditioner) = false
 
@@ -331,7 +328,8 @@ Tell the preconditioner that the operator it approximates has changed
 without it having been rebuilt, and return `pc`. The default does nothing.
 A [`FloquetPreconditioner`](@ref) marks its image pair stale, so that the
 next application rebuilds it from the current Jacobian. Called by
-[`nlsolvekrylov!`](@ref) at every Newton step; wrappers forward it.
+[`nlsolvekrylov!`](@ref) at every Newton step which does not rebuild the
+preconditioner; wrappers forward it.
 """
 pointmoved!(pc::AbstractPreconditioner) = pc
 
@@ -339,14 +337,27 @@ pointmoved!(pc::AbstractPreconditioner) = pc
     stalled!(pc::AbstractPreconditioner)
 
 Tell the preconditioner that the last linear solve reduced its residual
-slowly, by a factor worse than 0.5 per Arnoldi step (the report is off
-under [`Never`](@ref)), and return `pc`.
-The default does nothing. A [`ModeCouplingPreconditioner`](@ref) with
-[`Clusters`](@ref) takes it as the sign that the coupling has
-outgrown its clusters and remeasures them at the next update. Called by
-[`nlsolvekrylov!`](@ref) after every linear solve; wrappers forward it.
+slowly, by a factor worse than the `slowrate` of [`nlsolvekrylov!`](@ref)
+per Arnoldi step, and return `pc`. The default does nothing. A
+[`ModeCouplingPreconditioner`](@ref) with [`Clusters`](@ref) takes it as
+the sign that the coupling has outgrown its clusters and remeasures them
+at the next update. Called by [`nlsolvekrylov!`](@ref) after each slow
+linear solve, except under [`Never`](@ref); wrappers forward it.
 """
 stalled!(pc::AbstractPreconditioner) = pc
+
+"""
+    hasnewcandidates(pc::AbstractPreconditioner)
+
+Whether `pc` holds deflation candidates its last build did not take in,
+which a rebuild at the same point would: those a
+[`FloquetPreconditioner`](@ref) banked from the harvests of the solves
+since its last build. `false` for a preconditioner which does not deflate.
+[`nlsolvekrylov!`](@ref) reads it to tell whether retrying a step whose
+line search found no decrease, from a preconditioner rebuilt at its point,
+can change the step.
+"""
+hasnewcandidates(::AbstractPreconditioner) = false
 
 """
     deflationsize(pc)
@@ -356,16 +367,6 @@ The number of directions the active deflation pair of a
 not deflate.
 """
 deflationsize(::AbstractPreconditioner) = 0
-
-"""
-    candidatecount(pc)
-
-The number of candidate directions a [`FloquetPreconditioner`](@ref)
-holds in its bank: at least [`deflationsize`](@ref), and more when a
-candidate was left out of the last build or a harvest has added candidates
-the next build has not yet seen.
-"""
-candidatecount(::AbstractPreconditioner) = 0
 
 """
     deflationrebuilds(pc)
@@ -386,8 +387,8 @@ mode at every probe. Together with `products` in
 """
 deflationproducts(::AbstractPreconditioner) = 0
 
-# the hooks of a wrapper forward to what it wraps; the two which take a
-# `GMRESWorkspace` are in gmres.jl, after the type is defined
+# the hooks of a wrapper forward to what it wraps; the one which takes a
+# `GMRESWorkspace` is in gmres.jl, after the type is defined
 pointmoved!(pc::AbstractWrappedPreconditioner) =
     (pointmoved!(innerpreconditioner(pc)); pc)
 stalled!(pc::AbstractWrappedPreconditioner) =
@@ -396,14 +397,12 @@ escalatepreconditioner!(pc::AbstractWrappedPreconditioner) =
     escalatepreconditioner!(innerpreconditioner(pc))
 usescycleharvest(pc::AbstractWrappedPreconditioner) =
     usescycleharvest(innerpreconditioner(pc))
-seeddeflation!(pc::AbstractWrappedPreconditioner, X::AbstractMatrix; kwargs...) =
-    (seeddeflation!(innerpreconditioner(pc), X; kwargs...); pc)
 isexactpreconditioner(pc::AbstractWrappedPreconditioner) =
     isexactpreconditioner(innerpreconditioner(pc))
+hasnewcandidates(pc::AbstractWrappedPreconditioner) =
+    hasnewcandidates(innerpreconditioner(pc))
 deflationsize(pc::AbstractWrappedPreconditioner) =
     deflationsize(innerpreconditioner(pc))
-candidatecount(pc::AbstractWrappedPreconditioner) =
-    candidatecount(innerpreconditioner(pc))
 deflationrebuilds(pc::AbstractWrappedPreconditioner) =
     deflationrebuilds(innerpreconditioner(pc))
 deflationproducts(pc::AbstractWrappedPreconditioner) =
@@ -447,10 +446,8 @@ applycolumn!(z, pc, V, j) =
 
 The residual or product `f` as an [`ErasedFunction`](@ref), and `pc` as an
 [`ErasedPreconditioner`](@ref); either unchanged when it is erased already.
-An operator which is not a function is returned as it is.
 """
 erased(f::Function) = ErasedFunction(f)
 erased(f::ErasedFunction) = f
 erased(pc::AbstractPreconditioner) = ErasedPreconditioner(pc)
 erased(pc::ErasedPreconditioner) = pc
-erased(A) = A

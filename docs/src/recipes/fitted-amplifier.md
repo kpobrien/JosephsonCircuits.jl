@@ -11,6 +11,16 @@ The 20 kΩ resistor represents internal dissipation. Port and resistor baths
 are at their default zero temperature. The pump current is a complex HB
 Fourier coefficient; a real sinusoid would have twice this peak amplitude.
 
+```text
+ 1                  2
+ o------[cc]--------o--------+--------+
+ |                  |        |        |
+[p1]              [jj]     [cj]    [loss]
+ |                  |        |        |
+ o------------------o--------+--------+
+ 0
+```
+
 ```@example fittedamp
 using JosephsonCircuits, LinearAlgebra
 jpa = Circuit([
@@ -105,11 +115,11 @@ function measure(dt)
     sol = transientsolve(transientproblem(model), (0.0, settle + T - dt);
         dt, record = :checkpoints)
     times = sol.times[round(Int, settle/dt) + 1:end]
-    plan = transientquantumplan(sol, times, [f])
+    plan = transientquantumplan(sol, times, [2pi*f])
     # The even pump ladder that mixes into this settled Fourier bin.
-    frequencies = sort!(abs.([f + 2k*fp for k in -2:2]))
+    frequencies = sort!(abs.([2pi*(f + 2k*fp) for k in -2:2]))
     transientnoise(sol, plan; frequencies,
-        weights = fill(1/T, length(frequencies)), inputs = plan,
+        weights = fill(2pi/T, length(frequencies)), inputs = plan,
         commutationrtol = 3e-3)
 end
 noise = measure(2.5e-12)

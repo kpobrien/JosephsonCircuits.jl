@@ -18,13 +18,16 @@ analysis. This factorization eliminates the circuit graph instead, treating
 every circuit node as a supernode whose block holds the real-layout slots of
 all retained modes at that node: the nodes are ordered by KLU's analysis of
 the circuit-node graph (block triangular form, then a fill reducing
-ordering), amalgamated along the elimination tree into supernodes of a few
-hundred rows, and eliminated with pivoted dense LU on the diagonal blocks,
-dense products for the Schur updates and dense matrix-vector products for
-the solves. The blocks are assembled on the backend straight from the
-Fourier coefficients with [`realstructureentry`](@ref), the same per entry
-value the sparse assembly uses, so no sparse Jacobian is ever formed. The
-structure comes from the circuit graph alone, whatever the circuit is.
+ordering), merged along the elimination tree into larger supernodes only
+where the merged block holds no entry the factors would not hold node by
+node (the separators of a meshed circuit; a chain stays node by node, see
+[`amalgamate`](@ref)), and eliminated with pivoted dense LU on the
+diagonal blocks, dense products for the Schur updates and dense
+matrix-vector products for the solves. The blocks are assembled on the
+backend straight from the Fourier coefficients with
+[`realstructureentry`](@ref), the same per entry value the sparse assembly
+uses, so no sparse Jacobian is ever formed. The structure comes from the
+circuit graph alone, whatever the circuit is.
 
 The same specification serves two operators. Handed a
 [`BlockJacobian`](@ref) it factorizes the preconditioner's mode clusters
@@ -33,7 +36,20 @@ over the circuit graph, as above; handed a `SparseMatrixCSC` with a
 [`SparseBlockFactorization`](@ref), the direct solve of the linearized
 system in dense node blocks, batched over the frequencies of a device
 sweep, with `precision` then meaning the precision of the factors of a
-double matrix (equilibrated and refined when single).
+double matrix (equilibrated and refined when single). That solve merges
+no nodes: a merged supernode of a meshed circuit can be ill conditioned
+at a frequency where the matrix is not, and pivoting within it then
+costs the solution digits ([`blocksymbolic`](@ref)), where in the
+preconditioner it costs only iterations.
+
+The linearized solve takes it at two or more tones, on the host and on a
+device, when its factors fit the memory budget
+([`linearizedfactorization`](@ref)): several tones make the node blocks
+large and dense, and BLAS-3 kernels eliminate them, and the separators a
+junction lattice fills, faster than a scalar factorization does. A scalar
+factorization, [`KLUfactorization`](@ref) on the host, pivots across the
+whole matrix where this one pivots within a supernode, and keeps the
+sparsity within the node blocks which this one stores dense.
 
 The coupling set of the preconditioner is honored at the level of its
 *clusters*: the retained coupling graph of the modes is split into its
@@ -58,11 +74,14 @@ precision form, which halves the storage and runs at a device's single
 precision rate while the iteration stays in double precision.
 
 The block factorization does not pivot across its supernodes. A supernode
-whose diagonal block is singular, which happens when a node's stiffness
-at some mode frequency lives entirely in a promoted branch current and its
-own elements resonate there, stops it with a `SingularException`; the mode
-coupling preconditioner then falls back to the backend's sparse
-factorization (see [`refactorize!`](@ref)).
+whose diagonal block is singular, which happens when the part of the
+circuit eliminated up to it resonates at a mode frequency with the rest
+held at zero, stops it with a `SingularException`, though the matrix is
+not singular. The mode coupling preconditioner then falls back to the
+backend's sparse factorization (see [`refactorize!`](@ref)); the
+linearized solve does too when it chose the block factorization itself,
+solving its sweep again with `KLUfactorization()` or
+`CUDSSFactorization()`, and throws when it was given one.
 
 `refine` concerns the linearized solve: single precision factors of a
 double system refine their solutions against the double residual to double
@@ -93,12 +112,6 @@ withprecision(f::BlockFactorization, ::Type{T}) where {T<:AbstractFloat} =
 # given, or the backend's default
 singletonfactorization(f::BlockFactorization, backend) =
     something(f.singletons, defaultfactorization(backend))
-
-# Supernodes of a few hundred rows keep the dense kernels busy without
-# spending fill on merged zeros. A kernel size, not a numerical parameter.
-# The batched device factorization of the linearized solve does not
-# amalgamate (see `factorize` for a sparse matrix).
-const BLOCKTARGETROWS = 512
 
 """
     circuitnodegraph(pairptr, pairrow, invLnm::SparseMatrixCSC,
@@ -207,14 +220,23 @@ function eliminationtree(adj, order::AbstractVector{<:Integer})
 end
 
 """
-    amalgamate(parent, post, nrows, target::Integer)
+    amalgamate(parent, post, later, nrows; maxrows = typemax(Int))
 
-Merge chains of the elimination tree into supernodes: walking the postorder,
-a node joins the supernode of its child when it is that child's parent and
-the child its only child, until the supernode holds `target` rows. Each
+Merge the elimination tree into its fundamental supernodes: walking the
+postorder, a node joins the supernode of its child when it is that child's
+parent, the child is its only child, and the child's structure after fill,
+`later[child]`, is the node and the node's own structure `later[node]`.
+The rest of a child's structure always lies within its parent's, so the
+test is `length(later[child]) == length(later[node]) + 1`. The merged
+diagonal block and panel then hold no entry the node by node factors would
+not hold: a merge takes no zero into the factors, whatever the circuit, so
+a chain keeps its block bidiagonal factors while the separators of a
+meshed circuit, dense after fill, are eliminated as one block. `maxrows`
+bounds the rows of a supernode; the linearized solve, which merges
+nothing, passes the rows of one node ([`blocksymbolic`](@ref)). Each
 supernode is returned as its list of nodes, in elimination order.
 """
-function amalgamate(parent, post, nrows, target::Integer)
+function amalgamate(parent, post, later, nrows; maxrows::Integer = typemax(Int))
     N = length(parent)
     nchildren = zeros(Int, N)
     for a in 1:N
@@ -226,9 +248,11 @@ function amalgamate(parent, post, nrows, target::Integer)
     for (k, a) in enumerate(post)
         push!(current, a)
         rows += nrows[a]
-        chain = k < length(post) && parent[a] == post[k+1] &&
-            nchildren[post[k+1]] == 1 && rows < target
-        if !chain
+        nested = k < length(post) && parent[a] == post[k+1] &&
+            nchildren[post[k+1]] == 1 &&
+            length(later[a]) == length(later[post[k+1]]) + 1 &&
+            rows + nrows[post[k+1]] <= maxrows
+        if !nested
             push!(supernodes, current)
             current = Int[]
             rows = 0
@@ -315,19 +339,37 @@ end
     end
 end
 
-# The gather and the subtracting scatter of the substitutions: the kernels
-# above on a device, plain loops on the host, where a launch costs more than
-# the rows it moves and allocates at every call (`hostloop`)
-function gatherrows!(Z::AbstractArray{<:Any,3}, R::AbstractArray{<:Any,3},
+# The gathers and scatters of the substitutions: the kernels above on a
+# device, plain loops on the host, where a launch costs more than the rows
+# it moves and allocates at every call (`hostloop`). A gather's source may
+# be a matrix, the right-hand side every system of the batch shares.
+function gatherrows!(Z::AbstractArray{<:Any,3}, R::AbstractArray,
     idx::AbstractVector, backend)
     if hostloop(backend, length(Z))
-        @inbounds for k in axes(Z, 3), j in axes(Z, 2), i in axes(Z, 1)
-            Z[i, j, k] = R[idx[i], j, k]
+        if ndims(R) == 2
+            @inbounds for k in axes(Z, 3), j in axes(Z, 2), i in axes(Z, 1)
+                Z[i, j, k] = R[idx[i], j]
+            end
+        else
+            @inbounds for k in axes(Z, 3), j in axes(Z, 2), i in axes(Z, 1)
+                Z[i, j, k] = R[idx[i], j, k]
+            end
         end
     else
         blockgatherrowskernel!(backend, 256)(Z, R, idx; ndrange = length(Z))
     end
     return Z
+end
+function scatterrows!(X::AbstractArray{<:Any,3}, Z::AbstractArray{<:Any,3},
+    idx::AbstractVector, backend)
+    if hostloop(backend, length(Z))
+        @inbounds for k in axes(Z, 3), j in axes(Z, 2), i in axes(Z, 1)
+            X[idx[i], j, k] = Z[i, j, k]
+        end
+    else
+        blockscatterrowskernel!(backend, 256)(X, Z, idx; ndrange = length(Z))
+    end
+    return X
 end
 function scattersubrows!(X::AbstractArray{<:Any,3}, Z::AbstractArray{<:Any,3},
     idx::AbstractVector, backend)
@@ -373,45 +415,60 @@ end
 end
 
 """
-    batchedinverse!(Dinv, D, F, backend)
+    batchedinverse!(Dinv, D, F, backend, pivots, status)
 
 For each `k`, `Dinv[:, :, k]` becomes the inverse of `D[:, :, k]`, with
 `F` scratch of the same size: a loop of pivoted dense LU solves on the
-host, one batched call on a device (the CUDA extension).
+host, which pivot into `pivots`, at least as long as a block; one batched
+call on a device (the CUDA extension), which keeps its pivots there. A
+singular block throws a `SingularException` on the host, and on a device
+sets the entry of its system in `status`, the device vector
+[`blocklu!`](@ref) reads once after its last supernode (a batch of one
+block, which cuSOLVER factorizes, throws at once).
 """
+batchedinverse!(Dinv, D, F, backend, pivots, status) =
+    batchedinverse!(Dinv, D, F, backend, status)
 function batchedinverse!(Dinv::AbstractArray{T,3}, D::AbstractArray{T,3},
-    F::AbstractArray{T,3}, ::CPU) where {T}
+    F::AbstractArray{T,3}, ::CPU, pivots::Vector{BlasInt}, status) where {T}
+    ipiv = view(pivots, 1:size(D, 1))
     for k in axes(D, 3)
         Fk = view(F, :, :, k)
         copyto!(Fk, view(D, :, :, k))
-        LU = lu!(Fk)
         Dk = view(Dinv, :, :, k)
         fill!(Dk, zero(T))
         for i in axes(Dk, 1); Dk[i, i] = one(T); end
-        ldiv!(LU, Dk)
+        # LAPACK takes the pivot indices from Julia 1.11 on; before, and
+        # for a type LAPACK does not have, the factorization allocates them
+        @static if VERSION >= v"1.11"
+            if T <: LinearAlgebra.BlasFloat
+                info = last(LAPACK.getrf!(Fk, ipiv))
+                info > 0 && throw(SingularException(info))
+                LAPACK.getrs!('N', Fk, ipiv, Dk)
+            else
+                ldiv!(lu!(Fk), Dk)
+            end
+        else
+            ldiv!(lu!(Fk), Dk)
+        end
     end
     return Dinv
 end
 
 """
-    batchedmul!(C, A, B, alpha, beta, tA::Bool, tB::Bool, backend)
+    batchedmul!(C, A, B, alpha, beta, tA::Bool, backend)
 
-`C[:, :, k] = alpha*op(A[:, :, k])*op(B[:, :, k]) + beta*C[:, :, k]` for
-every `k`, `op` the transpose when the flag is set: a loop of `mul!` on
-the host, one strided batched GEMM on a device (the CUDA extension).
+`C[:, :, k] = alpha*op(A[:, :, k])*B[:, :, k] + beta*C[:, :, k]` for every
+`k`, `op` the transpose when `tA` is set: a loop of `mul!` on the host, one
+strided batched GEMM on a device (the CUDA extension).
 """
 function batchedmul!(C::AbstractArray{T,3}, A::AbstractArray{T,3},
-    B::AbstractArray{T,3}, alpha, beta, tA::Bool, tB::Bool, ::CPU) where {T}
+    B::AbstractArray{T,3}, alpha, beta, tA::Bool, ::CPU) where {T}
     for k in axes(C, 3)
         Ak = view(A, :, :, k); Bk = view(B, :, :, k); Ck = view(C, :, :, k)
         # a branch per transposition, so that each `mul!` is resolved
         # where it is compiled
-        if tA && tB
-            mul!(Ck, transpose(Ak), transpose(Bk), alpha, beta)
-        elseif tA
+        if tA
             mul!(Ck, transpose(Ak), Bk, alpha, beta)
-        elseif tB
-            mul!(Ck, Ak, transpose(Bk), alpha, beta)
         else
             mul!(Ck, Ak, Bk, alpha, beta)
         end
@@ -449,6 +506,7 @@ place by [`blocklu!`](@ref) once its blocks hold values, and applied by
     inverse and `Dinv` holds it.
 - `tasks`, `scratch`: the Schur updates of each supernode and the work
     blocks by size.
+- `pivots`: the pivot indices of the host's dense LU of a diagonal block.
 """
 struct BlockLU{T,A3,VI}
     N::Int
@@ -463,6 +521,7 @@ struct BlockLU{T,A3,VI}
     Dinv::Vector{A3}
     tasks::Vector{Vector{SchurTask{A3,VI}}}
     scratch::Dict{Tuple{Int,Int},A3}
+    pivots::Vector{BlasInt}
 end
 
 """
@@ -528,7 +587,8 @@ function blocklu(::Type{T}, sym, backend; nb::Integer = 1) where {T}
         end
     end
     return BlockLU{T,A3,VI}(N, Int(nb), length(perm), dI(perm), range,
-        [dI(r) for r in rowidxh], D, L, U, Dinv, tasks, scratch)
+        [dI(r) for r in rowidxh], D, L, U, Dinv, tasks, scratch,
+        Vector{BlasInt}(undef, maximum(length, range; init = 0)))
 end
 
 """
@@ -539,29 +599,56 @@ batch: for each supernode in order, the pivoted dense LU of its diagonal
 block and the explicit inverse from it, the panel below scaled by that
 inverse, and the product of the scaled panel with the panel to the right
 subtracted from the later blocks it reaches. After this the panels and
-inverses are the factors.
+inverses are the factors. A singular diagonal block throws a
+`SingularException`, on a device once the last supernode is done (see
+[`batchedinverse!`](@ref)).
 """
 function blocklu!(lu::BlockLU{T}, backend) where {T}
-    scat = blockschurkernel!(backend, 256)
+    # on a device the systems with a singular diagonal block, gathered
+    # where the blocks are factorized and read once, after the last
+    # supernode, rather than once per supernode
+    status = backend isa CPU ? nothing :
+        KernelAbstractions.zeros(backend, Cint, lu.nb)
     for P in 1:lu.N
         Dp = lu.D[P]; nP = size(Dp, 1)
         X = lu.Dinv[P]
-        batchedinverse!(X, Dp, lu.scratch[(nP, nP)], backend)
+        batchedinverse!(X, Dp, lu.scratch[(nP, nP)], backend, lu.pivots,
+            status)
         m = size(lu.L[P], 1)
         m == 0 && continue
         Lp = lu.L[P]
         tmp = lu.scratch[(m, nP)]
-        batchedmul!(tmp, Lp, X, one(T), zero(T), false, false, backend)
+        batchedmul!(tmp, Lp, X, one(T), zero(T), false, backend)
         copyto!(Lp, tmp)
         Wm = lu.scratch[(m, m)]
-        batchedmul!(Wm, Lp, lu.U[P], one(T), zero(T), false, false, backend)
+        batchedmul!(Wm, Lp, lu.U[P], one(T), zero(T), false, backend)
         for t in lu.tasks[P]
-            scat(t.target, t.rowmap, t.colmap, Wm, t.i0, t.j0;
-                ndrange = length(t.rowmap)*length(t.colmap)*lu.nb)
+            schurupdate!(t, Wm, lu.nb, backend)
         end
     end
     KernelAbstractions.synchronize(backend)
+    if !isnothing(status)
+        k = findfirst(!=(0), Array(status))
+        isnothing(k) || throw(SingularException(k))
+    end
     return lu
+end
+
+# one Schur update, `t.target[rowmap[i], colmap[j], k] -= W[i0 + i, j0 + j,
+# k]`: the kernel on a device, a plain loop on the host (`hostloop`)
+function schurupdate!(t::SchurTask, W::AbstractArray{<:Any,3}, nb::Integer,
+    backend)
+    m = length(t.rowmap); c = length(t.colmap)
+    if hostloop(backend, m*c*nb)
+        Tm = t.target
+        @inbounds for k in 1:nb, j in 1:c, i in 1:m
+            Tm[t.rowmap[i], t.colmap[j], k] -= W[t.i0 + i, t.j0 + j, k]
+        end
+    else
+        blockschurkernel!(backend, 256)(t.target, t.rowmap, t.colmap, W,
+            t.i0, t.j0; ndrange = m*c*nb)
+    end
+    return t.target
 end
 
 """
@@ -584,7 +671,7 @@ function substitute!(Y::AbstractArray{<:Any,3}, lu::BlockLU{T},
             m = length(lu.rowidx[P]); m == 0 && continue
             t = view(Pw, 1:m, :, :)
             batchedmul!(t, lu.L[P], view(Z, lu.range[P], :, :), one(T), zero(T),
-                false, false, backend)
+                false, backend)
             scattersubrows!(Z, t, lu.rowidx[P], backend)
         end
         for P in lu.N:-1:1
@@ -593,19 +680,19 @@ function substitute!(Y::AbstractArray{<:Any,3}, lu::BlockLU{T},
             if m > 0
                 t = view(Pw, 1:m, :, :)
                 gatherrows!(t, Y, lu.rowidx[P], backend)
-                batchedmul!(zP, lu.U[P], t, -one(T), one(T), false, false, backend)
+                batchedmul!(zP, lu.U[P], t, -one(T), one(T), false, backend)
             end
             batchedmul!(view(Y, lu.range[P], :, :), lu.Dinv[P], zP, one(T),
-                zero(T), false, false, backend)
+                zero(T), false, backend)
         end
     else
         for P in 1:lu.N
             zP = view(Z, lu.range[P], :, :)
             yP = view(Y, lu.range[P], :, :)
-            batchedmul!(yP, lu.Dinv[P], zP, one(T), zero(T), true, false, backend)
+            batchedmul!(yP, lu.Dinv[P], zP, one(T), zero(T), true, backend)
             m = length(lu.rowidx[P]); m == 0 && continue
             t = view(Pw, 1:m, :, :)
-            batchedmul!(t, lu.U[P], yP, one(T), zero(T), true, false, backend)
+            batchedmul!(t, lu.U[P], yP, one(T), zero(T), true, backend)
             scattersubrows!(Z, t, lu.rowidx[P], backend)
         end
         for P in lu.N:-1:1
@@ -613,7 +700,7 @@ function substitute!(Y::AbstractArray{<:Any,3}, lu::BlockLU{T},
             m = length(lu.rowidx[P]); m == 0 && continue
             t = view(Pw, 1:m, :, :)
             gatherrows!(t, Y, lu.rowidx[P], backend)
-            batchedmul!(yP, lu.L[P], t, -one(T), one(T), true, false, backend)
+            batchedmul!(yP, lu.L[P], t, -one(T), one(T), true, backend)
         end
     end
     return Y
@@ -642,21 +729,21 @@ end
 
 """
     clustersymbolic(modes, adj, order, Nmodes::Integer, layout::ModeLayout;
-        target = BLOCKTARGETROWS, tree = eliminationtree(adj, order))
+        tree = eliminationtree(adj, order))
 
 The symbolic block structure of one cluster, on the host and without
-allocating any factor storage: the supernodes of the amalgamated
-elimination tree of the circuit-node graph `adj` under the node `order`,
-restricted to the real-layout slots of `modes`, the positions of every
-supernode, its panel rows after fill, and the offsets the Schur updates
-scatter through. [`clusterblocks`](@ref) allocates from it and
-[`blockfactorbytes`](@ref) sizes it. The elimination `tree`
-([`eliminationtree`](@ref)) depends on the graph and the order alone, so
-a caller structuring several clusters of one graph computes it once.
+allocating any factor storage: the fundamental supernodes
+([`amalgamate`](@ref)) of the elimination tree of the circuit-node graph
+`adj` under the node `order`, restricted to the real-layout slots of
+`modes`, the positions of every supernode, its panel rows after fill, and
+the offsets the Schur updates scatter through. [`clusterblocks`](@ref)
+allocates from it and [`blockfactorbytes`](@ref) sizes it. The elimination
+`tree` ([`eliminationtree`](@ref)) depends on the graph and the order
+alone, so a caller structuring several clusters of one graph computes it
+once.
 """
 function clustersymbolic(modes, adj, order, Nmodes::Integer,
-    layout::ModeLayout; target = BLOCKTARGETROWS,
-    tree = eliminationtree(adj, order))
+    layout::ModeLayout; tree = eliminationtree(adj, order))
     nnodes = length(adj)
     # the slots of this cluster's modes at each node, in the real layout
     noderows = [Int[] for _ in 1:nnodes]
@@ -664,16 +751,16 @@ function clustersymbolic(modes, adj, order, Nmodes::Integer,
         c = (a - 1)*Nmodes + k
         append!(noderows[a], Int(layout.ptr[c]):Int(layout.ptr[c+1])-1)
     end
-    return clustersymbolic(noderows, adj, order; target, tree)
+    return clustersymbolic(noderows, adj, order; tree)
 end
 
 # the core: `noderows[a]` are the slots node `a` contributes, in order
 function clustersymbolic(noderows::Vector{Vector{Int}}, adj, order;
-    target = BLOCKTARGETROWS, tree = eliminationtree(adj, order))
+    maxrows::Integer = typemax(Int), tree = eliminationtree(adj, order))
     nnodes = length(adj)
     nrows = length.(noderows)
     parent, post, later = tree
-    nodes = amalgamate(parent, post, nrows, target)
+    nodes = amalgamate(parent, post, later, nrows; maxrows)
     N = length(nodes)
     snode = zeros(Int, nnodes); nodepos = zeros(Int, nnodes)
     noderank = zeros(Int, nnodes)
@@ -747,27 +834,18 @@ end
 
 """
     clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
-        layout::ModeLayout, backend; target = BLOCKTARGETROWS,
-        tree = eliminationtree(adj, order))
+        layout::ModeLayout, backend; tree = eliminationtree(adj, order))
 
-The symbolic block structure of one cluster: the supernodes of the
-amalgamated elimination tree of the circuit-node graph `adj` under the node
-`order`, restricted to the real-layout slots of `modes`; the panels from a
-symbolic elimination on the node graph; and the index maps of the Schur
-updates. Storage is allocated on `backend` in precision `T`. `tree` is the
-elimination of the graph, shared by the clusters of one graph (see
-[`clustersymbolic`](@ref)).
+The [`ClusterBlocks`](@ref) of one cluster, its storage allocated on
+`backend` in precision `T`: the block LU, a batch of one, of the symbolic
+block structure [`clustersymbolic`](@ref) finds for `modes` on the
+circuit-node graph `adj` under the node `order`, with the natural slots its
+blocks are assembled from. `tree` is the elimination of the graph, shared
+by the clusters of one graph.
 """
 function clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
-    layout::ModeLayout, backend; target = BLOCKTARGETROWS,
-    tree = eliminationtree(adj, order)) where {T}
-    sym = clustersymbolic(modes, adj, order, Nmodes, layout; target, tree)
-    return clusterblocks(T, modes, sym, backend)
-end
-
-# the core: the block LU of a symbolic structure, a batch of one, with the
-# natural slots its blocks are assembled from
-function clusterblocks(::Type{T}, modes, sym::NamedTuple, backend) where {T}
+    layout::ModeLayout, backend; tree = eliminationtree(adj, order)) where {T}
+    sym = clustersymbolic(modes, adj, order, Nmodes, layout; tree)
     (; N, perm, range, rowidxh) = sym
     lu = blocklu(T, sym, backend)
     dI = x -> tobackend(backend, Vector{Int32}(x))
@@ -1023,16 +1101,44 @@ end
 """
     freememory(backend)
 
-The free memory of `backend` in bytes: the host's for `CPU()`, the
-device's on a CUDA backend (defined by the CUDA extension). What
-[`Automatic`](@ref), [`linearizedfactorization`](@ref) and the device
-sweep's batch size their choices against.
+The free memory of `backend` in bytes: the host's for `CPU()`; on a CUDA
+backend (defined by the CUDA extension) the device's, with what CUDA.jl's
+memory pool holds without an array in it, which an allocation takes
+first. What [`Automatic`](@ref), [`linearizedfactorization`](@ref) and the
+device sweep's batch size their choices against.
 """
 freememory(::CPU) = Int(Sys.free_memory())
 function freememory(backend)
     throw(ArgumentError(
         "the free memory of this backend is unknown; load CUDA.jl for a CUDA device."))
 end
+
+"""
+    releasearray!(x)
+
+Return the memory of the device array `x` to its backend's memory pool at
+once, rather than when the collector finds the array; `x` must not be used
+again. A no-op on the host; the CUDA extension frees a CUDA array.
+"""
+releasearray!(x) = nothing
+
+# the share of a backend's free memory the factors and batches a solve
+# sizes for itself may take, the rest left to its other arrays and to
+# whatever else the machine runs
+const FREEMEMORYSHARE = 1//2
+
+"""
+    memorybudget(backend)
+
+The bytes the factors and batches a solve sizes for itself may take on
+`backend`: `FREEMEMORYSHARE`, half, of its free memory
+([`freememory`](@ref)). What
+[`Automatic`](@ref) ([`resolveautomatic`](@ref)), the growth of a
+preconditioner's coupling set ([`escalatepreconditioner!`](@ref)),
+[`linearizedfactorization`](@ref) and the batch of the device sweep
+([`devicesolutions`](@ref)) are held to.
+"""
+memorybudget(backend) = floor(Int, FREEMEMORYSHARE*freememory(backend))
 
 """
     circuitorder(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
@@ -1054,22 +1160,20 @@ function circuitorder(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
 end
 
 """
-    sparsefactorbytes(P::SparseMatrixCSC, ::Type{T},
-        ordering = fillordering(KLUfactorization(), P))
+    sparsefactorbytes(P::SparseMatrixCSC, ::Type{T}, ordering)
 
 The bytes a sparse LU of the pattern `P` in precision `T` would hold,
 each entry with its index, from the symbolic analysis alone: the entries
-of `L` and `U` under the fill reducing ordering a KLU factorization of `P`
-takes ([`fillordering`](@ref)), which are twice the fill that ordering
-predicts, `fill` entries each with the diagonal counted in both. What
-escalation to a larger coupling set is budgeted against on any backend; a
-device factorization orders differently, but the fill of the same pattern
-is of the same size. An `ordering` already chosen for `P` can be handed
-in.
+of `L` and `U` under `ordering`, the fill reducing ordering a KLU
+factorization of `P` takes ([`fillordering`](@ref)), which are twice the
+fill that ordering predicts, `fill` entries each with the diagonal counted
+in both, or under the natural order, which bounds them, when `ordering` is
+`nothing`. What escalation to a larger coupling set is budgeted against on
+any backend; a device factorization orders differently, but the fill of
+the same pattern is of the same size.
 """
 function sparsefactorbytes(P::SparseMatrixCSC, ::Type{T},
-    ordering::Union{Nothing,FillOrdering} =
-        fillordering(KLUfactorization(), P)) where {T}
+    ordering::Union{Nothing,FillOrdering}) where {T}
     # without an ordering, which only a pattern of one column or a failure
     # of both orderings leaves, the natural order's fill bounds it
     fillcount = isnothing(ordering) ?

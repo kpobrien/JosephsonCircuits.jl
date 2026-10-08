@@ -1,4 +1,18 @@
 using JosephsonCircuits, Test, LinearAlgebra, Random
+using JosephsonCircuits: transientinjection, transientquantumdiagnostics
+
+# The covariance and the commutator of quadrature pairs of responses, the
+# columns `2j - 1` and `2j` of `response` a pair, the covariance weighted
+# by the pairs' `variances`: the contraction the noise makes of its
+# responses, written out on the host as the reference the quantum
+# measurement's covariance and commutator are checked against
+function pairscontraction!(covariance, commutator, response, variances)
+    r = Array(response) .* transpose(sqrt.(Array(variances)))
+    x, p = Array(response)[:, 1:2:end], Array(response)[:, 2:2:end]
+    copyto!(commutator, Array(commutator) .+ x*transpose(p) .- p*transpose(x))
+    copyto!(covariance, Array(covariance) .+ r*transpose(r))
+    return nothing
+end
 
 # two ports declared out of numerical order, so that a port number is not
 # the row of its trace: port 2 is row 1 and port 1 is row 2
@@ -12,7 +26,7 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
     n, dt = 64, 1e-11
     times = collect(0:(n-1)) .* dt .+ 0.17e-9
     period = n*dt
-    f = 3/period
+    w = 2pi*3/period
     c = zeros(ComplexF64, fld(n-1, 2), 3)
     c[3, :] = [1, im, 1]
     plan = transientquantumplan(prob, times, c; ports = [1, 1, 2], backend)
@@ -20,8 +34,8 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
     @testset "Quantum temporal modes: $backend" begin
         @test plan.rows == [1, 1, 2]
         X, P = 1.7, -0.4
-        rf = sqrt(JC.planck_constant*f/period) .* (X .* cospi.(2f .* (times .- times[1])) .+
-              P .* sinpi.(2f .* (times .- times[1])))
+        rf = sqrt(JC.reduced_planck_constant*w/period) .* (X .* cos.(w .* (times .- times[1])) .+
+              P .* sin.(w .* (times .- times[1])))
         # port 1 carries the wave and port 2 twice it, on their rows
         traces = device(permutedims(hcat(rf, 2rf)))
         @test Array(transientquantum(plan, traces)) ≈ [X, P, P, -X, 2X, 2P] rtol=1e-13
@@ -29,16 +43,16 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
         # Independent canonical Fourier quadratures reconstruct both the
         # covariance and commutators, including complex overlapping modes.
         response = zeros(6, 4length(plan.frequencies))
-        for port in 1:2, (k, fk) in enumerate(plan.frequencies), q in 1:2
+        for port in 1:2, (k, wk) in enumerate(plan.frequencies), q in 1:2
             wave = zeros(2, n)
-            phase = 2fk .* (times .- times[1])
-            wave[port, :] .= sqrt(JC.planck_constant*fk/period) .*
-                             (q==1 ? cospi.(phase) : sinpi.(phase))
+            phase = wk .* (times .- times[1])
+            wave[port, :] .= sqrt(JC.reduced_planck_constant*wk/period) .*
+                             (q==1 ? cos.(phase) : sin.(phase))
             col = 2length(plan.frequencies)*(port-1)+2k-2+q
             response[:, col] .= Array(transientquantum(plan, device(wave)))
         end
         v, k = device(zeros(6, 6)), device(zeros(6, 6))
-        JC.transientnoiseaccumulate!(v, k, device(response), device(fill(0.5, size(response, 2))))
+        pairscontraction!(v, k, response, fill(0.5, size(response, 2)))
         @test Array(v) ≈ plan.vacuum atol=5e-14
         @test Array(k) ≈ plan.commutator atol=5e-14
         @test transientquantumdiagnostics(v, k, plan.commutator).passed
@@ -54,18 +68,18 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
         @test dot(Array(gradient), direction) ≈ dot(weights, measured) rtol=1e-13 atol=1e-12*cancellation
         @test iszero(Array(gradient)[3, :])
         envelope = reshape(sinpi.((0:(n-1)) ./ n) .^ 2, :, 1)
-        windowed = transientquantumplan(prob, times, [3.4/period]; envelopes = envelope, backend)
+        windowed = transientquantumplan(prob, times, [2pi*3.4/period]; envelopes = envelope, backend)
         @test norm(windowed.coefficients) ≈ 1
         @test windowed.vacuum ≈ Matrix(0.5I, 2, 2)
         @test JosephsonCircuits.KernelAbstractions.get_backend(transientquantum(plan, traces)) == backend
 
         # Analytic Gaussian channels fix the amplifier and attenuator factors.
-        single = transientquantumplan(prob, times, [f]; backend)
+        single = transientquantumplan(prob, times, [w]; backend)
         J = [0.0 1; -1 0]
         for g in (1.0, 2.0, 100.0)
             h = hcat(sqrt(g)*Matrix(1.0I, 2, 2), sqrt(g-1)*[1.0 0; 0 -1])
             v, k = device(zeros(2, 2)), device(zeros(2, 2))
-            JC.transientnoiseaccumulate!(v, k, device(h), device(fill(0.5, 4)))
+            pairscontraction!(v, k, h, fill(0.5, 4))
             @test transientquantumdiagnostics(v, k, J).passed
             metrics = transientquantumefficiency(h[:, 1:2], v)
             @test metrics.QE ≈ g/(2g-1)
@@ -98,13 +112,13 @@ if !@isdefined(TRANSIENTBACKENDTESTS)
         ts = collect(0:63) .* 1e-11
         two = quantumtestproblem()
         @test_throws ArgumentError transientquantumplan(two, ts, [0.0])
-        @test_throws ArgumentError transientquantumplan(two, ts, [0.5e11])
-        @test_throws ArgumentError transientquantumplan(two, ts, [3.4/(64e-11)])
-        @test_throws ArgumentError transientquantumplan(two, ts .^ 2, [1e9])
+        @test_throws ArgumentError transientquantumplan(two, ts, [2pi*0.5e11])
+        @test_throws ArgumentError transientquantumplan(two, ts, [2pi*3.4/(64e-11)])
+        @test_throws ArgumentError transientquantumplan(two, ts .^ 2, [2pi*1e9])
         @test_throws ArgumentError transientquantumplan(two, ts, zeros(31, 1))
         # a mode names a port by its number, which must exist
-        @test_throws ArgumentError transientquantumplan(two, ts, [1/(64e-11)]; ports = [3])
-        @test transientquantumplan(two, ts, [1/(64e-11)]; ports = [2]).rows == [2]
+        @test_throws ArgumentError transientquantumplan(two, ts, [2pi/(64e-11)]; ports = [3])
+        @test transientquantumplan(two, ts, [2pi/(64e-11)]; ports = [2]).rows == [2]
         circuit = Circuit(
             [:p => Port(1), :Rloss => Resistor(100.0; temperature = 0.1),
                 :Ropen => Resistor(Inf), :c => Capacitor(1e-12)],
@@ -126,11 +140,12 @@ if !@isdefined(TRANSIENTBACKENDTESTS)
         @test_throws ArgumentError transientnoisebaths(transientproblem(unmatched))
         for T in (0.0, 300.0)
             bath = JC.TransientNoiseBath("test", [1], [1.0], 1, 50.0, T)
-            f, df = 5e9, 1e8
-            variance = thermaloccupation(2pi*f, T) + 1/2
-            psd = JC.bathamplitude(bath, f, df)^2*variance/(2df)
-            expected = T == 0 ? JC.planck_constant*f/50 : 2JC.boltzmann_constant*T/50
-            @test psd ≈ expected rtol=1e-7
+            w, dw = 2pi*5e9, 2pi*1e8
+            variance = thermaloccupation(w, T) + 1/2
+            # the current's variance over the band, Johnson's classically
+            meansquare = JC.bathamplitude(bath, w, dw)^2*variance
+            expected = T == 0 ? 2JC.reduced_planck_constant*w/50*dw/(2pi) : 4JC.boltzmann_constant*T/50*dw/(2pi)
+            @test meansquare ≈ expected rtol=1e-7
         end
         # the baths as targets: a resistor bath injects the resistor's own
         # current direction, and its port is zero

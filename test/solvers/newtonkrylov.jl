@@ -1,4 +1,5 @@
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
+using JosephsonCircuits: BlockDiagonal, Floquet, HarmonicBand
 
 isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 
@@ -35,6 +36,18 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
         @test info.converged
         @test isapprox(x, [sqrt(2), cbrt(3)]; rtol = 1e-6)
         @test length(info.krylov) >= info.iterations
+    end
+
+    # a residual whose norm is not finite, from an entry or from finite
+    # entries whose norm overflows, scales no relative tolerance: the solve
+    # ends at the start, not converged, before any linear solve
+    for bad in (Inf, NaN, 1.5e308)
+        info = JosephsonCircuits.nlsolvekrylov!((F, J, x) -> (isnothing(F) ||
+                fill!(F, bad); nothing), jvp!, zeros(2), [1.0, 1.0],
+            ExactP(zeros(2, 2), nothing); rtol = 1e-6)
+        @test !info.converged
+        @test info.reason === :nonfinite
+        @test isempty(info.krylov)
     end
 
     # A rebuild forced by an escalation is never left to the probe: the
@@ -114,6 +127,39 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
     @test !JosephsonCircuits.isexactpreconditioner(w)
     @test JosephsonCircuits.pointmoved!(w) === w
 
+    # under `Never` no linear solve is reported slow, whatever its rate: a
+    # linear solver whose residual can grow, as BiCGStab's can, reports a
+    # rate above one, which `Always` reports and `Never` does not. The
+    # system is linear and the preconditioner exact, so the stagnated solve
+    # is replaced by the preconditioner's, which is the root
+    mutable struct SlowReportsP <: JosephsonCircuits.AbstractPreconditioner
+        A::Matrix{Float64}
+        stalls::Int
+    end
+    JosephsonCircuits.updatepreconditioner!(pc::SlowReportsP, ::AbstractVector) = pc
+    JosephsonCircuits.applypreconditioner!(z::AbstractVector, pc::SlowReportsP,
+        r::AbstractVector) = ldiv!(z, lu(pc.A), r)
+    JosephsonCircuits.stalled!(pc::SlowReportsP) = (pc.stalls += 1; pc)
+    struct GrowingResidualLS <: JosephsonCircuits.AbstractHBLinearSolver end
+    function JosephsonCircuits.hblinearsolve!(::GrowingResidualLS, deltax,
+            jvp!, F, ws, Mop!; rtol, atol, maxrestarts, oncycle = nothing)
+        fill!(deltax, 0)
+        return (converged = false, residual = 2*norm(F), iterations = 1,
+            cycles = 1, reason = :notconverged)
+    end
+    Alin = [3.0 1.0; 1.0 2.0]
+    blin = [1.0, -1.0]
+    linres!(F, J, x) = (isnothing(F) || (mul!(F, Alin, x); F .-= blin); nothing)
+    linjvp!(y, v) = mul!(y, Alin, v)
+    for (refresh, reported) in ((Always(), true), (Never(), false))
+        pc = SlowReportsP(Alin, 0)
+        info = JosephsonCircuits.nlsolvekrylov!(linres!, linjvp!, zeros(2),
+            zeros(2), pc, NewtonKrylov(refresh = refresh, escalate = false,
+                linearsolver = GrowingResidualLS()); atol = 1e-10)
+        @test info.converged
+        @test (pc.stalls > 0) == reported
+    end
+
     # the objects validate their own options
     @test_throws ArgumentError Staged(maxattempts = 0)
     @test_throws ArgumentError Staged(smin = 0.0)
@@ -124,6 +170,7 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
     @test_throws ArgumentError QuasiNewton(factorization = BlockFactorization())
     @test_throws ArgumentError GMRES(restart = 0)
     @test_throws ArgumentError GMRES(maxrestarts = 0)
+    @test_throws ArgumentError GMRES(400, 0)
     @test_throws ArgumentError NewtonKrylov(linearsolver = 1)
     @test_throws TypeError NewtonKrylov(refresh = :always)
     @test_throws ArgumentError Floquet(size = 0)
@@ -131,9 +178,11 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
     @test_throws ArgumentError HarmonicBand(-1)
     @test_throws ArgumentError HarmonicBand((2, -1))
     @test_throws ArgumentError Staged(grids = [(0,), (8,)])
-    # and the loop its tolerances
+    # and the loop its tolerances and the forcing sequence it is handed
     @test_throws ArgumentError JosephsonCircuits.nlsolvekrylov!(fj!, jvp!,
         zeros(2), [1.0, 1.0], ExactP(zeros(2, 2), nothing); rtol = NaN)
+    @test_throws ArgumentError JosephsonCircuits.nlsolvekrylov!(fj!, jvp!,
+        zeros(2), [1.0, 1.0], ExactP(zeros(2, 2), nothing); forcingmax = 1.0)
 end
 
 @testset "a single precision solve at the default tolerance" begin
@@ -226,4 +275,34 @@ end
         m isa Union{Newton,QuasiNewton} &&
             @test r.solverinfo.stages[end].iterations < 100
     end
+end
+
+@testset "a step with no decrease is retried only when a rebuild can change it" begin
+    # with no backtrack the first full step of a strong drive raises the
+    # merit; the full Jacobian, rebuilt at that point, is exact, so a retry
+    # from it would repeat the step, and the solve ends after one search
+    circuit, defs = testjpacircuit()
+    r = @test_logs (:warn,) match_mode = :any hbnlsolve((2*pi*5e9,), (8,),
+        [(mode = (1,), port = 1, current = 2e-6)], circuit, defs;
+        method = NewtonKrylov(linesearch = Backtracking(maxbacktracks = 0)))
+    st = r.solverinfo.stages[end]
+    @test st.reason === :linesearch
+    @test count(iszero, st.alpha) == 1
+end
+
+@testset "a probed step builds its deflation once" begin
+    # the probe measures the preconditioner the last step left, and the
+    # deflation is built once a step, by the refresh or at the first
+    # application after the point moved, never by both. The probe decides
+    # on measured times, so the solve is repeated once compiled
+    long, defs = testchaincircuit(12)
+    solve() = hbnlsolve((2*pi*8e9,), (8,), [(mode = (1,), port = 1,
+        current = 3.2e-6)], long, defs; method = NewtonKrylov(
+        preconditioner = Floquet(size = 12, harvest = 4), refresh = Probe(),
+        escalate = false))
+    solve()
+    r = solve()
+    st = r.solverinfo.stages[end]
+    @test r.solverinfo.converged
+    @test last(st.krylov).deflationrebuilds <= length(st.krylov)
 end

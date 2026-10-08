@@ -147,8 +147,12 @@ factorization of the polynomial there, and ArnoldiMethod's restarted
 Schur iteration on the companion pencil shifted and inverted through it,
 which never forms the pencil, with at most `krylovdim` basis vectors and
 `restarts` restarts, to the tolerance `tol`, which bounds the residual a
-pole is accepted with as well. A shift exactly at a pole makes the
-polynomial singular there; move it off by a little.
+pole is accepted with as well. The iteration starts from a fixed vector,
+and where its Krylov space closes before it holds the poles asked for, as
+it does at a repeated pole, continues from vectors drawn from a generator
+seeded alike at every search, so a search gives the same poles at every
+call and leaves the caller's random stream alone. A shift exactly at a
+pole makes the polynomial singular there; move it off by a little.
 
 A search for more poles than lie near its shift comes upon the pencil's
 infinite eigenvalues, which the inversion maps to zero. Of its
@@ -381,8 +385,10 @@ end
 # every finite pole, from the dense companion pencil
 polesolve(method::DenseSpectrum, sys, factorization) = densepoles(sys, method, method)
 
-# the dense spectrum's poles, reported as found by `reported`
-function densepoles(sys, method::DenseSpectrum, reported)
+# the dense spectrum's poles, reported as found by `reported`, which is
+# only stored and does not specialize the search
+Base.@nospecializeinfer function densepoles(sys, method::DenseSpectrum,
+        @nospecialize(reported))
     n = size(sys.Q0, 1)
     n <= method.maxunknowns || throw(ArgumentError(reported isa Monodromy ?
         lazy"without a pump the poles are those of the dense spectrum, and its $(n) unknowns exceed the $(method.maxunknowns) it takes by default, its time growing as their cube; give method = DenseSpectrum(maxunknowns = $(n)) for every pole, or ShiftInvert(shifts) for the poles near given frequencies." :
@@ -405,20 +411,26 @@ function polesolve(method::ShiftInvert, sys, factorization)
     n = size(sys.Q0, 1)
     work = PoleMatrixWorkspace(sys)
     cache = FactorizationCache()
-    values, vectors = ComplexF64[], Matrix{ComplexF64}(undef, n, 0)
+    # the poles, and shift by shift their vectors
+    values, blocks = ComplexF64[], Matrix{ComplexF64}[]
     shiftindices, searches = Int[], NamedTuple[]
     converged = true
     infinite = 0
+    start = vec(probevectors(2n, 1))
     for (k, shift) in enumerate(method.shifts)
         z = shift/sys.scale
         tryfactorize!(cache, factorization, polematrix!(work, sys, z))
         op = PoleShiftInvert(cache.factorization, sys.Q1, sys.Q2, z, zeros(ComplexF64, n), zeros(ComplexF64, n))
         count = min(method.nev, 2n)
         maxdim = min(method.krylovdim, 2n)
-        # a restart keeps half the basis, the requested poles at least
-        decomp, history = ArnoldiMethod.partialschur(op; nev = count, which = :LM,
-            tol = method.tol, mindim = clamp(maxdim ÷ 2, count, maxdim), maxdim,
-            restarts = method.restarts)
+        # a restart keeps half the basis, the requested poles at least;
+        # the iteration starts from the contour's fixed probe sequence and
+        # draws any vector it continues from from a seeded generator
+        decomp, history = seededdraws() do
+            ArnoldiMethod.partialschur(op; v1 = start, nev = count,
+                which = :LM, tol = method.tol, mindim = clamp(maxdim ÷ 2, count, maxdim),
+                maxdim, restarts = method.restarts)
+        end
         mu, V = ArnoldiMethod.partialeigen(decomp)
         # the companion's infinite eigenvalues map to zero: one there
         # exactly is infinite, and the others are candidates, checked
@@ -426,14 +438,33 @@ function polesolve(method::ShiftInvert, sys, factorization)
         finite = findall(x -> isfinite(x) && !iszero(x), mu)
         infinite += sum(x -> isfinite(x) && iszero(x), mu; init = 0)
         append!(values, z .+ inv.(mu[finite]))
-        vectors = hcat(vectors, V[1:n, finite])
+        push!(blocks, V[1:n, finite])
         append!(shiftindices, fill(k, length(finite)))
         push!(searches, (requested = count, converged = history.nconverged,
             products = history.mvproducts))
         converged &= history.converged
     end
+    # the shifts' vectors joined once, after the last
+    vectors = reduce(hcat, blocks)
     return poleresult(sys, values, vectors, shiftindices, searches, converged,
         infinite, method.tol, method; finite = finitebound(sys))
+end
+
+# `f` with the task's default random generator seeded with `seed`, and the
+# caller's state of it put back after. ArnoldiMethod continues its basis
+# from a vector drawn from that generator where the Krylov space closes
+# before it holds the eigenvalues asked for, as it does at a repeated
+# eigenvalue, so a search run through this draws the same vectors at every
+# call and leaves the caller's random stream where it was.
+function seededdraws(f; seed::Integer = 1)
+    rng = Random.default_rng()
+    state = copy(rng)
+    Random.seed!(rng, seed)
+    try
+        return f()
+    finally
+        copy!(rng, state)
+    end
 end
 
 # An upper bound on the number of finite poles, the degree of the
@@ -535,11 +566,11 @@ function hbpolesystem(psc::CompiledCircuit, circuitdefs, nonlinear,
     # argument is one, so multiply the modulation after construction.
     lsys = HBLinearizedSystem(modulation.Amatrixindices, nm.Ljb, R,
         m, psc.topology.Nbranches, modulation.phimatrix, K, G, C,
-        K, G, C, false, M, modulation.wpumpmodes, psc.Nnodes)
+        K, G, C, false, M, modulation.wpumpmodes)
     K = copy(lsys.Asparse)
     K.nzval .*= Lscale
     K += lsys.invLnm + M
-    stampoleblocks!(K, G, blocks, freq.modes, m, Lscale, scale)
+    K, G = stampoleblocks(K, G, blocks, freq.modes, m, Lscale, scale)
 
     # K*Tcommon is identically zero: a uniform flux shift inside any
     # component of the L/Lj graph changes no constitutive branch flux.
@@ -651,8 +682,14 @@ end
 # part, as a result lists them
 poleorder(poles) = sortperm([(-real(z), imag(z)) for z in poles])
 
-function poleresult(sys, values, vectors, shiftindices, searches,
-        converged, infinite, tol, method; finite = nothing)
+# The result of a search. The method, only stored, and the counts
+# `infinite` and `finite`, a number or `nothing` by method, do not
+# specialize it, so every method shares one instance.
+Base.@nospecializeinfer function poleresult(sys, values, vectors, shiftindices,
+        searches, converged, @nospecialize(infinite), tol, @nospecialize(method);
+        @nospecialize(finite = nothing))
+    infinite = infinite::Union{Nothing,Int}
+    finite = finite::Union{Nothing,Int}
     m, nn, nj = length(sys.modes), length(sys.nodes), length(sys.junctionbranches)
     count = length(values)
     voltage = zeros(ComplexF64, m, nn, count)

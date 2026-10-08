@@ -3,80 +3,53 @@
 # evaluation, and the Armijo acceptance.
 
 """
-    quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard_low = 0.1,
-        safeguard_high = 0.5)
+    quadratic_trial_step(ϕ0, ϕ1, dϕ0dα, ls::Backtracking)
 
-Return a tuple `(αfit, ϕfit, measured)` with the proposed step `αfit`, the
-estimated merit function value `ϕfit`, and `measured` a boolean indicating if
-the function value is based on an evaluation of the merit function (vs an 
-estimate) that minimizes a quadratic function fitted to `ϕ(α) = f(xₖ + α pₖ)`
-in the range `[0, 1]`. The fitting process uses the merit function values at
-`α = 0`, `α = 1`, and the derivative at the first point `dϕ(α)/dα|α = 0`.
-If the full step `α = ϕα1` satisfies the Armijo sufficient-decrease condition
-`ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`, then the full step is returned without
-fitting. By default `c1 = 1e-4`.
+Return a tuple `(αtrial, ϕtrial, measured)`: the step `αtrial` which
+minimizes a quadratic fitted to the merit function `ϕ(α) = f(xₖ + α pₖ)` on
+`[0, 1]`, the merit `ϕtrial` there, and `measured`, whether `ϕtrial` was
+evaluated rather than estimated from the fit. The fit takes the merit at
+`α = 0` and at `α = 1` and its derivative `dϕ(α)/dα|α = 0`. A full step
+`α = 1` which satisfies the Armijo sufficient-decrease condition
+`ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0` is returned without a fit.
 
 Based on Nocedal and Wright, chapter 3 section 5.
 
 # Arguments
--`ϕ0`: `ϕ(0)`, the value of the merit function at `α = 0`.
--`ϕ1`: `ϕ(1)`, the value of the merit function at `α = 1`.
--`dϕ0dα`:  `dϕ(α)/dα|α=0`, the derivative of the merit function with respect
-    to `α` at `α = 0`.
+- `ϕ0`: `ϕ(0)`, the value of the merit function at `α = 0`, finite.
+- `ϕ1`: `ϕ(1)`, the value of the merit function at `α = 1`.
+- `dϕ0dα`: `dϕ(α)/dα|α=0`, the derivative of the merit function with
+    respect to `α` at `α = 0`, finite and negative.
+- `ls`: the [`Backtracking`](@ref) which gives the constant `c1` of the
+    Armijo condition and the safeguards which bound the proposed step. The
+    lower one, `safeguardlow`, protects against large (eg. order of magnitude)
+    reductions in the step size without an additional function evaluation,
+    which would occur outside of this function; the fitted minimizer of a
+    full step which fails the Armijo condition is below `1/(2(1 - c1))`, so
+    the upper one, `safeguardhigh`, acts only when it is set below that.
 
-# Keywords
-- `c1 = 1e-4`: the constant in the Armijo sufficient-decrease check which
-     is typically (heuristicaly) set to be 1e-4,
-    `ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`.
-- `safeguard_low = 0.1`, `safeguard_high = 0.5`: the bounds of the
-    proposed step. The lower one protects against large (eg. order of
-    magnitude) reductions in the step size without an additional function
-    evaluation, which would occur outside of this function; the fitted
-    minimizer of a full step which fails the Armijo condition is below
-    `1/(2(1 - c1))`, so the upper one acts only when it is set below that.
+The callers check `ϕ0` and `dϕ0dα` before any search, and `ls` checked its
+settings when it was built, so neither is checked here.
 
 # Returns
-- `αtrial`: `αtrial` is the trial step predicted to minimize the merit
-    function based on quadratic interpolation.
-- `ϕtrial`: `ϕtrial` is either the predicted or measured value of the merit
-    function at the trial step above. If `measured = false`, then the
-    linesearch function needs to evaluate the trial point to verify that
-    Armijo sufficient-decrease condition is satisfied before accepting the
-    step.
-- `measured`: `true` if the returned `ϕtrial` has been measured and `false` if it
-    is an estimate value based on a fit.
+- `αtrial`: the step the quadratic fit predicts to minimize the merit
+    function, within the safeguards, or the full step.
+- `ϕtrial`: the merit at `αtrial`, measured or predicted. A predicted one
+    is the fit's: the line search evaluates the trial point and tests the
+    Armijo condition there before accepting the step.
+- `measured`: `true` when the full step is returned, having satisfied the
+    Armijo condition, so that `ϕtrial` is its measured merit, and `false`
+    when `ϕtrial` is an estimate.
 """
-function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard_low = 0.1,
-    safeguard_high = 0.5)
+function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα, ls::Backtracking)
     T = float(promote_type(typeof(ϕ0),typeof(ϕ1),typeof(dϕ0dα)))
     ϕ0, ϕ1, dϕ0dα = T(ϕ0), T(ϕ1), T(dϕ0dα)
-    safeguard_low = T(safeguard_low)
-    safeguard_high = T(safeguard_high)
-    c1 = T(c1)
+    safeguard_low = T(ls.safeguardlow)
+    safeguard_high = T(ls.safeguardhigh)
+    c1 = T(ls.c1)
 
-    # check that the safeguards satisfy 0 < low < high < 1
-    if !(zero(T) < safeguard_low < safeguard_high < one(T))
-        throw(ArgumentError(lazy"`safeguard_low` = $(safeguard_low) and `safeguard_high` = $(safeguard_high) must satisfy 0 < low < high < 1."))
-    end
-
-    # check that c1 is in (0,1)
-    if !(zero(T) < c1 < one(T))
-        throw(ArgumentError(lazy"`c1` = $(c1) must be in (0,1)."))
-    end
-
-    # if the function at alpha=0 is finite there isn't much we can do since
-    # ϕ0 is required for the algorithm.
-    if !isfinite(ϕ0)
-        throw(ArgumentError(lazy"`ϕ0` = $(ϕ0) must be finite."))
-    end
-
-    # check that the slope is negative.
-    if !isfinite(dϕ0dα) || dϕ0dα >= zero(T)
-        throw(ArgumentError(lazy"`dϕ0dα` = $(dϕ0dα) must be finite and negative."))
-    end
-
-    # check the Armijo sufficient decrease condition.
-    # if satified, return the full step.
+    # the Armijo sufficient decrease condition, under which the full step
+    # is returned
     if isfinite(ϕ1) && ϕ1 <= muladd(c1,dϕ0dα,ϕ0)
         return one(T), ϕ1, true
     end
@@ -108,110 +81,61 @@ function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard_low = 0.1,
 end
 
 """
-    cubic_trial_step(α0, α1, ϕ0, ϕα0, ϕα1, dϕ0dα; c1 = 1e-4,
-        safeguard_low = 0.1, safeguard_high = 0.5)
+    cubic_trial_step(α0, α1, ϕ0, ϕα0, ϕα1, dϕ0dα, ls::Backtracking)
 
-Return a tuple `(αfit, ϕfit, measured)` with the proposed step `αfit`, the
-estimated merit function value `ϕfit`, and `measured` a boolean indicating if
-the function value is based on an evaluation of the merit function (vs an 
-estimate) that minimizes a cubic function fitted to `ϕ(α) = f(xₖ + α pₖ)` in
-the range `[0, α1]`. The fitting process uses the merit function values at
-`α = 0`, `α = α0`, `α = α1`, and the derivative at the first point
-`dϕ(α)/dα|α = 0`. If the full step `α = α1` satisfies the α-scaled Armijo
-sufficient-decrease condition `ϕ(α1) <= ϕ(0) + α1 c1 (dϕ(α)/dα|α = 0)`, then
-the full step `α1` is returned without fitting. By default `c1 = 1e-4`.
+Return a tuple `(αtrial, ϕtrial, measured)`: the step `αtrial` which
+minimizes a cubic fitted to the merit function `ϕ(α) = f(xₖ + α pₖ)` on
+`[0, α1]`, the merit `ϕtrial` there, and `measured`, whether `ϕtrial` was
+evaluated rather than estimated from the fit. The fit takes the merit at
+`α = 0`, `α = α0` and `α = α1` and its derivative `dϕ(α)/dα|α = 0`. A latest
+trial `α1` which satisfies the α-scaled Armijo sufficient-decrease
+condition `ϕ(α1) <= ϕ(0) + α1 c1 (dϕ(α)/dα|α = 0)` is returned without a
+fit.
 
 Based on Nocedal and Wright, chapter 3 section 5.
 
 # Arguments
--`α0`: the previous trial step `α = α0`.
--`α1`: the proposed full trial step `α = α1`.
--`ϕ0`: the value of the function at `α = 0`.
--`ϕα0`: `ϕ(α0)`, the value of the merit function at `α = α0`.
--`ϕα1`: `ϕ(α1)`, the value of the merit function at `α = α1`.
--`dϕ0dα`: `dϕ(α)/dα|α=0`, the derivative of the merit function with respect to
-    `α` at `α = 0`.
+- `α0`: the trial before the latest, `0 < α1 < α0 <= 1`.
+- `α1`: the latest trial.
+- `ϕ0`: the value of the merit function at `α = 0`, finite.
+- `ϕα0`: `ϕ(α0)`, the value of the merit function at `α = α0`, finite.
+- `ϕα1`: `ϕ(α1)`, the value of the merit function at `α = α1`.
+- `dϕ0dα`: `dϕ(α)/dα|α=0`, the derivative of the merit function with
+    respect to `α` at `α = 0`, finite and negative.
+- `ls`: the [`Backtracking`](@ref) which gives the constant `c1` of the
+    α-scaled Armijo condition `ϕ(α) <= ϕ(0) + α c1 (dϕ(α)/dα|α = 0)` and
+    the safeguards which bound the proposed step, relative to the latest
+    trial `α1`: `safeguardlow` the smallest, which bounds the cut a single
+    fit makes before the caller evaluates the merit at the step it
+    proposes, and `safeguardhigh` the largest, so that every backtrack
+    cuts the step by at least this factor. A trial `α1` which satisfies
+    the Armijo condition is returned unclamped.
 
-# Keywords
-- `c1 = 1e-4`: the constant in the α-scaled Armijo sufficient-decrease
-    condition which is typically (heuristicaly) set to be 1e-4,
-    `ϕ(α) <= ϕ(0) + α c1 (dϕ(α)/dα|α = 0)`.
-- `safeguard_low = 0.1`: the smallest value we allow the step to take relative
-    to the full step `α1`. This protects against large (eg. order of magnitude)
-    reductions in the step size without an additional function evaluation,
-    which would occur outside of this function.
-- `safeguard_high = 0.5`: the largest value we allow the step to take relative
-    to the full step `α1`. This forces the linesearch to at least reduce the
-    step size by a factor of two for every backtrack. Note that if the full
-    step `α=α1` satisfies the Armijo sufficient-decrease condition, then it is
-    returned without any clamping.
+The search makes its trials in this order and hands only finite merits as
+`ϕα0`, the callers check `ϕ0` and `dϕ0dα` before any search, and `ls`
+checked its settings when it was built, so none of these is checked here.
 
 # Returns
-- `αtrial`: the trial step predicted to minimize the merit
-    function based on cubic interpolation.
-- `ϕtrial`: either the predicted or measured value of the merit
-    function at the trial step above. If `measured = false`, then the
-    linesearch function needs to evaluate the trial point to verify that
-    Armijo sufficient-decrease condition is satisfied before accepting the
-    step.
-- `measured`: `true` if the returned `ϕtrial` has been measured (only happens
-    when `α=ϕα0`) and `false` if it is an estimate value based on a fit.
+- `αtrial`: the step the cubic fit predicts to minimize the merit
+    function, within the safeguards.
+- `ϕtrial`: the merit at `αtrial`, measured or predicted. A predicted one
+    is the fit's: the line search evaluates the trial point and tests the
+    Armijo condition there before accepting the step.
+- `measured`: `true` when the latest trial `α1` itself is returned, having
+    satisfied the Armijo condition, so that `ϕtrial` is its measured merit,
+    and `false` when `ϕtrial` is the fit's estimate.
 """
-function cubic_trial_step(α0, α1, ϕ0, ϕα0, ϕα1, dϕ0dα; c1 = 1e-4,
-    safeguard_low = 0.1, safeguard_high = 0.5)
+function cubic_trial_step(α0, α1, ϕ0, ϕα0, ϕα1, dϕ0dα, ls::Backtracking)
     T = float(promote_type(typeof(α0),typeof(α1),typeof(ϕ0),typeof(ϕα0),
         typeof(ϕα1),typeof(dϕ0dα)))
     α0, α1 = T(α0), T(α1)
     ϕ0, ϕα0, ϕα1, dϕ0dα = T(ϕ0), T(ϕα0), T(ϕα1), T(dϕ0dα)
-    safeguard_low = T(safeguard_low)
-    safeguard_high = T(safeguard_high)
-    c1 = T(c1)
+    safeguard_low = T(ls.safeguardlow)
+    safeguard_high = T(ls.safeguardhigh)
+    c1 = T(ls.c1)
 
-    # check safeguard_low
-    if !(zero(T) < safeguard_low < safeguard_high)
-        throw(ArgumentError(lazy"`safeguard_low` = $(safeguard_low) must satisfy `0 < safeguard_low < safeguard_high`."))
-    end
-
-    # check safeguard_high
-    if !(safeguard_high < one(T))
-        throw(ArgumentError(lazy"`safeguard_high` = $(safeguard_high) must satisfy `safeguard_low < safeguard_high < 1`."))
-    end
-
-    # check that c1 is in (0,1)
-    if !(zero(T) < c1 < one(T))
-        throw(ArgumentError(lazy"`c1` = $(c1) must be in (0,1)."))
-    end
-
-    # if the function at alpha=0 is finite there isn't much we can do since
-    # ϕ0 is required for the algorithm.
-    if !isfinite(ϕ0)
-        throw(ArgumentError(lazy"`ϕ0` = $(ϕ0) must be finite."))
-    end
-
-    # finite older trial step function value ϕα0 is required for the cubic
-    # fit. we should screen out non-finite values before this function. 
-    if !isfinite(ϕα0)
-        throw(ArgumentError(lazy"`ϕα0` = $(ϕα0) must be finite."))
-    end
-
-    # check that the slope is negative.
-    if !isfinite(dϕ0dα) || dϕ0dα >= zero(T)
-        throw(ArgumentError(lazy"`dϕ0dα` = $(dϕ0dα) must be finite and negative."))
-    end
-
-    # the steps must be ordered as described below. this isn't strictly
-    # necessary for the fitting, but since the intended use is of this
-    # function is for a backtracking linesearch, we will enforce that the
-    # most recent trial step is smaller than the previous one.
-    if !(α1 < α0 <= one(T))
-        throw(ArgumentError(lazy"`α0` = $(α0) must satisfy `α1 < α0 <= 1`."))
-    end
-    if !(zero(T) < α1)
-        throw(ArgumentError(lazy"`α1` = $(α1) must satisfy `0 < α1 < α0`."))
-    end
-
-    # check the Armijo sufficient decrease condition for α1.
-    # if satified, return the proposed step α1.
+    # the Armijo sufficient decrease condition at α1, which is returned
+    # when it holds
     if isfinite(ϕα1) && ϕα1 <= muladd(c1*α1,dϕ0dα,ϕ0)
         return α1, ϕα1, true
     end
@@ -312,14 +236,14 @@ Backtracking line search on the curvilinear trial path:
     `x(α) = x0 + α*deltax - beta*α²*correction`
 
 with objective `ϕ(α) = 0.5*||F(x(α))||²`, following Nocedal & Wright section
-3.5 with the addition of a curvilinear path. The `α²`term is a correction to
-the approximate Jacobian which improves convergence particularly for strongly
-driven 3WM problems. The `α²` scaling enables it to turn off at `α=0` and not
-change the merit function or its derivatve at the starting point (so the 
-definition of the Armijo condition is not changed). We currently compute
-`correction` using Anderson acceleration (Anderson mixing). When
-`correction == nothing` or `beta == 0` the path is the straight path
-`x + α*deltax`.
+3.5 with the addition of a curvilinear path. The `α²` term is a correction
+to the approximate Jacobian, which improves convergence on strongly driven
+three wave mixing problems. Its `α²` scaling makes it vanish at `α = 0` with
+its derivative, so it changes neither the merit function nor its slope at
+the starting point, and the Armijo condition is that of the straight path.
+`correction` is the Anderson acceleration (Anderson mixing) correction of
+[`nlsolve!`](@ref). When `correction == nothing` or `beta == 0` the path is
+the straight path `x + α*deltax`.
 
 `F` holds the residual at `x0`, from which `ϕ0` was computed, and `Fbest`
 is scratch: the search keeps there the residual of its best trial,
@@ -331,23 +255,22 @@ hold the full step instead, and `Fbest` must hold the residual at `x0`.
 full-step data to estimate the trial step `α` at which the minimum of the
 merit function occurs. The full step data consists of the merit function value
 `ϕ0` and derivative `dϕ0dα` at the starting point `α=0` and the merit function
-value `ϕfullstep` at the full step `α=1`. If `ϕfullstep` is not provided by
-the user, then it is computed before calling [`quadratic_trial_step`](@ref)).
-If [`quadratic_trial_step`](@ref) returns a full step with the `measured`
-Boolean set to true, then we know it has already passed the Armijo
-sufficient-decrease condition `ϕα <= ϕ0 + c1*α*dϕ0dα` and can be used as the
-step. Return this step `α` and exit the function.
+value `ϕfullstep` at the full step `α=1`, evaluated first when the caller
+does not provide it. A full step which [`quadratic_trial_step`](@ref)
+returns as `measured` has passed the Armijo sufficient-decrease condition
+`ϕα <= ϕ0 + c1*α*dϕ0dα` and is returned.
 
-Otherwise loop over proposed trial step evaluations and cubic interpolations
-with [`cubic_trial_step`](@ref). Once a successful trial step is identified
-return that or return the best identified once `maxbacktracks` is reached.
+Otherwise trial evaluations alternate with the cubic fits of
+[`cubic_trial_step`](@ref) until a trial satisfies the condition, which is
+returned, or `maxbacktracks` trials have been made, when the best of them
+is.
 The Armijo constant `c1`, the safeguards of the fits, the trial budget
 `maxbacktracks` and whether the fits are made at all are the fields of
 `ls`, a [`Backtracking`](@ref). Without interpolation neither fit is made:
 the first backtrack is to `α = 1/2` and every later one multiplies `α` by
 `safeguardhigh`, with the Armijo test at each trial.
 
-This function always leaves`xcandidate == x(α)` and `F` holds the residual
+This function always leaves `xcandidate == x(α)` and `F` holds the residual
 there (for `α == 0` that is the residual at `x0`).
 
 Returns `(α, ϕα, accepted, backtracks)`:
@@ -374,7 +297,6 @@ function backtracking_linesearch!(f!, F::AbstractVector,
     end
     # the settings of the search, validated when `ls` was built
     c1 = ls.c1
-    safeguard_low = ls.safeguardlow
     safeguard_high = ls.safeguardhigh
     maxbacktracks = ls.maxbacktracks
     interpolate = ls.interpolate
@@ -383,8 +305,7 @@ function backtracking_linesearch!(f!, F::AbstractVector,
     # already provided (with F and xcandidate left at that full step), in
     # which case the evaluation is not repeated. linesearchevaluate! returns
     # the merit function value and overwrites F and xcandidate.
-    # quadratic_trial_step will later validate ϕ0 and dϕ0dα and check
-    # the Armijo condition at α = 1.
+    # quadratic_trial_step will later check the Armijo condition at α = 1.
     ϕ1 = if isnothing(ϕfullstep)
         # F holds the residual at x0. save it so the no-decrease
         # failure path can restore it by copy (a caller passing ϕfullstep
@@ -404,8 +325,7 @@ function backtracking_linesearch!(f!, F::AbstractVector,
     # with nothing measured in between, which is what halving avoids for a
     # caller whose trials are cheap next to the direction they test.
     α, ϕpred, accepted = if interpolate
-        quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = c1, safeguard_low = safeguard_low,
-            safeguard_high = safeguard_high)
+        quadratic_trial_step(ϕ0, ϕ1, dϕ0dα, ls)
     else
         armijo = isfinite(ϕ1) && ϕ1 <= muladd(c1, dϕ0dα, ϕ0)
         (armijo ? one(ϕ0) : one(ϕ0)/2, ϕ1, armijo)
@@ -444,11 +364,9 @@ function backtracking_linesearch!(f!, F::AbstractVector,
             # cubic fit through (0, ϕ0, dϕ0dα) and the two most recent
             # trials. first performs the Armijo test at α.
             αnext, ϕpred, accepted = cubic_trial_step(αprev, α, ϕ0, ϕprev,
-                ϕα, dϕ0dα; c1 = c1, safeguard_low = safeguard_low,
-                safeguard_high = safeguard_high)
-            # if the trial point α was accepted, then the linesearch is
-            # successful and we can return that trial step. otherwise, test
-            # the next proposed step αnext in the next iteration of the loop.
+                ϕα, dϕ0dα, ls)
+            # an accepted trial ends the search; otherwise the next pass
+            # of the loop tests the proposed step αnext
             if accepted
                 return α, ϕα, true, backtracks
             end
@@ -470,10 +388,10 @@ function backtracking_linesearch!(f!, F::AbstractVector,
         α = αnext
     end
 
-    # if the backtrack counter backtracks reaches maxbacktracks then the
-    # linesearch has failed and we need to restore the best trial's residual
-    # from the saved copy and recompute its trial point, xcandidate. if the
-    # bestα is from the last evaluation then there is nothign we need to do.
+    # with the trials spent the search has failed: the best trial's
+    # residual is restored from its saved copy and its trial point
+    # recomputed, unless the best trial is the last one evaluated, which F
+    # and xcandidate hold already
     if bestα != αeval
         copyto!(F, Fbest)
         linesearchtrialpoint!(xcandidate, x0, bestα, deltax, beta, correction)

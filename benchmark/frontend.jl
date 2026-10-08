@@ -3,6 +3,7 @@
 # Inputs are prepared before timing; package loading and input generation
 # are excluded. First-call figures include frontend JIT compilation.
 using JosephsonCircuits
+using JosephsonCircuits: elaborate
 using Statistics
 include(joinpath(@__DIR__, "options.jl"))
 

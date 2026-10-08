@@ -7,13 +7,13 @@
 
 Preallocated storage for [`gmres!`](@ref) with a restart length of `m` on a
 system of dimension `n`. Holds the `n x (m+1)` Arnoldi basis `V`, the
-`(m+1) x m` Hessenberg matrix `H` as the Givens rotations leave it, the raw
-Arnoldi Hessenberg `Harnoldi` beside it, the Givens rotations `cs` and `sn` which
-reduce it, the least squares right hand side `s`, its solution `y`, three
-length `n` work vectors, the two length `m` staging buffers `hd` and
-`cd` of the block Gram-Schmidt projection, allocated like `V`, and
-`external`, the workspace an external linear solver ([`KrylovJL`](@ref))
-keeps between the solves of one system, `nothing` until one is made.
+`(m+1) x m` Hessenberg matrix `H` as the Givens rotations leave it, the
+Givens rotations `cs` and `sn` which reduce it, the least squares right hand
+side `s`, its solution `y`, three length `n` work vectors, the two length `m`
+staging buffers `hd` and `cd` of the block Gram-Schmidt projection, allocated
+like `V`, and `external`, the workspace an external linear solver
+([`KrylovJL`](@ref)) keeps between the solves of one system, `nothing` until
+one is made.
 
 The dominant cost is `V`, which is `n*(m+1)` numbers, so `m` trades memory and
 orthogonalization work against restart frequency. It is not paid up front:
@@ -37,13 +37,6 @@ mutable struct GMRESWorkspace{T<:AbstractFloat,TV<:AbstractVector{T},TM<:Abstrac
     # which a device array must not be asked to do, and they are small
     # enough that the cost is one small transfer per Arnoldi step
     H::Matrix{T}
-    # the Arnoldi Hessenberg before the Givens rotations, column by column
-    # as each is finished. `H` itself is the triangularized least squares
-    # matrix once the rotations have been applied; a harvest that needs the
-    # Arnoldi relation `A*V[:, 1:j] = V[:, 1:j+1]*Harnoldi[1:j+1, 1:j]`
-    # (the harmonic Ritz pencil) reads this one. The singular values of the
-    # two agree, since a left orthogonal transformation preserves them.
-    Harnoldi::Matrix{T}
     cs::Vector{T}
     sn::Vector{T}
     s::Vector{T}
@@ -77,7 +70,7 @@ function GMRESWorkspace(b::AbstractVector{T}, m::Integer) where {T<:AbstractFloa
     cols = min(m + 1, GMRESINITIALCOLUMNS)
     return GMRESWorkspace{T,typeof(similar(b)),typeof(similar(b, n, cols))}(
         similar(b, n, cols), similar(b), similar(b), similar(b),
-        zeros(T, m + 1, m), zeros(T, m + 1, m),
+        zeros(T, m + 1, m),
         Vector{T}(undef, m), Vector{T}(undef, m),
         Vector{T}(undef, m + 1), Vector{T}(undef, m),
         similar(b, m), similar(b, m), nothing)
@@ -132,34 +125,15 @@ KrylovVectors(x::AbstractVector, F::AbstractVector, m::Integer) =
         similar(F))
 
 """
-    harvest!(pc::AbstractPreconditioner, ws::GMRESWorkspace, out::NamedTuple)
-
-Give the preconditioner `pc` the Arnoldi factorization a solve just built, so
-it can extract information for the *next* solve. `out` is the named tuple
-returned by [`gmres!`](@ref). Called by [`nlsolvekrylov!`](@ref) after every
-GMRES call. The default does nothing, which is correct for any preconditioner
-that does not recycle.
-
-Only the *last* restart cycle is still present in the workspace, so
-implementations take the usable Arnoldi dimension from the length of that
-cycle, `out.lastcycle` ([`harvestdimension`](@ref)), rather than from
-`out.iterations`, which counts every cycle.
-"""
-harvest!(pc::AbstractPreconditioner, ::GMRESWorkspace, ::NamedTuple) = pc
-harvest!(pc::AbstractWrappedPreconditioner, ws::GMRESWorkspace, out::NamedTuple) =
-    (harvest!(innerpreconditioner(pc), ws, out); pc)
-
-"""
     harvestcycle!(pc::AbstractPreconditioner, ws::GMRESWorkspace, j::Integer)
 
-Give the preconditioner the Arnoldi factorization of the restart cycle which
-has just ended, `j` vectors of it, before [`gmres!`](@ref) overwrites the
-workspace with the next cycle. The default does nothing.
-
-This is the per-cycle counterpart of [`harvest!`](@ref), which sees only the
-cycle left in the workspace when the solve returns. A preconditioner opts
-into it through [`usescycleharvest`](@ref), and one which does is *not*
-harvested again afterwards.
+Give the preconditioner `pc` the Arnoldi factorization of the restart cycle
+which has just ended, `j` vectors of it, before [`gmres!`](@ref) overwrites
+the workspace with the next cycle, so that it can extract information for
+the *next* solve from every cycle, the early full ones included. Called
+through the `oncycle` callback of [`gmres!`](@ref) for a preconditioner
+which asks for it ([`usescycleharvest`](@ref)). The default does nothing,
+which is correct for any preconditioner that does not recycle.
 """
 harvestcycle!(pc::AbstractPreconditioner, ::GMRESWorkspace, ::Integer) = pc
 harvestcycle!(pc::AbstractWrappedPreconditioner, ws::GMRESWorkspace, j::Integer) =
@@ -168,10 +142,10 @@ harvestcycle!(pc::AbstractWrappedPreconditioner, ws::GMRESWorkspace, j::Integer)
 """
     usescycleharvest(pc::AbstractPreconditioner)
 
-Whether `pc` wants [`harvestcycle!`](@ref) at the end of every restart cycle
-instead of [`harvest!`](@ref) once the solve is over. `false` by default, so
-that a preconditioner which harvests only the final cycle keeps doing
-exactly that.
+Whether `pc` reads the Arnoldi factorization of every restart cycle
+([`harvestcycle!`](@ref)), so that the linear solve calls it back at the end
+of each. `false` by default, which leaves the callback out of the solves of
+a preconditioner that does not recycle.
 """
 usescycleharvest(::AbstractPreconditioner) = false
 
@@ -367,21 +341,6 @@ function preconditionedproduct!(w::AbstractVector, z::AbstractVector, Aop,
 end
 
 """
-    harvestdimension(ws::GMRESWorkspace, out::NamedTuple)
-
-The number of Arnoldi vectors of the *last* restart cycle still present in
-the workspace, which is the usable dimension for a harvest: `out.lastcycle`,
-the length of that cycle as [`gmres!`](@ref) returns it, which a cycle
-ending early on the recurrence estimate or a breakdown makes shorter than
-the restart length, whether it is the last or not. Zero when there is no
-cycle to read.
-"""
-function harvestdimension(ws::GMRESWorkspace, out::NamedTuple)
-    j = Int(get(out, :lastcycle, 0))
-    return 1 <= j <= size(ws.H, 2) ? j : 0
-end
-
-"""
     norm2(v::AbstractVector)
 
 The Euclidean norm of `v`: for a `Float64` vector formed through the inner
@@ -410,9 +369,10 @@ norm2(v::AbstractVector) = norm(v)
 
 """
     gmres!(x, Aop!, b, ws::GMRESWorkspace; Mop! = nothing, rtol = 1e-6,
-        atol = 0.0, maxrestarts = 10, initialzero = true, oncycle = nothing)
+        atol = 0.0, maxrestarts = 10, oncycle = nothing)
 
-Solve `A*x = b` with restarted GMRES, where `mul!(w, Aop, v)` computes `w = A*v` and
+Solve `A*x = b` with restarted GMRES from the zero start, overwriting `x`
+with the solution, where `mul!(w, Aop, v)` computes `w = A*v` and
 the optional `Mop!` applies a preconditioner `z = M \\ v`, either as a bare
 in-place closure `Mop!(z, v)` or as an [`AbstractPreconditioner`](@ref), which
 is applied through [`applypreconditioner!`](@ref). The matrix `A`
@@ -436,27 +396,29 @@ spurious basis vector. The residual is
 recomputed explicitly at every restart so restarts cannot drift from the
 recurrence estimate.
 
-Converges when `norm(b - A*x) <= max(rtol*norm(b), atol)`. Returns the named
+Converges when `norm(b - A*x) <= max(rtol*norm(b), atol)`, a norm which is
+not finite never. Returns the named
 tuple `(iterations, residual, converged, cycles, reason, precondtime,
-residualvector, products, lastcycle)`, where `iterations` counts Arnoldi
-steps across all cycles, `cycles` the number of restart cycles begun,
-`lastcycle` the Arnoldi steps of the last of them, whose factorization the
-workspace still holds, `reason` is one of
+residualvector, products)`, where `iterations` counts Arnoldi steps across
+all cycles, `cycles` the number of restart cycles begun, `reason` is one of
 `:converged`, `:breakdown` (an unhappy breakdown: the Krylov space went
 invariant without the residual coming down), `:stagnation` (a cycle failed
 to reduce the explicit residual, or produced a non-finite one; a
 non-finite product or preconditioner application ends its cycle at that
-Arnoldi step and leaves `x` where the cycle started), or
+Arnoldi step and leaves `x` where the cycle started), `:nonfinite` (the
+norm of `b` is not finite, from an entry which is not or from finite
+entries whose norm overflows, and sets no tolerance: nothing is solved,
+`x` is zero and `residual` that norm), or
 `:iterationlimit`, `precondtime` the seconds spent applying the
 preconditioner, and `residualvector` the final residual `b - A*x` when it
 was formed explicitly (`nothing` otherwise; the caller reads it with `get`,
 as it does `precondtime` and `products`).
 
 `iterations` is *not* the total number of `Aop!` calls: each cycle costs one
-further application for the explicit residual recomputation, and a warm start
-costs one at the outset; `products` in the returned tuple is that total, not
-counting products a preconditioner takes inside its own application. `maxrestarts` bounds the number of cycles including
-the first, so the Arnoldi work is capped at `maxrestarts*m` steps.
+further application for the explicit residual recomputation; `products` in
+the returned tuple is that total, not counting products a preconditioner
+takes inside its own application. `maxrestarts` bounds the number of cycles
+including the first, so the Arnoldi work is capped at `maxrestarts*m` steps.
 `oncycle(ws, j)`, when given, is called at the end of every cycle with the
 workspace still holding that cycle's `j` Arnoldi vectors, for a caller
 which harvests from each cycle ([`harvestcycle!`](@ref)); it must only read
@@ -468,8 +430,7 @@ allocate.
 """
 function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     ws::GMRESWorkspace{T}; Mop! = nothing, rtol = 1e-6, atol = 0.0,
-    maxrestarts::Integer = 10, initialzero::Bool = true,
-    oncycle = nothing) where {T<:AbstractFloat}
+    maxrestarts::Integer = 10, oncycle = nothing) where {T<:AbstractFloat}
 
     n = length(b)
     # a bare in-place product is accepted alongside any `mul!`-able operator
@@ -493,46 +454,38 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
 
     bnorm = norm(b)
     tol = max(rtol*bnorm, atol)
+    # the solve starts from zero, whose residual is `b`
+    fill!(x, zero(T))
+
+    # a right hand side whose norm is not finite, from an entry which is not
+    # or from finite entries whose norm overflows, sets no tolerance: an
+    # infinite one would accept any residual. The solve ends here, not
+    # converged.
+    if !isfinite(bnorm)
+        return (iterations = 0, residual = bnorm, converged = false,
+            cycles = 0, reason = :nonfinite, precondtime = 0.0,
+            residualvector = nothing, products = 0)
+    end
 
     # a zero right hand side has the zero solution; return it rather than
     # dividing by a zero residual norm below
     if iszero(bnorm)
-        # zero is a solution, but so is any point already in the null space
-        # of A, so a warm start is measured rather than discarded
-        if initialzero
-            fill!(x, zero(T))
-            return (iterations = 0, residual = zero(T), converged = true,
-                cycles = 0, reason = :converged, precondtime = 0.0,
-                residualvector = nothing, products = 0, lastcycle = 0)
-        end
-        mul!(w, Aop, x)
-        products += 1
-        resnorm = norm(w)
-        if resnorm <= atol
-            return (iterations = 0, residual = resnorm, converged = true,
-                cycles = 0, reason = :converged, precondtime = 0.0,
-                residualvector = nothing, products = products, lastcycle = 0)
-        end
+        return (iterations = 0, residual = zero(T), converged = true,
+            cycles = 0, reason = :converged, precondtime = 0.0,
+            residualvector = nothing, products = 0)
     end
 
-    # initial residual w = b - A*x
-    if initialzero
-        fill!(x, zero(T))
-        copyto!(w, b)
-    else
-        mul!(w, Aop, x)
-        products += 1
-        @. w = b - w
-    end
-    resnorm = norm(w)
+    copyto!(w, b)
+    resnorm = bnorm
 
     totaliterations = 0
     cycles = 0
-    lastcycle = 0
     unhappy = false
     stagnated = false
     for _ in 1:maxrestarts
-        resnorm <= tol && break
+        # no convergence test accepts a norm which is not finite, whatever
+        # the tolerance
+        isfinite(resnorm) && resnorm <= tol && break
 
         cycles += 1
         beta = resnorm
@@ -554,9 +507,6 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
             end
 
             hsub, normw0 = gmres_orthogonalize!(w, V, H, ws.hd, ws.cd, j)
-            # the finished column of the Arnoldi Hessenberg, before the
-            # rotations below triangularize it in place
-            copyto!(view(ws.Harnoldi, 1:j+1, j), view(H, 1:j+1, j))
             resnorm = gmres_applyrotations!(H, cs, sn, s, j)
             totaliterations += 1
             products += 1
@@ -593,16 +543,14 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
 
         if nonfinite
             # nothing of this cycle is usable: `x` is left where the cycle
-            # started, whose explicit residual is `beta*V[:, 1]`, and no
-            # cycle is left in the workspace for a harvest
+            # started, whose explicit residual is `beta*V[:, 1]`, and the
+            # cycle is not harvested
             @views w .= beta .* V[:, 1]
             resnorm = beta
-            lastcycle = 0
             stagnated = true
             break
         end
 
-        lastcycle = j
         gmres_correction!(x, ws, j, Mop!)
 
         # The Arnoldi factorization of this cycle is about to be overwritten
@@ -638,7 +586,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         end
     end
 
-    converged = resnorm <= tol
+    converged = isfinite(resnorm) && resnorm <= tol
     reason = if converged
         :converged
     elseif unhappy
@@ -653,8 +601,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     # needs `A x` has it without another product
     return (iterations = totaliterations, residual = resnorm,
         converged = converged, cycles = cycles, reason = reason,
-        precondtime = precondtime, residualvector = w, products = products,
-        lastcycle = lastcycle)
+        precondtime = precondtime, residualvector = w, products = products)
 end
 
 # `AbstractHBLinearSolver` is declared in solvers/options.jl, before the
@@ -666,23 +613,27 @@ end
 The restarted GMRES of this package, with Givens rotations, the recycling
 subspace harvest and the preconditioner escalation the solver was built
 around. The default, and the only solver supporting deflation recycling,
-because `harvest!` reads the Arnoldi basis out of the internal workspace.
-`restart` is the cycle length and `maxrestarts` the restart budget per
-solve. A long cycle is the default because a restricted preconditioner
-leaves a few directions a short Krylov space cannot resolve, and a restart
-discards the progress on them; the basis of `restart + 1` vectors is cheap
-next to the sparse factorization an escalation would build.
+because the harvest ([`harvestcycle!`](@ref)) reads the Arnoldi basis out of
+the internal workspace. `restart` is the cycle length and `maxrestarts` the
+restart budget per solve. A long cycle is the default because a restricted
+preconditioner leaves a few directions a short Krylov space cannot resolve,
+and a restart discards the progress on them; the basis of `restart + 1`
+vectors is cheap next to the sparse factorization an escalation would build.
 """
 struct GMRES <: AbstractHBLinearSolver
     restart::Int
     maxrestarts::Int
+    # refused here whichever constructor builds it, so that the solves
+    # which read them need not check them again
+    function GMRES(restart::Integer, maxrestarts::Integer)
+        restart >= 1 || throw(ArgumentError(lazy"`restart` = $(restart) must be at least 1."))
+        maxrestarts >= 1 || throw(ArgumentError(
+            lazy"`maxrestarts` = $(maxrestarts) must be at least 1."))
+        return new(restart, maxrestarts)
+    end
 end
-function GMRES(; restart::Integer = 400, maxrestarts::Integer = 4)
-    restart >= 1 || throw(ArgumentError(lazy"`restart` = $(restart) must be at least 1."))
-    maxrestarts >= 1 || throw(ArgumentError(
-        lazy"`maxrestarts` = $(maxrestarts) must be at least 1."))
-    return GMRES(Int(restart), Int(maxrestarts))
-end
+GMRES(; restart::Integer = 400, maxrestarts::Integer = 4) =
+    GMRES(restart, maxrestarts)
 # the Krylov workspace and the budget of an external solver are those of
 # the default `GMRES()`
 restartlength(ls::GMRES) = ls.restart
@@ -746,7 +697,7 @@ hblinearsolve!(ls::AbstractHBLinearSolver, args...; kwargs...) =
 """
     supportsrecycling(ls)
 
-Whether the solver exposes an Arnoldi basis for [`harvest!`](@ref).
+Whether the solver exposes an Arnoldi basis for [`harvestcycle!`](@ref).
 """
 supportsrecycling(::AbstractHBLinearSolver) = false
 supportsrecycling(::GMRES) = true

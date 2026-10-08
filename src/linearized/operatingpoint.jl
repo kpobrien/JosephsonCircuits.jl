@@ -4,7 +4,7 @@
 
 """
     HBOperatingPoint(sys, x, jacobian, modelayout, Lscale, wmodes,
-        coupledbranches, Nmodes, Nnodes[, dc])
+        coupledbranches, Nmodes, dc)
 
 The converged pump operating point of [`hbnlsolve`](@ref) together with
 everything needed to propagate a component perturbation through it: the
@@ -21,30 +21,23 @@ function theorem does not hold with the holomorphic Jacobian, while in the
 real representation it applies directly.
 """
 struct HBOperatingPoint
-    # the HBSystem evaluation object and the ModeLayout, untyped: the
-    # system's type depends on the backend and the layout's on its index type
+    # the HBSystem evaluation object, untyped: its type depends on the
+    # backend
     sys
     x::Vector{Complex{Float64}}
     jacobian::SparseMatrixCSC{Float64,Int}
-    modelayout
+    modelayout::ModeLayout
     Lscale::Complex{Float64}
     wmodes::Vector{Float64}
     coupledbranches::Vector{Int}
     Nmodes::Int
-    Nnodes::Int
-    # The explicit direct current block, when the circuit has one: the
-    # canonical work, the canonical state the solve converged to, and the
-    # canonical Jacobian there. `jacobian` above is the harmonic one, read
-    # by everything which differentiates the harmonic system alone; what
-    # differentiates the whole system reads these.
+    # The explicit direct current block when the circuit has one, and
+    # nothing otherwise: the canonical work, the canonical state the solve
+    # converged to, and the canonical Jacobian there. `jacobian` above is the
+    # harmonic one, read by everything which differentiates the harmonic
+    # system alone; what differentiates the whole system reads these.
     dc
 end
-
-# an operating point of a circuit with no direct current block
-HBOperatingPoint(sys, x, jacobian, modelayout, Lscale, wmodes,
-    coupledbranches, Nmodes, Nnodes) =
-    HBOperatingPoint(sys, x, jacobian, modelayout, Lscale, wmodes,
-        coupledbranches, Nmodes, Nnodes, nothing)
 
 """
     pointsystem(op::HBOperatingPoint)
@@ -70,7 +63,9 @@ The explicit direct current block at a converged point.
 # Fields
 - `work`: the [`CanonicalWork`](@ref) carrying the layout, the transport
   rows and the blocks' zero frequency rows.
-- `u`: the converged canonical state, `[phiac | phidc | vdc]`.
+- `u`: the converged canonical state, `[internal | vdc]`: the internal
+  real state as the solver evaluates it, followed by the explicit average
+  voltages (see [`CompositeLayout`](@ref)).
 - `jacobian`: the canonical Jacobian there, which is the one the implicit
   function theorem applies to when the block is active.
 - `keep`: the rows the block adds to rather than replaces
@@ -96,9 +91,8 @@ respect to a component value is the harmonic one gathered and masked, plus
 it enters twice: as the transport rows `Y = P' G0 P` and as the coupling
 `G0 P` into the zero frequency nodal rows. A capacitor, an inductor and a
 junction are open circuits, a short and a short at zero frequency, none of
-which carries a conductance, so they contribute nothing here -- which is
-correct and is why the harmonic rows alone were right until a resistor
-carried direct current.
+which carries a conductance, so they contribute nothing here, and their
+derivative is the harmonic rows alone.
 
 The perturbation is relative by default: `G0` is proportional to `1/R`,
 so a relative change in `R` scales the whole stamp by `-1`; `alphas`
@@ -239,7 +233,7 @@ function componentstamp(idx::Integer, psc::CompiledCircuit,
     # the storage type the value's group would assemble in: floating point
     # for a plain number however it was written, so that the reciprocal of
     # an integer value has somewhere to go
-    T = grouptype(vvn, (idx,), true)
+    T = grouptype(vvn, (idx,))
     v = convert(T, value)
     if componenttype == :C
         rows, cols, vals = twoterminalstamp(n1, n2, v, -v, Nmodes)
@@ -358,7 +352,7 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     Ntot = length(op.x)
     Nmodes = op.Nmodes
     lookups = componentlookups(op.coupledbranches, op.sys.Ljb)
-    stamps = [componentstamp(idx, psc, nm, lookups, Nmodes)
+    stamps = [sensitivitystamp(idx, psc, nm, lookups, Nmodes)
         for idx in sensitivityindices]
     # the Josephson terms of the junctions asked for, on their own rows,
     # evaluated on a system of its own at the operating point, whose cached
@@ -481,39 +475,6 @@ function dckeep(work::CanonicalWork)
     isnothing(up) && return keep
     keep[windowindices(L)] .= Array(up.keep)
     return keep
-end
-
-"""
-    dcvoltagesensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
-        factorization = KLUfactorization())
-
-The derivative of the average node voltages with respect to a relative
-perturbation of each component value, in volts, indexed by node with ground
-dropped as [`hbnlsolve`](@ref) reports them.
-
-The same solve as [`calcnodefluxsensitivity`](@ref) and the other half of
-its answer: that returns the node fluxes, which are the periodic part, and
-this returns the average voltages, which are the direct current part and
-are unknowns of the canonical system rather than of the harmonic one.
-`nothing` for a circuit with no direct current block.
-"""
-function dcvoltagesensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
-        factorization = KLUfactorization())
-    isnothing(op.dc) && return nothing
-    L = op.dc.work.layout
-    lift = op.dc.work.transport.plan.lift
-    cache = FactorizationCache()
-    tryfactorize!(cache, factorization, op.dc.jacobian)
-    rhs = zeros(Float64, canonicaldim(L))
-    duc = zeros(Float64, canonicaldim(L))
-    dv = zeros(Float64, size(lift, 1), size(dFr, 2))
-    for k in axes(dFr, 2)
-        rhs .= view(dFr, :, k)
-        trysolve!(duc, cache.factorization, rhs)
-        rmul!(duc, -1)
-        dv[:, k] .= phi0 .* (lift*view(duc, voltagerange(L)))
-    end
-    return dv
 end
 
 """
@@ -766,8 +727,7 @@ function calcbranchtimedomainmap(sys, Nmodes::Integer, NLj::Integer)
 end
 
 """
-    ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
-        slots = collect(1:size(dFr, 2)))
+    ReverseSensitivity(op::HBOperatingPoint, lsys, dFr, slots)
 
 Precompute the reverse mode contraction data: the branch flux map
 ([`calcbranchtimedomainmap`](@ref)), the transform of the pump harmonic grid,
@@ -778,7 +738,7 @@ slot of `Ssensitivity` column `k` accumulates into, so that several columns
 belonging to one design parameter can share a slot.
 """
 function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
-        slots::Vector{Int} = collect(1:size(dFr, 2)))
+        slots::Vector{Int})
     # the operating point, and therefore the branch flux map and the
     # incidence lists, live on the pump mode grid, not the signal mode grid
     Nmodes = op.Nmodes

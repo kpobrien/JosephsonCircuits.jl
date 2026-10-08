@@ -4,52 +4,22 @@
 # =========================================================================
 
 """
-    seeddeflation!(pc, Xnew::AbstractMatrix; source = :external)
-
-Offer the columns of `Xnew` to `pc` as candidate physical correction
-vectors, between two linear solves, and return `pc`. The default does
-nothing, which is correct for any preconditioner which does not deflate.
-
-This is the injection point for an external candidate source: a
-continuation secant, a Newton step, or a physically constructed Floquet
-mode. Candidates are not *selected* here: the rank and benefit filters run
-at the next rebuild, where they are concatenated with the bank and
-compressed together against their exact residual images, which is what
-lets several sources rediscover the same channel without any of them
-having to know about the others; but every column is normalized, a
-numerically zero column is dropped, and the bank is trimmed to
-the option's `candidates`. The seed marks the active blocks stale when the bank grew,
-so the next application rebuilds them and the seeded directions take part
-in the very next solve (a seed into a bank already at the option's `candidates` may be
-trimmed away and then changes nothing); for that reason it
-must not be called while a GMRES solve is running, where the
-preconditioner has to stay fixed. The harvest banks its candidates through
-the internal `_bankcandidates!`, which does not mark anything stale.
-"""
-seeddeflation!(pc::AbstractPreconditioner, ::AbstractMatrix; kwargs...) = pc
-
-"""
     FloquetState(b::AbstractVector)
 
 The part of a [`FloquetPreconditioner`](@ref) that outlives one solve: the
 candidate physical correction vectors `X`, an `n` by `k` matrix allocated
-like `b`, and the provenance of each column. A candidate is a direction of
-the unknowns; its image under the current Jacobian is recomputed at every
-rebuild, so it means the same thing after the base has been rebuilt or
-rebound to a new operating point. [`HBReuse`](@ref) carries one across a
-cached sweep and replaces it only after a converged solve.
+like `b`. A candidate is a direction of the unknowns; its image under the
+current Jacobian is recomputed at every rebuild, so it means the same
+thing after the base has been rebuilt or rebound to a new operating point.
+[`HBReuse`](@ref) carries one across a cached sweep and replaces it only
+after a converged solve.
 """
 mutable struct FloquetState{TM<:AbstractMatrix}
     X::TM
-    source::Vector{Symbol}
-    # advanced whenever the bank changes, so a preconditioner can tell that
-    # its active blocks were built from an earlier bank even when the
-    # count is the same (a seed which appended and trimmed, for instance)
-    generation::Int
 end
 
-FloquetState(b::AbstractVector) = FloquetState(similar(b, length(b), 0), Symbol[], 0)
-Base.copy(s::FloquetState) = FloquetState(copy(s.X), copy(s.source), s.generation)
+FloquetState(b::AbstractVector) = FloquetState(similar(b, length(b), 0))
+Base.copy(s::FloquetState) = FloquetState(copy(s.X))
 
 # A small dense matrix built on the host and moved to wherever `proto`
 # lives. `eigen`, `svd` and `cholesky` are scalar indexed dense kernels, so
@@ -63,8 +33,6 @@ _hostbuilt(proto::SubArray, A::AbstractMatrix) = _hostbuilt(parent(proto), A)
 """
     FloquetPreconditioner(spec::Floquet, inner::AbstractPreconditioner, jvp!,
         b::AbstractVector; state = nothing)
-    FloquetPreconditioner(spec::Floquet, inner::AbstractPreconditioner, jvp!,
-        n::Integer; T = Float64, state = nothing)
 
 Augments a base preconditioner with a low-rank correction for the few global
 channels it represents badly, in the residual-image A-DEF1 form.
@@ -122,21 +90,14 @@ Euclidean norm GMRES actually minimizes.
 
 # Candidates
 
-Candidates arrive through [`seeddeflation!`](@ref) and are tagged by
-source. The harvest contributes up to two families from the Arnoldi
-factorization of each restart cycle of each solve when `cycleharvest` is
-set, and otherwise from the cycle left in the workspace
-([`harvest!`](@ref), [`harvestcycle!`](@ref)): the smallest singular directions of the
-rectangular Hessenberg, robust on a nonnormal operator, and, when `ritz`
-is positive, the harmonic Ritz directions nearest zero
-([`harmonicritznearzero`](@ref)), which target the near-singular
-eigendirections of a device close to threshold. Both are
-mapped through the current preconditioner into physical coordinates before
-being stored, so that a candidate stays meaningful after the Jacobian
-moves. A continuation secant or an externally constructed Floquet mode is
-injected the same way.
+Candidates come from the harvest, which takes the smallest singular
+directions of the rectangular Hessenberg of the Arnoldi factorization of
+each restart cycle of each solve ([`harvestcycle!`](@ref)): directions
+robust on a nonnormal operator. They are mapped through the current
+preconditioner into physical coordinates before being stored, so that a
+candidate stays meaningful after the Jacobian moves.
 
-No source is trusted. The residual-image factorization decides the rank,
+No candidate is trusted. The residual-image factorization decides the rank,
 which removes candidates that rediscovered the same channel, and each
 surviving direction is then tested for whether the base preconditioner
 needs help with it at all,
@@ -179,20 +140,12 @@ construction:
 - `size = 20`: the largest active rank retained. When more directions
   survive both filters the update is compressed to the `size` principal
   directions of `W'W`, that is, those carrying the most correction.
-- `harvest = 4`: smallest singular directions taken per harvest.
-- `ritz = 0`: harmonic Ritz directions nearest zero taken per harvest.
-  A complex Ritz pair contributes its real and imaginary parts as two real
-  candidates spanning the same invariant subspace. Off by default: the
-  Ritz directions of a strongly nonnormal operator carry large corrections
-  without being the directions GMRES stalls on, and the trim by correction
-  strength then keeps them over the singular ones, so adding them takes
-  more Arnoldi steps than the singular directions alone.
+- `harvest = 4`: smallest singular directions taken per restart cycle.
 - `candidates = 3*size`: the candidate bank's capacity. The active
-  directions of the last rebuild are always kept; older candidates are
-  dropped first. A rebuild resets the bank to the active set, so the
-  capacity only matters between rebuilds, and anything at or above
-  `size + harvest + 2*ritz` behaves the same; below that a harvest
-  displaces its own newest candidates.
+  directions of the last rebuild are always kept, and older candidates
+  are dropped first. A rebuild resets the bank to the active set, so the
+  capacity bounds what the harvests bank between two rebuilds, `harvest`
+  directions for every restart cycle of their solves.
 - `ranktol = eps(T)^(3/8)`: relative singular value threshold for the
   residual-image rank. The candidates' images are equalized to unit norm,
   so a small singular value of their block means two images nearly
@@ -203,9 +156,6 @@ construction:
   margin (`eps^(3/8)` is `1.4e-6` in double precision).
 - `benefittol = 1e-6`: the `eta` below which a direction is judged already
   handled by the base.
-- `cycleharvest = true`: harvest at the end of every restart cycle
-  ([`harvestcycle!`](@ref)) rather than only from the cycle left in the
-  workspace when the solve returns.
 
 The constructor's own keyword `state = nothing` is a [`FloquetState`](@ref)
 to start from, the candidates of a previous solve of a nearby system, which
@@ -221,9 +171,9 @@ writing `z`, so the two must not alias.
 mutable struct FloquetPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix{T},TV<:AbstractVector{T}} <: AbstractWrappedPreconditioner
     const inner::TI
     const jvp!::TJ
-    # the candidate physical correction vectors, `n` by `k`, with their
-    # provenance: the bank several sources feed and the rebuild compresses,
-    # and what persists across solves
+    # the candidate physical correction vectors, `n` by `k`: the bank the
+    # harvests feed and the rebuild compresses, and what persists across
+    # solves
     state::FloquetState{TM}
     # the active basis: `J*X = C`, `C'C = I`, `W = X - inv(P)*C`. System
     # sized and allocated like the vectors of the system, so on a device
@@ -239,10 +189,12 @@ mutable struct FloquetPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix{T
     rebuilds::Int
     # Jacobian products taken for the candidate images
     products::Int
-    # whether the active blocks are those of the current Jacobian, the
-    # current base and the current candidate bank: cleared by `pointmoved!`
-    # and by a seed, restored by `_rebuildfloquet!`
+    # whether the active blocks are those of the current Jacobian and the
+    # current base: cleared by `pointmoved!`, restored by `_rebuildfloquet!`
     fresh::Bool
+    # whether the bank holds candidates the last build did not take in: set
+    # by banking, cleared by a build
+    newcandidates::Bool
 end
 
 function FloquetPreconditioner(spec::Floquet, inner::AbstractPreconditioner,
@@ -251,27 +203,18 @@ function FloquetPreconditioner(spec::Floquet, inner::AbstractPreconditioner,
     st = isnothing(state) ? FloquetState(b) : state
     size(st.X, 1) == n || throw(DimensionMismatch(
         lazy"the deflation state is for dimension $(size(st.X, 1)) but the system has $(n)."))
-    length(st.source) == size(st.X, 2) || throw(ArgumentError(
-        "the deflation state has one provenance tag per candidate column."))
     ranktol = isnothing(spec.ranktol) ? eps(T)^(3//8) : T(spec.ranktol)
     return FloquetPreconditioner(inner, jvp!, st,
         similar(b, n, 0), similar(b, n, 0), similar(b, n, 0), similar(b, 0),
-        spec, ranktol, 0, 0, size(st.X, 2) == 0)
+        spec, ranktol, 0, 0, size(st.X, 2) == 0, size(st.X, 2) > 0)
 end
 
-function FloquetPreconditioner(spec::Floquet, inner::AbstractPreconditioner,
-    jvp!, n::Integer; T::Type{<:AbstractFloat} = Float64, state = nothing)
-    return FloquetPreconditioner(spec, inner, jvp!, Vector{T}(undef, n);
-        state = state)
-end
-
-# the *active* rank, which is what enters the cost of an application; the
-# candidate bank is reported separately
+# the *active* rank, which is what enters the cost of an application
 deflationsize(pc::FloquetPreconditioner) = size(pc.C, 2)
 deflationrebuilds(pc::FloquetPreconditioner) = pc.rebuilds
-candidatecount(pc::FloquetPreconditioner) = size(pc.state.X, 2)
 deflationproducts(pc::FloquetPreconditioner) =
     pc.products + deflationproducts(pc.inner)
+hasnewcandidates(pc::FloquetPreconditioner) = pc.newcandidates
 
 innerpreconditioner(pc::FloquetPreconditioner) = pc.inner
 pointmoved!(pc::FloquetPreconditioner) = (pc.fresh = false; pc)
@@ -303,14 +246,7 @@ function _clearfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     pc.W = similar(Xc, n, 0)
     pc.coeff = similar(Xc, 0)
     pc.fresh = true
-    return pc
-end
-
-function seeddeflation!(pc::FloquetPreconditioner,
-    Xnew::AbstractMatrix; source::Symbol = :external)
-    before = pc.state.generation
-    _bankcandidates!(pc, Xnew; source = source)
-    pc.state.generation == before || (pc.fresh = false)
+    pc.newcandidates = false
     return pc
 end
 
@@ -319,9 +255,8 @@ end
 # harvest, and GMRES requires a fixed preconditioner: rebuilding on the
 # next application would change the operator under a half-built Arnoldi
 # factorization and invalidate it. Banked candidates therefore take effect
-# at the next rebuild, which is triggered by `pointmoved!` at the next
-# Newton step, by a base refresh, or by an external `seeddeflation!` --
-# never from inside a solve.
+# at the next rebuild, which a base refresh or `pointmoved!` triggers at
+# the next Newton step, never from inside a solve.
 #
 # The bank is kept bounded at the option's `candidates`. The active
 # directions of the last rebuild are the proven ones and sit at the front
@@ -331,7 +266,7 @@ end
 # written once, into a new matrix: the one it replaces may be the active
 # basis, or held by a reuse, and is never written.
 function _bankcandidates!(pc::FloquetPreconditioner{TI,TJ,T},
-    Xnew::AbstractMatrix; source::Symbol = :external) where {TI,TJ,T}
+    Xnew::AbstractMatrix) where {TI,TJ,T}
     size(Xnew, 2) == 0 && return pc
     size(Xnew, 1) == size(pc.state.X, 1) || throw(DimensionMismatch(
         lazy"candidates have length $(size(Xnew, 1)) but the state is of "*
@@ -355,7 +290,6 @@ function _bankcandidates!(pc::FloquetPreconditioner{TI,TJ,T},
             (1:pc.spec.candidates)
     end
     X = similar(st.X, size(st.X, 1), length(idx))
-    tags = [i <= k ? st.source[i] : source for i in idx]
     for (c, i) in enumerate(idx)
         if i <= k
             copyto!(view(X, :, c), view(st.X, :, i))
@@ -365,8 +299,7 @@ function _bankcandidates!(pc::FloquetPreconditioner{TI,TJ,T},
         end
     end
     st.X = X
-    st.source = tags
-    st.generation += 1
+    pc.newcandidates = true
     return pc
 end
 
@@ -382,6 +315,8 @@ Costs `k` Jacobian products and `r` base solves for `k` candidates and
 active rank `r`.
 """
 function _rebuildfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
+    # the build takes in the whole bank as it stands
+    pc.newcandidates = false
     X0 = pc.state.X
     n, k = size(X0)
     k == 0 && return _clearfloquet!(pc)
@@ -516,16 +451,15 @@ function _rebuildfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     # same physical channels. The bank is never written in place, so it can
     # share the active basis.
     pc.state.X = X
-    pc.state.source = fill(:active, r)
     pc.rebuilds += 1
     pc.fresh = true
     return pc
 end
 
-# Bring the active blocks up to date when the point has moved or a
-# candidate has been seeded, but the base has not been rebuilt. There is
-# only one build path here: nothing is carried between rebuilds, because
-# `inv(P)*U` is never formed in the first place.
+# Bring the active blocks up to date when the point has moved but the base
+# has not been rebuilt. There is only one build path here: nothing is
+# carried between rebuilds, because `inv(P)*U` is never formed in the first
+# place.
 function _refreshfloquet!(pc::FloquetPreconditioner)
     pc.fresh && return pc
     if isexactpreconditioner(pc.inner)
@@ -546,89 +480,21 @@ function applypreconditioner!(z::AbstractVector, pc::FloquetPreconditioner,
 end
 
 """
-    harmonicritznearzero(Hbar::AbstractMatrix, nkeep::Integer)
-
-The harmonic Ritz vectors of an Arnoldi factorization whose Ritz values lie
-nearest the origin, returned as the columns of a *real* `m` by `p` matrix of
-coefficients in the Arnoldi basis, `p <= 2*nkeep`. Returns an `m` by `0`
-matrix when `nkeep < 1`, when the pencil cannot be factorized, or when
-every Ritz value is infinite.
-
-For `A*V = V_{m+1}*Hbar` a harmonic Ritz pair `(theta, y)` makes the
-eigenpair residual `A*V*y - theta*V*y` orthogonal to `A*K_m`, which is the
-generalized eigenproblem
-
-    Hbar'*Hbar*y = theta*H'*y
-
-with `H` the square leading block. That is the pencil solved here, on the
-host, rather than the equivalent `H + abs2(h)*inv(H')*e*e'`, which applies
-the inverse of `H` exactly where it is worst conditioned, near the
-directions of interest; a singular `H` gives infinite Ritz values, which
-are simply not selected. Harmonic Ritz values approximate the eigenvalues
-of `A` nearest zero far better than the ordinary Ritz values do, whose
-restarted GMRES cycle approximates the *outer* spectrum, the part deflation
-has no use for.
-
-`Hbar` must be the *Arnoldi* Hessenberg (`GMRESWorkspace.Harnoldi`), not
-the least squares matrix the Givens rotations leave in `GMRESWorkspace.H`:
-the singular values of the two agree, the pencil does not. A real matrix
-has complex eigenpairs in conjugate pairs, and both the real and the
-imaginary part of such an eigenvector lie in the real invariant subspace
-the pair spans, so each is returned as its own real column; the
-duplication is harmless because the residual-image factorization removes
-whatever is redundant.
-"""
-function harmonicritznearzero(Hbar::AbstractMatrix{T},
-    nkeep::Integer) where {T<:AbstractFloat}
-    m = size(Hbar, 2)
-    (nkeep >= 1 && m >= 1) || return zeros(T, m, 0)
-    Hb = Matrix(Hbar)
-    H = Hb[1:m, 1:m]
-    E = try
-        eigen(Hb'*Hb, Matrix(transpose(H)))
-    catch
-        return zeros(T, m, 0)
-    end
-    vals, vecs = E.values, E.vectors
-    finite = [i for i in eachindex(vals) if isfinite(vals[i])]
-    isempty(finite) && return zeros(T, m, 0)
-    order = sort(finite; by = i -> abs(vals[i]))
-    Y = Matrix{T}(undef, m, 0)
-    for i in order
-        size(Y, 2) >= 2*nkeep && break
-        v = view(vecs, :, i)
-        all(isfinite, v) || continue
-        vr = real.(v)
-        norm(vr) > 0 && (Y = hcat(Y, vr))
-        vi = imag.(v)
-        # the imaginary part is the second real direction of a conjugate
-        # pair, and is exactly zero for a real eigenvalue
-        norm(vi) > sqrt(eps(T))*norm(vr) && (Y = hcat(Y, vi))
-        count(j -> abs(vals[j]) <= abs(vals[i]), finite) >= nkeep &&
-            size(Y, 2) >= nkeep && break
-    end
-    return Y
-end
-
-"""
     _harvestfloquet!(pc::FloquetPreconditioner, Vj, Hj)
 
 Harvest candidate correction vectors from an Arnoldi factorization with
 basis `Vj` (`n` by `j`) and rectangular Hessenberg `Hj` (`j + 1` by `j`,
 host resident) and return `pc`.
 
-Two families are taken, following the principle that on a strongly
-nonnormal operator neither eigenvalue nor singular value information is
-reliably the better target:
+The `harvest` right singular vectors of `Hj` with the smallest singular
+values are taken, the directions this Krylov space found the
+preconditioned operator shrinks most. `Hj` may be the Hessenberg of the
+Arnoldi relation or the triangular one the Givens rotations of
+[`gmres!`](@ref) leave in its place: the rotations are orthogonal and act
+from the left, so the two share their singular values and right singular
+vectors.
 
-- the `harvest` right singular vectors of `Hj` with the smallest singular
-  values, the directions this Krylov space found the preconditioned
-  operator shrinks most;
-- the `ritz` harmonic Ritz directions nearest zero
-  ([`harmonicritznearzero`](@ref)), which approximate its near-singular
-  eigendirections.
-
-Both are Krylov-space directions. Each is lifted through the Arnoldi basis
+These are Krylov-space directions. Each is lifted through the Arnoldi basis
 and then mapped through the *current complete* preconditioner, `x = B*u`,
 into the physical state space before being stored, because that is the
 space in which a direction still means something once the Jacobian has
@@ -637,28 +503,20 @@ space rebuilt around it, whereas a stored residual direction would have to
 be reinterpreted against an operator it was never measured on.
 
 Nothing is rebuilt here. The preconditioner must not change under a running
-GMRES, so a harvest only appends to the candidate bank and marks the active
-blocks stale; the rebuild happens at the next Newton step.
+GMRES, so a harvest only appends to the candidate bank and leaves the
+active blocks as they are; the next build, at the next Newton step, takes
+the candidates in ([`hasnewcandidates`](@ref)).
 """
-function _harvestfloquet!(pc::FloquetPreconditioner{TI,TJ,T}, Vj::AbstractMatrix,
-    Hj::AbstractMatrix) where {TI,TJ,T}
+function _harvestfloquet!(pc::FloquetPreconditioner, Vj::AbstractMatrix,
+    Hj::AbstractMatrix)
     # nothing to deflate against an exact base; see `updatepreconditioner!`
     isexactpreconditioner(pc.inner) && return pc
     j = size(Vj, 2)
     j >= 1 || return pc
-    Hh = Matrix(Hj)
-    Y = Matrix{T}(undef, j, 0)
-
-    if pc.spec.harvest > 0
-        F = svd(Hh)
-        nv = size(F.V, 2)
-        p = min(pc.spec.harvest, nv)
-        p > 0 && (Y = hcat(Y, F.V[:, nv-p+1:nv]))
-    end
-    if pc.spec.ritz > 0
-        Y = hcat(Y, harmonicritznearzero(Hh, pc.spec.ritz))
-    end
-    size(Y, 2) == 0 && return pc
+    # the singular values come in decreasing order, so the smallest
+    # directions are the last columns
+    V = svd(Matrix(Hj)).V
+    Y = V[:, j-min(pc.spec.harvest, j)+1:j]
 
     # lift into the state space, then into correction coordinates
     U = Vj*_hostbuilt(Vj, Y)
@@ -671,25 +529,15 @@ function _harvestfloquet!(pc::FloquetPreconditioner{TI,TJ,T}, Vj::AbstractMatrix
         applypreconditioner!(cout, pc, cin)
         copyto!(view(X, :, c), cout)
     end
-    return _bankcandidates!(pc, X; source = :gmres_floquet)
+    return _bankcandidates!(pc, X)
 end
 
-function harvest!(pc::FloquetPreconditioner, ws::GMRESWorkspace,
-    out::NamedTuple)
-    j = harvestdimension(ws, out)
-    j >= 1 || return pc
-    return _harvestfloquet!(pc, view(ws.V, :, 1:j),
-        Matrix(view(ws.Harnoldi, 1:j+1, 1:j)))
-end
-
-usescycleharvest(pc::FloquetPreconditioner) = pc.spec.cycleharvest
+usescycleharvest(::FloquetPreconditioner) = true
 
 function harvestcycle!(pc::FloquetPreconditioner, ws::GMRESWorkspace,
     j::Integer)
     j >= 1 || return pc
-    # the *Arnoldi* Hessenberg: `ws.H` has been triangularized by the Givens
-    # rotations by now, which the singular directions survive and the
-    # harmonic Ritz pencil does not
-    return _harvestfloquet!(pc, view(ws.V, :, 1:j),
-        Matrix(view(ws.Harnoldi, 1:j+1, 1:j)))
+    # `ws.H` as the Givens rotations left it, which keeps the right
+    # singular vectors of the Arnoldi Hessenberg
+    return _harvestfloquet!(pc, view(ws.V, :, 1:j), view(ws.H, 1:j+1, 1:j))
 end

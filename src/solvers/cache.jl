@@ -280,8 +280,10 @@ of the previous solve and what its method solves with, rebound to the new
 component values (see [`HBReuse`](@ref)): under `NewtonKrylov` the
 preconditioner and the Krylov vectors, under `Newton` and `QuasiNewton`
 the assembled Jacobian and its factorization, whose fill reducing ordering
-and symbolic analysis are kept. Only the numeric matrices and the solve
-itself are recomputed. The matrices are refilled on the
+and symbolic analysis are kept, except for a circuit which injects direct
+current, whose canonical Jacobian `Newton` plans, orders and factorizes
+at every point. Otherwise only the numeric matrices and the solve itself
+are recomputed. The matrices are refilled on the
 patterns of the compiled circuit, which do not depend on the values, and
 assembled anew when a value changes the element type of its group (a
 resistance or a capacitance turned complex).

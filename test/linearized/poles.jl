@@ -32,12 +32,19 @@ end
                 q = hbstability(compile(c); frequencyscale = scale)
                 @test closepoles(q.poles/w0, expected/w0)
             end
-            Random.seed!(421)
             q = hbstability(c; method = ShiftInvert(w0*(0.1 + im); nev = 2))
             @test q.converged
             @test closepoles(q.poles/w0, expected/w0)
             @test all(==(1), q.shiftindices)
             @test only(q.searches).converged == 2
+            # the search starts from a fixed vector: it leaves the random
+            # stream alone, and gives the same poles whatever its state
+            Random.seed!(1)
+            again = hbstability(c; method = ShiftInvert(w0*(0.1 + im); nev = 2))
+            drawn = rand()
+            Random.seed!(1)
+            @test rand() == drawn
+            @test again.poles == q.poles
             # Port termination is physical damping; reference impedance
             # alone does not add damping to an unterminated port.
             port = Circuit([(:p, 1, 0, Port(1; Z0 = R)),
@@ -78,6 +85,25 @@ end
         q = hbstability(cap; method = ShiftInvert(0.1im; nev = 1))
         @test q.converged
         @test abs(only(q.poles)) < 1e-12
+        # A repeated pole closes the Krylov space early, and the search
+        # continues from drawn vectors, which a generator seeded alike at
+        # every search gives (review of 2026-10-07, finding 3): four equal
+        # RC branches, a pole four times over, and two capacitors, a zero
+        # pole twice, give the same poles whatever the caller's random
+        # state, and leave it where it was
+        for (c, pole) in ((Circuit(vcat([(Symbol(:r, i), i, 0, Resistor(2.0)) for i in 1:4],
+                    [(Symbol(:c, i), i, 0, Capacitor(0.5)) for i in 1:4])), -1.0),
+                (Circuit([(Symbol(:c, i), i, 0, Capacitor(1.0)) for i in 1:2]), 0.0))
+            method = ShiftInvert(0.1im; nev = 4)
+            Random.seed!(123)
+            drawn = rand()
+            Random.seed!(123)
+            p = hbstability(c; method)
+            @test rand() == drawn
+            @test all(x -> abs(x - pole) < 1e-9, p.poles)
+            Random.seed!(456)
+            @test hbstability(c; method).poles == p.poles
+        end
         # An algebraic voltage divider with one capacitor has one pole,
         # not two slow poles invented by regularizing the capacitance.
         divider = Circuit([(:r1, 1, 0, Resistor(2.0)),
@@ -90,7 +116,6 @@ end
         p = hbstability(resistor)
         @test isempty(p.poles)
         @test p.infinite == 2
-        Random.seed!(18)
         q = hbstability(resistor; method = ShiftInvert(0.1im))
         @test isempty(q.poles)
         # Negative conductance is an allowed active, time-local element.
@@ -240,7 +265,6 @@ end
         rate = maximum(real, hbstability(weak; nonlinear = weakpump, method = DenseSpectrum()).poles)
         exact = hbstability(weak; nonlinear = weakpump, Nmodulationharmonics = (4,), method = Monodromy(steps = 512, nev = 1))
         @test abs(real(only(exact.poles)) - rate) < 1e-6*abs(rate)
-        Random.seed!(917)
         iterative = hbstability(c; nonlinear = pump, Nmodulationharmonics = (6,),
             method = ShiftInvert([0.01+0.2im, 0.01-0.2im]; nev = 2))
         @test iterative.converged
@@ -255,7 +279,7 @@ end
             Nmodulationharmonics = (4,), threewavemixing = true,
             fourwavemixing = true, debuglsys = true)
         A = copy(dbg.lsys.Asparse)
-        JC.assemblesystemmatrix!(A, dbg.lsys, 0.31)
+        JC.assemblesystemmatrix!(A, dbg.lsys, 0.31 .+ dbg.lsys.wpumpmodes)
         z = 0.31im/omega
         Q = sys.Q0+z*sys.Q1+z^2*sys.Q2
         scale = Matrix(Q)/Matrix(A)
@@ -317,6 +341,22 @@ end
         end
     end
 
+    @testset "the poles near many shifts" begin
+        # A junction chain searched near many shifts over a band: each
+        # search keeps the vectors of the poles it finds, and the whole
+        # allocates in proportion to the shifts. Growth beyond linear is
+        # small beside the linear part at these counts, so a fourfold step
+        # tells them apart: linear growth allocates four times as much,
+        # quadratic sixteen.
+        chain = Circuit(vcat(Any[(:p1, 1, 0, Port(1; Z0 = 50.0)), (:p2, 64, 0, Port(2; Z0 = 50.0))],
+            Any[(Symbol(:j, i), i, i + 1, JosephsonJunction(1e-10)) for i in 1:63],
+            Any[(Symbol(:c, i), i, 0, Capacitor(45e-15)) for i in 1:64]))
+        shifts(S) = [1e6 + im*2pi*(5.0e9 + 2.0e9*(k - 0.5)/S) for k in 1:S]
+        bytes(S) = @allocated hbstability(chain; method = ShiftInvert(shifts(S); nev = 12))
+        bytes(8)
+        @test bytes(128) < 6*bytes(32)
+    end
+
     @testset "unsupported models and search input" begin
         c = Circuit([(:r, 1, 0, Resistor(2.0)), (:c, 1, 0, Capacitor(0.5))])
         @test_throws ArgumentError ShiftInvert(ComplexF64[])
@@ -345,18 +385,16 @@ end
             twin = Circuit([(:r1, 1, 0, Resistor(1.0)), (:c1, 1, 0, Capacitor(1.0)),
                 (:r2, 2, 0, Resistor(r2)), (:c2, 2, 0, Capacitor(1e-8))])
             dense = hbstability(twin; method = DenseSpectrum())
-            Random.seed!(123)
             searched = hbstability(twin; method = ShiftInvert(0.1im))
             @test searched.infinite <= dense.infinite
             @test all(s -> minimum(abs.(dense.poles .- s)) <= 1e-8*abs(s), searched.poles)
             @test searched.converged == (length(searched.poles) == length(dense.poles))
         end
         # an unpumped ladder of 1001 nodes exceeds the dense spectrum the
-        # default takes without a pump, which names the method it can give
+        # default takes without a pump
         ladder = Circuit(vcat([(Symbol(:c, k), k, 0, Capacitor(1.0)) for k in 1:1001],
             [(Symbol(:l, k), k, k + 1, Inductor(1.0)) for k in 1:1000], [(:r, 1, 0, Resistor(1.0))]))
-        refusal = try hbstability(ladder) catch e; e end
-        @test refusal isa ArgumentError && !occursin("Monodromy", sprint(showerror, refusal))
+        @test_throws ArgumentError hbstability(ladder)
         # 1201 harmonics of one node exceed the default's thousand unknowns
         @test_throws ArgumentError hbstability(c; pumpfrequency = 1.0, Nmodulationharmonics = (600,), method = DenseSpectrum())
         @test_throws ArgumentError hbstability(c; frequencyscale = Inf)

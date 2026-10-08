@@ -2,6 +2,7 @@ using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
 using Test
+isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 
 # The sparse factorizations behind a Newton step: the guarded factorize
 # and solve, the non-conjugating transpose solve, and the ordering chosen
@@ -186,6 +187,75 @@ end
         @test JC.factorize(JC.KLUfactorization(), G) isa typeof(Fg)
     end
 
+    @testset "nested dissection of a sweep's nodes" begin
+        # The system of a sweep of a junction chain under a pump of four
+        # harmonics: at four modulation harmonics each node's modes form a
+        # dense block, at sixteen a banded one, whose rows no two share.
+        # Its ordering, with nested dissection of the nodes, the modes of
+        # each a block of rows, allocates in proportion to the pattern's
+        # entries, as AMD and the predicted fill do; nested dissection of
+        # the rows allocated several times as much per entry of the banded
+        # pattern as of the dense.
+        circuit, defs = testchaincircuit(64)
+        pump = hbnlsolve((2pi*7e9,), (4,), [(mode = (1,), port = 1, current = 0.5e-6)],
+            circuit, defs; keyedarrays = false)
+        function perentry(Nmod)
+            d = hblinsolve([2pi*5.1234e9], circuit, defs; nonlinear = pump,
+                Nmodulationharmonics = (Nmod,), keyedarrays = false, debuglsys = true)
+            A, m = d.lsys.Asparse, d.lsys.Nmodes
+            ordering() = JC.fillordering(JC.KLUfactorization(), A; blocksize = m)
+            ordering()
+            return @allocated(ordering())/nnz(A)
+        end
+        @test perentry(16) < 1.5*perentry(4)
+        # a 3d grid of nodes, each a dense block of three rows coupled
+        # densely to its neighbours', where nested dissection is the
+        # better ordering: the one taken is METIS's ordering of the grid's
+        # node graph, each node's rows in turn
+        g, m = 8, 3
+        idx(i, j, k) = i + g*(j - 1) + g^2*(k - 1)
+        I3, J3 = Int[], Int[]
+        for i in 1:g, j in 1:g, k in 1:g, (di, dj, dk) in ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+            i + di <= g && j + dj <= g && k + dk <= g || continue
+            push!(I3, idx(i, j, k)); push!(J3, idx(i + di, j + dj, k + dk))
+        end
+        N = sparse(I3, J3, -1.0, g^3, g^3)
+        N = N + N' + 7I
+        nodes = Vector{Int64}(undef, g^3)
+        @test JC.LibSuiteSparse.cholmod_l_metis(JC.CHOLMOD.Sparse(JC._symmetricpattern(N), 1), C_NULL, 0,
+            true, nodes, JC.CHOLMOD.getcommon()) == 1
+        chosen = JC.fillordering(JC.KLUfactorization(), kron(N, sparse(ones(m, m))); blocksize = m)
+        @test chosen.perm == vec([c*m + a for a in 1:m, c in nodes])
+    end
+
+    @testset "the rows matched to columns before the ordering" begin
+        # A chain of transmission line blocks, each in series with a
+        # junction, carrying a direct current and a pump: the canonical
+        # Jacobian of its Newton solve has structural zeros on its
+        # diagonal, one fewer than its cells. An ordering applied to
+        # rows and columns alike leaves those zeros on the pivots'
+        # diagonal, and KLU, which pivots off them, filled in proportion
+        # to the square of the chain; with a maximum transversal first,
+        # the factors grow with the Jacobian: per entry of it, less than
+        # one and a half times as much at 64 cells as at 16.
+        function factorfill(n)
+            c = Any[(:P1, 1, 0, Port(1; Z0 = 50.0))]
+            for k in 1:n
+                push!(c, (Symbol(:tl, k), 2k - 1, 2k, TransmissionLine(50.0, 1e-3)),
+                    (Symbol(:jj, k), 2k, 2k + 1, JosephsonJunction(100e-12)),
+                    (Symbol(:cg, k), 2k + 1, 0, Capacitor(40e-15)))
+            end
+            push!(c, (:R2, 2n + 1, 0, Resistor(50.0)))
+            sources = [(mode = (0,), port = 1, current = 1e-7), (mode = (1,), port = 1, current = 0.3e-6)]
+            op = hbnlsolve((2pi*7e9,), (4,), sources, Circuit(c), Dict(); dc = true, odd = true, even = true,
+                keyedarrays = false, method = Newton(), returnoperatingpoint = true).operatingpoint
+            J = op.dc.jacobian
+            F = JC.kluordered(J)
+            return (nnz(F.L) + nnz(F.U) + nnz(F.F))/nnz(J)
+        end
+        @test factorfill(64) < 1.5*factorfill(16)
+    end
+
     @testset "a cache keeps the ordering of its pattern, and takes a seeded one" begin
         n = 300
         A = sprand(rng, n, n, 0.02) + 5I
@@ -204,47 +274,45 @@ end
         JC.tryfactorize!(cache, f, A2)
         @test cache.ordering === ordering
         @test cache.factorization\b ≈ JC.kluordered(A2)\b
-        # a cache seeded with it factorizes as the one which chose it, and
-        # so does one seeded with the bare permutation
+        # a cache seeded with it factorizes as the one which chose it
         seeded = JC.seedordering!(JC.FactorizationCache(), A2, ordering)
         JC.tryfactorize!(seeded, f, A2)
         @test seeded.ordering === ordering
         @test seeded.factorization.q == cache.factorization.q
-        bare = JC.seedordering!(JC.FactorizationCache(), A2, ordering.perm)
-        JC.tryfactorize!(bare, f, A2)
-        @test bare.factorization.q == cache.factorization.q
-        @test_throws ArgumentError JC.seedordering!(JC.FactorizationCache(), A, 1:n-1)
         @test_throws ArgumentError JC.seedordering!(JC.FactorizationCache(), A,
             JC.FillOrdering(collect(1:n-1), n))
         # another pattern gets an ordering of its own
         B = A + sparse(1:n-1, 2:n, 1.0, n, n)
         cache.factorization = nothing
         JC.tryfactorize!(cache, f, B)
-        @test cache.ordering == JC.fillordering(f, B)
-        @test cache.ordering != ordering
+        chosen = JC.fillordering(f, B)
+        @test (cache.ordering.perm, cache.ordering.fill) == (chosen.perm, chosen.fill)
+        @test (cache.ordering.perm, cache.ordering.fill) != (ordering.perm, ordering.fill)
         @test cache.factorization\b ≈ Matrix(B)\b
     end
 
     @testset "KLU sizes the factors of a given ordering by its fill" begin
-        # handed only a permutation, KLU reserves ten times the matrix for
-        # each factor; handed the fill the ordering choice predicted, it
-        # reserves that. A banded matrix fills little, so the reservation
-        # is most of what a fresh factorization allocates
+        # KLU reserves for each factor the fill the ordering carries, with
+        # its own margin: the fill the ordering choice predicted allocates
+        # far less than ten times the matrix, KLU's reservation for an
+        # ordering with no fill. A banded matrix fills little, so the
+        # reservation is most of what a fresh factorization allocates
         n = 20000
         A = spdiagm(-2 => fill(-1.0, n - 2), -1 => fill(0.5, n - 1),
             0 => fill(4.0, n), 1 => fill(0.5, n - 1), 2 => fill(-1.0, n - 2))
         o = JC.fillordering(JC.KLUfactorization(), A)
-        JC.kluordered(A, o); JC.kluordered(A, o.perm)
+        tenfold = JC.FillOrdering(o.perm, 10*nnz(A))
+        JC.kluordered(A, o); JC.kluordered(A, tenfold)
         # (measured inside a function: `@allocated` has Julia compile the
         # whole top-level expression it is written in, here the file's
         # testset)
         allocations(A, ordering) =
             @allocated JosephsonCircuits.kluordered(A, ordering)
         sized = allocations(A, o)
-        unsized = allocations(A, o.perm)
+        unsized = allocations(A, tenfold)
         @test sized < unsized/2
         b = randn(rng, n)
-        @test JC.kluordered(A, o)\b ≈ JC.kluordered(A, o.perm)\b
+        @test JC.kluordered(A, o)\b ≈ JC.kluordered(A, tenfold)\b
         @test norm(A*(JC.kluordered(A, o)\b) - b) <= 1e-12*norm(b)
     end
 end

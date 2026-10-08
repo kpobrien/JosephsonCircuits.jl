@@ -9,12 +9,13 @@
 # that they are removed by deleting it and test/circuit/legacy.jl.
 #
 # A netlist of `(name, node1, node2, value)` tuples, the original input
-# format: the name prefix table with the two functions that read it, the
+# format: the name prefix table with the function that reads it, the
 # convention that a port's reference impedance is the resistor placed
 # across it and the port termination which records that resistor, the
 # tuple forms of the entry points which took a tuple netlist in v0.5.4,
 # which sort the nodes by number as the format always did, and the tuple
-# netlist file reader and writer.
+# netlist file reader, with its parser of a value written as an
+# expression, and writer.
 #
 # A value written as an expression in a parameter named by the
 # `symfreqvar` keyword of the solvers, rewritten as a
@@ -24,15 +25,25 @@
 # no longer read: `ftol`, the absolute residual tolerance under its old
 # name, the line search settings `switchofflinesearchtol` and `alphamin`,
 # and `maxharmonics` and `maxpumpharmonics`, whose role the retained
-# harmonics took.
+# harmonics took; the `returnZ` keywords of the linearized solvers, whose
+# impedances they no longer compute; and the `noise` keyword of
+# `connectS_initialize`.
 #
-# Outside this file, the `Circuit(netlist)` constructor in
+# Outside this file: the `Circuit(netlist)` constructor in
 # circuit/parse.jl hands a netlist whose entries end in values rather than
-# components to `legacycircuit`, the Symbolics extension unwraps a `Num`
-# port number for `legacyportnumber`, the three solver entry points
-# which hold a compiled circuit beside its definitions hand a
-# `symfreqvar` to `frequencydependentcircuit`, and `hbnlsolve` and
-# `hbsolve` hand their deprecated keywords to `deprecatedsolverkeywords`.
+# components to `legacycircuit`; `compile` (circuit/compile.jl) finds the
+# resistor a port's termination names through `namedtermination`, whose
+# method for every other termination, naming none, is in
+# circuit/components.jl; the Symbolics extension unwraps a `Num` port
+# number for `legacyportnumber`; the three solver entry points which hold
+# a compiled circuit beside its definitions hand a `symfreqvar` to
+# `frequencydependentcircuit`; `hbnlsolve` and `hbsolve` hand their
+# deprecated keywords to `deprecatedsolverkeywords`, and `hbnlsolve` its
+# `factorization` to `deprecatedfactorization`; `hbsolve` and
+# `hblinsolve` hand the `returnZ` keywords to `removedimpedancekeywords`;
+# `hbnlsolve` and `hbsolve` collect what these find and warn once with it
+# (`warndeprecations`); and `connectS_initialize`
+# (networks/connections.jl) hands its `noise` to `deprecatedconnectnoise`.
 
 # Unwrap a wrapped symbolic value to whatever it holds. The Symbolics
 # extension adds the method for `Num`; everything else is already unwrapped.
@@ -59,97 +70,28 @@ showtermination(io::IO, t::LegacyTermination) =
 
 # === the tuple netlist -> Circuit ===
 
-# The component type prefixes of the tuple format. Two letter prefixes must
-# come before one letter prefixes with the same first letter; see
-# `checkcomponenttypes`.
-const legacyallowedcomponents = ["Lj","L","C","K","I","R","P"]
-
-"""
-    parsecomponenttype(name::String,allowedcomponents::Vector{String})
-
-The index in `allowedcomponents` of the one or two letter prefix which
-matches the start of the component name `name`. Prefixes are tried in
-order and the first match wins, so a two letter prefix listed after a one
-letter prefix with the same first letter can never match;
-[`checkcomponenttypes`](@ref) detects that ordering mistake.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","L","C","K","I","R","P"])
-2
-
-julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","L","C","K","I","R","P"]) for c in ["Lj","L","C","K","I","R","P"]]
-7-element Vector{Int64}:
- 1
- 2
- 3
- 4
- 5
- 6
- 7
-```
-"""
-function parsecomponenttype(name::String,allowedcomponents::Vector{String})
-
-    @inbounds for j in eachindex(allowedcomponents)
-        l=allowedcomponents[j]
-        if l[1] == name[1]
-            if length(l) == 2
-                if length(name) >= 2 && l[2] == name[2]
-                    return j
-                end
-            elseif length(l) == 1
-                return j
-            else
-                throw(ArgumentError(lazy"parsecomponenttype() currently only works for two letter components"))
-            end
-        end
+# The component type a tuple netlist entry's name gives by its prefix:
+# the first of the prefixes which begins the name, so that `Lj`, a
+# junction, is read before `L`, an inductor.
+const legacyprefixes = (:Lj, :L, :C, :K, :I, :R, :P)
+function legacycomponenttype(name::AbstractString)
+    for t in legacyprefixes
+        startswith(name, String(t)) && return t
     end
-    throw(ArgumentError(lazy"No component in allowedcomponents matches the name $(name)."))
+    throw(ArgumentError(lazy"The component name $(name) begins with none of the prefixes of the tuple netlist, Lj, L, C, K, I, R and P, which give its type."))
 end
 
-"""
-    checkcomponenttypes(allowedcomponents::Vector{String})
-
-Check that [`parsecomponenttype`](@ref) maps each prefix in
-`allowedcomponents` back to its own index, and throw an `ArgumentError`
-otherwise. This fails when a two letter prefix is listed after a one letter
-prefix with the same first letter, which would shadow it.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.checkcomponenttypes(["Lj","L","C","K","I","R","P"])
-true
-```
-"""
-function checkcomponenttypes(allowedcomponents::Vector{String})
-    for i in eachindex(allowedcomponents)
-        if i != parsecomponenttype(allowedcomponents[i],allowedcomponents)
-            throw(ArgumentError(lazy"Allowed components parsing check has failed for $(allowedcomponents[i]). This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents."))
-        end
-    end
-    return true
-end
-
-# the typed component model of one tuple netlist entry
-function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
-    if typesymbol == :L
-        return Inductor(value)
-    elseif typesymbol == :C
-        return Capacitor(value)
-    elseif typesymbol == :R
-        return Resistor(value)
-    elseif typesymbol == :Lj
-        return NonlinearInductor(value, sin)
-    elseif typesymbol == :I
-        return CurrentSource(value)
-    elseif typesymbol == :P
-        return Port(legacyportnumber(name, value); termination = nothing)
-    elseif typesymbol == :K
-        return MutualInductor(value, string(node1), string(node2))
-    else
-        throw(ArgumentError(lazy"Unknown legacy component type $(typesymbol) for $(name)."))
-    end
+# the typed component model of a tuple netlist entry of the type `t`; a
+# mutual inductor's entry names the inductors it couples in place of its
+# nodes, as the netlist form of a `Circuit` does
+function legacycomponent(t::Symbol, name, value)
+    t === :L && return Inductor(value)
+    t === :C && return Capacitor(value)
+    t === :R && return Resistor(value)
+    t === :Lj && return NonlinearInductor(value, sin)
+    t === :I && return CurrentSource(value)
+    t === :P && return Port(legacyportnumber(name, value); termination = nothing)
+    return MutualInductor(value)
 end
 
 # the port number of a `P` entry, whose value must be an integer however it
@@ -248,13 +190,15 @@ end
 
 const tuplenetlistmessage = "The netlist of (name, node1, node2, value) tuples is deprecated and will be removed in a future release. Write the circuit as a Circuit of typed components, `Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(100e-15)), ...])`, where a port states its own reference impedance and needs no resistor across it; see the Circuit docstring."
 
-# Convert the tuple netlist to components and connection groups, with the
-# deprecation warning attributed to the entry point `caller` the netlist
-# was given to. Each distinct node label becomes one `Net` holding every
-# terminal on it, in order of first appearance, with `Ground` appended to
-# net "0".
+# Convert the tuple netlist to a `Circuit`, its deprecation going `to` the
+# entry point the netlist was given to or to the messages of the call (see
+# `deprecate!`): each entry becomes the entry of the netlist form of a
+# `Circuit` with its typed component, its nodes labelled by their text, a
+# port with the resistor across it as its termination, and the netlist
+# form groups the nodes into nets, in order of first appearance, with
+# `Ground` appended to net "0".
 function legacycircuit(netlist, circuitdefs; pins = nothing, ports = nothing,
-        caller::Symbol = :Circuit)
+        to = :Circuit)
     # a list of typed components handed over without the Circuit around it,
     # or components without their connections, is not a tuple netlist, and
     # is said to be so before a warning about one
@@ -264,56 +208,28 @@ function legacycircuit(netlist, circuitdefs; pins = nothing, ports = nothing,
     if any(e -> e isa Tuple && last(e) isa AbstractComponent, netlist)
         throw(ArgumentError("The netlist holds typed components, which are passed as a circuit: write Circuit(netlist)."))
     end
-    Base.depwarn(tuplenetlistmessage, caller; force = true)
+    deprecate!(to, tuplenetlistmessage)
     if !isnothing(pins) || !isnothing(ports)
         throw(ArgumentError("A tuple netlist has no interface; give pins and ports to a netlist of typed components or to the connection-group form."))
     end
     components = Vector{Pair{String,Any}}(undef, length(netlist))
-    nodeorder = String[]
-    nodegroups = Dict{String,Vector{Any}}()
     for (i, entry) in enumerate(netlist)
         if length(entry) != 4
             throw(ArgumentError(lazy"The netlist entry $(entry) on line $(i) must be a tuple of (name, node1, node2, value)."))
         end
-        name, node1, node2, value = entry
+        name, _, _, value = entry
         if !(name isa AbstractString)
             throw(ArgumentError(lazy"The component name $(name) on line $(i) must be a string."))
         end
-        if occursin('/', name)
-            throw(ArgumentError(lazy"The component name $(name) on line $(i) contains the reserved hierarchical path separator \"/\"."))
-        end
-        typeindex = parsecomponenttype(String(name), legacyallowedcomponents)
-        typesymbol = Symbol(legacyallowedcomponents[typeindex])
         if !isnothing(circuitdefs)
             value = valuetonumber(value, circuitdefs)
         end
         components[i] = Pair{String,Any}(String(name),
-            legacycomponent(typesymbol, name, node1, node2, value))
-        if typesymbol != :K
-            for (t, node) in enumerate((node1, node2))
-                label = string(node)
-                if occursin('/', label)
-                    throw(ArgumentError(lazy"The node label $(label) on line $(i) contains the reserved hierarchical path separator \"/\"."))
-                end
-                group = get!(() -> (push!(nodeorder, label); Any[]),
-                    nodegroups, label)
-                push!(group, (String(name), t))
-            end
-        end
+            legacycomponent(legacycomponenttype(name), name, value))
     end
     legacyportimpedances!(components, netlist)
-    connections = Vector{Net{String,Vector{Any}}}(undef, length(nodeorder))
-    for (i, label) in enumerate(nodeorder)
-        group = nodegroups[label]
-        if label == "0"
-            push!(group, Ground)
-        end
-        # the endpoints are a vector, not a tuple: a large ground net as an
-        # `NTuple` of thousands of endpoints would be a new type to compile
-        # against
-        connections[i] = Net(label, group)
-    end
-    return Circuit(components, connections, nothing)
+    return netlistcircuit([(c.first, string(entry[2]), string(entry[3]), c.second)
+        for (c, entry) in zip(components, netlist)])
 end
 
 # === the symbolic frequency variable, deprecated ===
@@ -329,12 +245,13 @@ end
 const symfreqvarmessage = "The `symfreqvar` keyword is deprecated and will be removed in a future release. Write a frequency dependent value as a closure of the frequency, `Capacitor(FrequencyDependent(w -> C0*(1 + im*w/wc)))`, which needs neither a symbolic variable nor a keyword; see the FrequencyDependent docstring."
 
 """
-    frequencydependentcircuit(psc, circuitdefs, symfreqvar, caller)
+    frequencydependentcircuit(psc, circuitdefs, symfreqvar, to)
 
 A compiled circuit whose values depending on the symbolic frequency
 variable `symfreqvar` are rewritten as [`FrequencyDependent`](@ref)
-closures resolving them at `circuitdefs` and at the frequency, and a
-deprecation warning attributed to `caller`.
+closures resolving them at `circuitdefs` and at the frequency, its
+deprecation going `to` the entry point or the messages of the call (see
+[`warndeprecations`](@ref)).
 
 Every other value is left as it was, including one which still depends on
 a parameter the definitions do not give, so that the undefined parameter
@@ -342,8 +259,8 @@ is still reported by [`checkcomponentvaluesdefined`](@ref) naming its
 component rather than failing later inside a closure.
 """
 function frequencydependentcircuit(psc::CompiledCircuit, circuitdefs,
-        symfreqvar, caller::Symbol)
-    Base.depwarn(symfreqvarmessage, caller; force = true)
+        symfreqvar, to)
+    deprecate!(to, symfreqvarmessage)
     # the definitions resolved first, once for the table, so that only the
     # frequency is left for a closure to give, and a value named by a symbol
     # whose definition is written in the variable is found
@@ -376,35 +293,80 @@ function frequencydependentvalue(value, partial, symfreqvar)
             valuetonumber(partial, Dict{Any,Any}(symfreqvar => w)), w))
 end
 
+# === the deprecations of one call ===
+#
+# `Base.depwarn` shows a warning once per calling frame and function name,
+# so of two deprecations one call of an entry point meets, the second
+# would not be shown. A deprecation therefore goes `to` one of two
+# places: the name of the entry point, which warns at once, when the call
+# can meet no other, or the messages of a call which can meet several,
+# which warns once with all of them (`warndeprecations`).
+
+deprecate!(caller::Symbol, message) =
+    (Base.depwarn(message, caller; force = true); nothing)
+deprecate!(messages::Vector{String}, message) =
+    (push!(messages, message); nothing)
+
+"""
+    warndeprecations(messages::Vector{String}, caller::Symbol)
+
+Warn once, attributed to `caller`, with `messages`, the deprecations one
+call of `caller` met; nothing when there are none.
+"""
+function warndeprecations(messages::Vector{String}, caller::Symbol)
+    isempty(messages) ||
+        Base.depwarn(join(messages, "\n"), caller; force = true)
+    return nothing
+end
+
 # === the deprecated keywords of the nonlinear solvers ===
 
 """
-    deprecatedsolverkeywords(caller::Symbol, atol; ftol = nothing,
+    deprecatedsolverkeywords(to, atol; ftol = nothing,
         switchofflinesearchtol = nothing, alphamin = nothing,
         maxharmonics = nothing, maxpumpharmonics = nothing)
 
 The absolute residual tolerance of a solve given the deprecated keywords
 of the nonlinear solvers: `ftol` when it is given, which is `atol` under
-its old name, and `atol` otherwise. Each deprecated keyword given warns,
-attributed to `caller`; `switchofflinesearchtol` and `alphamin`, which the
-line search no longer has, and `maxharmonics` of `hbnlsolve` and
-`maxpumpharmonics` of `hbsolve`, whose role the retained harmonics took,
-are ignored.
+its old name, and `atol` otherwise. The deprecation of each keyword given
+goes `to` the entry point or the messages of the call (see
+[`warndeprecations`](@ref)); `switchofflinesearchtol` and `alphamin`,
+which the line search no longer has, and `maxharmonics` of `hbnlsolve`
+and `maxpumpharmonics` of `hbsolve`, whose role the retained harmonics
+took, are ignored.
 """
-function deprecatedsolverkeywords(caller::Symbol, atol; ftol = nothing,
+function deprecatedsolverkeywords(to, atol; ftol = nothing,
         switchofflinesearchtol = nothing, alphamin = nothing,
         maxharmonics = nothing, maxpumpharmonics = nothing)
     if !isnothing(ftol)
-        Base.depwarn("The `ftol` kwarg is deprecated: the absolute residual tolerance is `atol` in every solver of the package. Please use `atol` to avoid errors in future versions.", caller; force = true)
+        deprecate!(to, "The `ftol` kwarg is deprecated: the absolute residual tolerance is `atol` in every solver of the package. Please use `atol` to avoid errors in future versions.")
         atol = ftol
     end
-    unused(name) = Base.depwarn(lazy"The `$(name)` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", caller; force = true)
+    unused(name) = deprecate!(to, lazy"The `$(name)` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.")
     isnothing(switchofflinesearchtol) || unused(:switchofflinesearchtol)
     isnothing(alphamin) || unused(:alphamin)
-    retained(name, by) = Base.depwarn(lazy"The `$(name)` kwarg is deprecated and no longer used. `$(by)` is the retained set of modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.", caller; force = true)
+    retained(name, by) = deprecate!(to, lazy"The `$(name)` kwarg is deprecated and no longer used. `$(by)` is the retained set of modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.")
     isnothing(maxharmonics) || retained(:maxharmonics, :Nharmonics)
     isnothing(maxpumpharmonics) || retained(:maxpumpharmonics, :Npumpharmonics)
     return atol
+end
+
+"""
+    deprecatedfactorization(to, method, factorization)
+
+The method of a solve given `factorization`, the keyword with which
+`hbnlsolve` took the sparse factorization of its Newton iteration in
+v0.5.4. The factorization is now an option of the method: given beside
+the default, a [`NewtonKrylov`](@ref), its deprecation goes `to` the
+entry point or the messages of the call (see [`warndeprecations`](@ref)),
+and the solve takes `Newton(factorization = factorization)`, as v0.5.4
+did; given beside another method it is refused.
+"""
+deprecatedfactorization(to, method, ::Nothing) = method
+function deprecatedfactorization(to, method, factorization)
+    method isa NewtonKrylov || throw(ArgumentError(lazy"`factorization` is an option of the method, and `method` = $(method) is given as well; pass the factorization to the method alone."))
+    deprecate!(to, "The `factorization` kwarg is deprecated: the factorization is an option of the method. Please pass `method = Newton(factorization = ...)` to avoid errors in future versions.")
+    return Newton(; factorization)
 end
 
 # === the tuple forms of the entry points ===
@@ -416,9 +378,16 @@ end
 # their keyword `sorting`, which is now `compile`'s, and still take it
 # here.
 
-# the netlist compiled the way the tuple format ordered its nodes
-legacycompiled(netlist, caller::Symbol; sorting::Symbol = :number) =
-    compile(legacycircuit(netlist, nothing; caller = caller); sorting = sorting)
+# the netlist compiled the way the tuple format ordered its nodes, its
+# deprecation going `to` the entry point or the messages of the call. The
+# conversion is called through an inference barrier: a solver called with
+# a circuit inference cannot see, such as a global read in a function,
+# infers its tuple form too, and would infer the conversion of a netlist
+# of unknown entries with it
+legacycompiled(netlist, to; sorting::Symbol = :number) =
+    Base.inferencebarrier(compilenetlist)(netlist, to, sorting)::CompiledCircuit
+compilenetlist(netlist, to, sorting) =
+    compile(legacycircuit(netlist, nothing; to = to); sorting = sorting)
 
 function hbsolve(ws, wp::NTuple{N,Number}, sources,
         Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
@@ -583,7 +552,28 @@ code.
 function parsecomponentvalue(s::AbstractString)
     v = tryparse(Float64, s)
     isnothing(v) || return v
-    return CircuitValues.fromexpr(Meta.parse(s))
+    return expressionvalue(Meta.parse(s))
+end
+
+# A value written in a netlist file arrives as a parsed Julia `Expr`, which
+# is converted to a `CircuitValue` accepting only the closed operator set of
+# circuit/values.jl and the constants `im` and `pi`, so that no Symbolics
+# parser is needed.
+const expressionconstants = Dict{Symbol,Any}(:im => im, :pi => pi)
+const expressionbinary = Dict{Symbol,Function}(:+ => +, :- => -, :* => *, :/ => /, :^ => ^)
+const expressionunary = Dict{Symbol,Function}(:- => -, :inv => inv, :sqrt => sqrt,
+    :exp => exp, :log => log, :conj => conj, :real => real, :imag => imag)
+expressionvalue(x::Number) = CircuitValues.Constant(x)
+function expressionvalue(s::Symbol)
+    haskey(expressionconstants, s) && return CircuitValues.Constant(expressionconstants[s])
+    return CircuitValues.Parameter(s)
+end
+function expressionvalue(e::Expr)
+    e.head === :call || error("unsupported expression head $(e.head)")
+    op = e.args[1]; args = map(expressionvalue, e.args[2:end])
+    length(args) == 1 && haskey(expressionunary, op) && return expressionunary[op](args[1])
+    haskey(expressionbinary, op) && return reduce(expressionbinary[op], args)
+    error("unsupported operator $(op) in a component value")
 end
 
 # === the deprecated entry points ===
@@ -618,6 +608,14 @@ function connectS!(Sout, Sa, Sb, k::Int, l::Int;
     return interconnectS!(Sout, Sa, Sb, k, l; nbatches = nbatches)
 end
 
+# The `noise` keyword `connectS_initialize` took in v0.5.4, which has no
+# effect: `connectS!` computes the noise covariances of the networks given
+# without them when it is called with `noise = true`. Given, it warns.
+function deprecatedconnectnoise(noise)
+    isnothing(noise) || Base.depwarn("The `noise` kwarg of `connectS_initialize` is deprecated and has no effect: `connectS!` computes the noise covariances of the networks given without them, from their scattering parameters at the time, when it is called with `noise = true`. Please remove it to avoid errors in future versions.", :connectS_initialize; force=true)
+    return nothing
+end
+
 # `X_Y_to_sympletic_pair` and `X_Y_to_sympletic_block` were misspelled.
 function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real}; kwargs...)
     Base.depwarn("`X_Y_to_sympletic_pair` is deprecated, use `X_Y_to_symplectic_pair` instead.", :X_Y_to_sympletic_pair; force=true)
@@ -630,6 +628,9 @@ function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:R
 end
 
 
+# the deprecation of the single pump form of `hbsolve`, below
+const singlepumpmessage = "This form of hbsolve, with a single pump frequency and integer harmonic counts, is deprecated: it calls the harmonic balance solvers hbnlsolve and hblinsolve, which take any number of pump tones and ports, with the syntax of the legacy solver, which supported four wave mixing of one strong tone only. Please switch to hbsolve(ws, (wp,), sources, (Nmodulationharmonics,), (Npumpharmonics,), circuit, circuitdefs)."
+
 #     hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
 #         circuitdefs; pumpports = [1], keyword arguments...)
 #
@@ -639,10 +640,11 @@ end
 # translated into a call of the current solvers and warns that it is
 # deprecated. A tuple netlist is compiled with its nodes sorted as
 # `sorting` says, and any other circuit as `compile` compiles it; the line
-# search keywords are handed to `hbnlsolve`, which warns that they are
-# ignored. Note that the signal modes of the result are ordered as
-# `hblinsolve` orders them (the signal at index 1, the rest as listed in
-# `modes`), which need not match the order the original solver used.
+# search keywords and the impedance outputs are ignored. One warning names
+# the form and every other deprecation the call meets. Note that the
+# signal modes of the result are ordered as `hblinsolve` orders them (the
+# signal at index 1, the rest as listed in `modes`), which need not match
+# the order the original solver used.
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = nothing, alphamin = nothing,
@@ -658,14 +660,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnZsensitivityadjoint = nothing,
     factorization = nothing)
 
-    Base.depwarn("""
-    This form of hbsolve, with a single pump frequency and integer harmonic
-    counts, is deprecated: it calls the harmonic balance solvers hbnlsolve
-    and hblinsolve, which take any number of pump tones and ports, with the
-    syntax of the legacy solver, which supported four wave mixing of one
-    strong tone only. Please switch to hbsolve(ws, (wp,), sources,
-    (Nmodulationharmonics,), (Npumpharmonics,), circuit, circuitdefs).
-        """, :hbsolve; force=true)
+    # the deprecations of this call, warned together below
+    deprecations = String[singlepumpmessage]
 
     # the single pump as a one element frequency tuple
     w = (wp,)
@@ -684,10 +680,15 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     Nmodes = length(freq.modes)
 
     psc = circuit isa AbstractVector ?
-        legacycompiled(circuit, :hbsolve; sorting = sorting) : compile(circuit)
-    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+        legacycompiled(circuit, deprecations; sorting = sorting) :
+        compile(circuit)
     isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
-        circuitdefs, symfreqvar, :hbsolve))
+        circuitdefs, symfreqvar, deprecations))
+    deprecatedsolverkeywords(deprecations, ftol; switchofflinesearchtol,
+        alphamin)
+    removedimpedancekeywords(deprecations; returnZ, returnZadjoint,
+        returnZsensitivity, returnZsensitivityadjoint)
+    warndeprecations(deprecations, :hbsolve)
     nm=numericmatrices(psc, circuitdefs, Nmodes = Nmodes)
 
     # `factorization = nothing` leaves the preconditioner to `Automatic`; a
@@ -695,7 +696,6 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     # form builds with one
     nonlinear = hbnlsolve(w, sources, freq, indices, psc, nm;
         iterations = iterations, atol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
         method = NewtonKrylov(preconditioner = isnothing(factorization) ?
@@ -725,9 +725,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         returnvoltage = returnvoltage,
         returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        returnSsensitivity = returnSsensitivity, returnZ = returnZ,
-        returnZadjoint = returnZadjoint, returnZsensitivity = returnZsensitivity,
-        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        returnSsensitivity = returnSsensitivity,
         factorization = factorization)
 
     return HB(nonlinear, linearized)
@@ -746,4 +744,90 @@ function solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
         gammaii_indexmap, Sii_indexmap, scattering_parameters,
         noise_covariances, nbatches, factorization, internal_ports, noise,
         nothing)
+end
+
+# === the impedance outputs of the linearized solve, removed ===
+
+"""
+    removedimpedancekeywords(to; returnZ = nothing, returnZadjoint = nothing,
+        returnZsensitivity = nothing, returnZsensitivityadjoint = nothing)
+
+A deprecation, going `to` the entry point or the messages of the call
+(see [`warndeprecations`](@ref)), when any of the impedance outputs
+v0.5.4's `hbsolve` and `hblinsolve` took is given: no output replaces
+them, and they are otherwise ignored. `hbsolve`, its single pump form
+and `hblinsolve` hand them here.
+"""
+function removedimpedancekeywords(to; returnZ = nothing,
+        returnZadjoint = nothing, returnZsensitivity = nothing,
+        returnZsensitivityadjoint = nothing)
+    all(isnothing, (returnZ, returnZadjoint, returnZsensitivity,
+        returnZsensitivityadjoint)) && return nothing
+    deprecate!(to, "The `returnZ`, `returnZadjoint`, `returnZsensitivity`, and `returnZsensitivityadjoint` kwargs have been removed. Please compute them from scattering parameters matrices.")
+    return nothing
+end
+
+# === the Xyce harmonic balance reader, deprecated ===
+#
+# `spice_hb_load` reads the frequency domain output of a Xyce harmonic
+# balance simulation, a `.HB.FD.prn` file, and is deprecated, since the
+# package neither writes nor runs Xyce. It returns a named tuple with the
+# value of each output variable at each frequency in `data`, one row per
+# variable in the order of the header, the name of each row in
+# `variables`, the frequencies in `f`, the index column in `index`, and
+# the column names in `header`. A variable printed as the two columns
+# `Re(name)` and `Im(name)` is the row `name`; any other column is a row
+# of its own, its real part.
+function spice_hb_load(filename)
+    Base.depwarn("`spice_hb_load` is deprecated: the package neither writes nor runs Xyce. It still reads a Xyce `.HB.FD.prn` file, and will be removed in a future version.", :spice_hb_load; force = true)
+
+    data = Float64[]
+    header = SubString{String}[]
+
+    open(filename, "r") do io
+        for line in eachline(io)
+            s = strip(line)
+            isempty(s) && continue
+            if startswith(s, "Index")
+                append!(header, split(s, r"\s+"))
+            elseif s == "End of Xyce(TM) Simulation"
+                break
+            else
+                append!(data, parse.(Float64, split(s, r"\s+")))
+            end
+        end
+    end
+
+    values = reshape(data, length(header), :)
+    index = values[1, :]
+    f = values[2, :]
+
+    # the columns of each variable, its real and imaginary parts by name
+    variables = String[]
+    recolumn = Int[]
+    imcolumn = Int[]
+    for c in 3:length(header)
+        m = match(r"^(Re|Im)\((.*)\)$", header[c])
+        name = isnothing(m) ? String(header[c]) : String(m.captures[2])
+        k = findfirst(==(name), variables)
+        if isnothing(k)
+            push!(variables, name)
+            push!(recolumn, 0)
+            push!(imcolumn, 0)
+            k = length(variables)
+        end
+        if !isnothing(m) && m.captures[1] == "Im"
+            imcolumn[k] = c
+        else
+            recolumn[k] = c
+        end
+    end
+
+    data1 = zeros(Complex{Float64}, length(variables), size(values, 2))
+    for k in eachindex(variables)
+        recolumn[k] > 0 && (data1[k, :] .+= view(values, recolumn[k], :))
+        imcolumn[k] > 0 && (data1[k, :] .+= im .* view(values, imcolumn[k], :))
+    end
+
+    return (data=data1, f=f, index=index, header=header, variables=variables)
 end

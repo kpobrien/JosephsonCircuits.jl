@@ -1,17 +1,19 @@
 """
     JosephsonCircuitsCUDAExt
 
-Package extension loaded with `using CUDA`. It supplies four things: the
+Package extension loaded with `using CUDA`. It supplies five things: the
 real transform plans, through CUFFT, which the residual and the matrix-free
 Jacobian-vector and Hessian-vector products of
-[`JosephsonCircuits.HBSystem`](@ref) need on a CUDA device; the device's
-free memory, which the automatic choices of preconditioner and linearized
-factorization are sized against; the batched dense primitives
-`batchedinverse!` and `batchedmul!`, cuBLAS `getrf`/`getri` strided
-batched and `gemm_strided_batched!`, which every dense operation of a
-`SparseBlockFactorization` is one call to; and the period map's dense
-eigensolve, cuSOLVER's `geev` with the left vectors it needs checked
-(see `mapspectrum!`).
+[`JosephsonCircuits.HBSystem`](@ref) need on a CUDA device; the complex in
+place transform plans of the transient's windowed I/Q measurement
+(`transientiqfftplans`); the device's free memory, which the automatic
+choices of preconditioner and linearized factorization are sized against,
+and the release of a device array to the memory pool (`releasearray!`);
+the batched dense primitives `batchedinverse!` and `batchedmul!`, cuBLAS
+`getrf`/`getri` strided batched and `gemm_strided_batched!`, which every
+dense operation of a `SparseBlockFactorization` is one call to; and the
+period map's dense eigensolve, cuSOLVER's `geev` with the left vectors it
+needs checked (see `mapspectrum!`).
 
 Everything else on that path is device generic: the linear maps around the
 pointwise time domain nonlinearity are KernelAbstractions kernels of
@@ -31,8 +33,8 @@ using CUDA.CUFFT
 using KernelAbstractions
 import LinearAlgebra
 using LinearAlgebra: lu!, ldiv!
-import JosephsonCircuits: fftplans, freememory, batchedinverse!, batchedmul!,
-    blockidentity!, transientiqfftplans, mapspectrum!
+import JosephsonCircuits: fftplans, freememory, releasearray!, batchedinverse!,
+    batchedmul!, blockidentity!, transientiqfftplans, mapspectrum!
 using JosephsonCircuits: eigenvector
 
 # Real transform plans on the device with the same dimensions, direction
@@ -49,17 +51,25 @@ function fftplans(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
 end
 
 
-freememory(::CUDABackend) = Int(CUDA.free_memory())
+# the device's free memory and what CUDA.jl's memory pool holds without an
+# array in it, which an allocation takes before the device's: the pool keeps
+# what a solve or a sweep released
+function freememory(::CUDABackend)
+    free = Int(CUDA.free_memory())
+    reserved, used = CUDA.cached_memory(), CUDA.used_memory()
+    (ismissing(reserved) || ismissing(used)) && return free
+    return free + max(Int(reserved) - Int(used), 0)
+end
+releasearray!(x::CuArray) = CUDA.unsafe_free!(x)
 
 # the batched dense primitives of the block factorization of the
 # linearized system: one cuBLAS call over the batch of systems
 function batchedinverse!(Dinv::CuArray{T,3}, D::CuArray{T,3},
-    F::CuArray{T,3}, backend::CUDABackend) where {T}
+    F::CuArray{T,3}, backend::CUDABackend, status) where {T}
     if size(D, 3) == 1
-        # a batch of one (the preconditioner's clusters, whose supernodes
-        # are amalgamated to hundreds of rows): the dense LU of cuSOLVER,
-        # which the batched routines below, made for many small blocks,
-        # are far slower than at that size
+        # a batch of one block, as a cluster of the preconditioner can be:
+        # the dense LU of cuSOLVER, since the batched routines below are
+        # made for many blocks
         n = size(D, 1)
         Fm = reshape(F, n, n)
         copyto!(Fm, reshape(D, n, n))
@@ -70,19 +80,18 @@ function batchedinverse!(Dinv::CuArray{T,3}, D::CuArray{T,3},
     end
     copyto!(F, D)
     pivots, info = CUDA.CUBLAS.getrf_strided_batched!(F, true)
-    # a zero pivot in any system of the batch is a singular diagonal block;
-    # the host path throws the same from `lu!`, and `tryfactorize!` then
+    # a zero pivot in a system of the batch is a singular diagonal block,
+    # kept in `status` without a read back; `blocklu!` reads it once and
+    # throws, as the host path throws from `lu!`, and `tryfactorize!` then
     # refactorizes afresh rather than solve with garbage factors
-    k = findfirst(!=(0), Array(info))
-    isnothing(k) || throw(LinearAlgebra.SingularException(Int(k)))
+    status .= max.(status, info)
     CUDA.CUBLAS.getri_strided_batched!(F, Dinv, pivots)
     return Dinv
 end
 function batchedmul!(C::AbstractArray{T,3}, A::AbstractArray{T,3},
-    B::AbstractArray{T,3}, alpha, beta, tA::Bool, tB::Bool,
-    ::CUDABackend) where {T}
-    CUDA.CUBLAS.gemm_strided_batched!(tA ? 'T' : 'N', tB ? 'T' : 'N', T(alpha),
-        A, B, T(beta), C)
+    B::AbstractArray{T,3}, alpha, beta, tA::Bool, ::CUDABackend) where {T}
+    CUDA.CUBLAS.gemm_strided_batched!(tA ? 'T' : 'N', 'N', T(alpha), A, B,
+        T(beta), C)
     return C
 end
 

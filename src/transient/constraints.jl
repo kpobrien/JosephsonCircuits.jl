@@ -61,8 +61,7 @@ struct ConstraintProjection{M, MP, VP}
     RJp::MP
     RJpt::MP
     RJpabs::MP
-    RJZ::Matrix{Float64}
-    RJZl::Matrix{Float64}
+    RJZl::SparseMatrixCSC{Float64,Int}
     lmoljp::Vector{Float64}
     lmoljpdev::VP
     # the current-phase relations of the projected junctions, in the order
@@ -70,7 +69,14 @@ struct ConstraintProjection{M, MP, VP}
     # moves the result where a device array needs it, so one host table
     # serves both.
     relationsp::JunctionRelations{Matrix{Float64},Vector{Int}}
-    ZLZ::Matrix{Float64}
+    # the pattern of the small Jacobians `Z' (L + J'(x)) Z` with the values
+    # of `Z' L Z`, and for each projected junction the positions of the
+    # values its stiffness adds to and their coefficients, from `jptr[p]`
+    # to `jptr[p + 1] - 1` (see projectionplan)
+    jacobian::SparseMatrixCSC{Float64,Int}
+    jptr::Vector{Int}
+    jidx::Vector{Int}
+    jcoef::Vector{Float64}
     Zcinj::SparseMatrixCSC{Float64,Int}
     Zcconstant::Vector{Float64}
     Zcline::SparseMatrixCSC{Float64,Int}
@@ -81,7 +87,7 @@ struct ConstraintProjection{M, MP, VP}
     # solution; `RJpabs` above is that of `RJp`, which bounds the
     # rounding of the projected junctions' phases
     ZcLabs::M
-    RJZltabs::Matrix{Float64}
+    RJZltabs::SparseMatrixCSC{Float64,Int}
     Zcinjabs::SparseMatrixCSC{Float64,Int}
     Zclineabs::SparseMatrixCSC{Float64,Int}
     Zcblockabs::SparseMatrixCSC{Float64,Int}
@@ -97,8 +103,8 @@ struct ConstraintProjection{M, MP, VP}
     Qt::M
     QG::M
     QL::M
-    RJQ::Matrix{Float64}
-    Minv::Matrix{Float64}
+    RJQ::SparseMatrixCSC{Float64,Int}
+    Minv::RatePseudoinverse
     Qinj::SparseMatrixCSC{Float64,Int}
     Qconst::Vector{Float64}
     Qline::SparseMatrixCSC{Float64,Int}
@@ -142,16 +148,29 @@ struct ProjectionWork{A, H, B}
     open::Vector{Bool}
     # host work of the residual and of the small solves: the projected
     # junctions' currents and slopes per condition, `(npj, N)`, the
-    # floors per condition, the terms along the directions, `(k, m)`,
-    # one condition's Jacobian, `(k, k)`, the slopes times `RJZ`,
-    # `(npj, k)`, and one condition's slopes
+    # floors per condition, the terms along the directions, `(k, m)`, and
+    # one condition's Jacobian on the projection's pattern
     current::Matrix{Float64}
     slope::Matrix{Float64}
     floor::Vector{Float64}
     kwork::Matrix{Float64}
-    jacobian::Matrix{Float64}
-    djz::Matrix{Float64}
+    jacobian::SparseMatrixCSC{Float64,Int}
+    # the sparse factorizations of the Jacobians and the fill reducing
+    # ordering of their pattern, none without directions: one,
+    # refactorized for every condition at every solve, or, for the Newton
+    # iteration of a stepper's endpoint, one kept per condition (see
+    # `projectendpoint!`), nothing until its condition's first
+    factors::Vector{Union{Nothing,KLU.KLUFactorization{Float64,Int}}}
+    ordering::Union{Nothing,FillOrdering}
+    # per condition, for that iteration: the residual before its last
+    # correction, whether its next correction refreshes its factorization,
+    # and the factorizations it has made; and one condition's slopes
+    previous::Vector{Float64}
+    refresh::Vector{Bool}
+    factorizations::Vector{Int}
     dcol::Vector{Float64}
+    # the buffers of the rate system's factorized blocks (see ratework)
+    ratework::Vector{NTuple{3,Matrix{Float64}}}
     # the drive of a stepper's endpoint along the constraints' rows and
     # the magnitudes of its terms, `(k, N)`, along the reading's rows,
     # `(kq, N)`, and the magnitudes of the drive values
@@ -172,16 +191,21 @@ end
 # ones keeps its invariant reading.
 function touchedalgebraic(Zall, Zcall, L, RJ, injection, lineinjection, blockscatter, stateful)
     touched, blocked = Int[], Int[]
+    # the drives, the lines' forcing and the blocks' scatter along each
+    # constraint's row, one column per row
+    alongrows = A -> sparse(transpose(Zcall*A))
+    drives, lines, onblock = alongrows(injection), alongrows(lineinjection), alongrows(blockscatter)
+    # the junctions each direction moves, one column per direction, without
+    # those whose two nodes it moves alike
+    moved = dropzeros!(RJ*Zall)
     for c in 1:size(Zall, 2)
-        junctions = nnz(RJ*Zall[:, c]) > 0
-        row = Zcall[c:c, :]
-        onblock = row*blockscatter
-        block = nnz(onblock) > 0
-        driven = nnz(row*injection) > 0 || nnz(row*lineinjection) > 0 || block
+        junctions = !isempty(nzrange(moved, c))
+        block = !isempty(nzrange(onblock, c))
+        driven = !isempty(nzrange(drives, c)) || !isempty(nzrange(lines, c)) || block
         (junctions || driven) && push!(touched, c)
         # a block without states, an open, a short or a through, moves
         # no constraint; one with states does
-        any(j -> stateful[j] && onblock[1, j] != 0, 1:size(blockscatter, 2)) && push!(blocked, c)
+        any(q -> stateful[rowvals(onblock)[q]] && nonzeros(onblock)[q] != 0, nzrange(onblock, c)) && push!(blocked, c)
     end
     if !isempty(touched) && length(touched) < size(Zall, 2)
         # the union of the couplings' pattern with its transpose's: the
@@ -332,11 +356,12 @@ end
 
 # The correction along the directions from the violation in the work's
 # `g`: the coefficients `alpha = -(Z' (L + J'(x)) Z)^-1 g` per condition,
-# with the Jacobians at the phases in `hphi`, and the state's move
-# `Z alpha` into the work's `work`; none for the conditions `open` does
-# not hold, when it is given.
-function constraintcorrection!(pw::ProjectionWork, pr::ConstraintProjection, open = nothing)
-    projectionsolve!(pw, pr, false, open)
+# with the Jacobians at the phases in `hphi`, or with `kept` on the
+# factorizations the conditions keep (see `projectionsolve!`), and the
+# state's move `Z alpha` into the work's `work`; none for the conditions
+# `open` does not hold, when it is given.
+function constraintcorrection!(pw::ProjectionWork, pr::ConstraintProjection, open = nothing; kept::Bool = false)
+    projectionsolve!(pw, pr, false, open; kept)
     pw.alpha .*= -1
     copyto!(pw.dalpha, pw.alpha)
     stepmul!(pw.work, pr.Z, pw.dalpha)
@@ -349,22 +374,40 @@ end
 # `constraintcorrection!`, until the residual is at its floor, `gb` being
 # the drive along the constraints' rows, `(directions, conditions)` on
 # the host, and `gbabs` the magnitudes of its terms; a linear constraint
-# is met by one correction. A condition is corrected until its own
-# residual has reached its floor and no further, so that its endpoint
-# does not depend on the conditions beside it, and the work's `open`
-# holds the conditions which have not. `moved!` is called with each move
-# of the state. Returns whether every residual reached its floor within
-# `iterations` corrections.
-function projectendpoint!(x, pw::ProjectionWork, pr::ConstraintProjection, gb, gbabs, iterations::Int, moved! = nothing)
+# is met by one correction. Each condition keeps its factorization of
+# the Jacobian across corrections and endpoints, as the stage operator
+# keeps its own (see `newtonsolve!`), a correction on it a chord
+# (simplified Newton) step, and refreshes it at the current state before
+# a correction when the last left the residual above `contraction` times
+# the one before, or when at the rate it contracted the floor lies beyond
+# the corrections left, the floor being many orders below an endpoint's
+# first residual, or when it has none of its own yet. A refresh is the
+# Jacobian at that state, so poorly contracting corrections refresh as
+# often as Newton does, and it is not carried to the next endpoint,
+# whose residual always asks for a correction. The work holds one
+# factorization per condition, or one for one condition. A condition is
+# corrected until its own residual has reached its floor and no further,
+# so that its endpoint does not depend on the conditions beside it, and
+# the work's `open` holds the conditions which have not. `moved!` is
+# called with each move of the state. Returns whether every residual
+# reached its floor within `iterations` corrections.
+function projectendpoint!(x, pw::ProjectionWork, pr::ConstraintProjection, gb, gbabs, iterations::Int, moved! = nothing;
+        contraction::Float64 = NEWTONCONTRACTION)
     open = pw.open
+    fill!(pw.previous, Inf)
     for iteration in 1:iterations + 1
         floor = constraintresidual!(pw, pr, x, gb, gbabs)
         for j in axes(gb, 2)
-            open[j] = !(maximum(abs, view(pw.g, :, j)) <= floor[j])
+            residual = maximum(abs, view(pw.g, :, j))
+            open[j] = !(residual <= floor[j])
+            rate = residual/pw.previous[j]
+            slow = 0 < rate < 1 && floor[j] < residual && log(floor[j]/residual)/log(rate) > iterations - iteration + 1
+            pw.refresh[j] = pw.factorizations[j] == 0 || rate > contraction || slow
+            pw.previous[j] = residual
         end
         any(open) || return true
         iteration > iterations && return false
-        constraintcorrection!(pw, pr, open)
+        constraintcorrection!(pw, pr, open; kept = true)
         x .+= pw.work
         isnothing(moved!) || moved!(pw.work)
         isempty(pr.pj) && return true
@@ -446,11 +489,14 @@ end
 # The projection's tangent transposed, at the phases in the work's
 # `hphi`: from the cotangent `xbar` of the projected flux, `(state,
 # columns)` on the backend, the multiplier `gamma = M'^-1 Z' xbar` along
-# the constraints, left in the work's `alpha`, the cotangent of the flux
-# before the projection, `xbar -= (L + J'(x))' Zl gamma`, and the
-# cotangent of the projection's forcing, `fbar = -Zl gamma`, for the
-# currents and the components the caller contracts it with.
-function constrainttranspose!(xbar, fbar, pw::ProjectionWork, pr::ConstraintProjection, sys, backend)
+# the constraints, left in the work's `alpha`, and its image `Zl gamma` in
+# the work's `work`, the cotangent of the flux before the projection,
+# `xbar -= (L + J'(x))' Zl gamma`, and the cotangent of the projection's
+# forcing, `fbar = -Zl gamma`, for the currents and the components the
+# caller contracts it with. `cosp`, the derivative of the projected
+# junctions' relations at those phases on the backend, is formed here
+# where the caller has not formed it.
+function constrainttranspose!(xbar, fbar, pw::ProjectionWork, pr::ConstraintProjection, sys, backend; cosp = nothing)
     N = size(pw.hphi, 2)
     m = size(pw.g, 2)
     dirs = m ÷ N
@@ -464,8 +510,8 @@ function constrainttranspose!(xbar, fbar, pw::ProjectionWork, pr::ConstraintProj
     xbar .-= pw.work2
     if !isempty(pr.pj)
         stepmul!(pw.phim, pr.RJp, pw.work)
-        cosp = tobackend(backend, derivativeat(pr.relationsp, pw.hphi))
-        reshape(pw.phim, :, dirs, N) .*= pr.lmoljpdev .* reshape(cosp, :, 1, N)
+        c = isnothing(cosp) ? tobackend(backend, derivativeat(pr.relationsp, pw.hphi)) : cosp
+        reshape(pw.phim, :, dirs, N) .*= pr.lmoljpdev .* reshape(c, :, 1, N)
         stepmul!(pw.work2, pr.RJpt, pw.phim)
         xbar .-= pw.work2
     end
@@ -473,26 +519,36 @@ function constrainttranspose!(xbar, fbar, pw::ProjectionWork, pr::ConstraintProj
 end
 
 # `Z'` of the rate of the drive at `t` for every condition, into `bdotz`,
-# `(directions, conditions)` on the host: the drives by a central
-# difference far below the step, the lines' forced currents by
-# `linerate`, the same difference of their histories, and the blocks'
-# resting waves held. `hv1` and `hv2` are `(drives, conditions)` host
-# work.
-function drivedotz!(bdotz, pr::ConstraintProjection, problems, t, delta, hv1, hv2, linerate = nothing)
-    # the five point central difference, whose truncation and rounding
-    # balance near the roundoff of the rate at the step `ratedelta` sets
-    drivevalues!(hv1, problems, t + delta)
-    drivevalues!(hv2, problems, t - delta)
-    hv1 .= 8 .* (hv1 .- hv2)
-    drivevalues!(hv2, problems, t + 2delta)
-    hv1 .-= hv2
-    drivevalues!(hv2, problems, t - 2delta)
-    hv1 .+= hv2
+# `(directions, conditions)` on the host: the drives by the difference of
+# `ratestencil` in a record starting at `t0`, the lines' forced currents
+# by `linerate`, a difference of their histories, and the blocks' resting
+# waves held. `hv1` and `hv2` are `(drives, conditions)` host work.
+function drivedotz!(bdotz, pr::ConstraintProjection, problems, t, t0, delta, hv1, hv2, linerate = nothing)
+    offsets, weights = ratestencil(t, t0, delta)
+    fill!(hv1, 0)
+    for k in eachindex(offsets)
+        iszero(weights[k]) && continue
+        drivevalues!(hv2, problems, t + offsets[k]*delta)
+        hv1 .+= weights[k] .* hv2
+    end
     hv1 ./= 12delta
     mul!(bdotz, pr.Zcinj, hv1)
     isnothing(linerate) || (bdotz .+= pr.Zcline*linerate)
     return bdotz
 end
+
+# The five point differences which read the rate of the drives at the step
+# `delta` of `ratedelta`, as the offsets of their samples in units of
+# `delta` and their weights, whose sum over `12 delta` is the rate: the
+# central one, and the one sided one on `[t, t + 4 delta]`, fourth order
+# both, the one sided one with seven times the rounding.
+const CENTRALRATE = ((-2.0, -1.0, 1.0, 2.0, 0.0), (1.0, -8.0, 8.0, -1.0, 0.0))
+const ONESIDEDRATE = ((0.0, 1.0, 2.0, 3.0, 4.0), (-25.0, 48.0, -36.0, 16.0, -3.0))
+# the difference a record starting at `t0` reads the rate of its drives at
+# `t` with: the central one within the record, and the one sided one at its
+# start, since the integration reads no drive before the start, and one
+# which begins there, `t <= t0 ? 0.0 : ...`, is smooth on that side alone
+ratestencil(t, t0, delta) = t - 2delta < t0 ? ONESIDEDRATE : CENTRALRATE
 
 # the step of the difference which reads the rate of the drives, a
 # hundredth of the step: the five point difference's truncation at the
@@ -555,13 +611,16 @@ end
 # by its curvature along the tangent flux, all on the read final rate
 # `w` of the solve. Along a tangent of the currents the rate of the
 # currents at the end of the grid is the drive's rate, the derivative of
-# the cubic through the last four grid values; `dIh` holds the currents on
-# the grid, `(targets, times, directions)` on the host, one column for a
-# tangent along the components alone, and `injection` the targets'
-# injection, scaled, on the host. Both perturbations of the constraints
-# enter as one forcing, `dL w - dbdot`, so a direction the nominal
-# problem leaves undriven reads the rate its tangent current gives it.
-function readtangentrate!(finalrate, dv, dx, sys, sol, N, ndir, perturbation, dIh, injection, backend)
+# the cubic through the last four grid values; `currents` are the
+# tangent's on the host (see `TangentCurrents`), one zero column of them
+# for a tangent along the components alone, and `injection` the targets'
+# injection, scaled, on the host; `linerate`, where the circuit has lines,
+# the rate of the currents the tangent's arriving waves force at the end,
+# `(line port, columns)` on the backend. Both perturbations of the
+# constraints enter as one forcing, `dL w - dbdot`, so a direction the
+# nominal problem leaves undriven reads the rate its tangent current
+# gives it.
+function readtangentrate!(finalrate, dv, dx, sys, sol, N, ndir, perturbation, currents, injection, backend, linerate = nothing)
     n = size(dv, 1)
     o = outputreading(sys, backend, n, N, ndir*N)
     xh = Array(reshape(sol.finalflux, n, N))
@@ -576,8 +635,8 @@ function readtangentrate!(finalrate, dv, dx, sys, sol, N, ndir, perturbation, dI
         copyto!(o.er, pw.phip)
     end
     states = !isnothing(perturbation) && perturbation.states
-    readoutputs!(o, sys, size(dIh, 2), dv, dx, dIh, injection, states ? xh : zeros(0, 0), states ? wh : zeros(0, 0),
-        perturbation, backend)
+    readoutputs!(o, sys, size(currents.grid, 2), dv, dx, currents, injection, states ? xh : zeros(0, 0), states ? wh : zeros(0, 0),
+        perturbation, backend, linerate)
     copyto!(finalrate, o.dvread)
     return finalrate
 end
@@ -585,9 +644,10 @@ end
 # The work of a tangent's reading of a port on an algebraic direction at
 # every time, one concrete object: the readings' work over the columns
 # and over the conditions, the read tangent rate, the read rate of the
-# solve at the time, the forcing on the host and the backend, the
-# curvature term, and the projected junctions' phases and read rates on
-# the host with a column of them on the backend.
+# solve at the time, the forcing on the host and the backend with the
+# lines' part of it on the backend, the curvature term, and the projected
+# junctions' phases and read rates on the host with a column of them on
+# the backend.
 struct OutputReading{A, F}
     rr::RateReadWork{A, F}
     rn::RateReadWork{A, F}
@@ -595,6 +655,7 @@ struct OutputReading{A, F}
     wk::A
     gh::Matrix{Float64}
     gdev::A
+    lineforcing::A
     ch::Matrix{Float64}
     hphi::Matrix{Float64}
     er::Matrix{Float64}
@@ -607,17 +668,24 @@ function outputreading(sys, backend, n, N, m)
     k = isnothing(pr) ? 0 : length(pr.directions)
     z = (dims...) -> KernelAbstractions.zeros(backend, Float64, dims...)
     return OutputReading(ratereadwork(sys, backend, n, N, m), ratereadwork(sys, backend, n, N, N),
-        z(n, m), z(n, N), zeros(n, m), z(n, m), zeros(k, m), zeros(npj, N), zeros(npj, N), z(npj, N))
+        z(n, m), z(n, N), zeros(n, m), z(n, m), z(n, m), zeros(k, m), zeros(npj, N), zeros(npj, N), z(npj, N))
 end
 
 # the tangent rate at grid point `k` read for the port waves, into the
 # work's `dvread`: the reading linearized at the projected junctions'
 # phases and read rates the work holds, with the tangent currents' rate
-# through the stencil and, where the perturbation reads the states, the
-# states `xh` and their read rate `wh` on the host
-function readoutputs!(o::OutputReading, sys, k, dv, dx, dIh, injection, xh, wh, perturbation, backend)
-    tangentforcing!(o.gh, o.ch, sys, k, dIh, injection, o.hphi, o.er, dx, xh, wh, perturbation, o.rr.pw)
+# through the stencil, where the circuit has lines the rate `linerate` of
+# the currents the tangent's arriving waves force, `(line port, columns)`
+# on the backend, which moves the constraints as the drives' rate does,
+# and, where the perturbation reads the states, the states `xh` and their
+# read rate `wh` on the host
+function readoutputs!(o::OutputReading, sys, k, dv, dx, currents, injection, xh, wh, perturbation, backend, linerate = nothing)
+    tangentforcing!(o.gh, o.ch, sys, k, currents, injection, o.hphi, o.er, dx, xh, wh, perturbation, o.rr.pw)
     copyto!(o.gdev, o.gh)
+    if !isnothing(linerate)
+        stepmul!(o.lineforcing, sys.lineinjection, linerate)
+        o.gdev .-= o.lineforcing
+    end
     isnothing(o.rr.pw) || copyto!(o.rr.pw.hphi, o.hphi)
     return readrate!(o.dvread, dv, nothing, sys, o.rr; forcing = o.gdev, curvature = o.ch)
 end
@@ -708,8 +776,8 @@ end
 # The forcing of a tangent's reading at grid point `k`, `(state, columns)`
 # on the host into `g`, and the curvature term along the projected
 # directions into `c`, `(directions, columns)`, or `nothing`: the rate
-# of the tangent currents on the grid `dIh`, `(targets, times,
-# directions)`, through the stencil and the targets' `injection`; the
+# of the tangent's `currents` on the grid (see `TangentCurrents`),
+# through the stencil and the targets' `injection`; the
 # perturbation of the stiffness and of the junctions on the read rate
 # `wh` at the state `xh`, `(state, conditions)`, where the perturbation
 # reads the states, and on the projected junctions' read rate `er` at
@@ -717,14 +785,15 @@ end
 # curvature of the projected junctions' stiffness along the tangent flux
 # `dx`, `(state, columns)` on the backend, on `er`. Columns are the
 # directions of every condition, contiguous per condition.
-function tangentforcing!(g, c, sys, k, dIh, injection, hphi, er, dx, xh, wh, perturbation, pw)
+function tangentforcing!(g, c, sys, k, currents, injection, hphi, er, dx, xh, wh, perturbation, pw)
     pr = sys.projection
     n, m = size(g)
     N = size(er, 2)
     fill!(g, 0)
-    idx, wgt = currentratestencil(k, size(dIh, 2))
+    idx, wgt = currentratestencil(k, size(currents.grid, 2))
     if !isempty(idx)
-        dIdot = sum(wgt[i] .* dIh[:, idx[i], :] for i in eachindex(idx)) ./ sys.h
+        work = isempty(currents.targets) ? nothing : zeros(size(injection, 2), directions(currents))
+        dIdot = sum(wgt[i] .* gridcurrents!(work, currents, idx[i]) for i in eachindex(idx)) ./ sys.h
         g .-= repeat(injection*dIdot, 1, N)
     end
     if !isnothing(perturbation) && !isnothing(perturbation.forcing)
@@ -814,34 +883,53 @@ function constraintprojection(p::TransientProblem, G::SparseMatrixCSC, L::Sparse
     directions = p.algebraic[touched]
     Zh, Zch = Zall[:, touched], Zcall[touched, :]
     Zlh = sparse(transpose(Zch))
-    Rh = isempty(touched) ? spzeros(0, n) : sparse(Matrix(transpose(Zh)*Zh) \ Matrix(transpose(Zh)))
+    Rh = isempty(touched) ? spzeros(0, n) : directionreading(Zh)
     # the reading: the capacitor free islands and the block current rows
     readrows = [z for z in p.inertialess if all(<=(p.Nnodal), z)]
     auxrows = [b.auxbase + q for b in p.blocks for q in eachindex(b.signal)]
     (isempty(directions) && isempty(readrows) && isempty(auxrows)) && return nothing
-    indicator = dirs -> sparse(reduce(vcat, dirs; init = Int[]), reduce(vcat, [fill(c, length(z)) for (c, z) in enumerate(dirs)]; init = Int[]),
+    indicator = dirs -> sparse(foldl(append!, dirs; init = Int[]), [c for (c, z) in enumerate(dirs) for _ in z],
         ones(sum(length, dirs; init = 0)), n, length(dirs))
     support = [i for c in 1:size(Zh, 2) for i in findnz(Zh[:, c])[1]]
-    pj = sort!(unique!([i for node in vcat(support, reduce(vcat, readrows; init = Int[])) for i in rowvals(RJ)[nzrange(RJ, node)]]))
+    pj = sort!(unique!([i for node in vcat(support, foldl(append!, readrows; init = Int[])) for i in rowvals(RJ)[nzrange(RJ, node)]]))
     RJph = RJ[pj, :]
-    RJZ = Matrix(RJph*Zh)
-    RJZl = Matrix(RJph*Zlh)
-    ZLZ = Matrix(Zch*L*Zh)
+    RJZl = RJph*Zlh
+    jacobian, jptr, jidx, jcoef = projectionplan(Zch*L*Zh, RJZl, RJph*Zh)
     Zrh = indicator(readrows)
     Eah = sparse(auxrows, 1:length(auxrows), ones(length(auxrows)), n, length(auxrows))
     Qh = sparse(transpose(hcat(Zrh, Eah)))
-    Minv = ratesystem(G, L, Zrh, Eah).Minv
+    Minv = ratesystem(G, L, Zrh, Eah).pinv
     d = A -> devicesparse(A, backend)
     return ConstraintProjection(directions, pj, d(Zh), d(sparse(transpose(Zh))), d(Zch*L), Zch, d(Zlh), d(Zch), d(RJph), d(sparse(transpose(RJph))),
         d(abs.(RJph)),
-        RJZ, RJZl, lmolj[pj], tobackend(backend, lmolj[pj]),
+        RJZl, lmolj[pj], tobackend(backend, lmolj[pj]),
         isnothing(p.relations) ? emptyrelations(zeros(0)) :
             hostrelations(p.relations, pj),
-        ZLZ, Zch*injection, Vector(Zch*constant), Zch*lineinjection, Zch*blockscatter,
-        d(abs.(Zch*L)), Matrix(abs.(transpose(RJZl))), abs.(Zch*injection), abs.(Zch*lineinjection), abs.(Zch*blockscatter),
-        readrows, auxrows, d(Zrh), d(Eah), d(Qh), d(sparse(transpose(Qh))), d(Qh*G), d(Qh*L), Matrix(RJph*Zrh), Minv,
+        jacobian, jptr, jidx, jcoef, Zch*injection, Vector(Zch*constant), Zch*lineinjection, Zch*blockscatter,
+        d(abs.(Zch*L)), abs.(sparse(transpose(RJZl))), abs.(Zch*injection), abs.(Zch*lineinjection), abs.(Zch*blockscatter),
+        readrows, auxrows, d(Zrh), d(Eah), d(Qh), d(sparse(transpose(Qh))), d(Qh*G), d(Qh*L), RJph*Zrh, Minv,
         Qh*injection, Vector(Qh*constant), Qh*lineinjection, Qh*blockscatter,
         !isempty(blocked), d(Rh), d(sparse(transpose(Rh))))
+end
+
+# `(Z' Z)^-1 Z'`, which reads the coefficients along the directions `Z`
+# of a vector of the state, sparse: `Z' Z` couples only the directions
+# which share a node, so it is solved block by block of those couplings,
+# each on the nodes its directions span
+function directionreading(Z::SparseMatrixCSC)
+    n, k = size(Z)
+    Zt = sparse(transpose(Z))
+    ZtZ = Zt*Z
+    rr, rc, rv = Int[], Int[], Float64[]
+    at = zeros(Int, k)
+    for (D, _) in blockcomponents(ZtZ)
+        nodes = sort!(unique!([rowvals(Z)[q] for d in D for q in nzrange(Z, d)]))
+        B = densesub!(at, ZtZ, D, D) \ densesub!(at, Zt, D, nodes)
+        for (j, node) in enumerate(nodes), (i, d) in enumerate(D)
+            iszero(B[i, j]) || (push!(rr, d); push!(rc, node); push!(rv, B[i, j]))
+        end
+    end
+    return sparse(rr, rc, rv, k, n)
 end
 
 # the rate along the projected directions replaced by the derivative at
@@ -863,42 +951,134 @@ end
 # `transposed` `M_j'^-1 g`, on the columns of condition `j` of the work's
 # `g` into its `alpha`, with `M_j = Z' (L + J'(x)) Z` the Jacobian of the
 # constraints along the projected directions at the condition's phases
-# in `hphi`, assembled into the work's `jacobian`; zero for the
-# conditions `open` does not hold, when it is given.
-function projectionsolve!(pw::ProjectionWork, pr::ConstraintProjection, transposed::Bool, open = nothing)
+# in `hphi`, refactorized (see `factorprojection!`), or with `kept` on
+# the factorization the condition keeps, refactorized where the work's
+# `refresh` asks (see `projectendpoint!`); zero for the conditions `open`
+# does not hold, when it is given.
+function projectionsolve!(pw::ProjectionWork, pr::ConstraintProjection, transposed::Bool, open = nothing; kept::Bool = false)
     N = size(pw.hphi, 2)
     dirs = size(pw.g, 2) ÷ N
-    M, djz, d = pw.jacobian, pw.djz, pw.dcol
+    isempty(pw.factors) && return pw.alpha
     for j in 1:N
         a = view(pw.alpha, :, (j - 1)*dirs + 1:j*dirs)
         if !isnothing(open) && !open[j]
             fill!(a, 0)
             continue
         end
-        copyto!(M, pr.ZLZ)
-        if !isempty(pr.pj)
-            derivativeinto!(d, pr.relationsp, view(pw.hphi, :, j))
-            djz .= (pr.lmoljp .* d) .* pr.RJZ
-            mul!(M, transpose(pr.RJZl), djz, 1.0, 1.0)
+        f = length(pw.factors) == 1 ? 1 : j
+        if !kept || pw.refresh[j]
+            factorprojection!(pw, pr, j, f)
+            kept && (pw.factorizations[j] += 1)
         end
-        F = lu!(M)
+        F = pw.factors[f]::KLU.KLUFactorization{Float64,Int}
         a .= view(pw.g, :, (j - 1)*dirs + 1:j*dirs)
         transposed ? ldiv!(transpose(F), a) : ldiv!(F, a)
     end
     return pw.alpha
 end
 
+# Condition `j`'s Jacobian at its phases in the work's `hphi`, assembled
+# into the work's `jacobian` on the projection's pattern, factorized into
+# the work's factorization `f`: refactorized on the pivots of its last,
+# or a new one where it has none or `fresh` asks for new pivots.
+function factorprojection!(pw::ProjectionWork, pr::ConstraintProjection, j::Int, f::Int; fresh::Bool = false)
+    M, d = pw.jacobian, pw.dcol
+    values = nonzeros(M)
+    copyto!(values, nonzeros(pr.jacobian))
+    if !isempty(pr.pj)
+        derivativeinto!(d, pr.relationsp, view(pw.hphi, :, j))
+        for p in eachindex(d)
+            w = pr.lmoljp[p]*d[p]
+            for q in pr.jptr[p]:pr.jptr[p + 1] - 1
+                values[pr.jidx[q]] += w*pr.jcoef[q]
+            end
+        end
+    end
+    F = pw.factors[f]
+    pw.factors[f] = (fresh || isnothing(F)) ? kluordered(M, pw.ordering; allowsingular = true) :
+        refactorize!(KLUfactorization(), F, M)
+    return pw
+end
 
-function projectionwork(pr::ConstraintProjection, backend, n::Int, N::Int, m::Int)
+# The factorizations a stepper's projection keeps for its endpoints (see
+# `projectendpoint!`) set to its conditions' Jacobians at the state `x`,
+# one column per condition: refactorized, or with `fresh` factorized
+# anew, where the stepper sets its stage operator to a state, at the
+# start and at every checkpoint, so that a replay from a checkpoint
+# starts on the factorizations the solve had there.
+function refreshprojection!(pw::ProjectionWork, pr::ConstraintProjection, x; fresh::Bool = false)
+    isempty(pw.factors) && return pw
+    if !isempty(pr.pj)
+        stepmul!(pw.phip, pr.RJp, x)
+        copyto!(pw.hphi, pw.phip)
+    end
+    for j in axes(pw.hphi, 2)
+        factorprojection!(pw, pr, j, length(pw.factors) == 1 ? 1 : j; fresh)
+        pw.factorizations[j] += 1
+    end
+    return pw
+end
+
+# The pattern of the projection's small Jacobians
+# `Z' (L + J'(x)) Z = ZLZ + RJZl' Diagonal(lmolj J'(phi)) RJZ`, the
+# couplings of the directions through the stiffness and through the
+# junctions they share, with the values of `ZLZ`; and for each junction
+# `p`, the positions in the pattern's values of the entries its stiffness
+# adds to, `jidx[jptr[p]:jptr[p + 1] - 1]`, with the coefficients its
+# stiffness multiplies there, so a condition's Jacobian is assembled in
+# place, each junction adding to the couplings of the directions on its
+# nodes.
+function projectionplan(ZLZ::SparseMatrixCSC, RJZl::SparseMatrixCSC, RJZ::SparseMatrixCSC)
+    k = size(ZLZ, 1)
+    pattern(A) = SparseMatrixCSC(size(A)..., SparseArrays.getcolptr(A), rowvals(A), ones(nnz(A)))
+    S = pattern(ZLZ) + sparse(transpose(pattern(RJZl)))*pattern(RJZ)
+    M = SparseMatrixCSC(k, k, copy(SparseArrays.getcolptr(S)), copy(rowvals(S)), zeros(nnz(S)))
+    position(i, j) = (r = nzrange(M, j); r[searchsortedfirst(view(rowvals(M), r), i)])
+    for j in 1:k, q in nzrange(ZLZ, j)
+        nonzeros(M)[position(rowvals(ZLZ)[q], j)] += nonzeros(ZLZ)[q]
+    end
+    RJZlt, RJZt = sparse(transpose(RJZl)), sparse(transpose(RJZ))
+    jptr, jidx, jcoef = [1], Int[], Float64[]
+    for p in 1:size(RJZ, 1)
+        for qa in nzrange(RJZlt, p), qb in nzrange(RJZt, p)
+            push!(jidx, position(rowvals(RJZlt)[qa], rowvals(RJZt)[qb]))
+            push!(jcoef, nonzeros(RJZlt)[qa]*nonzeros(RJZt)[qb])
+        end
+        push!(jptr, length(jidx) + 1)
+    end
+    return M, jptr, jidx, jcoef
+end
+
+function projectionwork(pr::ConstraintProjection, backend, n::Int, N::Int, m::Int; kept::Bool = false)
     k, npj = length(pr.directions), length(pr.pj)
     kr, ka = length(pr.readrows), length(pr.auxrows)
     kq = kr + ka
     allocate = (dims...) -> KernelAbstractions.zeros(backend, Float64, dims...)
+    # the small Jacobians' factorization, analyzed on their pattern once
+    # and first factorized at the junctions' stiffness at zero phase; each
+    # condition refactorizes it with its own values. With `kept` each
+    # condition keeps a factorization of its own, on the same ordering,
+    # first factorized at its own values.
+    jacobian = copy(pr.jacobian)
+    factors = Union{Nothing,KLU.KLUFactorization{Float64,Int}}[]
+    ordering = nothing
+    if k > 0
+        ordering = fillordering(KLUfactorization(), jacobian)
+        if kept
+            append!(factors, fill(nothing, N))
+        else
+            values = nonzeros(jacobian)
+            for p in 1:npj, q in pr.jptr[p]:pr.jptr[p + 1] - 1
+                values[pr.jidx[q]] += pr.lmoljp[p]*pr.jcoef[q]
+            end
+            push!(factors, kluordered(jacobian, ordering; allowsingular = true))
+        end
+    end
     return ProjectionWork(allocate(npj, N), zeros(npj, N), zeros(npj, N), allocate(npj, m), allocate(k, m), allocate(k, m),
         zeros(k, m), zeros(k, m), allocate(k, m), allocate(n, m), allocate(n, m),
         allocate(kq, m), allocate(kq, m), zeros(kq, m), zeros(kq, m), allocate(kr, m), allocate(ka, m), fill(false, N),
-        zeros(npj, N), zeros(npj, N), zeros(N), zeros(k, m), zeros(k, k), zeros(npj, k), zeros(npj),
-        zeros(k, N), zeros(k, N), zeros(kq, N), zeros(size(pr.Zcinj, 2), N))
+        zeros(npj, N), zeros(npj, N), zeros(N), zeros(k, m), jacobian, factors, ordering, fill(Inf, N), fill(false, N),
+        zeros(Int, N), zeros(npj), ratework(pr.Minv, m), zeros(k, N), zeros(k, N), zeros(kq, N), zeros(size(pr.Zcinj, 2), N))
 end
 
 # The index one unknowns of the endpoint read from their equations: the
@@ -918,7 +1098,7 @@ function endpointread!(v, x, pr::ConstraintProjection, pw::ProjectionWork, junct
     copyto!(pw.gq, pw.qwork)
     mul!(view(pw.gq, 1:kr, :), transpose(pr.RJQ), junction, 1.0, 1.0)
     pw.gq .-= gq
-    mul!(pw.theta, pr.Minv, pw.gq)
+    ratesolve!(pw.theta, pr.Minv, pw.gq, pw.ratework)
     pw.theta .*= -1
     if kr > 0
         copyto!(pw.thetar, pw.theta[1:kr, :])
@@ -955,7 +1135,8 @@ function endpointreadtranspose!(vbar, xbar, pr::ConstraintProjection, pw::Projec
     copyto!(pw.gq, pw.qwork)
     copyto!(pw.theta, pw.qwork2)
     view(pw.gq, kr + 1:kq, :) .= view(pw.theta, kr + 1:kq, :)
-    pw.theta .= -(transpose(pr.Minv)*pw.gq)
+    ratesolve!(pw.theta, pr.Minv, pw.gq, pw.ratework; transposed = true)
+    pw.theta .*= -1
     copyto!(pw.qwork, pw.theta)
     stepmul!(pw.work, pr.Qt, pw.qwork)
     stepmul!(pw.work2, sys.Gt, pw.work)

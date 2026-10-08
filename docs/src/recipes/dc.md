@@ -26,6 +26,19 @@ frequency mode. It is not the same thing as the zero frequency entry of
 `nodeflux`, which remains the static periodic flux that sets inductor
 currents and junction phases.
 
+The port's source drives the resistor `rl`; the second example adds the
+current source `i1` across it:
+
+```text
+ 1
+ o-------+--------+--------+
+ |       |        |        |
+[p1]   [rl]     [c1]     [i1]
+ |       |        |        |
+ o-------+--------+--------+
+ 0
+```
+
 ```@example dc
 using JosephsonCircuits
 
@@ -45,6 +58,29 @@ expected_voltage = Idc*inv(1/50.0 + 1/150.0)
 @assert sol.solverinfo.converged
 @assert isapprox(sol.dcnodevoltage[1], expected_voltage; rtol = 1e-10)
 (sol.dcnodevoltage[1], expected_voltage)
+```
+
+The port source injects its current into node 1, the port's first
+terminal. A [`CurrentSource`](@ref) in the circuit drives its current
+through itself from its first terminal to its second: it draws the
+current from the node at its first terminal and delivers it to the node
+at its second, the opposite sense. Written from node 1 to ground, the
+same current develops the opposite voltage across the same load, and
+beside the port source it cancels it:
+
+```@example dc
+reversed = Circuit(
+    [(:p1, 1, 0, Port(1; Z0 = 50.0)),
+     (:i1, 1, 0, CurrentSource(Idc)),
+     (:rl, 1, 0, Resistor(150.0)),
+     (:c1, 1, 0, Capacitor(1.0e-12))])
+alone = hbnlsolve((2*pi*5e9,), (1,), [], reversed;
+    dc = true, odd = true, keyedarrays = false)
+both = hbnlsolve((2*pi*5e9,), (1,), [(mode = (0,), port = 1, current = Idc)],
+    reversed; dc = true, odd = true, keyedarrays = false)
+@assert isapprox(alone.dcnodevoltage[1], -expected_voltage; rtol = 1e-10)
+@assert abs(both.dcnodevoltage[1]) < 1e-12*expected_voltage
+(alone.dcnodevoltage[1], both.dcnodevoltage[1])
 ```
 
 A finite inductor across a resistor sets its average voltage to zero. A
@@ -78,6 +114,16 @@ resistor. The port termination also carries DC, so the injected current
 is larger than the junction current. KCL and the zero-voltage junction
 relation determine the initial voltage and flux analytically.
 
+```text
+ drive             junction
+ o-------[r]-------o--------+
+ |                 |        |
+[p1]             [jj]     [cj]
+ |                 |        |
+ o-----------------o--------+
+ 0
+```
+
 ```@example biasedstate
 using JosephsonCircuits
 Lj, R, Z0 = 1e-9, 100.0, 50.0
@@ -92,7 +138,7 @@ circuit = Circuit([
     (:cj, "junction", 0, Capacitor(1e-12)),
 ])
 compiled = compile(circuit)
-problem = transientproblem(compiled; sources = [TransientSource(1, t -> Idc)])
+problem = transientproblem(compiled; sources = [TransientSource(1, Returns(Idc))])
 
 # Ground is omitted. Use the compiled node order, not netlist position.
 names = compiled.nodenames[2:end]

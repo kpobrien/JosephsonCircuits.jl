@@ -4,6 +4,16 @@ Differentiate the reflection phase with respect to a matched line length. The an
 
 The plotting code requires `Plots` in addition to `JosephsonCircuits`.
 
+```text
+ 1                  2                  3
+ o------[tl]--------o-------[cc]-------o--------+
+ |                                     |        |
+[p1]                                 [jj]     [c2]
+ |                                     |        |
+ o-------------------------------------o--------+
+ 0
+```
+
 A [`ScatteringParameters`](@ref) block depends on a design parameter through the analytic derivative its `derivatives` keyword states: here a matched transmission line section in front of the amplifier, with the derivative of the reflection with respect to the line length. A matched lossless line delays the reflection on its way in and out, so the gain does not depend on the length, and the phase of `S11` turns by `-2*w*len/vphase` per fractional change of the length, which the example compares with. A block which states no derivative (measured Touchstone data, say) is parameter independent and costs nothing.
 
 ```julia
@@ -31,7 +41,7 @@ wp = (2*pi*4.75001*1e9,)
 sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
 # the parameters: the line length the block states a derivative for, and Lj
-@time r = designsensitivities(circuit, p, ws, wp, sources, (8,), (16,))
+r = designsensitivities(circuit, p, ws, wp, sources, (8,), (16,))
 
 # the derivative of the phase of S11 with respect to the fractional change
 # of the length, len*imag(dS/dlen/S), against the delay of the line there

@@ -19,42 +19,132 @@
 """
     designderivative(value, name::Symbol, definitions)
 
-The derivative of a component value with respect to the design parameter
-`name`, at `definitions`, as a number: zero for a number, one for the
-parameter itself written as a symbol or a string, and for a
-[`CircuitValue`](@ref) expression the derivative of the expression
-evaluated at the definitions. A value which does not resolve to a number
-is refused, as is a frequency dependent one. The Symbolics extension adds
-the method for a `Num`.
+The derivative of a component value, as it is written, with respect to the
+parameter `name` it is written in, at `definitions`, as a number: zero for
+a number, one for the parameter itself written as a symbol or a string,
+and for a [`CircuitValue`](@ref) expression the derivative of the
+expression with the definitions substituted (see
+[`resolvedefinitions`](@ref)). A frequency dependent leaf depends on no
+parameter. A derivative which does not come to a number, one which
+depends on the frequency or on a parameter the definitions do not give, is
+refused. This differentiates the value alone: when `name` is itself
+defined in terms of other parameters, [`DesignChain`](@ref) carries the
+derivative on through its definition. The Symbolics extension adds the
+method for a `Num`.
 """
 designderivative(::Number, ::Symbol, definitions) = zero(ComplexF64)
 designderivative(v::Union{Symbol,AbstractString}, name::Symbol, definitions) =
-    Symbol(v) === name ? one(ComplexF64) : zero(ComplexF64)
+    definitionname(v) === name ? one(ComplexF64) : zero(ComplexF64)
 function designderivative(v::CircuitValue, name::Symbol, definitions)
     d = valuetonumber(CircuitValues.derivative(v, name), definitions)
-    d isa Number || throw(ArgumentError(lazy"the derivative of the value $(v) with respect to $(name) is $(d) at these definitions, which is not a number; design sensitivities need every parameter defined."))
+    isnumeric(d) || throw(ArgumentError(lazy"the derivative of the value $(v) with respect to $(name) is $(d) at these definitions, which is not a number: a design parameter must move a value in a direction which depends neither on the frequency nor on an undefined parameter."))
     return ComplexF64(d)
 end
-designderivative(v, ::Symbol, definitions) =
-    throw(ArgumentError(lazy"the value $(v) cannot be differentiated with respect to a design parameter; write component values as numbers, parameters or expressions in parameters (frequency dependent values are not supported)."))
 
-# the analytic derivatives of a block's scattering matrix, by parameter:
-# only a `ScatteringParameters` block states any
+"""
+    DesignChain(definitions, names)
+
+The derivatives of the parameters of `definitions` with respect to the
+design parameters `names`, by the chain rule through the definitions:
+a parameter's derivative is one with respect to itself, and a parameter
+defined by a value written in other parameters adds the derivative of
+that value in each of them ([`designderivative`](@ref)) times that one's
+own. So a component written `Capacitor(:Cd)` with `:Cd => 2*C0` has the
+derivative 2 with respect to `C0`, and a selected parameter which is itself
+defined in terms of others is differentiated as the definitions would move
+it, its definition replaced by its value. The derivatives are evaluated at
+the definitions resolved once ([`resolvedefinitions`](@ref)), the
+resolution the values themselves take, kept sparse, as pairs of a
+parameter's index in `names` and a nonzero derivative, and memoized by
+name, so a parameter shared by many values is differentiated once.
+"""
+struct DesignChain
+    definitions::Dict{Symbol,Any}
+    resolved::ResolvedDefinitions
+    selected::Dict{Symbol,Int}
+    gradients::Dict{Symbol,Vector{Pair{Int,ComplexF64}}}
+end
+function DesignChain(definitions, names::AbstractVector{Symbol})
+    byname = definitionsbyname(definitions)
+    return DesignChain(byname, resolvedefinitions(byname),
+        Dict(n => j for (j, n) in enumerate(names)),
+        Dict{Symbol,Vector{Pair{Int,ComplexF64}}}())
+end
+
+# the derivative of the parameter `name`: one with respect to itself when
+# it is selected, and the derivative of its definition when that is written
+# in other parameters
+function namegradient!(chain::DesignChain, name::Symbol)
+    g = get(chain.gradients, name, nothing)
+    isnothing(g) || return g
+    v = get(chain.definitions, name, nothing)
+    g = checkissymbolic(v) ? valuegradient!(chain, v) :
+        Pair{Int,ComplexF64}[]
+    j = get(chain.selected, name, 0)
+    iszero(j) || (g = vcat(j => one(ComplexF64), g))
+    chain.gradients[name] = g
+    return g
+end
+
+# the derivative of a value as it is written: its derivative in each
+# parameter it names times that parameter's own, summed by design parameter
+function valuegradient!(chain::DesignChain, v)
+    g = Pair{Int,ComplexF64}[]
+    for n in valuenames(v)
+        gn = namegradient!(chain, n)
+        isempty(gn) && continue
+        d = designderivative(v, n, chain.resolved)
+        iszero(d) && continue
+        for (j, x) in gn
+            k = findfirst(p -> first(p) == j, g)
+            if isnothing(k)
+                push!(g, j => d*x)
+            else
+                g[k] = j => last(g[k]) + d*x
+            end
+        end
+    end
+    return filter!(p -> !iszero(last(p)), g)
+end
+
+# The value of the component `i` at the definitions, as a complex number,
+# and its derivative with respect to the selected parameters, or `nothing`
+# and an empty derivative for a frequency dependent value which no selected
+# parameter moves. A value which depends on a parameter the definitions do
+# not give is refused, as is a frequency dependent value which a selected
+# parameter moves: the sensitivities rescale a component's own stamp,
+# which needs its value to be a number.
+function componentgradient!(chain::DesignChain, psc::CompiledCircuit,
+        i::Integer)
+    written = psc.componentvalues[i]
+    value = resolvevalue(written, chain.resolved)
+    if !isnumeric(value)
+        (checkissymbolic(value) && isempty(circuitvariables(value))) ||
+            throw(ArgumentError(lazy"the component $(psc.componentnames[i]) has the value $(value) at these definitions, which is not a number; design sensitivities need every parameter defined."))
+        isempty(valuegradient!(chain, written)) || throw(ArgumentError(
+            lazy"the component $(psc.componentnames[i]) has the frequency dependent value $(value), which a selected design parameter moves; a design parameter may move only components whose values are numbers."))
+        return nothing, Pair{Int,ComplexF64}[]
+    end
+    return ComplexF64(value), valuegradient!(chain, written)
+end
+
+# the analytic derivatives of a block's scattering matrix, as
+# `name => provider` pairs: only a `ScatteringParameters` block states any
 blockderivatives(d::ScatteringParameters) = d.derivatives
-blockderivatives(d) = NamedTuple()
+blockderivatives(d) = Pair{Symbol,Any}[]
 
 # the names of the design parameters: the ones given, as names or as
-# definition keys, or by default every defined parameter and every
-# parameter a scattering block states a derivative for, in sorted order
+# definition keys, or by default every parameter the definitions give a
+# number and every parameter a scattering block states a derivative for,
+# in sorted order
 function designparameters(parameters, definitions, psc::CompiledCircuit)
     if isnothing(parameters)
         names = Symbol[]
-        for k in keys(definitions)
-            n = definitionname(k)
-            isnothing(n) || push!(names, n)
+        for (n, v) in definitionsbyname(definitions)
+            isnumeric(v) && push!(names, n)
         end
         for b in psc.scatteringblocks
-            append!(names, keys(blockderivatives(b.definition)))
+            append!(names, first.(blockderivatives(b.definition)))
         end
         return sort!(unique!(names))
     end
@@ -68,50 +158,99 @@ function designparameters(parameters, definitions, psc::CompiledCircuit)
 end
 
 """
+    designdirections(psc::CompiledCircuit, definitions, names)
+
+The nonzero derivatives of the component values of `psc` with respect to
+the design parameters `names`, from one sparse enumeration: each value is
+differentiated once, through the definitions by the chain rule
+([`DesignChain`](@ref)), and only the derivatives which are not zero are
+kept, so the cost grows with the dependences rather than with the
+components times the parameters. Returns `(components, values, entries)`:
+the flat indices of the components a design parameter may move, in
+compiled order, their values at the definitions, and a triplet
+`(k, j, dv/dp)` per nonzero derivative of the `k`th of them with respect
+to parameter `j`, by parameter and then by component. The components are
+those of [`designjacobian`](@ref), which materializes its dense output
+from these.
+"""
+function designdirections(psc::CompiledCircuit, definitions,
+        names::AbstractVector{Symbol})
+    chain = DesignChain(definitions, names)
+    # a port's reference impedance is the value of the termination it owns,
+    # a component of its own, or of the port itself when it owns none
+    terminated = Set(p.component for p in psc.ports if !iszero(p.environment))
+    components = Int[]
+    values = ComplexF64[]
+    entries = Tuple{Int,Int,ComplexF64}[]
+    for i in eachindex(psc.componentvalues)
+        i in terminated && continue
+        v, g = componentgradient!(chain, psc, i)
+        isnothing(v) && continue
+        push!(components, i)
+        push!(values, v)
+        for (j, x) in g
+            push!(entries, (length(components), j, x))
+        end
+    end
+    sort!(entries; by = e -> (e[2], e[1]))
+    return (; components, values, entries)
+end
+
+"""
     designjacobian(circuit, circuitdefs; parameters = nothing)
 
 The Jacobian of the component values of a typed [`Circuit`](@ref), or of
-its compiled circuit, with respect to its design parameters: the values
-are written in terms of parameters (symbols, or the parameters of
-[`@params`](@ref)) and `circuitdefs` gives every parameter a number; the
-entry `(k, j)` is `d(value of component k)/d(parameter j)` at the
-definitions, exact (see [`designderivative`](@ref)).
+its compiled circuit, with respect to its design parameters, exact, at the
+definitions `circuitdefs`: the entry `(k, j)` is
+`d(value of component k)/d(parameter j)`. A definition is keyed by the
+parameter's symbol, its string, its parameter of [`@params`](@ref) or,
+with Symbolics, its `Num`, and is one of
+
+- a number, real or complex: an independent parameter, whose derivative
+  with respect to itself is one;
+- a value written in other parameters, an expression of them or a
+  Symbolics expression, to any depth (`:Cc => Cj/10`): its derivative
+  follows the definition by the chain rule ([`DesignChain`](@ref)), so
+  `Capacitor(:Cc)` has the derivative `1/10` with respect to `Cj`;
+- a frequency dependent value ([`FrequencyDependent`](@ref)), which no
+  parameter moves.
+
+A component value is a number, a name, an expression in names (`Cj/4`) or
+a frequency dependent value, and its derivative is the expression's,
+evaluated at the definitions, complex wherever a parameter moves a value
+along a complex direction (a loss tangent rotates it).
 
 Returns `(names, values, J)`: the component names in compiled order, their
 values at the definitions, and the complex `length(names)` by
-`length(parameters)` Jacobian. `parameters` are names or definition keys;
-by default every defined parameter and every parameter a
+`length(parameters)` Jacobian, dense, materialized from the sparse
+enumeration of the nonzero derivatives ([`designdirections`](@ref)).
+`parameters` are names or definition keys; by default every parameter the
+definitions give a number and every parameter a
 [`ScatteringParameters`](@ref) block states a derivative for, sorted by
-name. Analysis ports are not among the components: a port's slot holds
-its reference impedance, which appears under the termination generated for
-it. A scattering block has no scalar value to differentiate; its dependence
-is carried separately by [`designblockjacobian`](@ref).
+name. A parameter defined in terms of others may be selected by name, and
+is differentiated as replacing its definition by its value would move it,
+the parameters it is written in held. A port's slot holds its reference
+impedance: a port which owns a termination is not among the components,
+its reference impedance being the value of that termination, which is; a
+port which owns none (`termination = nothing`) is, and a parameter moves
+only the normalization of its waves through it. A component whose value
+is frequency dependent is not among them either, and one a selected
+parameter moves is refused: the sensitivities rescale a component's own
+stamp, which needs its value to be a number. A scattering block has no
+scalar value to differentiate; its dependence is carried separately by
+[`designblockjacobian`](@ref).
 """
 function designjacobian(circuit::CompilableCircuit, circuitdefs::AbstractDict;
         parameters = nothing)
     psc = compile(circuit)
     definitions = definitiontable(circuitdefs)
     names = designparameters(parameters, definitions, psc)
-    vvn = componentvaluestonumber(psc.componentvalues, definitions)
-    keep = [i for i in eachindex(vvn) if psc.componenttypes[i] !== :P]
-    for i in keep
-        vvn[i] isa Number || throw(ArgumentError(lazy"the component $(psc.componentnames[i]) has the value $(vvn[i]) at these definitions, which is not a number; design sensitivities need every parameter defined and no frequency dependent value."))
+    d = designdirections(psc, definitions, names)
+    J = zeros(ComplexF64, length(d.components), length(names))
+    for (k, j, x) in d.entries
+        J[k, j] = x
     end
-    v0 = ComplexF64[vvn[i] for i in keep]
-    J = zeros(ComplexF64, length(keep), length(names))
-    # the definitions are gathered once for the whole Jacobian, as
-    # `componentvaluestonumber` gathers them once for the whole value
-    # table: by name for every representation of a value, and normalized
-    # for the expressions, which substitute them
-    byname = definitionsbyname(definitions)
-    normalized = normalizedefinitions(byname)
-    for (j, name) in enumerate(names), (k, i) in enumerate(keep)
-        value = psc.componentvalues[i]
-        J[k, j] = value isa CircuitValue ?
-            designderivative(value, name, normalized) :
-            designderivative(value, name, byname)
-    end
-    return String[psc.componentnames[i] for i in keep], v0, J
+    return String[psc.componentnames[i] for i in d.components], d.values, J
 end
 
 """
@@ -122,19 +261,33 @@ each [`ScatteringParameters`](@ref) block of the compiled circuit and each
 parameter its `derivatives` names, a derivative block whose scattering
 matrix is the block's stated `dS/dp`. A block which states no derivative
 for a parameter does not depend on it. Returns a vector of
-`(blockpath, parameterindex, derivativeblock)`.
+`(blockpath, parameterindex, derivativeblock)`, by block and, within a
+block, in the order of `parameters`. Each block's derivatives are read
+once, against a table of the parameters' positions.
 """
 function designblockjacobian(circuit::CompilableCircuit, parameters)
     psc = compile(circuit)
+    positions = Dict{Symbol,Vector{Int}}()
+    for (j, name) in enumerate(parameters)
+        push!(get!(Vector{Int}, positions, name), j)
+    end
     out = Tuple{String,Int,Any}[]
-    for b in psc.scatteringblocks, (j, name) in enumerate(parameters)
-        d = blockderivatives(b.definition)
-        haskey(d, name) || continue
-        # a derivative is not a passive scattering matrix and is not
-        # checked as one: the positional constructor
-        push!(out, (b.path, j, ScatteringParameters(d[name], b.definition.nports,
-            b.definition.zref, b.definition.grounded, b.definition.noise,
-            b.definition.negative_frequency)))
+    found = Tuple{Int,Any}[]
+    for b in psc.scatteringblocks
+        empty!(found)
+        for (name, provider) in blockderivatives(b.definition),
+                j in get(positions, name, ())
+            push!(found, (j, provider))
+        end
+        for (j, provider) in sort!(found; by = first)
+            # a derivative is not a passive scattering matrix and is not
+            # checked as one: the positional constructor, called with the
+            # provider the block holds untyped, builds a block of its
+            # concrete type
+            push!(out, (b.path, j, ScatteringParameters(provider,
+                b.definition.nports, b.definition.zref, b.definition.grounded,
+                b.definition.noise, b.definition.negative_frequency)))
+        end
     end
     return out
 end
@@ -142,7 +295,7 @@ end
 """
     designsensitivities(circuit, circuitdefs, ws, wp, sources,
         Nmodulationharmonics, Npumpharmonics; parameters = nothing,
-        kwargs...)
+        keyedarrays = true, kwargs...)
 
 The derivative of the scattering parameters with respect to the design
 parameters of a typed [`Circuit`](@ref) whose component values are
@@ -151,13 +304,21 @@ sensitivities:
 
     dS/dp_j = sum_k (dS/dv_k) (dv_k/dp_j).
 
-`circuitdefs` gives every parameter a number. The components which depend
-on the selected parameters, and the exact derivative of each, come from
-the expressions the values were written as ([`designjacobian`](@ref)), so
-a derived value like `Capacitor(C/4)` contributes its factor of one
-quarter without being declared; a [`ScatteringParameters`](@ref) block
+`circuitdefs` defines the parameters in the forms
+[`designjacobian`](@ref) lists: by numbers, by values written in other
+parameters, to any depth, or by frequency dependent values. The
+components which depend on the selected parameters, and the exact
+derivative of each, come from the expressions the values and the
+definitions were written as, by the chain rule, in one sparse enumeration
+of the nonzero derivatives ([`designdirections`](@ref)), so a derived
+value like `Capacitor(C/4)` contributes its factor of one quarter without
+being declared, as does `Capacitor(:Cd)` with `:Cd => C/4`; a
+[`ScatteringParameters`](@ref) block
 depends on a parameter through the analytic derivative its `derivatives`
-states ([`designblockjacobian`](@ref)). The solve runs once, with the
+states ([`designblockjacobian`](@ref)). A port's reference impedance
+normalizes its waves, so a parameter it depends on moves that
+normalization too, through the termination the port owns or, for a port
+which owns none, through the port itself. The solve runs once, with the
 adjoint sensitivities of [`hbsolve`](@ref) carrying the exact direction
 `dv_k/dp_j` of each dependent component into the contraction
 (`sensitivityoperatingpoint = true`, so the shift of the pump operating
@@ -172,12 +333,16 @@ contraction, so a design variable shared across a long line costs one
 contraction rather than one per cell.
 
 `parameters` are the names, or the definition keys, of the parameters to
-differentiate with respect to; by default every defined parameter and
-every parameter a block states a derivative for, sorted by name. Returns
+differentiate with respect to; by default every parameter the definitions
+give a number and every parameter a block states a derivative for, sorted
+by name. Returns
 `(out, dSdp)`: the full [`hbsolve`](@ref) output, and a keyed array
 `dS/dp` with the axes of the scattering sensitivity and a `parameter`
-axis in place of the `component` axis. Additional keyword arguments are
-forwarded to `hbsolve`.
+axis in place of the `component` axis; with `keyedarrays = false`, the
+plain array of the solve's scattering sensitivity, `(output, input,
+parameter, frequency)`, the port and the mode of each side flattened as in
+the plain `S`, its component axis the parameters. Additional keyword
+arguments are forwarded to `hbsolve`, as `keyedarrays` is.
 
 # Extended help
 
@@ -214,11 +379,11 @@ end
 """
 function designsensitivities(circuit::CompilableCircuit, circuitdefs::AbstractDict,
         ws, wp, sources, Nmodulationharmonics, Npumpharmonics;
-        parameters = nothing, kwargs...)
+        parameters = nothing, keyedarrays::Bool = true, kwargs...)
     psc = compile(circuit)
     definitions = definitiontable(circuitdefs)
     names = designparameters(parameters, definitions, psc)
-    componentnames, v0, J = designjacobian(psc, definitions; parameters = names)
+    d = designdirections(psc, definitions, names)
     blockpairs = designblockjacobian(psc, names)
     # One pair per (component, parameter) dependence, carrying the exact
     # direction of the component value under the parameter as the rescale
@@ -226,11 +391,11 @@ function designsensitivities(circuit::CompilableCircuit, circuitdefs::AbstractDi
     # stamp before the negative frequency conjugation, which is what makes
     # this exact for complex component values.
     pairs = Tuple{String,Int,Complex{Float64}}[]
-    for j in eachindex(names), k in eachindex(componentnames)
-        iszero(J[k, j]) && continue
-        iszero(v0[k]) && throw(ArgumentError(
-            lazy"the component $(componentnames[k]) depends on the parameter $(names[j]) but has the value zero at this point, so its stamp carries no direction to rescale."))
-        push!(pairs, (componentnames[k], j, J[k, j]/v0[k]))
+    for (k, j, x) in d.entries
+        name = psc.componentnames[d.components[k]]
+        iszero(d.values[k]) && throw(ArgumentError(
+            lazy"the component $(name) depends on the parameter $(names[j]) but has the value zero at this point, so its stamp carries no direction to rescale."))
+        push!(pairs, (name, j, x/d.values[k]))
     end
     isempty(pairs) && isempty(blockpairs) && throw(ArgumentError(
         "no component value depends on the selected design parameters."))
@@ -241,12 +406,13 @@ function designsensitivities(circuit::CompilableCircuit, circuitdefs::AbstractDi
         nsensitivityparameters = length(names),
         sensitivitylabels = String.(names),
         returnSsensitivity = true,
-        sensitivityoperatingpoint = true, kwargs...)
-    # Ssensitivity already carries one slot per design parameter; rewrap
-    # with the documented axis names.
+        sensitivityoperatingpoint = true, keyedarrays = keyedarrays,
+        kwargs...)
+    # Ssensitivity already carries one slot per design parameter: plain, it
+    # is the derivative as it stands, and keyed it is rewrapped with the
+    # documented axis names
+    keyedarrays || return (out = out, dSdp = out.linearized.Ssensitivity)
     Ss = Array(out.linearized.Ssensitivity)
-    ndims(Ss) == 6 || throw(DimensionMismatch(
-        lazy"unexpected Ssensitivity layout with $(ndims(Ss)) axes."))
     dSdpout = AxisKeys.KeyedArray(ComplexF64.(Ss),
         outputmode = out.linearized.modes,
         outputport = collect(out.linearized.portnumbers),

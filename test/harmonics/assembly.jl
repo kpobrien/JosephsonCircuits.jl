@@ -3,6 +3,8 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+isdefined(Main, :structurejacobian) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
+
 # The structure aware assembly reads the circuit's structure directly rather
 # than a precomputed segmented gather. Its correctness against the physics
 # is established in test/harmonics/system.jl, which checks it against the
@@ -19,7 +21,7 @@ using Test
 # the transposed counterpart of `structurejacobian`
 function structurejacobiantransposed(d, Ami, Amc, Ljb, Lscale, Rbnm, Nmodes,
     Nbranches, Nfreq, invLnm, Gnm, Cnm, layout)
-    P, _ = JosephsonCircuits.realjacobianstructure(Ami, Amc, Ljb, Rbnm,
+    P = JosephsonCircuits.realjacobianstructure(Ami, Amc, Ljb, Rbnm,
         Nmodes, Nbranches, invLnm, Gnm, Cnm, layout; transposed = true)
     junctions = JosephsonCircuits.junctionstructure(eltype(P), Ami, Amc, Ljb,
         Lscale, Rbnm, Nmodes, Nbranches, Nfreq, JosephsonCircuits.CPU())
@@ -59,18 +61,15 @@ end
             # `:none` is the mode block diagonal, `:all` the full Jacobian,
             # and a partial set is the case whose coupling mask is lower
             # triangular and whose pattern is therefore not symmetric
-            for spec in (JosephsonCircuits.BlockDiagonal(), JosephsonCircuits.FullJacobian(), JosephsonCircuits.CoupledModes([2]))
-                S = spec isa JosephsonCircuits.BlockDiagonal ? Int[] :
-                    spec isa JosephsonCircuits.FullJacobian ? collect(1:Nm) :
-                    spec.indices
-                mask = JosephsonCircuits.modecouplingmask(Nm, S)
+            for S in (Int[], collect(1:Nm), [2])
+                mask = [m2 in S || m1 == m2 for m1 in 1:Nm, m2 in 1:Nm]
                 Ami = JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, mask)
                 Amc = JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixconjindices, mask)
                 args = (Ami, Amc, d.Ljb, d.Lscale, d.Rbnm, Nm, d.Nbranches,
                         d.Nfreq, d.invLnm, d.Gnm, d.Cnm, ml)
-                J, plan = JosephsonCircuits.structurejacobian(d, args...)
+                J, plan = structurejacobian(d, args...)
                 Jt, plant = structurejacobiantransposed(d, args...)
 
                 ref = sparse(transpose(J))
@@ -115,11 +114,13 @@ end
             K = JosephsonCircuits.linearterm(L2, G2, C2, sys.wmodesm,
                 sys.wmodes2m)
             Kr = JosephsonCircuits.complex_to_real(K, ml, ml)
-            zerofd = zero(JosephsonCircuits.cosphimatrix(sys))
+            # the coefficients' shape, read at the starting point: the
+            # system holds no point until one is set
+            zerofd = zero(d.cosphimatrix(d.xr))
             args = (d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
                 d.Lscale, d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm,
                 d.Gnm, d.Cnm, ml)
-            J, plan = JosephsonCircuits.structurejacobian(d, args...)
+            J, plan = structurejacobian(d, args...)
             Jt, plant = structurejacobiantransposed(d, args...)
             for (P, p, R) in ((J, plan, Kr), (Jt, plant, sparse(transpose(Kr))))
                 JosephsonCircuits.refreshvalues!(p, L2, G2, C2, sys.wmodesm,
@@ -157,21 +158,26 @@ end
         cpu = JC.CPU(); sync() = JC.KernelAbstractions.synchronize(cpu)
         args = (d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
             d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm, ml)
-        for (P, plan) in (JC.structurejacobian(d, args...),
+        for (P, plan) in (structurejacobian(d, args...),
                 structurejacobiantransposed(d, args...))
             js = plan.junctions
-            host = zeros(plan.n); k = zeros(plan.n)
-            JC.assemblerealjacobian!(host, plan, cosfd)
-            JC.structureassemblykernel!(cpu, 64)(k, plan.colptr, plan.rowval,
-                plan.lin, cosfd, js.pairptr, js.pairrow, js.pairjunc,
-                js.paircoef, js.lmolj, js.ami, js.amc, plan.linv, plan.lptr,
-                js.nmodes, js.nfreq, plan.transposed; ndrange = plan.n)
-            sync(); @test isequal(k, host)
-            plan.assemble!(k, plan.colptr, plan.rowval, plan.lin, cosfd,
-                js.pairptr, js.pairrow, js.pairjunc, js.paircoef, js.lmolj,
-                js.ami, js.amc, plan.slots, js.nfreq, plan.transposed;
-                ndrange = length(plan.colptr) - 1)
-            sync(); @test isequal(k, host)
+            # a transposed plan assembles with the per entry kernel itself,
+            # which the first testset compares with the natural orientation
+            if !plan.transposed
+                host = zeros(plan.n); k = zeros(plan.n)
+                JC.assemblerealjacobian!(host, plan, cosfd)
+                JC.structureassemblykernel!(cpu, 64)(k, plan.colptr,
+                    plan.rowval, plan.lin, cosfd, js.pairptr, js.pairrow,
+                    js.pairjunc, js.paircoef, js.lmolj, js.ami, js.amc,
+                    plan.linv, plan.lptr, js.nmodes, js.nfreq,
+                    plan.transposed; ndrange = plan.n)
+                sync(); @test isequal(k, host)
+                plan.assemble!(k, plan.colptr, plan.rowval, plan.lin, cosfd,
+                    js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
+                    js.lmolj, js.ami, js.amc, plan.slots, js.nfreq;
+                    ndrange = length(plan.colptr) - 1)
+                sync(); @test isequal(k, host)
+            end
             g = plan.linear; x = g.inputs
             pos = zero(g.pos)
             JC.storedpositionkernel!(cpu, 64)(pos, plan.colptr, plan.rowval,
@@ -195,8 +201,8 @@ end
             js.nmodes, js.nfreq, jp.transposed; ndrange = jp.n)
         sync(); @test isequal(k, host)
         jp.assemble!(k, jp.colptr, jp.rowval, cosfd, js.pairptr, js.pairrow,
-            js.pairjunc, js.paircoef, js.lmolj, js.ami, js.nmodes, js.nfreq,
-            jp.transposed; ndrange = length(jp.colptr) - 1)
+            js.pairjunc, js.paircoef, js.lmolj, js.ami, js.nmodes, js.nfreq;
+            ndrange = length(jp.colptr) - 1)
         sync(); @test isequal(k, host)
         g = cp.linear; x = g.inputs
         lin = zeros(ComplexF64, jp.n)
@@ -213,16 +219,14 @@ end
             sys = d.sys; ml = d.modelayout; Nm = d.Nmodes
             for spec in (JosephsonCircuits.BlockDiagonal(), JosephsonCircuits.FullJacobian())
                 pc = JosephsonCircuits.ModeCouplingPreconditioner(sys,
-                    d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
-                    d.Lscale, d.Rbnm, Nm, d.Nbranches, d.Nfreq, d.invLnm,
-                    d.Gnm, d.Cnm, ml; spec = spec)
-                S = spec isa JosephsonCircuits.BlockDiagonal ? Int[] : collect(1:Nm)
-                mask = JosephsonCircuits.modecouplingmask(Nm, S)
+                    d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nm,
+                    d.Nbranches, d.Nfreq, ml; spec = spec)
+                mask = JosephsonCircuits.couplingmask(spec, Nm, d.Amatrixmodes)
                 Ami = JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, mask)
                 Amc = JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixconjindices, mask)
-                Jref, plan = JosephsonCircuits.structurejacobian(d, Ami, Amc,
+                Jref, plan = structurejacobian(d, Ami, Amc,
                     d.Ljb, d.Lscale, d.Rbnm, Nm, d.Nbranches, d.Nfreq,
                     d.invLnm, d.Gnm, d.Cnm, ml)
                 @test nnz(pc.P) == nnz(Jref)
@@ -252,11 +256,14 @@ end
     # retains. The struct is generic over where its parts live, so this runs
     # the same arithmetic the device path does without a device.
     using SparseArrays
+    devicevalued(At) = JosephsonCircuits.DeviceValuedSparseMatrix(
+        JosephsonCircuits.DeviceSparsePattern(SparseArrays.getcolptr(At),
+            rowvals(At), size(At)...), nonzeros(At))
     for (m, n) in ((5, 5), (4, 7), (7, 4), (1, 3))
         A = sprandn(m, n, 0.4)
         # a non-symmetric structure, or a transpose would go unnoticed
         At = SparseMatrixCSC(transpose(A))
-        dv = JosephsonCircuits.DeviceValuedSparseMatrix(At, nonzeros(At))
+        dv = devicevalued(At)
         @test size(dv) == (m, n)
         @test nnz(dv) == nnz(A)
         B = JosephsonCircuits.hostsparse(dv)
@@ -268,7 +275,6 @@ end
     A = sprandn(6, 6, 0.3)
     @test JosephsonCircuits.hostsparse(A) === A
     # and reading an entry of the device valued form is still refused
-    At = SparseMatrixCSC(transpose(A))
-    dv = JosephsonCircuits.DeviceValuedSparseMatrix(At, nonzeros(At))
+    dv = devicevalued(SparseMatrixCSC(transpose(A)))
     @test_throws ArgumentError dv[1, 1]
 end

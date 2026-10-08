@@ -128,13 +128,14 @@ function _buildgather(keys::Vector{Int}, nkeys::Integer, Ti::Type)
 end
 
 """
-    plannonlineartermtranspose(plan, modelayout, fd, td; backend = CPU())
+    plannonlineartermtranspose(plan, modelayout, fd, td)
 
 Build the [`NonlinearTermTransposePlan`](@ref) of a
-[`NonlinearTermPlan`](@ref).
+[`NonlinearTermPlan`](@ref), on the plan's backend.
 """
 function plannonlineartermtranspose(plan::NonlinearTermPlan, modelayout,
-        fd::AbstractArray, td::AbstractArray; backend = CPU())
+        fd::AbstractArray, td::AbstractArray)
+    backend = plan.backend
     Ti = Int32
     nslots = plan.nslots
     ncomplex = plan.ncomplex

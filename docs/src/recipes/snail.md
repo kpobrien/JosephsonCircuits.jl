@@ -5,11 +5,33 @@ Compare pump-on and pump-off gain for an explicitly modeled SNAIL. The quadratic
 Requires `JosephsonCircuits` and `Plots`. The optional comparison uses
 WRspice through `XicTools_jll`, or a local WRspice installation.
 
-Figures and timings come from the original reference run using 16 threads
-on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
-and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
+The SNAIL follows [Frattini et al. (2018)](https://doi.org/10.1103/PhysRevApplied.10.054020).
+A resonator, `lr` and `cr`, ends in a SNAIL: a small junction `jj1` in a
+loop with three large ones in series, `jj2` to `jj4`, and the loop
+inductance `ll`; port 2, of 1 kΩ, drives the bias line `ldc`, coupled to
+`ll` by `k1`. The small junction has `alpha` times the area of the large
+ones, so `alpha` times their critical current and capacitance. The
+resonator, 1.25 times that of the [flux-pumped example](flux-pump.md), and
+the bias line, `Ll`, `Ldc` and `K` of that example, are assumed, as are
+the bias and the pump, at twice the pump-off resonance of 8.019 GHz:
 
-The circuit parameters are from [Frattini et al. (2018)](https://doi.org/10.1103/PhysRevApplied.10.054020).
+```text
+ 1          2          3             4                5                6
+ o---[cc]---o---[lr]---o----[ll]-----o--[jj2 || cj2]--o--[jj3 || cj3]--o
+ |          |          |                                               |
+[p1]      [cr]   [jj1 || cj1]                                    [jj4 || cj4]
+ |          |          |                                               |
+ o----------o----------o-----------------------------------------------o
+ 0
+
+ 7
+ o
+ |
+[p2 || ldc]      ldc coupled to ll by k1
+ |
+ o
+ 0
+```
 
 ```@example snail
 using JosephsonCircuits
@@ -25,17 +47,14 @@ Ll = 34e-12
 Ldc = 0.74e-12
 K = 0.999 # the coupling of the bias inductor ldc to the loop inductor ll
 
-alpha = 0.29
-Z0 = 50
-w0 = 2*pi*8e9
-l=10e-3
+alpha = 0.29 # the area of the small junction relative to the large ones
 circuit = Circuit(
     [(:p1, 1, 0, Port(1; Z0 = R)),
      (:cc, 1, 2, Capacitor(Cc)),
      (:lr, 2, 3, Inductor(Lr)), (:cr, 2, 0, Capacitor(Cr)),
      # the small junction of the SNAIL, across the three large ones
      (:jj1, 3, 0, JosephsonJunction(Lj/alpha)),
-     (:cj1, 3, 0, Capacitor(Cj/alpha)),
+     (:cj1, 3, 0, Capacitor(alpha*Cj)),
      (:ll, 3, 4, Inductor(Ll)),
      (:jj2, 4, 5, JosephsonJunction(Lj)), (:cj2, 4, 5, Capacitor(Cj)),
      (:jj3, 5, 6, JosephsonJunction(Lj)), (:cj3, 5, 6, Capacitor(Cj)),
@@ -46,8 +65,8 @@ circuit = Circuit(
      # a high impedance port, so the bias may be applied across it
      (:p2, 7, 0, Port(2; Z0 = 1000.0))])
 ws = 2*pi*(7.8:0.001:8.2)*1e9
-wp = (2*pi*16.00*1e9,)
-Ip = 4.4e-6
+wp = (2*pi*16.038*1e9,)
+Ip = 4.7e-6
 Idc = 0.000159
 # add the DC bias and pump to port 2
 sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
@@ -60,10 +79,10 @@ nothing # hide
 The full sweep and plotting commands continue this setup:
 
 ```julia
-@time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
+jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
     Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 @assert jpapumpon.nonlinear.solverinfo.converged
-@time jpapumpoff = hbsolve(ws, wp, sourcespumpoff, Nmodulationharmonics,
+jpapumpoff = hbsolve(ws, wp, sourcespumpoff, Nmodulationharmonics,
     Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 @assert jpapumpoff.nonlinear.solverinfo.converged
 
@@ -129,11 +148,6 @@ plot!(
 plot(p1,p2,layout=(2,1))
 ```
 
-```
-  0.010345 seconds (16.74 k allocations: 40.025 MiB)
-  0.011252 seconds (16.68 k allocations: 39.985 MiB)
-```
-
 ![SNAIL parametric amplifier simulation with JosephsonCircuits.jl](../assets/examples/snail.png)
 
 ## A small executable check
@@ -152,17 +166,40 @@ small = hbsolve(2pi .* [7.9e9, 8.0e9, 8.1e9], wp, sourcespumpon,
 nothing # hide
 ```
 
+With the pump and the bias off the circuit is linear, and its reflection
+has a closed form: the junctions are their inductances at zero phase, and
+the loop of the bias line, `ldc` and the 1 kΩ port, is reflected into
+`ll` through the mutual inductance `M = K sqrt(Ll Ldc)`:
+
+```@example snail
+function reflection(w)
+    M = K*sqrt(Ll*Ldc)
+    Zll = im*w*Ll + (w*M)^2/(im*w*Ldc + 1000.0)
+    ZJ = 1/(1/(im*w*Lj) + im*w*Cj)
+    Zsnail = 1/(1/(im*w*Lj/alpha) + im*w*alpha*Cj + 1/(Zll + 3ZJ))
+    Z = 1/(im*w*Cc) + 1/(im*w*Cr + 1/(im*w*Lr + Zsnail))
+    return (Z - R)/(Z + R)
+end
+wcheck = 2pi .* [7.9e9, 8.0e9, 8.1e9]
+S11 = hblinsolve(wcheck, circuit).S((0,), 1, (0,), 1, :)
+@assert isapprox(S11, reflection.(wcheck); atol = 1e-12)
+(solver = S11, closed = reflection.(wcheck))
+```
+
 ## Compare with WRspice
+
+WRspice solves two 600 ns transients at each signal frequency, so the
+comparison is made at nine frequencies around the gain peak:
 
 ```julia
 using XicTools_jll
 
-# simulate the JPA in WRSPICE
-wswrspice=2*pi*(7.8:0.005:8.2)*1e9
+# simulate the SNAIL amplifier in WRSPICE
+wswrspice=2*pi*(7.98:0.01:8.06)*1e9
 n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[0.0,wp[1]],[Idc,2*Ip],[(0,1)],[(0,7),(0,7)];trise=10e-9,tstop=600e-9);
 
-@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
 S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
 
 # plot the output
@@ -185,10 +222,6 @@ plot(
 plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     label="WRspice",
     seriestype=:scatter)
-```
-
-```
-2067.364975 seconds (149.73 k allocations: 29.873 GiB, 0.01% gc time)
 ```
 
 ![SNAIL parametric amplifier simulation with JosephsonCircuits.jl and WRspice](../assets/examples/snail_WRspice.png)

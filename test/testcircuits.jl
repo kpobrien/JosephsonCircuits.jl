@@ -1,5 +1,5 @@
-# Circuits shared across test files, so a change to a canonical test
-# device is made in one place. Files include this defensively
+# Circuits, and a helper, shared across test files, so a change to a
+# canonical test device is made in one place. Files include this defensively
 # (`isdefined(Main, ...) || include(...)`) so each test file still runs
 # standalone.
 
@@ -43,6 +43,17 @@ function testchaincircuit(n::Integer = 4)
     circuit = Circuit(circuit)
     circuitdefs = Dict{Symbol,Complex{Float64}}(
         :Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
+    return circuit, circuitdefs
+end
+
+# a linear resonator of two nodes, an inductor and a capacitor at node 1
+# coupled through a capacitor to a port at node 2, values of order one: no
+# junction, and at w = 1 node 1's own elements resonate with node 2 held at
+# zero, a singular node block in a nonsingular matrix
+function testresonatorcircuit()
+    circuit = Circuit(Any[(:l, 1, 0, Inductor(:Lr)), (:c, 1, 0, Capacitor(:Cr)),
+        (:cc, 1, 2, Capacitor(:Cr)), (:p, 2, 0, Port(1; Z0 = :Zr))])
+    circuitdefs = Dict{Symbol,Complex{Float64}}(:Lr => 1.0, :Cr => 0.5, :Zr => 1.0)
     return circuit, circuitdefs
 end
 
@@ -209,4 +220,24 @@ end
 function nonlinearkw(kw::NamedTuple)
     return (dc = get(kw, :dc, false), even = get(kw, :threewavemixing, false),
         odd = get(kw, :fourwavemixing, true))
+end
+
+# --- the structure of the real Jacobian -------------------------------------
+
+# The sparsity structure of the real Jacobian restricted to the mode
+# coupling described by `Amatrixindices` and `Amatrixconjindices`, with
+# the `StructureRealJacobianPlan` which assembles it, taking the linear
+# term matrices from `d.sys` so that the assembly is the one the solver
+# performs; `d` is the named tuple `hbnlsolve(...; debugJacobian = true)`
+# returns. The assembly and the mode coupling tests share it.
+function structurejacobian(d, Amatrixindices::Matrix, Amatrixconjindices::Matrix, Ljb, Lscale, Rbnm,
+        Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, layout)
+    JC = JosephsonCircuits
+    P = JC.realjacobianstructure(Amatrixindices, Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches,
+        invLnm, Gnm, Cnm, layout)
+    junctions = JC.junctionstructure(eltype(P), Amatrixindices, Amatrixconjindices, Ljb, Lscale, Rbnm,
+        Nmodes, Nbranches, Nfreq, JC.CPU())
+    plan = JC.planstructurerealjacobian(P, eltype(P), junctions, d.sys.invLnm, d.sys.Gnm, d.sys.Cnm,
+        d.sys.wmodesm, d.sys.wmodes2m, layout, JC.CPU(); transposed = false)
+    return P, plan
 end

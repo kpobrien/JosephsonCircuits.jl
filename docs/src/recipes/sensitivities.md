@@ -4,6 +4,20 @@ Differentiate the JPA response with respect to its design parameters. The small 
 
 The plotting code requires `Plots` in addition to `JosephsonCircuits`.
 
+The first check differentiates a capacitor on a port; the JPA of the
+later sections has its junction inductance and capacitances as design
+parameters:
+
+```text
+ 1                  2
+ o------[cc]--------o--------+
+ |                  |        |
+[p1]              [jj]     [cj]
+ |                  |        |
+ o------------------o--------+
+ 0
+```
+
 The adjoint calculation differentiates scattering parameters with respect to design parameters without re-solving the nonlinear problem for each perturbation. Every component value which depends on a parameter contributes through the chain rule with its exact derivative, including derived values such as `Capacitor(Cj/4)`.
 
 ## Check a design derivative
@@ -24,6 +38,51 @@ response(value) = hblinsolve(ws, c, Dict(:C => value); keyedarrays = false).S[1,
 finite_difference = (response(C + step) - response(C - step))/(2step)
 @assert isapprox(analytic, finite_difference; rtol = 1e-6)
 abs((analytic - finite_difference)/finite_difference)
+```
+
+## Derived definitions
+
+A parameter may be defined in terms of others, and the derivative follows
+the definition by the chain rule. The forms a definition takes:
+
+| definition | example | derivative |
+|---|---|---|
+| a number, real or complex | `C => 1e-12` | one with respect to itself; a default parameter |
+| a value written in other parameters, to any depth | `:Cc => C/10` | the chain rule through the definition: `Capacitor(:Cc)` has the derivative `1/10` with respect to `C` |
+| a frequency dependent value | `:Cd => FrequencyDependent(w -> ...)` | none: no parameter moves it |
+
+The keys may be symbols, strings, the parameters of `@params` or, with
+Symbolics loaded, `Num`s. A component value is a number, a name, an
+expression in names, or a frequency dependent value, and its derivative
+is exact: the expression is differentiated symbolically and evaluated at
+the definitions. A derived parameter is not among the defaults; selected
+by name, it is differentiated as replacing its definition by its value
+would move it, the parameters it is written in held. A component whose
+value is frequency dependent cannot be moved by a selected parameter; one
+which no selected parameter moves takes no part.
+
+Here the coupling capacitance is defined as a tenth of the resonator's, so
+`C` moves both, and the derivative with respect to `C` is checked against
+a central difference which moves `C` alone in the definitions.
+
+```@example derived
+using JosephsonCircuits
+JosephsonCircuits.@params C
+c = Circuit([(:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(:Cc)),
+    (:cr, 2, 0, Capacitor(C)), (:lr, 2, 0, Inductor(1e-9))])
+definitions = Dict(:Cc => C/10, C => 1e-12)
+names, values, J = designjacobian(c, definitions)
+@assert J[findfirst(==("cc"), names), 1] ≈ 0.1
+ws, wp = [2pi*4.9e9], (2pi*5e9,)
+sources = [(mode = (1,), port = 1, current = 0.0)]
+r = designsensitivities(c, definitions, ws, wp, sources, (0,), (1,))
+analytic = r.dSdp((0,), 1, (0,), 1, :C, 1)
+step = 1e-6*1e-12
+response(value) = hblinsolve(ws, c, merge(definitions, Dict(C => value));
+    keyedarrays = false).S[1, 1, 1]
+finite_difference = (response(1e-12 + step) - response(1e-12 - step))/(2step)
+@assert isapprox(analytic, finite_difference; rtol = 1e-6)
+(names .=> real.(J[:, 1]), abs((analytic - finite_difference)/finite_difference))
 ```
 
 ## Total and frozen-pump derivatives
@@ -117,7 +176,7 @@ ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = 2*pi*4.75001*1e9
 sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-@time r = designsensitivities(jpa, p, ws, (wp,), sources, (8,), (16,))
+r = designsensitivities(jpa, p, ws, (wp,), sources, (8,), (16,))
 
 # the derivative of the gain in dB with respect to each parameter,
 # dG/dp = (20/log(10))*real(conj(S)*dS/dp)/abs2(S), scaled by the

@@ -4,10 +4,11 @@
 # (`Lj/2`, `1/(im*w*C)`) which is resolved to a number once the parameters
 # are defined, possibly in two steps: the circuit definitions first, and
 # the mode frequency later. `CircuitValue` is the tree such an expression is
-# stored as: what the parameters of `@params` build and what a
-# parameterized netlist file expression parses to, so the numeric path of
-# the package never needs Symbolics itself. A Symbolics `Num` is not
-# lowered to one; the extension substitutes the definitions into it.
+# stored as: what the parameters of `@params` build, and what the
+# deprecated netlist file reader of circuit/legacy.jl parses an expression
+# to, so the numeric path of the package never needs Symbolics itself. A
+# Symbolics `Num` is not lowered to one; the extension substitutes the
+# definitions into it.
 #
 # The operator set is closed and small on purpose: `+ - * / ^` and the
 # unary `- inv sqrt exp log conj real imag`. Anything richer belongs inside
@@ -124,14 +125,8 @@ function Base.show(io::IO, c::Constant)
     print(io, iszero(imag(v)) ? real(v) : v)
 end
 Base.show(io::IO, u::Unary) = print(io, nameof(u.f), "(", u.a, ")")
-function Base.show(io::IO, b::Binary)
-    op = nameof(b.f)
-    if op in (:+, :-, :*, :/, :^)
-        print(io, "(", b.a, " ", op, " ", b.b, ")")
-    else
-        print(io, op, "(", b.a, ", ", b.b, ")")
-    end
-end
+# every binary operation of the closed set, `+ - * / ^`, is written infix
+Base.show(io::IO, b::Binary) = print(io, "(", b.a, " ", nameof(b.f), " ", b.b, ")")
 
 # the set of parameter names an expression depends on
 parameters(e)=(s=Set{Symbol}(); _p!(s,e); s)
@@ -147,17 +142,17 @@ hasprovider(_) = false
 
 #     substituteparams(expr, d)
 #
-# Replace the parameters named in the dictionary `d` by their values and
-# leave the rest free. Because the constructors fold constants, an
-# expression whose parameters are all defined collapses to a `Constant`,
-# while one which still depends on an undefined parameter comes back as a
-# tree. A frequency dependent leaf is a `Provider` rather than a
-# parameter and passes through, for `freqsubst` in harmonics/sparse.jl to
-# resolve once per mode.
+# Replace the parameters named in the dictionary `d` by their values, a
+# number or a value of this module, and leave the rest free. Because the
+# constructors fold constants, an expression whose parameters are all
+# defined collapses to a `Constant`, while one which still depends on an
+# undefined parameter comes back as a tree. A frequency dependent leaf is
+# a `Provider` rather than a parameter and passes through, for `freqsubst`
+# in harmonics/sparse.jl to resolve once per mode.
 substituteparams(c::Constant, d) = c
 substituteparams(p::Provider, d) = p
 substituteparams(q::Parameter, d) =
-    haskey(d, q.name) ? Constant(d[q.name]) : q
+    haskey(d, q.name) ? tocv(d[q.name]) : q
 substituteparams(u::Unary, d) = mk(u.f, substituteparams(u.a, d))
 substituteparams(b::Binary, d) =
     mk(b.f, substituteparams(b.a, d), substituteparams(b.b, d))
@@ -178,11 +173,13 @@ evalproviders(b::Binary, w) = mk(b.f, evalproviders(b.a, w), evalproviders(b.b, 
 # The derivative of an expression with respect to the parameter `name`, as
 # an expression, for the design sensitivities. The constructors fold the
 # constants, so the derivative of an expression which does not depend on
-# the parameter collapses to `Constant(0)`. A design parameter is real, so
-# `conj`, `real` and `imag` commute with the derivative.
+# the parameter collapses to `Constant(0)`. A frequency dependent leaf is
+# a closure of the frequency alone and depends on no parameter. A design
+# parameter is real, so `conj`, `real` and `imag` commute with the
+# derivative.
 derivative(p::Parameter, name::Symbol) = Constant(p.name === name ? 1 : 0)
 derivative(::Constant, name::Symbol) = Constant(0)
-derivative(::Provider, name::Symbol) = throw(ArgumentError(lazy"a frequency dependent value has no derivative with respect to the design parameter $(name)."))
+derivative(::Provider, name::Symbol) = Constant(0)
 function derivative(u::Unary, name::Symbol)
     a = u.a
     da = derivative(a, name)
@@ -213,33 +210,6 @@ function derivative(b::Binary, name::Symbol)
     throw(ArgumentError(lazy"no derivative for $(f)."))
 end
 
-# === parsing a component value from an expression ===
-#
-# A value written in a netlist file arrives as a parsed Julia `Expr`. This
-# converts it to a `CircuitValue`, accepting only the closed operator set
-# above plus the constants `im` and `pi`, so no Symbolics parser is needed.
-module Parsing
-import ..CircuitValues: CircuitValue, Constant, Parameter
-const CONSTS = Dict{Symbol,Any}(:im => im, :pi => pi)
-const BINOPS = Dict{Symbol,Function}(:+ => +, :- => -, :* => *, :/ => /, :^ => ^)
-const UNOPS  = Dict{Symbol,Function}(:- => -, :inv => inv, :sqrt => sqrt,
-                                     :exp => exp, :log => log, :conj => conj,
-                                     :real => real, :imag => imag)
-fromexpr(x::Number) = Constant(x)
-function fromexpr(s::Symbol)
-    haskey(CONSTS, s) && return Constant(CONSTS[s])
-    return Parameter(s)
-end
-function fromexpr(e::Expr)
-    e.head === :call || error("unsupported expression head $(e.head)")
-    op = e.args[1]; args = map(fromexpr, e.args[2:end])
-    length(args) == 1 && haskey(UNOPS, op) && return UNOPS[op](args[1])
-    haskey(BINOPS, op) && return reduce(BINOPS[op], args)
-    error("unsupported operator $(op) in a component value")
-end
-end
-
-using .Parsing: fromexpr
 end # module CircuitValues
 
 using .CircuitValues
@@ -286,16 +256,23 @@ FrequencyDependent(f) = CircuitValues.Provider(f)
 
 # === resolving a written value to a number ===
 #
-# A component value is written as a number, as a symbol or string looked up
-# in `circuitdefs`, as a `CircuitValue` expression, or as a callable of
-# frequency. `valuetonumber` turns each into a number, or into an expression
-# which still depends on the frequency.
+# A component value is written as a number, as a symbol or string naming a
+# parameter, as a `CircuitValue` expression, or as a symbolic value of the
+# Symbolics extension. A parameter is defined by a number, by a value
+# written in other parameters, to any depth, or by a frequency dependent
+# value. The definitions are resolved once, each name to what its
+# definition comes to (`resolvedefinitions`), and every value substitutes
+# that one table, whether it names a parameter or is an expression in
+# several. The design derivatives follow the same definitions by the chain
+# rule (`DesignChain`).
 
 """
     componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
 
-Resolve each component value in `componentvalues` with [`valuetonumber`](@ref)
-and return the results as a `Vector{Any}`: the table mixes real and
+Resolve each component value in `componentvalues` at the definitions
+`circuitdefs`, resolved once for the whole table
+([`resolvedefinitions`](@ref)), and return the results as a `Vector{Any}`:
+the table mixes real and
 complex values (a port's entry is its reference impedance), symbolic values
 and frequency dependent providers,
 and the groups the assembly reads are typed when they are gathered from it
@@ -319,35 +296,127 @@ function componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
     # where `map` over `zip(values, Iterators.repeated(dict))` widens the
     # result element by element. A table of floating point numbers is its
     # own resolution; for any other (one holding a name, an expression, a
-    # symbolic value) the definitions are gathered by name once for the
-    # whole table rather than once per value.
+    # symbolic value) the definitions are resolved once for the whole table
+    # rather than once per value.
     all(v -> v isa AbstractFloat || v isa Complex, componentvalues) &&
         return Any[valuetonumber(value,circuitdefs) for value in componentvalues]
+    resolved = resolvedefinitions(circuitdefs)
+    return Any[resolvevalue(value, resolved) for value in componentvalues]
+end
+
+"""
+    ResolvedDefinitions
+
+The definitions of the parameters, each resolved once by
+[`resolvedefinitions`](@ref): `values` holds what each name comes to, a
+number as it was given or what a definition written in other parameters
+resolves to, and `expressions` the same as a [`CircuitValue`](@ref)
+wherever it is a number or one, for an expression to substitute. Mutable
+so that it is a heap object: each value of a table reaches its method by
+a dynamic call, which would copy an immutable one to the heap.
+"""
+mutable struct ResolvedDefinitions
+    values::Dict{Symbol,Any}
+    expressions::Dict{Symbol,CircuitValue}
+end
+
+"""
+    resolvedefinitions(circuitdefs)
+
+Resolve the definitions of the parameters once, for every value written in
+them: a definition which is a number is its own value, and one written in
+other parameters, as an expression or a symbolic value, has their values
+substituted, resolved first, so a parameter may be defined in terms of
+others to any depth (`:Lj => Lj0/2` beside `:Lj0 => 2e-9`). A frequency
+dependent leaf stays for [`substitutefreq`](@ref) to evaluate, a parameter
+the definitions do not give stays free, for the check of the values to
+name, and any other definition is its own value. A parameter defined in
+terms of itself, directly or through others, is refused. Returns a
+[`ResolvedDefinitions`](@ref); the keys may be anything
+[`definitionsbyname`](@ref) reads.
+"""
+function resolvedefinitions(circuitdefs)
     byname = definitionsbyname(circuitdefs)
-    d = normalizedefinitions(byname)
-    return Any[resolvevalue(value, byname, d, circuitdefs)
-        for value in componentvalues]
+    resolved = ResolvedDefinitions(Dict{Symbol,Any}(),
+        Dict{Symbol,CircuitValue}())
+    sizehint!(resolved.values, length(byname))
+    sizehint!(resolved.expressions, length(byname))
+    # the names whose definitions are being resolved, innermost last
+    pending = Symbol[]
+    for name in keys(byname)
+        resolvename!(resolved, pending, byname, name)
+    end
+    return resolved
 end
 
-# One value of the table, with the definitions gathered by name, and the
-# numbers among them in `d`. A name, written as a symbol, a string or a
-# bare parameter, is looked up as it is defined, so a definition which is
-# not a number (a provider, an expression) serves every spelling of it; an
-# expression substitutes the numbers.
-resolvevalue(value::Union{Symbol,AbstractString}, byname, d, circuitdefs) =
-    resolvedefinition(definedvalue(byname, definitionname(value)), d)
-function resolvevalue(value::CircuitValues.Parameter, byname, d, circuitdefs)
-    v = get(byname, value.name, nothing)
-    return (isnothing(v) || v isa Number) ? valuetonumber(value, d) :
-        resolvedefinition(v, d)
+# Resolve the definition of `name`, those of the parameters it is written
+# in first.
+function resolvename!(resolved::ResolvedDefinitions, pending::Vector{Symbol},
+        byname::Dict{Symbol,Any}, name::Symbol)
+    haskey(resolved.values, name) && return nothing
+    v = byname[name]
+    if checkissymbolic(v)
+        k = findfirst(==(name), pending)
+        isnothing(k) || throwcircular(vcat(pending[k:end], name))
+        push!(pending, name)
+        for n in valuenames(v)
+            haskey(byname, n) && resolvename!(resolved, pending, byname, n)
+        end
+        pop!(pending)
+        v = resolvevalue(v, resolved)
+    end
+    resolved.values[name] = v
+    if v isa CircuitValue
+        resolved.expressions[name] = v
+    elseif isnumeric(v)
+        resolved.expressions[name] = CircuitValues.Constant(ComplexF64(v))
+    end
+    return nothing
 end
-resolvevalue(value::CircuitValue, byname, d, circuitdefs) =
-    valuetonumber(value, d)
-resolvevalue(value, byname, d, circuitdefs) = valuetonumber(value, circuitdefs)
 
-# A definition which is itself an expression is resolved one level, with
-# the numbers the definitions give, so that a parameter may be defined in
-# terms of others (`:Lj => Lj0/2`); any other definition is its own value.
+function throwcircular(chain::Vector{Symbol})
+    names = join(chain, " -> ")
+    throw(ArgumentError(lazy"The parameter $(first(chain)) is defined in terms of itself: $(names)."))
+end
+
+# whether a value is a number rather than one which still depends on a
+# parameter or on the frequency
+isnumeric(v) = v isa Number && !checkissymbolic(v)
+
+# the names of the parameters a value is written in, as it is written: the
+# name a symbol or a string gives, the parameters of an expression, and
+# the variables of a symbolic value of the Symbolics extension
+valuenames(v::Union{Symbol,AbstractString}) = (definitionname(v),)
+valuenames(v::CircuitValue) = CircuitValues.parameters(v)
+valuenames(v) = (definitionname(x) for x in circuitvariables(v))
+
+"""
+    resolvevalue(value, resolved::ResolvedDefinitions)
+
+A value at the resolved definitions `resolved`: a name, written as a
+symbol or a string, is what its definition came to, and an expression
+substitutes the values of its parameters, so a name means the same
+whether it is a whole value or part of one. A parameter the definitions do
+not give stays free. Anything else is resolved by its
+[`valuetonumber`](@ref) method; the Symbolics extension adds the method of
+the four argument form, `resolvevalue(value, byname, resolved,
+circuitdefs)` with `byname` the resolved values, for its own values.
+"""
+resolvevalue(value, resolved::ResolvedDefinitions) =
+    resolvevalue(value, resolved.values, resolved, resolved)
+function resolvevalue(value::Union{Symbol,AbstractString}, byname, resolved,
+        circuitdefs)
+    name = definitionname(value)
+    return haskey(byname, name) ? byname[name] : CircuitValues.Parameter(name)
+end
+resolvevalue(value::CircuitValue, byname, resolved, circuitdefs) =
+    valuetonumber(value, resolved)
+resolvevalue(value, byname, resolved, circuitdefs) =
+    valuetonumber(value, circuitdefs)
+
+# A definition the Symbolics extension does not substitute into a
+# symbolic value, one which is not a number, is the value of a bare
+# variable it defines, resolved as an expression is.
 resolvedefinition(v::CircuitValue, d) = valuetonumber(v, d)
 resolvedefinition(v, d) = v
 
@@ -356,10 +425,11 @@ resolvedefinition(v, d) = v
 
 A symbol names a parameter; return the value `circuitdefs` defines it as,
 under whichever key names it: its symbol, its string or its parameter
-object (see [`definitionsbyname`](@ref)). A definition which is an
-expression in other parameters is resolved with the numbers `circuitdefs`
-gives them. A name `circuitdefs` does not define comes back as the
-parameter, which the check of the values reports naming its component.
+object (see [`definitionsbyname`](@ref)). A definition written in other
+parameters is resolved with their definitions, to any depth (see
+[`resolvedefinitions`](@ref)). A name `circuitdefs` does not define comes
+back as the parameter, which the check of the values reports naming its
+component.
 
 # Examples
 ```jldoctest
@@ -370,15 +440,8 @@ julia> JosephsonCircuits.valuetonumber(:Lj1,Dict("Lj1"=>1e-12))
 1.0e-12
 ```
 """
-function valuetonumber(value::Symbol,circuitdefs)
-    byname = definitionsbyname(circuitdefs)
-    return resolvevalue(value, byname, normalizedefinitions(byname),
-        circuitdefs)
-end
-
-# the value a name is defined as, or the parameter it names when it is not
-definedvalue(byname::Dict{Symbol,Any}, name::Symbol) =
-    get(byname, name, CircuitValues.Parameter(name))
+valuetonumber(value::Symbol,circuitdefs) =
+    resolvevalue(value, resolvedefinitions(circuitdefs))
 
 """
     valuetonumber(value::String,circuitdefs)
@@ -395,16 +458,14 @@ julia> JosephsonCircuits.valuetonumber("Lj1",Dict("Lj1"=>1e-12,"Lj2"=>2e-12))
 valuetonumber(value::String,circuitdefs) =
     valuetonumber(Symbol(value), circuitdefs)
 
-# the definitions as pairs, from a dictionary or any iterable of pairs
-_definitionpairs(d::AbstractDict) = pairs(d)
-_definitionpairs(d) = d
-
 """
     valuetonumber(value::CircuitValue, circuitdefs)
 
 Substitute the definitions in `circuitdefs`, which may be keyed by `Symbol`,
-by `String`, or by the parameter objects themselves, into a parameterized component
-value.
+by `String`, or by the parameter objects themselves, into a parameterized
+component value, each resolved first (see [`resolvedefinitions`](@ref)),
+so a parameter defined in terms of others means here what it means as a
+whole value.
 
 A fully defined value comes back as a plain number, real when its imaginary
 part is zero. A value which still depends on an undefined parameter comes
@@ -412,30 +473,27 @@ back as an expression, which the check of the values reports naming its
 component.
 """
 valuetonumber(value::CircuitValue, circuitdefs) =
-    valuetonumber(value, normalizedefinitions(circuitdefs))
+    valuetonumber(value, resolvedefinitions(circuitdefs))
 
-# the resolved form: the definitions already normalized to a dictionary
-# keyed by parameter name
-function valuetonumber(value::CircuitValue, d::Dict{Symbol,ComplexF64})
-    out = CircuitValues.substituteparams(value, d)
+# the resolved form: the definitions resolved once, for every value
+function valuetonumber(value::CircuitValue, resolved::ResolvedDefinitions)
+    out = CircuitValues.substituteparams(value, resolved.expressions)
     out isa CircuitValues.Constant || return out
     return iszero(imag(out.val)) ? real(out.val) : out.val
 end
 
 """
-    normalizedefinitions(circuitdefs)
+    normalizedefinitions(byname::Dict{Symbol,Any})
 
-The definitions a parameterized value substitutes, as a dictionary keyed by
-parameter name: keys may be `Symbol`s, `String`s or the parameter objects
-themselves. An entry whose value is not a number (a symbolic expression
-included) cannot be substituted into an expression and is left out, so
-that a definition which serves another purpose (a component whose value is
-itself a key, for instance) does not stop every parameterized value from
-resolving; a parameter left undefined comes back unresolved from
-[`valuetonumber`](@ref).
+The definitions a parameterized value substitutes, from those keyed by
+parameter name (see [`definitionsbyname`](@ref)), as a dictionary of
+complex numbers. An entry whose value is not a number (a symbolic
+expression included) cannot be substituted into an expression and is left
+out, so that a definition which serves another purpose (a component whose
+value is itself a key, for instance) does not stop every parameterized
+value from resolving; a parameter left undefined comes back unresolved
+from [`valuetonumber`](@ref).
 """
-normalizedefinitions(circuitdefs) =
-    normalizedefinitions(definitionsbyname(circuitdefs))
 function normalizedefinitions(byname::Dict{Symbol,Any})
     d = Dict{Symbol,ComplexF64}()
     for (name, v) in byname
@@ -453,12 +511,13 @@ The definitions keyed by the name of the parameter each key names (see
 no parameter is left out. A parameter may be defined under its symbol,
 its string or its parameter object, and one defined under two of them with
 different values is refused rather than resolved by the order of the
-dictionary. A table already keyed by name is returned as it is.
+dictionary. A table already keyed by name is returned as it is, and
+[`ResolvedDefinitions`](@ref) as the values they resolved to.
 """
-definitionsbyname(byname::Dict{Symbol,Any}) = byname
 function definitionsbyname(circuitdefs)
     byname = Dict{Symbol,Any}()
-    for (k, v) in _definitionpairs(circuitdefs)
+    # a dictionary, or any collection of pairs
+    for (k, v) in circuitdefs
         name = definitionname(k)
         isnothing(name) && continue
         if haskey(byname, name) && !isequal(byname[name], v)
@@ -468,6 +527,8 @@ function definitionsbyname(circuitdefs)
     end
     return byname
 end
+definitionsbyname(byname::Dict{Symbol,Any}) = byname
+definitionsbyname(resolved::ResolvedDefinitions) = resolved.values
 
 """
     definitiontable(circuitdefs)

@@ -160,7 +160,7 @@ function FlattenState(maxdepth::Int)
 end
 
 # the index of `def` in the deduplicated definition list, adding it if new
-function definitionindex!(st::FlattenState, def)
+Base.@nospecializeinfer function definitionindex!(st::FlattenState, @nospecialize(def))
     i = get(st.defindex, def, 0)
     if i == 0
         push!(st.definitions, def)
@@ -457,9 +457,7 @@ graph.
 - `Nbranches`: the number of branches, `size(Rbn, 1)`.
 
 [`compile`](@ref) builds one for every circuit, see
-[`circuittopology`](@ref). The spanning tree, the loops and the isolated
-nodes are diagnostics of the same branches and are computed on request by
-[`calccircuitgraph`](@ref).
+[`circuittopology`](@ref).
 """
 struct CircuitTopology
     edge2indexdict::Dict{Tuple{Int,Int},Int}
@@ -521,8 +519,8 @@ The flat table, in elaboration order:
 - `componentnames`: the hierarchical instance path of each entry. A matched
     port's own termination is the entry named `"<port path>/termination"`.
 - `componenttypes`: the type symbol of each entry: `:C`, `:R`, `:L`, `:Lj`
-    (a sinusoidal [`NonlinearInductor`](@ref)), `:I`, `:K` (a mutual
-    inductor) or `:P` (a port).
+    (a [`NonlinearInductor`](@ref), whatever its relation), `:I`, `:K` (a
+    mutual inductor) or `:P` (a port).
 - `componentvalues`: the value of each entry as written; the reference
     impedance for a port.
 - `nodeindices`: a 2 by `ncomponents` matrix of the node indices of each
@@ -595,30 +593,6 @@ The number of entries in the flat component table.
 ncomponents(c::CompiledCircuit) = length(c.componenttypes)
 
 # === lowering one component to a table entry ===
-#
-# `lowercomponent` returns the `(typesymbol, value)` of a component the
-# `isa` chain in `compile` does not handle inline, or throws
-# `ComponentNotSupportedError` for one the solvers cannot use, so the
-# diagnostics are in one place. The lumped elements are lowered by the
-# chain alone; a second table for them would be a second place to get one
-# wrong.
-
-function lowercomponent(def::VoltageSource, path)
-    throw(ComponentNotSupportedError(lazy"the VoltageSource at $(path) is not supported by the solvers."))
-end
-function lowercomponent(def::GaussianChannel, path)
-    throw(ComponentNotSupportedError(lazy"the GaussianChannel at $(path) is not yet supported by the harmonic balance solvers. It parsed, validated, and elaborated successfully; solver support for Gaussian channels is planned. Currently solvable components: Inductor, Capacitor, Resistor, JosephsonJunction and the other NonlinearInductors, MutualInductor, CurrentSource, Port, and the scattering blocks (ScatteringParameters, TransmissionLine, RationalScattering and LinearizedScattering)."))
-end
-function lowercomponent(def, path)
-    throw(ComponentNotSupportedError(lazy"the component $(typeof(def)) at $(path) is not supported by the solver."))
-end
-
-# Narrow a `Vector{Any}` to the element type its contents allow, so that a
-# fully numeric circuit gets a `Vector{Float64}` of values rather than a
-# vector of boxed numbers.
-function tightenvalues(values::Vector{Any})
-    return map(identity, values)
-end
 
 # The temperature a component states, or `nothing`. Only the lumped
 # components which can dissipate carry one; a scattering block states its
@@ -633,33 +607,6 @@ componenttemperature(def) = nothing
 # `compile` numbers the nets in the order their terminals are met, sorts
 # that list with `calcnodesorting` and renumbers every recorded node index
 # with `sortnodes`.
-
-"""
-    findgroundnodeindex(uniquenodevector::Vector{String})
-
-The index of the ground node `"0"` in `uniquenodevector`, or `0` if there
-is none.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.findgroundnodeindex(["1","0","2"])
-2
-
-julia> JosephsonCircuits.findgroundnodeindex(["1","2"])
-0
-
-julia> JosephsonCircuits.findgroundnodeindex(String[])
-0
-```
-"""
-function findgroundnodeindex(uniquenodevector::Vector{String})
-    for i in eachindex(uniquenodevector)
-        if uniquenodevector[i] == "0"
-            return i
-        end
-    end
-    return 0
-end
 
 """
     calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
@@ -730,7 +677,8 @@ function calcnodesorting(uniquenodevector::Vector{String};
         throw(ArgumentError(lazy"Unknown sorting $(repr(sorting)); use :number, :name or :none."))
     end
 
-    groundnodeindex = findgroundnodeindex(uniquenodevector)
+    # the first node named "0", or none
+    groundnodeindex = something(findfirst(==("0"), uniquenodevector), 0)
 
     if groundnodeindex == 0
         throw(ArgumentError("The circuit has no connection to Ground. Connect at least one endpoint to Ground; the ground net is required by the solver."))
@@ -750,29 +698,22 @@ function calcnodesorting(uniquenodevector::Vector{String};
 end
 
 """
-    noderenumbering(order)
-
-The renumbering induced by the sorting permutation `order` returned by
-[`calcnodesorting`](@ref): `renumber[j]` is the new index of the node whose
-old index was `j`. `compile` uses it to renumber the node indices of
-scattering blocks, which have no component table entry to be re-read from.
-"""
-noderenumbering(order::Vector{Int}) = invperm(order)
-
-"""
     sortnodes(uniquenodevector, nodeindexvector, order)
 
 Apply the precomputed sorting permutation `order` (see
 [`calcnodesorting`](@ref)), returning the sorted names, the renumbered
 component node indices as a 2 by `Ncomponents` matrix, and the
-renumbering itself (see [`noderenumbering`](@ref)).
+renumbering itself, `invperm(order)`, whose `j`th entry is the new index
+of the node whose old index was `j`: `compile` renumbers the nodes of the
+scattering blocks with it, since they have no component table entry to be
+re-read from.
 """
 function sortnodes(uniquenodevector::Vector{String},
         nodeindexvector::Vector{Int}, order::Vector{Int})
 
     nodeindices = zeros(eltype(nodeindexvector),2,length(nodeindexvector)÷2)
 
-    nodevectorsortindices = noderenumbering(order)
+    nodevectorsortindices = invperm(order)
 
     for (i,j) in enumerate(nodeindexvector)
         # a mutual inductor couples two inductors rather than two nodes, so
@@ -807,21 +748,16 @@ function shortednets(elab::ElaboratedCircuit)
         def = instancedefinition(elab, i)
         terminals = instanceterminals(elab, i)
         # the terminals come in pairs for a two terminal component and for
-        # each port of a scattering block; any other component is compiled
-        # into a refusal, and its terminals keep their nets
-        if length(terminals) == 2 ||
-                def isa ScatteringParameters || def isa LinearizedScattering
-            for k in 1:2:length(terminals)
-                a, b = terminals[k], terminals[k+1]
-                if a == b
-                    shorted[a] = true
-                else
-                    other[a] = other[b] = true
-                end
-            end
-        else
-            for n in terminals
-                other[n] = true
+        # each port of a scattering block; a mutual inductor has none, and
+        # any other component is one `compile` refuses
+        (length(terminals) == 2 || def isa ScatteringParameters ||
+            def isa LinearizedScattering) || continue
+        for k in 1:2:length(terminals)
+            a, b = terminals[k], terminals[k+1]
+            if a == b
+                shorted[a] = true
+            else
+                other[a] = other[b] = true
             end
         end
     end
@@ -845,8 +781,7 @@ with ground first; the default `sorting = :name` sorts the net names as
 strings, since hierarchical net names are not integers, and `:number`
 sorts integer node names by value.
 
-Only components the solvers support can be lowered: a
-[`GaussianChannel`](@ref), a [`VoltageSource`](@ref), or a component with
+Only components the solvers support can be lowered: a component with
 other than two terminals which is not a scattering block throws a
 [`ComponentNotSupportedError`](@ref) naming the instance. A circuit with no connection to [`Ground`](@ref) throws an
 `ArgumentError`.
@@ -910,11 +845,11 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
             continue
         end
 
-        # The common components are lowered by an `isa` chain, ordered by
-        # how many of each a large circuit typically holds, and everything
-        # else falls through to `lowercomponent`; on a heterogeneous vector
-        # the chain of branches is one dispatch where a method per model
-        # would be one per component
+        # The components are lowered by an `isa` chain, ordered by how many
+        # of each a large circuit typically holds, and any other is one the
+        # solvers cannot use; on a heterogeneous vector the chain of
+        # branches is one dispatch where a method per model would be one
+        # per component
         typesymbol, value = if def isa Capacitor
             (:C, def.C)
         elseif def isa NonlinearInductor
@@ -937,7 +872,7 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         elseif def isa MutualInductor
             (:K, def.K)
         else
-            lowercomponent(def, path)
+            throw(ComponentNotSupportedError(lazy"the component $(typeof(def)) at $(path) is not supported by the solver."))
         end
         push!(componentnames, path)
         push!(componenttypes, typesymbol)
@@ -1050,8 +985,11 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
     group(t) = [i for (i, s) in enumerate(componenttypes) if s === t]
 
     Nnodes = length(uniquenodevector)
+    # the values narrowed to the element type their contents allow, so that
+    # a fully numeric circuit holds a `Vector{Float64}` rather than a vector
+    # of boxed numbers
     return CompiledCircuit(nodenames, nodeindices, Nnodes,
-        componentnames, componenttypes, tightenvalues(componentvalues),
+        componentnames, componenttypes, map(identity, componentvalues),
         componentnamedict, componenttemperatures, junctioncprs,
         group(:C), group(:R), group(:L), group(:Lj), group(:I),
         group(:K), ports, scatteringblocks, couplings,
@@ -1235,24 +1173,32 @@ function portreferenceimpedances(ports::Vector{CompiledPort}, values)
 end
 
 """
-    noiseindices(c::CompiledCircuit, values,
-        candidates = noisecandidates(c))
+    noiseindices(c::CompiledCircuit, values; frequencies = ())
 
 The flat table indices of the internal dissipative components, which are
 the noise channels of the linearized analysis: every resistor which is not
 a port's own termination, and every capacitor or inductor whose resolved
-value in `values` has a nonzero imaginary part.
+value in `values` is lossy, a number with a nonzero imaginary part or a
+frequency dependent value with one at any of the angular `frequencies`,
+the mode frequencies of a sweep. Where such a value is lossless its
+channel carries no noise. Without `frequencies` a frequency dependent value
+is no channel.
 
 A port termination is an external bath rather than an internal channel and
 is excluded by its role; any other resistor across a port's nodes is an
-ordinary device resistor and is included. `candidates` are the components
-examined, those which can be noise channels whatever their values, which a
-plan computes once and passes in.
+ordinary device resistor and is included.
 """
-function noiseindices(c::CompiledCircuit, values, candidates = noisecandidates(c))
-    return [i for i in candidates if c.componenttypes[i] === :R ||
-        (values[i] isa Complex && !iszero(values[i].im))]
+function noiseindices(c::CompiledCircuit, values; frequencies = ())
+    return [i for i in noisecandidates(c) if c.componenttypes[i] === :R ||
+        islossy(values[i], frequencies)]
 end
+
+# whether a capacitor's or an inductor's value dissipates: a number with an
+# imaginary part, or a frequency dependent value with one at any of
+# `frequencies`
+islossy(value, frequencies) = checkissymbolic(value) ?
+    any(w -> islossy(substitutefreq(value, w), ()), frequencies) :
+    value isa Complex && !iszero(imag(value))
 
 """
     isolatedsubnetworks(c::CompiledCircuit)
@@ -1290,9 +1236,9 @@ end
 
 # the components which can be noise channels whatever their values: the
 # resistors which are not a port's own environment, and the capacitors
-# and inductors, which are when their value has an imaginary part; a plan
-# holds them so that an assembly reads the values of these alone. A
-# component whose terminals are one node carries no current and is none.
+# and inductors, which are when their value has an imaginary part, so that
+# `noiseindices` reads the values of these alone. A component whose
+# terminals are one node carries no current and is none.
 function noisecandidates(c::CompiledCircuit)
     owned = Set(p.environment for p in c.ports if !iszero(p.environment))
     return [i for (i, t) in enumerate(c.componenttypes)

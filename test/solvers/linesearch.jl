@@ -10,33 +10,30 @@ using Logging
 
     @testset verbose=true "linesearch" begin
         @test(all(isapprox.(
-            JosephsonCircuits.quadratic_trial_step(0.0,-0.22,-0.02),
+            JosephsonCircuits.quadratic_trial_step(0.0,-0.22,-0.02, Backtracking()),
             (1.0, -0.22,true),
         )))
         @test(all(isapprox.(
-            JosephsonCircuits.quadratic_trial_step(0.0,0.0,-0.2),
+            JosephsonCircuits.quadratic_trial_step(0.0,0.0,-0.2, Backtracking()),
             (0.5, -0.05000000000000001, false),
         )))
         @test(all(isapprox.(
-            JosephsonCircuits.quadratic_trial_step(0.1,NaN,-0.02),
+            JosephsonCircuits.quadratic_trial_step(0.1,NaN,-0.02, Backtracking()),
             (0.5, 0.09000000000000001, false),
         )))
         # both safeguards bound the fitted step: the minimizer of this fit
         # is 0.4525
-        @test JosephsonCircuits.quadratic_trial_step(0.5, 0.605, -1.0;
-            safeguard_high = 0.2)[1] == 0.2
-        @test JosephsonCircuits.quadratic_trial_step(0.5, 0.605, -1.0;
-            safeguard_low = 0.46, safeguard_high = 0.6)[1] == 0.46
-        @test JosephsonCircuits.quadratic_trial_step(0.5, 0.605, -1.0)[1] ≈ 1/2.21
-        @test_throws ArgumentError JosephsonCircuits.quadratic_trial_step(
-            0.5, 0.605, -1.0; safeguard_low = 0.3, safeguard_high = 0.2)
+        @test JosephsonCircuits.quadratic_trial_step(0.5, 0.605, -1.0,
+            Backtracking(safeguardhigh = 0.2))[1] == 0.2
+        @test JosephsonCircuits.quadratic_trial_step(0.5, 0.605, -1.0,
+            Backtracking(safeguardlow = 0.46, safeguardhigh = 0.6))[1] == 0.46
+        @test JosephsonCircuits.quadratic_trial_step(0.5, 0.605, -1.0,
+            Backtracking())[1] ≈ 1/2.21
         # a full step whose residual overflows is halved within the
         # safeguards too, with the linear estimate at that step
         for bad in (Inf, NaN)
-            @test JosephsonCircuits.quadratic_trial_step(0.5, bad, -1.0; safeguard_high = 0.2) ==
-                (0.2, 0.5 - 0.2, false)
-            @test JosephsonCircuits.quadratic_trial_step(0.5, bad, -1.0;
-                safeguard_low = 0.6, safeguard_high = 0.7)[1] == 0.6
+            @test JosephsonCircuits.quadratic_trial_step(0.5, bad, -1.0,
+                Backtracking(safeguardhigh = 0.2)) == (0.2, 0.5 - 0.2, false)
         end
     end
 
@@ -64,20 +61,6 @@ using Logging
         @test α == 0.2 && accepted
     end
 
-    @testset verbose=true "linesearch error" begin
-
-        @test_throws(
-            ArgumentError("`dϕ0dα` = 0.0 must be finite and negative."),
-            JosephsonCircuits.quadratic_trial_step(0.0,0.2,0.0)
-        )
-
-        @test_throws(
-            ArgumentError("`ϕ0` = NaN must be finite."),
-            JosephsonCircuits.quadratic_trial_step(NaN,0.0,-0.02)
-        )
-
-    end
-
     @testset verbose=true "the Backtracking option" begin
         # every method interpolates by default, which suits the exact
         # step the direct loops take and the exact preconditioner the
@@ -100,10 +83,11 @@ using Logging
         @test JosephsonCircuits.withescalation(
             NewtonKrylov(linesearch = b), false).linesearch === b
 
-        # each keyword validates itself, as the other option objects do
+        # each keyword validates itself, as the other option objects do,
+        # with the bounds the line searches rely on and do not check again,
+        # whichever constructor builds it
         @test_throws ArgumentError Backtracking(safeguardlow = 0.0)
-        # the bounds match those the line searches enforce, so a value they
-        # would reject is refused at construction
+        @test_throws ArgumentError Backtracking(true, 0.0, 0.5, 1e-4, 10, 2)
         @test_throws ArgumentError Backtracking(safeguardlow = 0.5)
         @test_throws ArgumentError Backtracking(safeguardlow = 0.3,
             safeguardhigh = 0.3)

@@ -52,7 +52,12 @@ function polematrix!(work::PoleMatrixWorkspace, sys, z)
     return Q
 end
 
-polematrix(sys, z) = polematrix!(PoleMatrixWorkspace(sys), sys, z)
+# `l` fixed quasi-random vectors of length `n`, the probes of the contour
+# and the start of the shifted search: they leave the caller's random
+# stream alone and favour no symmetry of a circuit, as a constant vector,
+# orthogonal to the antisymmetric modes of a symmetric one, would
+probevectors(n, l) =
+    ComplexF64[sin(i*j*sqrt(2)) + im*cos(i*j*sqrt(3)) for i in 1:n, j in 1:l]/sqrt(n)
 
 # The contributions of the nodes `nodes` of the unit circle to the moment
 # sums `sums[k]`, the sum over the nodes `t` of `t^(k-1) X_t`, `X_t` the
@@ -74,6 +79,11 @@ function addmoments!(sums, bound, work, cache, factorization, sys, center, radiu
     end
     return bound
 end
+
+# the nodes of the trapezoidal rule of `N` points on the unit circle,
+# `offset` half steps past the angles 2pi*j/N: offset 0 gives the rule,
+# and offset 1 the nodes between, which double it
+rulenodes(N, offset) = (cis(pi*(2j + offset)/N) for j in 0:N-1)
 
 # The poles inside the circle from the trapezoidal rule of `N` nodes: the
 # block Hankel matrices of the moments, the first's rank cut at `ranktol`
@@ -106,23 +116,21 @@ end
 function polesolve(method::ContourIntegral, sys, factorization)
     n = size(sys.Q0, 1)
     l = min(n, method.probes)
-    # every unit vector for a small reference; otherwise probes from a
-    # fixed sequence, which leaves the caller's random stream alone
-    V = l == n ? Matrix{ComplexF64}(I, n, n) :
-        ComplexF64[sin(i*j*sqrt(2)) + im*cos(i*j*sqrt(3)) for i in 1:n, j in 1:l]/sqrt(n)
+    # every unit vector for a small reference; otherwise the fixed probes
+    V = l == n ? Matrix{ComplexF64}(I, n, n) : probevectors(n, l)
     center, radius = method.center/sys.scale, method.radius/sys.scale
     K, N = method.moments, method.quadrature
     work, cache = PoleMatrixWorkspace(sys), FactorizationCache()
     sums = [zeros(ComplexF64, n, l) for _ in 1:2K]
     bound = addmoments!(sums, 0.0, work, cache, factorization, sys, center, radius,
-        (cis(2pi*j/N) for j in 0:N-1), V)
+        rulenodes(N, 0), V)
     previous = polereduce(sums, bound, N, K, method.ranktol, center, radius)
     distance(a, b) = isempty(a) ? 0.0 : isempty(b) ? Inf :
         maximum(x -> minimum(abs.(x .- b)), a)/radius
     result = nothing
     for _ in 1:method.refinements
         bound = addmoments!(sums, bound, work, cache, factorization, sys, center, radius,
-            (cis(pi*(2j + 1)/N) for j in 0:N-1), V)
+            rulenodes(N, 1), V)
         N *= 2
         current = polereduce(sums, bound, N, K, method.ranktol, center, radius)
         change = max(distance(previous.values, current.values), distance(current.values, previous.values))

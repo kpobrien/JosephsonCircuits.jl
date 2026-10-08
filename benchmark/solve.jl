@@ -68,11 +68,28 @@ measure("rpm$(N512)/hbsolve", pumped, line, gain)
 # two dimensional grid of mixing products, with the direct current and
 # every order retained.
 const N128 = benchsize(128)
+line128 = rpmjtwpa(N128)
 twotone(c) = hbnlsolve((WP, WS), (8, 4),
     [(mode = (1, 0), port = 1, current = 1.1e-6),
      (mode = (0, 1), port = 1, current = 1.1e-6)], c;
     dc = true, odd = true, even = true, keyedarrays = false)
-measure("rpm$(N128)/hbnlsolve, two pumps", twotone, rpmjtwpa(N128), converged)
+pumped2 = measure("rpm$(N128)/hbnlsolve, two pumps", twotone, line128,
+    converged)
+
+# The gain sweep of the line under the two pumps: the linearized solve on
+# the two dimensional grid of signal and idler modes, from the pump solve
+# above, with the default factorization of the sweep.
+const WSWEEP2 = 2*pi*collect(range(4e9, 9e9; length = benchsize(41)))
+sweep2(nl) = hblinsolve(WSWEEP2, line128; nonlinear = nl,
+    Nmodulationharmonics = (2, 2), threewavemixing = true,
+    fourwavemixing = true, keyedarrays = false)
+function gain2(lin)
+    k = argmin(abs.(lin.w .- 2*pi*6e9))
+    nm = length(lin.modes)
+    s21 = lin.S[lin.signalindex + nm, lin.signalindex, k]
+    return "gain=$(round(10*log10(abs2(s21)); digits = 2)) dB at $(round(lin.w[k]/(2*pi*1e9); digits = 2)) GHz"
+end
+measure("rpm$(N128)/hblinsolve, two pumps", sweep2, pumped2, gain2)
 
 # A strong pump on a long line, three quarters of the critical current,
 # which the Newton iteration takes many damped steps to reach.

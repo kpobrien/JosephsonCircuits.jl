@@ -166,20 +166,6 @@ JosephsonCircuits.applypreconditioner!(z::AbstractVector, p::JacobiP,
         end
     end
 
-    @testset "warm start" begin
-        n = 30
-        A = randn(n, n) + 4n*I
-        b = randn(n)
-        xref = A \ b
-        ws = JosephsonCircuits.GMRESWorkspace(n, n)
-        x = copy(xref)                       # start at the solution
-        out = JosephsonCircuits.gmres!(x, matrixproduct(A), b, ws;
-            rtol = 1e-10, initialzero = false)
-        @test out.converged
-        @test out.iterations == 0            # nothing to do
-        @test isapprox(x, xref; rtol = 1e-10)
-    end
-
     @testset "allocation does not scale with iterations" begin
         n = 50
         A = randn(n, n) + 5n*I
@@ -291,8 +277,7 @@ end
 
     # a preconditioner which is not fixed makes the recurrence estimate run
     # ahead of the explicit residual, so a cycle ends early and another
-    # follows; a harvest reads the last cycle, whose length the per cycle
-    # callback sees
+    # follows, whose lengths the per cycle callback sees
     calls = Ref(0)
     Mv!(z, v) = (calls[] += 1; z .= v .* (1 + 0.3*sin(calls[])); z)
     Av = Matrix(Diagonal(1.0 .+ (1:40) ./ 40)) .+ 0.05 .* sin.((1:40) .* (1:40)')
@@ -303,7 +288,6 @@ end
         oncycle = (ws, j) -> push!(lengths, j))
     @test outv.cycles == length(lengths) >= 2
     @test first(lengths) < 30
-    @test JosephsonCircuits.harvestdimension(wsv, outv) == last(lengths)
 
     # a non-finite value from the preconditioner or the operator ends the
     # cycle at the step which met it: the solve does not run the cycle out
@@ -327,7 +311,6 @@ end
         @test xn == zeros(40)
         @test outn.residual == norm(bn)
         @test outn.residualvector ≈ bn
-        @test outn.lastcycle == 0
     end
 
     # a cycle of one step against an exact preconditioner takes its
@@ -340,7 +323,7 @@ end
     oute = JosephsonCircuits.gmres!(xe, matrixproduct(An), bn,
         JosephsonCircuits.GMRESWorkspace(40, 30, Float64); Mop! = Me!,
         rtol = 1e-12, maxrestarts = 4)
-    @test oute.converged && oute.lastcycle == 1
+    @test oute.converged && oute.cycles == 1 && oute.iterations == 1
     @test applied[] == 1
     @test xe ≈ An \ bn rtol = 1e-12
     # a longer cycle of rank one does not: its last step left the image of
@@ -352,7 +335,7 @@ end
     outd = JosephsonCircuits.gmres!(xd, matrixproduct([1.0 0.0; 0.0 0.0]),
         [1.0, 1.0], JosephsonCircuits.GMRESWorkspace(2, 2, Float64);
         Mop! = (z, v) -> (z .= D .* v), rtol = 1e-12, maxrestarts = 1)
-    @test outd.lastcycle == 2
+    @test outd.cycles == 1 && outd.iterations == 2
     @test xd ≈ [1.0, 2.0]
 
     # non-finite tolerances must be rejected rather than reporting a
@@ -365,17 +348,16 @@ end
         matrixproduct(A3), b3, ws3; rtol = Inf)
     @test_throws ArgumentError JosephsonCircuits.gmres!(x3,
         matrixproduct(A3), b3, ws3; atol = NaN)
-
-    # a zero right hand side with initialzero = false must measure the warm
-    # start rather than discard it
-    A4 = [2.0 0.0; 0.0 3.0]
-    b4 = [0.0, 0.0]
-    x4 = [7.0, -4.0]
-    ws4 = JosephsonCircuits.GMRESWorkspace(2, 2, Float64)
-    out4 = JosephsonCircuits.gmres!(x4, matrixproduct(A4), b4, ws4;
-        rtol = 1e-10, initialzero = false)
-    @test out4.converged
-    @test norm(A4*x4 - b4) <= 1e-10
+    # and so must a right hand side whose norm is not finite, from an entry
+    # or from finite entries whose norm overflows: its relative tolerance
+    # would accept any residual, the zero start's infinite one included
+    for bnf in ([Inf, 1.0], fill(1.5e308, 2), [NaN, 1.0])
+        xnf = ones(2)
+        outnf = JosephsonCircuits.gmres!(xnf, matrixproduct(A3), bnf, ws3)
+        @test !outnf.converged
+        @test outnf.reason === :nonfinite
+        @test iszero(xnf)
+    end
 
     # the reported termination reason and cycle count are present and
     # consistent with convergence

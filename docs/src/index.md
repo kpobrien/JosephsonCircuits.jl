@@ -74,7 +74,7 @@ Pkg.add(name = "JosephsonCircuits", rev = "main")
 
 If an example does not match your installation, check `Pkg.status()` and
 `VERSION` first. Include those values and a minimal reproducer in a bug
-report. See the [migration guide](migration.md) for interface changes.
+report. See the [migration guide](migration.md) for the changes since v0.5.4.
 
 ## A first calculation
 
@@ -106,7 +106,9 @@ the same pump in time, including the Fourier-amplitude convention.
   sensitivities about a driven state.
 - Temporal stability poles about a driven state, with method-specific limits
   and convergence checks in the [stability guide](stability.md).
-- Linear circuit responses and symbolic circuit matrices.
+- Linear circuit responses, and the circuit matrices with the component
+  values left as expressions in their parameters
+  ([`symbolicmatrices`](@ref)).
 - Transient trajectories, their tangent and adjoint responses, and noise
   in selected temporal modes.
 

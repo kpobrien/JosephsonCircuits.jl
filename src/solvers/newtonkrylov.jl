@@ -5,7 +5,10 @@
 """
     nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner,
         method::NewtonKrylov = NewtonKrylov(); iterations = 1000,
-        atol = 1e-8, rtol = 0.0, workspace = nothing)
+        atol = 1e-8, rtol = 0.0, workspace = nothing, forcingmin = 1e-10,
+        forcingmax = 0.9, forcingstart = 0.3, forcinggamma = 0.9,
+        forcingalpha = (1 + sqrt(5))/2, stagnation = 0.9, slowrate = 0.5,
+        linearfloor = 0.1)
 
 Inexact (Newton-Krylov) solver for a real system: the Newton step is taken
 from [`gmres!`](@ref) on the exact matrix-free product `jvp!(y, v)` rather
@@ -29,23 +32,32 @@ here: the preconditioner is `pc`, built by the caller.
 [`Always`](@ref), by the measured rule of [`Probe`](@ref), and for
 [`Never`](@ref) only when forced. A rebuild is forced regardless of the
 policy when a solve makes progress but misses its tolerance, when a step is
-not a descent direction, when the line search finds no decrease, and after
-a successful escalation. The linear tolerance follows the Eisenstat-Walker choice 2 forcing sequence
-`krylovgamma*(|F_k|/|F_{k-1}|)^krylovalpha` clamped to
-`[krylovrtolmin, krylovrtolmax]`, with an absolute floor of `atol/10` so late
-solves are not pushed below the nonlinear tolerance. Because the
-preconditioner can be stale, the linesearch slope is always taken from an
-exact matrix-free product, and a direction which is not a descent
-direction is solved for again, at the same forcing, from a rebuilt
-preconditioner before the iteration is declared stalled; for an exact
-preconditioner that is the exact Newton step.
+not a descent direction, when the line search finds no decrease and the
+rebuild can change the step (below), and after a successful escalation.
+The linear tolerance follows the Eisenstat-Walker choice 2 forcing sequence
+`forcinggamma*(|F_k|/|F_{k-1}|)^forcingalpha`, clamped to
+`[forcingmin, forcingmax]` and started at `forcingstart`, with an absolute
+floor of `linearfloor` times the tolerance in force,
+`max(atol, rtol*norm(F0))`, so late solves are not pushed below the
+nonlinear tolerance. Because the preconditioner can be stale, the
+linesearch slope is always taken from an exact matrix-free product, and a
+direction which is not a descent direction is solved for again, at the
+same forcing, from a rebuilt preconditioner before the iteration is
+declared stalled; for an exact preconditioner that is the exact Newton
+step.
 
 The globalization is the plain damped-Newton path of [`nlsolve!`](@ref):
 the [`backtracking_linesearch!`](@ref) of [`nlsolve!`](@ref) with the
 method's [`Backtracking`](@ref), which on Armijo failure still takes the
 best decreasing trial, with consecutive failures counted against its
-`maxfailures` and a no-decrease step retried once from a fresh
-preconditioner before stopping. There is deliberately no Anderson
+`maxfailures`, and a step with no decrease retried once from a rebuilt
+preconditioner before stopping when the rebuild can change it: when the
+preconditioner the step came from was not rebuilt at its point, or has
+changed since in a way a rebuild takes in (an escalation granted, a slow
+solve reported, on which a [`Clusters`](@ref) request remeasures,
+candidates a deflation banked, see [`hasnewcandidates`](@ref)). Against a
+preconditioner rebuilt there and unchanged the retry would repeat the step,
+and the solve stops at once. There is deliberately no Anderson
 acceleration here: the Krylov steps are near-exact Newton steps, and the
 solver is kept simple.
 
@@ -61,29 +73,39 @@ solver is kept simple.
     previous solve of the same system, or holding `nothing`, in which case
     the vectors are allocated and stored into it for the next solve. With
     no `Ref` at all they are allocated and dropped.
+- `forcingmin = 1e-10`, `forcingmax = 0.9`, `forcingstart = 0.3`,
+    `forcinggamma = 0.9`, `forcingalpha = (1 + sqrt(5))/2`: the clamp, the
+    first term and the parameters of the forcing sequence, on the ranges
+    Eisenstat-Walker choice 2 is defined on: `0 < forcingmin <=
+    forcingstart <= forcingmax < 1`, `0 < forcinggamma <= 1` and
+    `1 < forcingalpha <= 2`.
+- `stagnation = 0.9`: a linear solve which does not bring the linear
+    residual below this fraction of the residual norm is stagnated, and
+    the preconditioner solve is taken as the step.
+- `slowrate = 0.5`: a linear solve whose residual was multiplied, on
+    average, by more than this factor per Arnoldi step is reported to the
+    preconditioner as slow ([`stalled!`](@ref)); none is under
+    [`Never`](@ref).
+- `linearfloor = 0.1`: the absolute floor of the linear solves, as a
+    fraction of the nonlinear tolerance in force.
 
 And, read off `method`: `linearsolver`, the linear solver of the Newton
 step, a [`GMRES`](@ref) or a [`KrylovJL`](@ref); `refresh`, when the
 preconditioner is rebuilt, [`Always`](@ref) before every step, by the
 measured rule of [`Probe`](@ref), or [`Never`](@ref) except when forced
 (either way a solve which made progress but missed its tolerance, a
-non-descent direction, a line search with no decrease and a successful
-escalation force a rebuild); and `escalate`, whether a preconditioner
-which makes progress but fails to reach its tolerance is escalated (see
-[`escalatepreconditioner!`](@ref)) rather than tried again, within the
-memory the grown factors are predicted to take; a refused escalation is
-recorded (`escalationrequested` in the Krylov record) and the solve
-carries on.
+non-descent direction, a line search with no decrease which a rebuild can
+change, and a successful escalation force a rebuild); and `escalate`,
+whether a preconditioner whose linear solve fails to reach its tolerance
+is escalated (see [`escalatepreconditioner!`](@ref)), within the memory
+the grown factors are predicted to take; a refused escalation is recorded
+(`escalationrequested` in the Krylov record) and the solve carries on.
 
-The forcing sequence is Eisenstat-Walker choice 2 with `gamma = 0.9` and
-`alpha = (1 + sqrt(5))/2`, clamped to `[1e-10, 0.9]` and started at 0.3;
-a solve which does not bring the linear residual below 0.9 of the residual
-norm is treated as stagnated and the preconditioner solve taken as the
-step; and a solve whose residual came down by less than 0.5 per Arnoldi
-step is reported to the preconditioner as slow ([`stalled!`](@ref); off
-under [`Never`](@ref), which also disables the count rule). These are
-fixed, not options of the method. The line
-search is the method's [`Backtracking`](@ref), interpolating by default.
+The forcing sequence, the thresholds of a stagnated and of a slow linear
+solve and the floor of the linear solves are keywords of this function
+rather than options of the method; [`Never`](@ref) turns off the
+slow-solve report and the count rule. The line search is the method's
+[`Backtracking`](@ref), interpolating by default.
 Two budgets bound the work: `iterations` Newton steps, and `iterations`
 restart lengths of Arnoldi steps in total, so that a preconditioner which
 runs every linear solve to its limit cannot turn the step budget into
@@ -101,17 +123,16 @@ the [`NewtonKrylov`](@ref) method object (`preconditioner`, `linearsolver`,
 Returns an [`IterationInfo`](@ref) with the same per-iteration diagnostics
 as [`nlsolve!`](@ref) (the `andersonaccepted` record is always false) and a
 `reason` of `:converged`, `:iterations`, `:work` (the Arnoldi budget was
-spent), `:linesearch` (no decrease twice, or a direction which is not a
-descent direction after the exact rescue), or `:progress`.
+spent), `:linesearch` (no decrease, after the retry when one is made, or
+a direction which is not a descent direction after the exact rescue),
+`:progress`, or `:nonfinite` (the residual norm at the initial point is
+not finite, and no step is taken).
 """
-function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
+function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
     x::AbstractVector{T}, pc::AbstractPreconditioner,
     method::NewtonKrylov = NewtonKrylov(); iterations = 1000, atol = 1e-8,
-    rtol = 0.0,
-    workspace::Union{Nothing,Base.RefValue} = nothing) where {T<:AbstractFloat}
-
-    krylovrestart = restartlength(method.linearsolver)
-    krylovmaxrestarts = maxrestarts(method.linearsolver)
+    rtol = 0.0, workspace::Union{Nothing,Base.RefValue} = nothing,
+    kwargs...) where {T<:AbstractFloat}
 
     length(F) == length(x) || throw(DimensionMismatch(
         lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
@@ -130,11 +151,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     atol >= 0 || throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
     0 <= rtol < Inf || throw(ArgumentError(
         lazy"`rtol` = $(rtol) must be finite and nonnegative."))
-    krylovrestart >= 1 || throw(ArgumentError(
-        lazy"`krylovrestart` = $(krylovrestart) must be at least 1."))
-    krylovmaxrestarts >= 1 || throw(ArgumentError(
-        lazy"`krylovmaxrestarts` = $(krylovmaxrestarts) must be at least 1."))
-    m = min(krylovrestart, length(x))
+    # the restart length, which `GMRES` validated when it was built
+    m = min(restartlength(method.linearsolver), length(x))
     kv = if isnothing(workspace) || isnothing(workspace[])
         KrylovVectors(x, F, m)
     else
@@ -147,42 +165,37 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # the iteration behind a function barrier, so that it is compiled for
     # the concrete type of a workspace which a reuse holds untyped
     return _nlsolvekrylov!(erased(fj!), jvp, F, x, erased(pc), method, kv;
-        iterations = iterations, atol = atol, rtol = rtol)
+        iterations = iterations, atol = atol, rtol = rtol, kwargs...)
 end
 
 function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
     x::AbstractVector{T}, pc::AbstractPreconditioner, method::NewtonKrylov,
-    kv::KrylovVectors; iterations, atol, rtol) where {T<:AbstractFloat}
+    kv::KrylovVectors; iterations, atol, rtol, forcingmin = 1e-10,
+    forcingmax = 0.9, forcingstart = 0.3, forcinggamma = 0.9,
+    forcingalpha = (1 + sqrt(5))/2, stagnation = 0.9, slowrate = 0.5,
+    linearfloor = 0.1) where {T<:AbstractFloat}
+
+    # the ranges the forcing sequence and the thresholds are defined on
+    0 < forcingmin <= forcingstart <= forcingmax < 1 || throw(ArgumentError(
+        lazy"the forcing terms must satisfy 0 < `forcingmin` = $(forcingmin) <= `forcingstart` = $(forcingstart) <= `forcingmax` = $(forcingmax) < 1."))
+    (0 < forcinggamma <= 1 && 1 < forcingalpha <= 2) || throw(ArgumentError(
+        lazy"Eisenstat-Walker choice 2 takes 0 < `forcinggamma` <= 1 and 1 < `forcingalpha` <= 2, not $(forcinggamma) and $(forcingalpha)."))
+    (0 < stagnation <= 1 && 0 < slowrate < 1 && 0 <= linearfloor <= 1) ||
+        throw(ArgumentError(
+            lazy"`stagnation` = $(stagnation) must be in (0, 1], `slowrate` = $(slowrate) in (0, 1) and `linearfloor` = $(linearfloor) in [0, 1]."))
 
     linearsolver = method.linearsolver
-    policy = method.refresh
-    escalate = method.escalate
-
-    # The fixed constants of the iteration, under the names the loop below
-    # uses. The forcing sequence is Eisenstat-Walker choice 2 and its
-    # parameters are only defined on these ranges; the stagnation and slow
-    # solve thresholds are those the docstring describes.
-    krylovrestart = restartlength(linearsolver)
     krylovmaxrestarts = maxrestarts(linearsolver)
-    krylovrefreshiterations = policy isa Never ? typemax(Int) : 1
-    krylovrefreshrate = policy isa Never ? 1.0 : 0.5
-    krylovrefresh = policy isa Probe ? :probe : :count
-    krylovrtolmin = 1e-10
-    krylovrtolmax = 0.9
-    krylovrtol0 = 0.3
-    krylovgamma = 0.9
-    krylovalpha = (1 + sqrt(5))/2
-    krylovstagnation = 0.9
-    krylovescalate = escalate ? 1 : typemax(Int)
+    # the refresh policy, read off the method: under `Probe` a measured
+    # probe decides whether a rebuild the count asks for pays, and under
+    # `Never` the count asks for none and no slow solve is reported
+    probing = method.refresh isa Probe
+    frozen = method.refresh isa Never
+    escalate = method.escalate
     linesearch = method.linesearch
 
     ws, deltax, xcandidate = kv.ws, kv.deltax, kv.xcandidate
     Jv, Fbest = kv.Jv, kv.Fbest
-
-    # absolute floor for the linear solves: once the linear residual is below
-    # the nonlinear tolerance, further accuracy cannot help the Newton
-    # iteration, and demanding it makes late GMRES solves "fail"
-    gmresatol = real(T)(atol)/10
 
     ### diagnostic info
     krylovrecord = KrylovSolveInfo[]
@@ -197,7 +210,7 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
     # preconditioner which runs every solve to its limit cannot turn the
     # step budget into hours
     work = 0
-    workbudget = iterations*krylovrestart
+    workbudget = iterations*restartlength(linearsolver)
     # the progress rule (`residualstalled`) judges the residual history
     # from `progressstart` against the budget left; its one recovery
     # rebuilds the preconditioner and takes exact Newton steps from then
@@ -206,7 +219,7 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
     exactforcing = false
     # why the next rebuild was asked for: `:forced` by a failure of the
     # last solve or the start, `:stale` by the count and rate rules, which
-    # is the only kind `krylovrefresh = :probe` may skip
+    # is the only kind `Probe` may skip
     refreshreason = :forced
     # the measurements of the probe rule: the last rebuild's time, the
     # one-step reduction and Arnoldi count of the solve right after it, and
@@ -215,11 +228,8 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
     rhofresh = NaN
     kfresh = 0
     tstep = 0.0
-    # consecutive linear solves which failed to reach the forcing tolerance,
-    # which trigger an escalation of the preconditioner
-    linearfailures = 0
     # The forcing sequence is Eisenstat-Walker choice 2 clamped to
-    # [krylovrtolmin, krylovrtolmax] and nothing else. A cap which
+    # [forcingmin, forcingmax] and nothing else. A cap which
     # tightened the clamp after a damped step would read a short step as a
     # weak direction; on a long pumped line every step is short because
     # the residual is nonlinear along a full Newton direction, and the near
@@ -230,18 +240,13 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
     # the preconditioner object itself is handed to the linear solve, which
     # applies it through `applypreconditioner!`
     Mop! = pc
-    # Where the recycled subspace is read out of the Arnoldi factorization.
-    # A preconditioner which harvests per cycle gets the callback and is not
-    # harvested again after the solve; one which harvests only the cycle
-    # left in the workspace gets the call afterwards. Either way nothing is
+    # A preconditioner which recycles reads the Arnoldi factorization of
+    # every restart cycle, when the linear solver exposes it. Nothing is
     # *rebuilt* inside a solve: the preconditioner has to stay fixed for
     # GMRES, so a harvest only banks candidates and the rebuild waits for
-    # the `pointmoved!` of the next Newton step.
-    recycles = supportsrecycling(linearsolver)
-    percycle = recycles && usescycleharvest(pc)
-    oncycle = percycle ? (wsc, j) -> harvestcycle!(pc, wsc, j) : nothing
-    harvestafter!(out) =
-        (recycles && !percycle && harvest!(pc, ws, out); nothing)
+    # the next Newton step, its refresh or, without one, its `pointmoved!`.
+    oncycle = supportsrecycling(linearsolver) && usescycleharvest(pc) ?
+        (wsc, j) -> harvestcycle!(pc, wsc, j) : nothing
     # residual-only adapter for the linesearch, which never needs the
     # Jacobian and therefore does not accept the combined fj! interface
     residual!(Fv, xv) = fj!(Fv, nothing, xv)
@@ -270,7 +275,7 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
         updatepreconditioner!(pc, x)
         fj!(nothing, nothing, x)
         t = time() - t0
-        probe = krylovrefresh === :probe && !isexactpreconditioner(pc)
+        probe = probing && !isexactpreconditioner(pc)
         return t, probe ? onestepreduction() : NaN
     end
 
@@ -278,22 +283,25 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
     # pushed immediately after a step is accepted, so convergence is decided
     # on each fresh residual and no preconditioner is ever assembled at a
     # final point. `atol` is absolute; `rtol` adds a relative test beside
-    # it, and with the default `rtol = 0` the tolerance is exactly `atol`
+    # it, and with the default `rtol = 0` the tolerance is exactly `atol`.
+    # A start which has converged, or whose residual norm is not finite,
+    # ends the solve before any preconditioner work
     residual!(F, x)
-    tracestart!(tr, F, atol, rtol)
+    tracestart!(tr, F, atol, rtol) && return IterationInfo(tr, krylovrecord)
+    # absolute floor for the linear solves, from the tolerance in force, the
+    # relative one included: once the linear residual is below the
+    # nonlinear tolerance, further accuracy cannot help the Newton
+    # iteration, and demanding it makes late GMRES solves "fail"
+    gmresatol = linearfloor*tr.atol
 
     for n in 1:iterations
-        tr.converged && break
-
         # the matrix-free product reads the evaluation point held by the
         # caller, and the linesearch leaves it at the last trial point
         # rather than the accepted one, so resynchronize it
         fj!(nothing, nothing, x)
-        # the Jacobian the preconditioner's deflation was measured against
-        # is that of the previous step; a refresh below rebuilds it, and a
-        # form which can refresh cheaply without the base does so lazily
-        pointmoved!(pc)
-        if refresh && refreshreason === :stale && krylovrefresh === :probe &&
+        # the probe measures the preconditioner the last step left, with the
+        # deflation built against that step's Jacobian
+        if refresh && refreshreason === :stale && probing &&
                 kfresh > 0 && isfinite(rhofresh) && rhofresh > 0
             rho = onestepreduction()
             kpred = rho >= 1 ? Inf : rho <= 0 ? 0.0 :
@@ -305,24 +313,36 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
             tfactor, rhofresh = refreshpreconditioner!()
             refresh = false
             refreshreason = :forced
+        else
+            # the deflation was built against an earlier step's Jacobian: a
+            # form which can rebuild it without the base does so at its next
+            # application. A refresh rebuilds the deflation itself, so it is
+            # told only when there is none, and a step builds it once
+            pointmoved!(pc)
         end
+        # whether the preconditioner this step's direction comes from was
+        # rebuilt at this point, and whether it has changed since in a way
+        # a rebuild here takes in; they decide the retry of a step whose
+        # line search finds no decrease
+        rebuilthere = justrefreshed
+        changed = false
 
         # Eisenstat-Walker choice 2 forcing term from the last accepted
-        # step, at its clamp maximum before any step has been taken
+        # step, and its first term before any step has been taken
         forcing = if length(normF) >= 2 && normF[end-1] > 0
-            clamp(krylovgamma*(normF[end]/normF[end-1])^krylovalpha,
-                krylovrtolmin, krylovrtolmax)
+            clamp(forcinggamma*(normF[end]/normF[end-1])^forcingalpha,
+                forcingmin, forcingmax)
         else
             # the *initial* forcing term, which is a separate quantity from
-            # the upper clamp: seeding the safeguard at krylovrtolmax would
-            # let it walk down from there over several outer steps
-            # (0.9, 0.76, 0.58, 0.37, 0.18 for the default gamma and alpha),
-            # so that several successive linear solves terminate after very
-            # little residual reduction
-            krylovrtol0
+            # the upper clamp: seeding the safeguard at forcingmax would let
+            # it walk down from there over several outer steps (0.9, 0.76,
+            # 0.58, 0.37, 0.18 for the default gamma and alpha), so that
+            # several successive linear solves terminate after very little
+            # residual reduction
+            forcingstart
         end
 
-        exactforcing && (forcing = krylovrtolmin)
+        exactforcing && (forcing = forcingmin)
         tsolve = time()
         out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
             rtol = forcing, atol = gmresatol,
@@ -331,10 +351,9 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
         work += out.iterations
         tstep = tsolve/max(out.iterations, 1)
         justrefreshed && (kfresh = max(out.iterations, 1))
-        harvestafter!(out)
         # a residual which is not finite counts as stagnated
         stagnated = !out.converged &&
-            !(out.residual <= krylovstagnation*normF[end])
+            !(out.residual <= stagnation*normF[end])
         push!(krylovrecord, krylovsolverecord(out, n, :step, normF[end],
             forcing, justrefreshed, stagnated, tstart, pc))
         # `!justrefreshed` matters: a retry only makes sense against a
@@ -350,16 +369,16 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
             # preconditioner too crude for the problem rather than one that
             # is merely stale.
             tfactor, rhofresh = refreshpreconditioner!()
+            rebuilthere = true
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts, oncycle = oncycle)
             # the fresh preconditioner's reduction and Arnoldi count, which
             # calibrate the probe, are this solve's
             kfresh = max(out.iterations, 1)
-            harvestafter!(out)
             work += out.iterations
             stagnated = !out.converged &&
-                !(out.residual <= krylovstagnation*normF[end])
+                !(out.residual <= stagnation*normF[end])
             push!(krylovrecord, krylovsolverecord(out, n, :retry, normF[end],
                 forcing, true, stagnated, tstart, pc))
         end
@@ -372,29 +391,23 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
         if stagnated
             applypreconditioner!(deltax, pc, F)
         end
-        # Escalation is triggered by repeated *non-convergence*, not by
-        # stagnation. These are different symptoms: stagnation is a Krylov
-        # space which contributed nothing, while the common failure of a
-        # merely inadequate preconditioner is a solve which makes real
-        # progress and still cannot reach the forcing tolerance within its
-        # budget. Only the latter repeats, so keying escalation to stagnation
-        # alone would leave it never firing on the problems it exists to
-        # rescue.
-        if out.converged
-            linearfailures = 0
-        else
-            linearfailures += 1
-            if linearfailures >= krylovescalate
-                if escalatepreconditioner!(pc)
-                    # the escalation dropped the factorization: the rebuild
-                    # is mandatory, not a probe's economic decision
-                    refresh = true
-                    refreshreason = :forced
-                    krylovrecord[end] = with(krylovrecord[end]; escalated = true)
-                else
-                    krylovrecord[end] = with(krylovrecord[end]; escalationrequested = true)
-                end
-                linearfailures = 0
+        # Escalation is triggered by every solve which does not converge,
+        # not by stagnation alone. These are different symptoms: stagnation
+        # is a Krylov space which contributed nothing, while the common
+        # failure of a merely inadequate preconditioner is a solve which
+        # makes real progress and still cannot reach the forcing tolerance
+        # within its budget, so keying escalation to stagnation alone would
+        # leave it never firing on the problems it exists to rescue.
+        if escalate && !out.converged
+            if escalatepreconditioner!(pc)
+                # the escalation dropped the factorization: the rebuild
+                # is mandatory, not a probe's economic decision
+                refresh = true
+                refreshreason = :forced
+                changed = true
+                krylovrecord[end] = with(krylovrecord[end]; escalated = true)
+            else
+                krylovrecord[end] = with(krylovrecord[end]; escalationrequested = true)
             end
         end
         # Staleness is judged by how fast the linear residual came down per
@@ -403,16 +416,22 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
         # badly stale preconditioner can satisfy the tolerance in a single
         # iteration after removing only a small fraction of the linear
         # residual, and a rule keyed to the count reads that as health.
-        if out.iterations > 0 && normF[end] > 0
+        # Under `Never` no solve is reported, whatever its rate, which
+        # exceeds one for a linear solver whose residual can grow.
+        if !frozen && out.iterations > 0 && normF[end] > 0
             rate = (out.residual/normF[end])^(1/out.iterations)
             # a slow solve is what a preconditioner which measures its own
-            # structure needs to hear, whether or not it is refreshed
-            isfinite(rate) && rate > krylovrefreshrate && stalled!(pc)
+            # structure needs to hear, whether or not it is refreshed, and
+            # one may remeasure at its next rebuild
+            if isfinite(rate) && rate > slowrate
+                stalled!(pc)
+                changed = true
+            end
         end
         # the count rule: under `Always` and `Probe` one Arnoldi step is
         # enough to ask for a rebuild (which the probe may then decline),
         # under `Never` no count is
-        if out.iterations >= krylovrefreshiterations
+        if !frozen && out.iterations >= 1
             refresh || (refreshreason = :stale)
             refresh = true
         end
@@ -438,6 +457,8 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
             # the Jacobian. If that is not a descent direction either, the
             # iteration has stalled.
             tfactor, rhofresh = refreshpreconditioner!()
+            rebuilthere = true
+            changed = false
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts, oncycle = oncycle)
@@ -445,7 +466,6 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
             # the rescue is often the most informative solve of the step,
             # and its Arnoldi steps count against the work budget like any
             # other solve's
-            harvestafter!(out)
             push!(krylovrecord, krylovsolverecord(out, n, :rescue,
                 normF[end], forcing, true, false, tstart, pc))
             work += out.iterations
@@ -476,8 +496,16 @@ function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
         if iszero(alpha1)
             # no decrease anywhere along the direction; F again holds the
             # residual at the unchanged x (the linesearch restore contract).
-            # retry once from a fresh preconditioner, then give up
-            if refreshedforstall
+            # A rebuild here gives another direction only when the
+            # preconditioner this one came from was not rebuilt at this
+            # point, or has changed since in a way a rebuild takes in: an
+            # escalation granted, a slow solve reported, on which a cluster
+            # request remeasures, or candidates a deflation banked. Then the
+            # step is retried once from a rebuilt preconditioner; otherwise
+            # a retry would repeat it exactly, and the solve ends, as it
+            # does when the retry finds no decrease either
+            if refreshedforstall ||
+                    (rebuilthere && !changed && !hasnewcandidates(pc))
                 tr.reason = :linesearch
                 break
             end

@@ -76,12 +76,16 @@ function evaluatehybrid!(B::AbstractArray{Complex{Float64},3},
     C::AbstractArray{Complex{Float64},3}, block::ScatteringParameters,
     ws::AbstractVector, work::HybridWorkspace; derivative::Bool = false)
 
-    n = block.nports
-    if size(B) != (n, n, length(ws)) || size(C) != (n, n, length(ws))
-        throw(DimensionMismatch(lazy"The destination arrays have sizes $(size(B)) and $(size(C)) but ($(n), $(n), $(length(ws))) is required."))
-    end
+    # the block's data at the nonzero frequencies, the one step which reads
+    # its provider; the coefficients follow from the data alone
+    S = nonzeroscattering!(work, block.nports, ws)
+    evaluatescattering!(S, block, work.wnz, work.absws)
+    return hybridcoefficients!(B, C, S, block.zref, ws, work; derivative = derivative)
+end
 
-    # evaluate the scattering parameters only at the nonzero frequencies
+# the nonzero frequencies of `ws` into `work`, and the scratch for the
+# scattering parameters of a block of `n` ports there
+function nonzeroscattering!(work::HybridWorkspace, n::Int, ws::AbstractVector)
     empty!(work.nonzeroindices)
     empty!(work.wnz)
     for i in eachindex(ws)
@@ -90,20 +94,31 @@ function evaluatehybrid!(B::AbstractArray{Complex{Float64},3},
             push!(work.wnz, ws[i])
         end
     end
-    nonzeroindices = work.nonzeroindices
-    k = length(nonzeroindices)
+    k = length(work.nonzeroindices)
     if size(work.S) != (n, n, k)
         work.S = Array{Complex{Float64},3}(undef, n, n, k)
     end
-    S = work.S
-    evaluatescattering!(S, block, work.wnz, work.absws)
+    return work.S
+end
 
+# the coefficients `B` and `C` of `evaluatehybrid!` at the frequencies
+# `ws` from the scattering parameters `S` at the nonzero ones, which
+# `work` lists, and the reference impedances `zref`
+function hybridcoefficients!(B::AbstractArray{Complex{Float64},3}, C::AbstractArray{Complex{Float64},3},
+    S::Array{Complex{Float64},3}, zref::Vector{Float64}, ws::AbstractVector,
+    work::HybridWorkspace; derivative::Bool = false)
+
+    n = size(S, 1)
+    if size(B) != (n, n, length(ws)) || size(C) != (n, n, length(ws))
+        throw(DimensionMismatch(lazy"The destination arrays have sizes $(size(B)) and $(size(C)) but ($(n), $(n), $(length(ws))) is required."))
+    end
+    nonzeroindices = work.nonzeroindices
     resize!(work.rinv2, n)
     resize!(work.r2, n)
     rinv2 = work.rinv2
     r2 = work.r2
     @inbounds for p in 1:n
-        r2[p] = sqrt(block.zref[p])
+        r2[p] = sqrt(zref[p])
         rinv2[p] = 1/r2[p]
     end
     fill!(B, zero(Complex{Float64}))
@@ -193,12 +208,10 @@ a kernel; see [`DeviceScatteringStamps`](@ref).
     the row's own except for a pumped block, and the ordinal among
     `pumped` of the pumped block it belongs to, zero for a block which does
     not convert.
-- `pumped`, `pumpedk`, `modeoffsets`: the pumped blocks, as indices into
-    `blocks`, the harmonic by which each couples each pair of modes (see
-    [`pumpedharmonics`](@ref)), and the frequency offsets of the modes
-    those were read from.
-- `Nmodes`, `Nauxports`: the mode count and the number of auxiliary port
-    current unknowns.
+- `pumped`, `pumpedk`: the pumped blocks, as indices into `blocks`, and
+    the harmonic by which each couples each pair of modes (see
+    [`pumpedharmonics`](@ref)).
+- `Nmodes`: the mode count.
 - `scale`: the solver scale the rows are written in.
 - `iscale`: the scale of the auxiliary port current unknowns. The stored
     unknown is `i/iscale`, so every auxiliary column is `iscale` times the
@@ -237,14 +250,11 @@ struct ScatteringStampSystem
     # couple modes)
     inmodeindex::Vector{Int32}
     coupled::Vector{Int32}
-    # the pumped blocks, as indices into `blocks`, the harmonic each
-    # couples each pair of modes by (see [`pumpedharmonics`](@ref)), and
-    # the mode frequency offsets those were read from
+    # the pumped blocks, as indices into `blocks`, and the harmonic each
+    # couples each pair of modes by (see [`pumpedharmonics`](@ref))
     pumped::Vector{Int}
     pumpedk::Vector{Matrix{Int}}
-    modeoffsets::Vector{Float64}
     Nmodes::Int
-    Nauxports::Int
     scale::Float64
     iscale::Float64
     # the first block holding each block's definition object: elaboration
@@ -264,7 +274,7 @@ countscatteringports(psc::CompiledCircuit) =
 
 """
     scatteringstampsystem(blocks::Vector{StampedScatteringBlock}, Nmodes,
-        Ntotal, scale; modeoffsets = nothing, iscale = 1.0)
+        Ntotal, scale; modeoffsets, iscale = 1.0)
 
 The positional inner form of [`scatteringstampsystem`](@ref), everything
 past the point where the blocks and their terminals are known: the
@@ -274,32 +284,25 @@ keyword form it never returns `nothing`.
 
 `modeoffsets` are the frequency offsets of the modes from the signal, in
 radians per second. A [`LinearizedScattering`](@ref) block couples the modes
-whose offsets differ by a harmonic of its pump, so with one present the
-offsets are required, and the contributions between such pairs are
-entered on top of the diagonal ones; a block which does not convert
-takes no notice of them.
+whose offsets differ by a harmonic of its pump, and the contributions
+between such pairs are entered on top of the diagonal ones; a block which
+does not convert takes no notice of them.
 
 `iscale` is the scale of the auxiliary port current unknowns; see
 [`ScatteringStampSystem`](@ref).
 """
 function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
-    Nmodes::Integer, Ntotal::Integer, scale::Real; modeoffsets = nothing,
+    Nmodes::Integer, Ntotal::Integer, scale::Real; modeoffsets,
     iscale::Real = 1.0)
-
-    # how many auxiliary port currents the blocks occupy in total: each has
-    # one per port per mode, laid out consecutively from its own base
-    naux = sum(sb -> sb.block.nports*Nmodes, blocks)
 
     # the pumped blocks and the harmonic by which each couples each pair
     # of modes
     pumped = Int[]
     pumpedk = Matrix{Int}[]
-    offsets = isnothing(modeoffsets) ? zeros(Float64, Nmodes) :
-        Float64.(collect(modeoffsets))
+    offsets = Float64.(collect(modeoffsets))
     length(offsets) == Nmodes || throw(DimensionMismatch(lazy"$(length(offsets)) mode offsets were given for $(Nmodes) modes."))
     for (bi, sb) in enumerate(blocks)
         sb.block isa LinearizedScattering || continue
-        isnothing(modeoffsets) && throw(ArgumentError(lazy"the pumped block at $(sb.name) couples the modes of the solve, whose frequency offsets this stamp was not given."))
         push!(pumped, bi)
         push!(pumpedk, pumpedharmonics(sb.block, offsets))
     end
@@ -392,8 +395,8 @@ function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
     firstof = [get!(seen, sb.block, bi) for (bi, sb) in enumerate(blocks)]
     return ScatteringStampSystem(blocks, kcl, pattern, patternindex,
         copy(patternindex), blockindex, pindex, qindex, coeff, sign,
-        modeindex, inmodeindex, coupled, pumped, pumpedk, offsets,
-        Int(Nmodes), naux, Float64(scale), Float64(iscale), firstof)
+        modeindex, inmodeindex, coupled, pumped, pumpedk, Int(Nmodes),
+        Float64(scale), Float64(iscale), firstof)
 end
 
 """
@@ -610,10 +613,11 @@ end
 # where an entry from input mode `n` reads it through a harmonic `k >= 0`,
 # and at the negative of the input frequency, `negws`, into
 # `Hneg[:, :, j, n]` where one reads it through `k < 0` (see
-# `conversionentry`), rotated by the pump phase as `evaluateharmonics!`
-# rotates them. Only those are evaluated, so a table need cover only the
-# frequencies the solve reads; the rest of `Hpos` and `Hneg` is left as it
-# was. `readmodes` is scratch for the input modes of one harmonic.
+# `conversionentry`), rotated by the pump phase as
+# `evaluatecoveredharmonics!` rotates them. Only those are evaluated, so a
+# table need cover only the frequencies the solve reads; the rest of `Hpos`
+# and `Hneg` is left as it was. `readmodes` is scratch for the input modes
+# of one harmonic.
 function readharmonics!(Hpos, Hneg, block::LinearizedScattering,
         ws::AbstractVector, negws::AbstractVector, K::AbstractMatrix{Int},
         readmodes::Vector{Int})
@@ -828,7 +832,6 @@ carries the channels of both kinds rather than those of its loss.
 """
 statednoise(block::ScatteringParameters) = block.noise isa NoiseCovariance
 statednoise(block::LinearizedScattering) = block.noise isa NoiseCovariance
-statednoise(block) = false
 """
     planscatteringnoise(ssys)
 
@@ -840,7 +843,8 @@ declares [`Lossless`](@ref) or is [`provablylossless`](@ref).
 of the block's loss, differing only in the temperature the channels are
 at, and give a block one channel per port; [`Lossless`](@ref) declares
 there are none; and a [`NoiseCovariance`](@ref) states the covariance
-outright and gives a block two channels per port.
+outright and gives a block two channels per port. A block's constructor
+admits no other noise model, and a pumped block's only the last two.
 """
 planscatteringnoise(::Nothing) = nothing
 function planscatteringnoise(ssys::ScatteringStampSystem)
@@ -854,7 +858,6 @@ function planscatteringnoise(ssys::ScatteringStampSystem)
     for (bi, sb) in enumerate(ssys.blocks)
         f = ssys.firstof[bi]
         carries[bi] = if f == bi
-            checknoisemodel(sb.block, sb.name)
             # a block asserted lossless, or shown to be, adds nothing; a
             # block which states its noise adds it whatever its loss
             statednoise(sb.block) || !(sb.block.noise isa Lossless ||
@@ -873,24 +876,6 @@ function planscatteringnoise(ssys::ScatteringStampSystem)
     return ScatteringNoisePlan(blockindices, channelbase, channelcounts, nch,
         ssys.Nmodes)
 end
-
-# The noise models the noise calculation supports. Silently ignoring an
-# unsupported one would return a quantum efficiency computed for a
-# different block than the user asked for, so it is an error here rather
-# than a warning.
-function checknoisemodel(block::ScatteringParameters, name)
-    noise = block.noise
-    if noise isa Passive || noise isa Lossless ||
-            noise isa ThermalEquilibrium || noise isa NoiseCovariance
-        return nothing
-    end
-    throw(ArgumentError(lazy"The scattering block at $(name) has the noise model $(noise), which the noise and quantum efficiency calculations do not support. Use Passive(), Lossless(), ThermalEquilibrium(T) or NoiseCovariance(V), or request no noise outputs."))
-end
-function checknoisemodel(block::LinearizedScattering, name)
-    (block.noise isa Lossless || block.noise isa NoiseCovariance) && return nothing
-    throw(ArgumentError(lazy"The pumped scattering block at $(name) has the noise model $(block.noise); a pumped block is lossless and emits nothing, or states the covariance its solve reports."))
-end
-checknoisemodel(block, name) = nothing
 
 """
     scatteringnoisenames(plan::ScatteringNoisePlan,
@@ -1059,9 +1044,6 @@ in the rows after them, its channels of the conjugate kind by the factor
 of `V - K/2`, with `K = I - S S'`, which [`checkblockdeclarations`](@ref)
 has admitted at every mode frequency of the sweep, or which a completed
 covariance meets by construction.
-
-The channel of a mode whose frequency is zero is zero, matching the wave
-normalization of the lumped noise ports, which is singular there.
 """
 function scatteringnoisewaves!(noiseoutputwave::AbstractMatrix,
     plan::ScatteringNoisePlan, ssys::ScatteringStampSystem,
@@ -1236,7 +1218,7 @@ end
 # pump frequency whose two ends are the same ladder, which is why the
 # outermost groups can still be one
 function pumpladders(wp::Real, nus::AbstractVector)
-    tol = 1e-6*wp
+    tol = harmonictolerance*wp
     res = Float64[nu - round(nu/wp)*wp for nu in nus]
     groups = Vector{Int}[]
     for i in sortperm(res)
@@ -1450,12 +1432,11 @@ end
 
 # the harmonic transfer functions of a block, or with `covariance` the
 # harmonic covariances of its stated noise, at the signed frequencies
-# each harmonic's data covers, rotated by the pump phase as
-# `evaluateharmonics!` and the covariance form of this function rotate them,
-# and zero where the data does not reach, which the harmonic map of a
-# family never reads. A covariance is read on the conjugate ladder as
-# well, the relation carrying it there being the same at either sign of
-# the rotation
+# each harmonic's data covers, the harmonic `k` rotated by the pump phase,
+# `cis(k*phase)`, and zero where the data does not reach, which the
+# harmonic map of a family never reads. A covariance is read on the
+# conjugate ladder as well, the relation carrying it there being the same
+# at either sign of the rotation
 function evaluatecoveredharmonics!(dest::AbstractArray{Complex{Float64},4}, block::LinearizedScattering,
         ws::AbstractVector; covariance::Bool = false)
     n = block.nports
@@ -1687,7 +1668,6 @@ function pumpedblocknoisewaves!(noiseoutputwave::AbstractMatrix,
             for k in 1:nrhs
                 acc = zero(Complex{Float64})
                 for p in 1:n, m in 1:Nmodes
-                    iszero(wmodes[m]) && continue
                     acc += sqrt(abs(wmodes[m]))*F[(p-1)*Nmodes + m, c]*
                         phiadj[sb.auxbase + (p-1)*Nmodes + m, k]
                 end
@@ -1701,41 +1681,44 @@ function pumpedblocknoisewaves!(noiseoutputwave::AbstractMatrix,
 end
 
 # the noise output waves of one block, behind a function barrier because
-# the block is stored untyped: the formula of `scatteringnoisewaves!`
+# the block is stored untyped: its data at the modes, the one step which
+# reads its providers, and the formula of `scatteringnoisewaves!`, which
+# reads the data alone (blockdatanoisewaves!)
 function blocknoisewaves!(noiseoutputwave::AbstractMatrix,
     block::ScatteringParameters, sb::StampedScatteringBlock,
     wmodes::AbstractVector, phiadj::AbstractMatrix, rowoffset::Integer,
     Nmodes::Integer, work::ScatteringNoiseWorkspace; evaluate::Bool = true)
 
     n = block.nports
-    nrhs = size(phiadj, 2)
     stated = statednoise(block)
-    nchannels = stated ? 2n : n
     if size(work.S) != (n, n, Nmodes)
         work.S = Array{Complex{Float64},3}(undef, n, n, Nmodes)
         resize!(work.L, n*n)
     end
-    S = work.S
-    L = work.L
-    M = work.M
-    evaluate && evaluatescattering!(S, block, wmodes, work.absws)
+    evaluate && evaluatescattering!(work.S, block, wmodes, work.absws)
     if stated
         if size(work.V) != (n, n, Nmodes)
             work.V = Array{Complex{Float64},3}(undef, n, n, Nmodes)
             resize!(work.M, n*n)
         end
         evaluatecovariance!(work.V, block, wmodes, work.absws)
-        block.noise.completed && completestated!(work.V, S)
+        block.noise.completed && completestated!(work.V, work.S)
     end
+    return blockdatanoisewaves!(noiseoutputwave, n, stated, sb, wmodes, phiadj, rowoffset, Nmodes, work)
+end
+
+# the noise output waves of a block of `n` ports from its scattering
+# parameters at the modes, and its stated covariance there where it
+# states one, which `work` holds (see blocknoisewaves!)
+function blockdatanoisewaves!(noiseoutputwave::AbstractMatrix, n::Int, stated::Bool,
+    sb::StampedScatteringBlock, wmodes::AbstractVector, phiadj::AbstractMatrix, rowoffset::Integer,
+    Nmodes::Integer, work::ScatteringNoiseWorkspace)
+
+    nrhs = size(phiadj, 2)
+    S = work.S
+    L = work.L
+    M = work.M
     for m in 1:Nmodes
-        if iszero(wmodes[m])
-            for c in 1:nchannels
-                for k in 1:nrhs
-                    noiseoutputwave[rowoffset + (c-1)*Nmodes + m, k] = 0
-                end
-            end
-            continue
-        end
         # the commutator of the added noise wave and its factor,
         # `L L' = I - S S'`, in the flat layout the kernel of the device
         # path uses so that the two compute the same channels
@@ -1850,12 +1833,16 @@ end
 # behind a function barrier, since the block is stored untyped: the
 # frequencies of `ws` at which the construction of `block` did not hold
 # its data to the declaration, a few at a time, so that a block of many
-# ports over a long sweep holds little at once
-function checkdeclaration(block::ScatteringParameters, name, ws, absws)
-    unchecked = filter(w -> !checkedwhenbuilt(block, w), ws)
+# ports over a long sweep holds little at once. It takes the block
+# unspecialized, compiled once for every block: what the block declares is
+# read once, and its data through `evaluatescattering!`, which is all a new
+# kind of block compiles.
+Base.@nospecializeinfer function checkdeclaration(@nospecialize(block::ScatteringParameters), name, ws, absws)
+    unchecked = uncheckedfrequencies(block, ws)
     isempty(unchecked) && return nothing
     n = block.nports
     stated = statednoise(block)
+    lossless, atol = block.noise isa Lossless, block.atol
     chunk = 64
     S = Array{Complex{Float64},3}(undef, n, n, min(chunk, length(unchecked)))
     V = stated ? similar(S) : nothing
@@ -1867,7 +1854,7 @@ function checkdeclaration(block::ScatteringParameters, name, ws, absws)
         stated && evaluatecovariance!(view(V, :, :, 1:length(wc)), block, wc, absws)
         for k in eachindex(wc)
             Sk = view(Sc, :, :, k)
-            (!stated && plainlymet!(M, block, Sk)) && continue
+            (!stated && plainlymet!(M, lossless, atol, Sk)) && continue
             checkblockcontract(block, Sk, stated ? view(V, :, :, k) : nothing,
                 wc[k]; name = name)
         end
@@ -1882,12 +1869,12 @@ end
 # which its Cholesky factorization into the scratch `M` shows, where it
 # is passive. Where this is not plain, `checkblockcontract` decides, and
 # says why it refuses.
-function plainlymet!(M::Matrix{Complex{Float64}}, block::ScatteringParameters, S)
+function plainlymet!(M::Matrix{Complex{Float64}}, lossless::Bool, atol::Float64, S)
     all(isfinite, S) || return false
-    block.noise isa Lossless && return unitaritydeviation(S) <= block.atol
+    lossless && return unitaritydeviation(S) <= atol
     n = size(S, 1)
     @inbounds for q in 1:n, p in 1:n
-        acc = p == q ? Complex{Float64}(1 + block.atol) : zero(Complex{Float64})
+        acc = p == q ? Complex{Float64}(1 + atol) : zero(Complex{Float64})
         for l in 1:n
             acc -= S[p, l]*conj(S[q, l])
         end
@@ -1896,23 +1883,26 @@ function plainlymet!(M::Matrix{Complex{Float64}}, block::ScatteringParameters, S
     return issuccess(cholesky!(Hermitian(M); check = false))
 end
 
-# Whether the construction of `block` held its data at the signed
-# frequency `w` to what the block declares (see `checkstoreddata` and
-# `checkbeyondsamples`): at every frequency for a realization and a
-# line, whose passivity or unitarity holds over the whole axis, and for
-# a stored table declared lossless, which is bounded between and beyond
-# its knots; within the knots of any other stored data, whose samples
-# were checked and whose interpolant is what the data states; and
-# nowhere for a callable, or for a block which states its noise.
-function checkedwhenbuilt(block::ScatteringParameters, w::Real)
-    statednoise(block) && return false
+# The signed frequencies of `ws` at which the construction of `block` did
+# not hold its data to what the block declares (see `checkstoreddata` and
+# `checkbeyondsamples`): none for a realization and a line, whose
+# passivity or unitarity holds over the whole axis, and for a stored table
+# declared lossless, which is bounded between and beyond its knots; those
+# beyond the knots of any other stored data, whose samples were checked
+# and whose interpolant is what the data states; and every one for a
+# callable, or for a block which states its noise.
+Base.@nospecializeinfer function uncheckedfrequencies(@nospecialize(block::ScatteringParameters), ws)
+    statednoise(block) && return collect(Float64, ws)
     p = unrotated(block.provider)
-    (p isa RationalScatteringProvider || p isa TransmissionLineProvider) &&
-        return true
-    isstored(p) || return false
-    block.noise isa Lossless && return true
-    return holdsdata(p, block.negative_frequency isa Native ? w : abs(w))
+    (p isa RationalScatteringProvider || p isa TransmissionLineProvider) && return Float64[]
+    isstored(p) || return collect(Float64, ws)
+    block.noise isa Lossless && return Float64[]
+    return unheldfrequencies(p, block.negative_frequency isa Native, ws)
 end
+# the frequencies of `ws` at which the stored provider `p` holds no data,
+# read at the signed frequency for a natively signed block and at its
+# magnitude otherwise
+unheldfrequencies(p, native::Bool, ws) = Float64[w for w in ws if !holdsdata(p, native ? w : abs(w))]
 
 """
     checkpumpedblockmodels(ssys::Union{Nothing,ScatteringStampSystem}, w,
@@ -1968,7 +1958,6 @@ of its channels gives back (see [`ScatteringNoisePlan`](@ref)).
 function noisechanneltemperatures(psc, noiseportimpedanceindices, noiseplan,
     ssys, temperature)
 
-    checktemperature(temperature, "the keyword `temperature`")
     stated = psc.componenttemperatures
     # a stated temperature was checked when its component was built
     ts = Float64[haskey(stated, i) ? Float64(stated[i]) :

@@ -124,14 +124,12 @@ using Test, JosephsonCircuits, LinearAlgebra, SparseArrays
         result = hbstability(c; method = ContourIntegral(-1.8, 0.5))
         @test result.converged
         @test result.poles ≈ [-1.8]
-        for (form,f) in ((:entry, LaplaceResponse((p,q,s) -> 0.4/(s+2))),
-                (:inplace, LaplaceResponse((M,s) -> fill!(M,0.4/(s+2)))))
-            block = ScatteringParameters(f; nports = 1, zref = 1.0, form)
-            c = Circuit([(:s,1,block),(:r,1,0,Resistor(3.0))])
-            result = hbstability(c; method = ContourIntegral(-1.8, 0.5))
-            @test result.converged
-            @test result.poles ≈ [-1.8]
-        end
+        block = ScatteringParameters(LaplaceResponse((M,s) -> fill!(M,0.4/(s+2))); nports = 1, zref = 1.0,
+            form = :inplace)
+        c = Circuit([(:s,1,block),(:r,1,0,Resistor(3.0))])
+        result = hbstability(c; method = ContourIntegral(-1.8, 0.5))
+        @test result.converged
+        @test result.poles ≈ [-1.8]
         # Independent source perturbations vanish, even with a complex drive.
         driven = Circuit([(:r,1,0,Resistor(2.0)),(:c,1,0,Capacitor(0.5)),(:i,1,0,CurrentSource(2im))])
         @test hbstability(driven).poles ≈ [-1.0]
@@ -257,7 +255,8 @@ using Test, JosephsonCircuits, LinearAlgebra, SparseArrays
             c,d = circuit(native,phase),circuit(analytic,phase)
             a,b = (JC.hbpolesystem(compile(x),Dict(),nothing,(2,),omega;pumpfrequency=omega) for x in (c,d))
             for z in (-0.4+0.7im,0.3-0.8im)
-                @test JC.polematrix(a,z) ≈ JC.polematrix(b,z) atol=1e-14 rtol=1e-13
+                @test JC.polematrix!(JC.PoleMatrixWorkspace(a), a, z) ≈
+                    JC.polematrix!(JC.PoleMatrixWorkspace(b), b, z) atol=1e-14 rtol=1e-13
             end
         end
         region=(center=-0.8,radius=0.7)
@@ -406,6 +405,25 @@ using Test, JosephsonCircuits, LinearAlgebra, SparseArrays
         @test abs(exact - only(contours[1].poles)) < 1e-12*abs(s)
         @test abs(s - exact) < 1e-7*abs(s) && abs(s - exact) < abs(coarse.poles[1] - exact)/12
         @test coarse.rateerrors[1] ≈ abs(real(exact) - real(coarse.poles[1])) rtol = 1e-2
+    end
+
+    @testset "the history maps of many lines" begin
+        # A line cut into many segments: the coordinates the period map
+        # holds of its history, each port's a run of its rows, and their
+        # maps at the step, which allocate in proportion to the segments.
+        # Growth beyond linear is small beside the linear part at these
+        # sizes, so a fourfold step tells them apart: linear growth
+        # allocates four times as much, quadratic sixteen.
+        function bytes(L)
+            c = Circuit(vcat(Any[(:left, 1, 0, Resistor(150.0)), (:right, L + 1, 0, Resistor(150.0))],
+                Any[(Symbol(:t, i), i, i + 1, TransmissionLine(50.0, 2e-2/L; vp = 2e8)) for i in 1:L]))
+            p = transientproblem(c)
+            rows, cols = JC.historycolumns(p, 1e-12, 12)
+            maps() = JC.historymaps(p, rows, cols, 1e-12, 1, 12)
+            maps()
+            return @allocated maps()
+        end
+        @test bytes(4096) < 6*bytes(1024)
     end
 
     @testset "the period map places a line's own modes by its waves" begin

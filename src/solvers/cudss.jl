@@ -89,10 +89,9 @@ function _cudss_factorize(A; kwargs...)
         "CUDSSFactorization requires CUDSS.jl and CUDA.jl to be loaded. Run `using CUDA, CUDSS` before calling the solver, or use the default KLUfactorization()."))
 end
 
-function _cudss_factorize!(F, A; kwargs...)
-    throw(ArgumentError(
-        "CUDSSFactorization requires CUDSS.jl and CUDA.jl to be loaded."))
-end
+# Defined by the CUDSS extension: the refactorization of a factorization
+# `_cudss_factorize` made, which only the extension makes.
+function _cudss_factorize! end
 
 """
     uniformbatchlimit(nrhs::Integer)
@@ -119,14 +118,55 @@ correctness and one of speed.
 
 The cap costs nothing on this path, since the speedup of batching a
 frequency sweep through cuDSS saturates by about a dozen systems. It
-applies only to the cuDSS batch: a [`SparseBlockFactorization`](@ref)
-sweep sizes its batch by memory instead ([`blocksystembytes`](@ref)) and
-profits from batches well past this. The `nrhs` argument is kept because
-the first bound depends on it and the second does not, so a cuDSS release
-which fixes one can be accommodated without changing the callers. Re-check
-both against newer releases before raising it.
+applies only to the cuDSS batch, which a frequency sweep also holds to its
+memory budget ([`cudssbatchlimit`](@ref)): a
+[`SparseBlockFactorization`](@ref) sweep sizes its batch by memory alone
+([`blocksystembytes`](@ref)) and profits from batches well past this. The
+`nrhs` argument is kept because the first bound depends on it and the
+second does not, so a cuDSS release which fixes one can be accommodated
+without changing the callers. Re-check both against newer releases before
+raising it.
 """
 uniformbatchlimit(nrhs::Integer) = 15
+
+"""
+    cudssbatchlimit(persystem::Integer, nrhs::Integer, budget::Integer)
+
+The systems of a uniform cuDSS batch: as many as `budget` bytes hold at
+`persystem` bytes a system, at least one, and no more than
+[`uniformbatchlimit`](@ref) allows.
+"""
+cudssbatchlimit(persystem::Integer, nrhs::Integer, budget::Integer) =
+    clamp(budget ÷ max(persystem, 1), 1, uniformbatchlimit(nrhs))
+
+"""
+    cudsssystembytes(A::SparseMatrixCSC, T, nrhs::Integer, backend;
+        kwargs...)
+
+The device memory cuDSS takes for one system of the pattern of `A`, with
+`nrhs` right hand sides of element type `T`, by its own estimate after an
+analysis of the pattern: the peak of its factorization, which a uniform
+batch takes once for each system. `kwargs` are the options of the
+factorization ([`solverkwargs`](@ref)), on which the estimate depends.
+"""
+function cudsssystembytes(A::SparseMatrixCSC, ::Type{T}, nrhs::Integer,
+        backend; kwargs...) where {T}
+    # the compressed rows of `A`, as the sweep hands it to cuDSS, returned
+    # to the pool with the estimate
+    At = sparse(transpose(A))
+    pattern = (tobackend(backend, SparseArrays.getcolptr(At)),
+        tobackend(backend, rowvals(At)), tobackend(backend, ones(T, nnz(At))))
+    bytes = _cudss_systembytes(pattern..., nrhs; kwargs...)
+    foreach(releasearray!, pattern)
+    return bytes
+end
+
+# Overridden by the CUDSS extension: cuDSS's estimate, after its analysis,
+# of the device memory one system of a pattern takes.
+function _cudss_systembytes(rowptr, colind, nzval, nrhs; kwargs...)
+    throw(ArgumentError(
+        "estimating cuDSS's memory requires CUDSS.jl and CUDA.jl to be loaded. Run `using CUDA, CUDSS` before calling the solver, or leave `backend` at its default."))
+end
 
 # Overridden by the CUDSS extension: a uniform batch of systems sharing one
 # sparsity pattern, analyzed once and then refactorized and solved as a batch.
@@ -135,13 +175,14 @@ function _cudss_sweep(rowptr, colind, nzval, X, B; kwargs...)
         "solving a frequency sweep on a device requires CUDSS.jl and CUDA.jl to be loaded. Run `using CUDA, CUDSS` before calling the solver, or leave `backend` at its default."))
 end
 
-function _cudss_sweepsolve!(S)
-    throw(ArgumentError(
-        "solving a frequency sweep on a device requires CUDSS.jl and CUDA.jl to be loaded."))
-end
-function _cudss_sweeprefactorize!(S)
-    throw(ArgumentError("a batched solve on a device requires CUDSS.jl and CUDA.jl to be loaded."))
-end
-function _cudss_sweepapply!(S, X, B)
-    throw(ArgumentError("a batched solve on a device requires CUDSS.jl and CUDA.jl to be loaded."))
-end
+# Defined by the CUDSS extension, for a batch `_cudss_sweep` made, which
+# only the extension makes: the refactorization and solve of the batch,
+# and the two apart for a time stepper which solves many times per
+# refactorization.
+function _cudss_sweepsolve! end
+function _cudss_sweeprefactorize! end
+function _cudss_sweepapply! end
+
+# Overridden by the CUDSS extension: the factorization data of a finished
+# sweep, destroyed at once rather than when the collector finds it.
+_cudss_release!(S) = nothing

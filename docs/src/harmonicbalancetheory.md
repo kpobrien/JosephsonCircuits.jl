@@ -150,17 +150,19 @@ checks stop unsuccessful solves. `solverinfo` records the outcome.
 
 | Choice | Retained coupling |
 |---|---|
-| `BlockDiagonal()` | Independent factorization for each mode |
-| `HarmonicBand` | Selected harmonic offsets |
+| `JosephsonCircuits.BlockDiagonal()` | Independent factorization for each mode |
+| `JosephsonCircuits.HarmonicBand` | Selected harmonic offsets |
 | `MeasuredBand()` | Band selected from the Fourier content of the junction derivative |
-| `Clusters` | Mode groups merged according to coupling strength |
-| `FullJacobian()` | All real-Jacobian couplings |
+| `JosephsonCircuits.Clusters` | Mode groups merged according to coupling strength |
+| `JosephsonCircuits.FullJacobian()` | All real-Jacobian couplings |
 
-`Automatic()` uses pump count and predicted factor memory to choose a
-strategy. Sparse or dense node-block factorizations solve the retained
-systems. The block method uses graph supernodes without first constructing
-a scalar sparse matrix. Mixed-precision factors can be refined in double
-precision. See [performance](performance.md) for current defaults.
+`Automatic()` chooses by the number of independent pump tones and the
+predicted factor memory, so commensurate pumps driven as harmonics of one
+tone take the one-tone choice. Sparse or dense node-block factorizations
+solve the retained systems. The block method uses graph supernodes
+without first constructing a scalar sparse matrix. Mixed-precision factors
+can be refined in double precision. See [performance](performance.md) for
+current defaults.
 
 If GMRES stalls, the solver can expand the coupling or increase factor
 precision within its memory budget. Mode-local criteria cannot detect

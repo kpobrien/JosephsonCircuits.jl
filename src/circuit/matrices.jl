@@ -1,12 +1,11 @@
 
 """
     CircuitMatrices(Cnm::SparseMatrixCSC, Gnm::SparseMatrixCSC, Lb::SparseVector,
-        Lbm::SparseVector, Ljb::SparseVector, Ljbm::SparseVector,
-        Mb::SparseMatrixCSC, invLnm::SparseMatrixCSC,
-        Rbnm::SparseMatrixCSC{Int, Int}, portindices::Vector{Int},
-        portnumbers::Vector{Int}, portimpedances::Vector,
-        portenvironmentindices::Vector{Int},
-        noiseportimpedanceindices::Vector{Int}, Lmean, vvn)
+        Ljb::SparseVector, Ljbm::SparseVector, Mb::SparseMatrixCSC,
+        invLnm::SparseMatrixCSC, Rbnm::SparseMatrixCSC{Int, Int},
+        portindices::Vector{Int}, portnumbers::Vector{Int},
+        portimpedances::Vector, portenvironmentindices::Vector{Int}, Lmean,
+        vvn)
 
 The matrices of a compiled circuit at a given mode count: the capacitance,
 conductance and inverse inductance matrices in the node basis, the
@@ -20,8 +19,6 @@ by [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `Gnm`: the conductance matrix in the node basis with each
     element duplicated along the diagonal Nmodes times.
 - `Lb`: vector of branch linear inductances.
-- `Lbm`: vector of branch linear inductances with each element
-    duplicated Nmodes times.
 - `Ljb`: vector of branch Josephson junction inductances.
 - `Ljbm`: vector of branch Josephson junction inductances with
     each element duplicated Nmodes times.
@@ -40,20 +37,15 @@ by [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `portenvironmentindices::Vector{Int}`: vector of indices at which the port
     owned environments occur, ordered by port number, with zero for a port
     which owns none.
-- `noiseportimpedanceindices::Vector{Int}`: the indices of the components
-    which add thermal noise, for the noise calculations: the resistors
-    other than a port's own termination, and the lossy capacitors and
-    inductors.
 - `Lmean`: the mean of the linear and Josephson inductances, zero when the
     circuit has none; the solvers replace it by the solver scale of
     [`calcsolverscale`](@ref) under the same name.
 - `vvn`: the vector of component values with the definitions substituted.
 """
-struct CircuitMatrices{TC,TG,TLb,TLbm,TLj,TLjm,TM,TiL,TLmean}
+struct CircuitMatrices{TC,TG,TLb,TLj,TLjm,TM,TiL,TLmean}
     Cnm::TC
     Gnm::TG
     Lb::TLb
-    Lbm::TLbm
     Ljb::TLj
     Ljbm::TLjm
     Mb::TM
@@ -63,7 +55,6 @@ struct CircuitMatrices{TC,TG,TLb,TLbm,TLj,TLjm,TM,TiL,TLmean}
     portnumbers::Vector{Int}
     portimpedances::Vector
     portenvironmentindices::Vector{Int}
-    noiseportimpedanceindices::Vector{Int}
     Lmean::TLmean
     vvn::Vector{Any}
 end
@@ -71,14 +62,13 @@ end
 # the flat value table is stored as `Vector{Any}` whatever it was built as,
 # so that the matrices of a circuit have one type per element type of the
 # assembled groups rather than one per way the table was typed
-function CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm,
+function CircuitMatrices(Cnm, Gnm, Lb, Ljb, Ljbm, Mb, invLnm,
         Rbnm::SparseMatrixCSC{Int,Int}, portindices::Vector{Int},
         portnumbers::Vector{Int}, portimpedances::Vector,
-        portenvironmentindices::Vector{Int},
-        noiseportimpedanceindices::Vector{Int}, Lmean, vvn::AbstractVector)
-    return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm, Rbnm,
+        portenvironmentindices::Vector{Int}, Lmean, vvn::AbstractVector)
+    return CircuitMatrices(Cnm, Gnm, Lb, Ljb, Ljbm, Mb, invLnm, Rbnm,
         portindices, portnumbers, portimpedances, portenvironmentindices,
-        noiseportimpedanceindices, Lmean, Vector{Any}(vvn))
+        Lmean, Vector{Any}(vvn))
 end
 
 """
@@ -90,29 +80,34 @@ symbolic, so that the capacitance and inverse inductance matrices can be
 inspected as expressions. The mutually coupled inductor branches are
 excluded from the inverse inductance matrix and represented by auxiliary
 branch currents instead (see circuit/mna.jl), so no symbolic linear solve is
-needed.
+needed. A value written as a symbol, or as a parameter of
+[`@params`](@ref), gives entries which are expressions in the parameters,
+of the package's own `CircuitValue` type.
 
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 [`assemblematrices`](@ref), [`orderedports`](@ref),
 [`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
 
 # Examples
-```julia
-@variables Ipump Rleft Cc Lj Cj
-circuit = Circuit(
-    [:p1 => Port(1; Z0 = Rleft),
-     :i1 => CurrentSource(Ipump),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
-     :gnd => Ground()],
-    [[(:p1, 1), (:i1, 1), (:cc, 1)],
-     [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
-JosephsonCircuits.testshow(stdout,symbolicmatrices(circuit))
+```jldoctest
+julia> circuit = Circuit(
+           [:p1 => Port(1; Z0 = :Rleft),
+            :i1 => CurrentSource(:Ipump),
+            :cc => Capacitor(:Cc),
+            :jj => JosephsonJunction(:Lj),
+            :cj => Capacitor(:Cj),
+            :gnd => Ground()],
+           [[(:p1, 1), (:i1, 1), (:cc, 1)],
+            [(:cc, 2), (:jj, 1), (:cj, 1)],
+            [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]]);
 
-# output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Rleft], [2], Int64[], Lj, Any[Rleft, Rleft, Ipump, Cc, Lj, Cj])
+julia> m = symbolicmatrices(circuit);
+
+julia> m.Cnm[1, 2], m.Cnm[2, 2]
+(-(Cc), (Cc + Cj))
+
+julia> m.Gnm[1, 1], m.Ljb[2]
+((1.0 / Rleft), Lj)
 ```
 """
 function symbolicmatrices(circuit::CompilableCircuit; Nmodes::Int = 1)
@@ -152,7 +147,7 @@ circuitdefs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15, :Rlef
 JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 ```jldoctest
 circuit = Circuit(
@@ -170,7 +165,7 @@ psc = JosephsonCircuits.compile(circuit)
 JosephsonCircuits.testshow(stdout,numericmatrices(psc, circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 """
 function numericmatrices(circuit::CompilableCircuit,

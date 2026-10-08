@@ -14,12 +14,13 @@ device.
 matched termination at the physical temperature `T` in kelvin. It sends in
 a thermal field, the symmetrized noise `nbar + 1/2` in each mode, with
 `nbar = thermaloccupation(ω, T)` at the mode's frequency, so a signal and
-its idler see different occupations. A termination is at zero kelvin unless
-it states a temperature; the analysis `temperature` warms the circuit's
-losses, not its ports. For a line whose noise is not that of one
-temperature, put its attenuators in the circuit at their own temperatures
-with the port at the top, as below, or give the port the effective
-temperature of the field that reaches it ([`effectivetemperature`](@ref)).
+its idler see different occupations. The
+[temperature table](conventions.md#Noise-normalization-and-temperature)
+gives the temperature of each source of noise. For a line whose noise is
+not that of one temperature, put its attenuators in the circuit at their
+own temperatures with the port at the top, as below, or give the port the
+effective temperature of the field that reaches it
+([`effectivetemperature`](@ref)).
 
 A passive circuit whose ports and losses share one temperature is in
 equilibrium: every wave leaving it is thermal.

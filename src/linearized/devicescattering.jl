@@ -1,5 +1,5 @@
 # The scattering blocks on a backend: their stamps into the batched system
-# matrices and the evaluation of their tabulated or entry-form data on the
+# matrices and the evaluation of their tabulated or constant data on the
 # device, one work item per contribution and frequency.
 
 # ---------------------------------------------------------------------------
@@ -214,8 +214,8 @@ end
 # interpolant, and are zero where the block holds its end values; a block
 # which is zero beyond its band (`zeroout`) is zero there, and a block whose
 # data must not leave the band was checked on the host, because a kernel
-# cannot raise. A frequency within roundoff of an end knot is on it, as on
-# the host (see `evaluateprovider!`).
+# cannot raise. A frequency within roundoff of an end knot is on it, by
+# the tolerance the host admits (see `edgetolerance`).
 @inline function tableentry(freqs, vals, curv, eslopes, foff, nf, voff, soff,
         n, p, q, w, zeroout::Bool)
     @inbounds begin
@@ -224,7 +224,7 @@ end
         f1 = freqs[foff+1]
         fn = freqs[foff+nf]
         if zeroout
-            tol = 8*eps(Float64)*max(abs(f1), abs(fn))
+            tol = edgetolerance(f1, fn)
             (w < f1 - tol || w > fn + tol) && return zero(eltype(vals))
         end
         if nf == 1
@@ -257,26 +257,20 @@ end
     end
 end
 
-# the value one contribution adds, from the scattering entry it reads. The
-# two kernels below differ only in where that entry comes from: a table or a
-# callable.
-@inline function hybridcontribution(::Type{T}, S, wm, samepq::Bool, zrefq,
-        coeffc, sgnc, scale, iscale) where {T}
-    Bpq = zero(T); Cpq = zero(T)
-    if iszero(wm)
-        # the zero frequency rows are i = 0
-        Cpq = samepq ? one(T) : zero(T)
-    else
-        # the impedance of the column port q, whose voltage or current the
-        # entry multiplies
-        r2 = sqrt(zrefq)
-        rinv2 = one(r2)/r2
-        Bpq = -rinv2*S
-        Cpq = r2*S
-        if samepq
-            Bpq += rinv2
-            Cpq += r2
-        end
+# the value one contribution adds, from the scattering entry it reads. It
+# serves the sweep alone, whose mode frequencies are nonzero, so the zero
+# frequency rows `i = 0` of `hybridcoefficients!` have no counterpart here.
+@inline function hybridcontribution(S, wm, samepq::Bool, zrefq, coeffc,
+        sgnc, scale, iscale)
+    # the impedance of the column port q, whose voltage or current the
+    # entry multiplies
+    r2 = sqrt(zrefq)
+    rinv2 = one(r2)/r2
+    Bpq = -rinv2*S
+    Cpq = r2*S
+    if samepq
+        Bpq += rinv2
+        Cpq += r2
     end
     return coeffc == 1 ? sgnc*(im*wm*scale)*Bpq : -iscale*Cpq
 end
@@ -300,50 +294,15 @@ end
         p = Int(pindex[c]); q = Int(qindex[c])
         wm = ws[f] + wpump[m]
         n = Int(nports[bi])
-        T = eltype(values)
-        S = zero(T)
-        if !iszero(wm)
-            isconj = conjsym[bi] != 0
-            wq = isconj ? abs(wm) : wm
-            S = tableentry(freqs, vals, curv, eslopes, Int(freqoff[bi]),
-                Int(nfreq[bi]), Int(valoff[bi]), Int(slopeoff[bi]), n, p, q,
-                wq, zeroout[bi] != 0)
-            if isconj && wm < 0
-                S = conj(S)
-            end
+        isconj = conjsym[bi] != 0
+        wq = isconj ? abs(wm) : wm
+        S = tableentry(freqs, vals, curv, eslopes, Int(freqoff[bi]),
+            Int(nfreq[bi]), Int(valoff[bi]), Int(slopeoff[bi]), n, p, q,
+            wq, zeroout[bi] != 0)
+        if isconj && wm < 0
+            S = conj(S)
         end
-        values[c, f] = hybridcontribution(T, S, wm, p == q,
-            zref[Int(zrefoff[bi]) + q], coeff[c], sgn[c], scale, iscale)
-    end
-end
-
-# the same, for blocks whose scattering parameters come from a callable of the
-# `:entry` form. The callables live in a device array indexed by block: they
-# capture only numbers, so they are `isbits`, and blocks built from one helper
-# share a type, which is what lets them be stored and called this way.
-@kernel function deviceentrykernel!(values, @Const(modeindex),
-        @Const(blockindex), @Const(pindex), @Const(qindex), @Const(coeff),
-        @Const(sgn), @Const(zrefoff), @Const(zref), @Const(funcs),
-        @Const(conjsym), @Const(wpump), @Const(ws), scale, iscale, ncontrib)
-    gid = @index(Global)
-    @inbounds begin
-        g = gid - 1
-        c = g % ncontrib + 1
-        f = g ÷ ncontrib + 1
-        m = Int(modeindex[c]); bi = Int(blockindex[c])
-        p = Int(pindex[c]); q = Int(qindex[c])
-        wm = ws[f] + wpump[m]
-        T = eltype(values)
-        S = zero(T)
-        if !iszero(wm)
-            isconj = conjsym[bi] != 0
-            wq = isconj ? abs(wm) : wm
-            S = T(funcs[bi](p, q, wq))
-            if isconj && wm < 0
-                S = conj(S)
-            end
-        end
-        values[c, f] = hybridcontribution(T, S, wm, p == q,
+        values[c, f] = hybridcontribution(S, wm, p == q,
             zref[Int(zrefoff[bi]) + q], coeff[c], sgn[c], scale, iscale)
     end
 end
@@ -365,7 +324,7 @@ Which frequency a block is evaluated at still depends on its negative
 frequency rule, and a range which must not be extrapolated is checked on the
 host before each batch, because a kernel cannot raise.
 """
-struct DeviceProviders{VI,VZ,VR,VC,VF,B}
+struct DeviceProviders{VI,VZ,VR,VC,B}
     nports::VI
     zrefoff::VI
     zref::VR
@@ -380,9 +339,6 @@ struct DeviceProviders{VI,VZ,VR,VC,VF,B}
     curv::VC
     slopeoff::VI
     eslopes::VC
-    # the callables of the `:entry` form, or `nothing` when the blocks are
-    # tabulated; exactly one of `vals` and `funcs` is used
-    funcs::VF
     conjsym::VZ
     # 1 where a block is zero beyond its band
     zeroout::VZ
@@ -403,7 +359,6 @@ struct DeviceProviders{VI,VZ,VR,VC,VF,B}
     strict::Vector{Bool}
     conjhost::Vector{Bool}
     names::Vector{String}
-    ssys::Any
     backend::B
 end
 
@@ -419,35 +374,12 @@ function candeviceevaluate(ssys)
     isempty(ssys.blocks) && return false
     # a pumped block's coupling between modes is formed on the host
     isempty(ssys.pumped) || return false
-    first = ssys.blocks[1].block.provider
-    if first isa CallableMatrixProvider
-        # a callable can be called from a kernel only in the `:entry` form,
-        # and only if the closures can live in a device array, which needs
-        # them to be `isbits` and all of one type
-        first.form === :entry || return false
-        isbits(first.f) || return false
-        for sb in ssys.blocks
-            p = sb.block.provider
-            p isa CallableMatrixProvider || return false
-            p.form === :entry || return false
-            typeof(p.f) === typeof(first.f) || return false
-        end
-        return true
-    end
     for sb in ssys.blocks
         p = sb.block.provider
         (p isa TabulatedMatrixProvider || p isa ConstantMatrixProvider) ||
             return false
     end
     return true
-end
-
-# the callables of an entry-wise stamp system, or `nothing` when its blocks
-# are tabulated
-function entrycallables(ssys)
-    p1 = ssys.blocks[1].block.provider
-    (p1 isa CallableMatrixProvider && p1.form === :entry) || return nothing
-    return [sb.block.provider.f for sb in ssys.blocks]
 end
 
 # The stamp system holds its blocks untyped, so a loop which reads a
@@ -514,8 +446,6 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     candeviceevaluate(ssys) || return nothing
     nb = length(ssys.blocks)
     nports = Int32[sb.block.nports for sb in ssys.blocks]
-    callables = entrycallables(ssys)
-    istable = isnothing(callables)
     # size everything first and fill it in place: a line whose every cell is
     # its own block has hundreds of thousands of table points, and growing
     # the flat arrays a block at a time would be slow. A definition's data
@@ -527,7 +457,6 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
         p = sb.block.provider
         n = sb.block.nports
         ztot += n
-        istable || continue
         stot += 2*n*n
         if p isa ConstantMatrixProvider
             ntot += 1; vtot += n*n
@@ -574,13 +503,7 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
         freqoff[bi] = fi
         valoff[bi] = vi
         slopeoff[bi] = si
-        if !istable
-            # an entry-wise callable has no table, no range, and nothing to
-            # extrapolate
-            nfreq[bi] = 0
-            ranges[bi] = (-Inf, Inf)
-            strict[bi] = false
-        elseif prov isa ConstantMatrixProvider
+        if prov isa ConstantMatrixProvider
             # a single matrix is a one point table
             nfreq[bi] = 1
             freqs[fi + 1] = 0.0
@@ -620,18 +543,17 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     end
 
     d(x) = tobackend(backend, x)
-    funcs = istable ? nothing : tobackend(backend, callables)
     ncontrib = length(ssys.Aindex)
     return DeviceProviders(d(nports), d(zrefoff), d(zref), d(freqoff),
         d(nfreq), d(freqs), d(valoff), d(vals), d(curv), d(slopeoff),
-        d(eslopes), funcs, d(conjsym), d(zeroout),
+        d(eslopes), d(conjsym), d(zeroout),
         d(Int32.(ssys.modeindex)), d(Int32.(ssys.blockindex)),
         d(Int32.(ssys.pindex)), d(Int32.(ssys.qindex)), d(Int8.(ssys.coeff)),
         d(Int8.(ssys.sign)), d(collect(Float64, wpumpmodes)),
         d(zeros(Float64, nbatch)), zeros(Float64, nbatch),
         collect(Float64, wpumpmodes), Float64(scale),
         Float64(ssys.iscale),
-        ncontrib, ranges, strict, conjhost, names, ssys, backend)
+        ncontrib, ranges, strict, conjhost, names, backend)
 end
 
 # a kernel cannot raise, so a block whose data must not be extrapolated has
@@ -655,7 +577,7 @@ function checkdeviceranges(dp::DeviceProviders, k::Integer)
         lo, hi = dp.ranges[bi]
         l, h = dp.conjhost[bi] ? (loabs, hiabs) : (lonat, hinat)
         # a frequency within roundoff of an end knot is on it, as on the host
-        tol = 8eps(Float64)*max(abs(lo), abs(hi))
+        tol = edgetolerance(lo, hi)
         if l < lo - tol || h > hi + tol
             throw(ArgumentError(lazy"The scattering block at $(dp.names[bi]) is evaluated over [$(l), $(h)] rad/s but its tabulated range is [$(lo), $(hi)] rad/s. Extrapolation of tabulated data is opt-in: pass extrapolation = :constant, :linear or :zero if extrapolation is intended, or fit the block with RationalScattering, which extrapolates as a passive rational function."))
         end
@@ -682,19 +604,12 @@ function stagedeviceproviders!(values::AbstractMatrix, dp::DeviceProviders,
     end
     checkdeviceranges(dp, k)
     copyto!(dp.ws, dp.wshost)
-    if isnothing(dp.funcs)
-        deviceproviderkernel!(dp.backend, 64)(values, dp.modeindex,
-            dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn, dp.nports,
-            dp.zrefoff, dp.zref, dp.freqoff, dp.nfreq, dp.freqs, dp.valoff,
-            dp.vals, dp.curv, dp.slopeoff, dp.eslopes, dp.conjsym, dp.zeroout,
-            dp.wpump, dp.ws, dp.scale, dp.iscale, dp.ncontrib;
-            ndrange = length(values))
-    else
-        deviceentrykernel!(dp.backend, 64)(values, dp.modeindex,
-            dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn,
-            dp.zrefoff, dp.zref, dp.funcs, dp.conjsym, dp.wpump, dp.ws,
-            dp.scale, dp.iscale, dp.ncontrib; ndrange = length(values))
-    end
+    deviceproviderkernel!(dp.backend, 64)(values, dp.modeindex,
+        dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn, dp.nports,
+        dp.zrefoff, dp.zref, dp.freqoff, dp.nfreq, dp.freqs, dp.valoff,
+        dp.vals, dp.curv, dp.slopeoff, dp.eslopes, dp.conjsym, dp.zeroout,
+        dp.wpump, dp.ws, dp.scale, dp.iscale, dp.ncontrib;
+        ndrange = length(values))
     KernelAbstractions.synchronize(dp.backend)
     return values
 end

@@ -10,7 +10,10 @@ preconditioner with its structure and symbolic factorization, the
 deflation candidates of the last converged solve under a
 [`Floquet`](@ref) preconditioner, and the Krylov vectors; under
 [`Newton`](@ref) and [`QuasiNewton`](@ref) the assembled Jacobian with
-its plan and the factorization with its fill reducing ordering. Hand one
+its plan and the factorization with its fill reducing ordering. A circuit
+which injects direct current is solved by `Newton` in the canonical
+coordinates of its direct current block, whose Jacobian plan, ordering and
+factorization are built at every point rather than kept. Hand one
 as `reuse` to the method of [`hbnlsolve`](@ref) on a mode set and circuit
 matrices already built, which is the one [`hbcache`](@ref) calls; it is
 filled by the first solve and rebound to the new values by every later
@@ -75,8 +78,9 @@ const _DOC_NLKWARGS = """
     flux length or of the full augmented length including the auxiliary
     variables of the modified nodal analysis formulation. `x0`, `rtol`,
     `debugJacobian`, `returnsystem` and `assemblejacobian` apply to the
-    direct and Krylov methods; a `Staged` method builds and warm starts
-    its own stages and ignores them.
+    direct and Krylov methods. A `Staged` method builds and warm starts its
+    own stages: it refuses `x0`, `debugJacobian = true` and `returnsystem =
+    true`, and ignores `rtol` and `assemblejacobian`.
 - `keyedarrays = true`: return `nodeflux` and `S` as keyed arrays with named
     axes rather than plain arrays.
 - `sensitivitynames = String[]`: the components, named by their
@@ -100,12 +104,17 @@ const _DOC_NLKWARGS = """
 - `ftol`: deprecated, read as `atol` with a warning.
 - `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
     warning.
+- `factorization`: deprecated; beside the default method it solves with
+    `Newton(factorization = factorization)` with a warning, and beside
+    another method it is refused: the factorization is an option of the
+    method.
 
 A solve which does not converge returns the last iterate with
 `solverinfo.converged = false` and warns with the reason it stopped, which
 is also the `reason` of its [`IterationInfo`](@ref) (`:iterations`,
-`:work`, `:linesearch`, `:progress` or `:external`; [`stallmessage`](@ref)
-spells each out). Check `solverinfo.converged` before using the result."""
+`:work`, `:linesearch`, `:progress`, `:nonfinite` or `:external`;
+[`stallmessage`](@ref) spells each out). Check `solverinfo.converged`
+before using the result."""
 
 """
     hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
@@ -203,13 +212,18 @@ rejected with an `ArgumentError`. See `src/circuit/mna.jl`.
     modes, a truncation by frequency beside the truncations by order; the
     zero frequency mode follows `dc`. See [`truncfreqs`](@ref) for why a
     floor matters on incommensurate tones.
-- `maxintermodorder = Inf`: keep only the modes whose harmonic indices
-    have an absolute sum of at most this order, a diamond truncation of the
-    multi-tone Fourier space.
+- `maxintermodorder = Inf`: the largest intermodulation order retained. A
+    mode which mixes two or more tones is kept when the absolute values of
+    its harmonic indices sum to at most this order; every harmonic of a
+    single tone is kept up to that tone's cap in `Nharmonics`, whatever
+    the order, so for one tone this removes nothing.
 - `dc = false`: retain the zero frequency mode. A `CurrentSource`
-    component of the netlist is a constant current, out of its first
-    terminal and into its second, which drives this mode; a nonzero one
-    without the mode is an error.
+    component of the netlist is a constant current, which drives this
+    mode; a nonzero one without the mode is an error. It drives its current
+    through itself from its first terminal to its second: it draws the
+    current from the node at its first terminal and delivers it to the
+    node at its second, the opposite sense of a port source, which injects
+    its current into the port's first (positive) terminal.
 - `odd = true`: retain the odd harmonics, which four wave mixing couples
     through.
 - `even = false`: retain the even harmonics, which three wave mixing
@@ -264,7 +278,7 @@ out=hbnlsolve(
     circuit,circuitdefs;dc=true,odd=true,even=false)
 # each entry, the direct current fluxes and the much smaller pump ones
 all(isapprox.(out.nodeflux[:],
-    ComplexF64[15.190314040027383 + 0.0im, 3.02951933906079e-6 - 1.8979297778957574e-8im, 6.835392148519059 + 0.0im, -2.3940358355817786e-6 + 1.49981280411377e-8im, -6.835392148531658 + 0.0im, -5.11646504117753e-6 + 3.205357109735252e-8im];
+    ComplexF64[15.190313925948457 + 0.0im, 3.0295193148601166e-6 - 1.8979297617655687e-8im, 6.835392097204295 + 0.0im, -2.3940362470180187e-6 + 1.4998131089887555e-8im, -6.835392097216894 + 0.0im, -5.116465430387518e-6 + 3.2053573997775784e-8im];
     rtol = 1e-8))
 
 # output
@@ -303,6 +317,7 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, atol = 1e-8, ftol = nothing,
     switchofflinesearchtol = nothing, alphamin = nothing,
+    factorization = nothing,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
     keyedarrays::Bool = true,
     sensitivitynames::AbstractVector = String[],
@@ -311,16 +326,25 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
     returnsystem::Bool = false, assemblejacobian::Bool = true,
     warnnotconverged::Bool = true,
     ) where {N}
-    # the deprecated symbolic frequency variable, in circuit/legacy.jl
+    # the deprecated symbolic frequency variable and keywords warn
+    # together, whichever method solves, and `ftol` is read as `atol`; in
+    # circuit/legacy.jl
+    deprecations = String[]
     isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
-        circuitdefs, symfreqvar, :hbnlsolve))
-
-    # the deprecated keywords warn, whichever method solves, and `ftol` is
-    # read as `atol`; in circuit/legacy.jl
-    atol = deprecatedsolverkeywords(:hbnlsolve, atol; ftol,
+        circuitdefs, symfreqvar, deprecations))
+    atol = deprecatedsolverkeywords(deprecations, atol; ftol,
         switchofflinesearchtol, alphamin, maxharmonics)
+    method = deprecatedfactorization(deprecations, method, factorization)
+    warndeprecations(deprecations, :hbnlsolve)
 
     if method isa Staged
+        # the continuation builds and warm starts the system of each of its
+        # stages itself, so a start, or the system of one solve handed
+        # back, has nothing to apply to
+        isnothing(x0) || throw(ArgumentError(
+            "`method = Staged()` warm starts each stage from the last and takes no `x0`; solve with the method of its stages to start from a point."))
+        (returnsystem || debugJacobian) && throw(ArgumentError(
+            "`returnsystem = true` and `debugJacobian = true` hand back the system of one solve, and `method = Staged()` solves a continuation of systems at its own truncations and drives; build the system with the method of its stages."))
         return stagedhbnlsolve(method, w, Nharmonics, sources, psc,
             circuitdefs; iterations = iterations,
             Nevaluationharmonics = Nevaluationharmonics,
@@ -400,15 +424,16 @@ building those, with the inputs in their canonical forms
 ([`tonefrequencies`](@ref), [`sourcetable`](@ref)); it takes every keyword
 of the general method except the ones which describe the mode set
 (`Nharmonics`, `Nevaluationharmonics`, `maxintermodorder`,
-`frequencywindow`, `dc`, `odd`, `even`),
-and it does not accept `method = Staged()`, whose continuation builds each
-stage's own system. It takes one keyword the general method does not:
-`reuse = nothing`, an [`HBReuse`](@ref) which a solve fills and every
-later solve of the same topology, mode grid, tone frequencies, precision
-and backend rebinds (a mismatch is an `ArgumentError`); an
-[`ExternalSolver`](@ref) ignores it. It is refused with `returnsystem =
-true` and `debugJacobian = true`, whose system would be rebound under the
-caller.
+`frequencywindow`, `dc`, `odd`, `even`) and the deprecated ones (`ftol`,
+`switchofflinesearchtol`, `alphamin`, `factorization`, `maxharmonics` and
+`symfreqvar`), and it does not accept `method = Staged()`, whose
+continuation builds each stage's own system. It takes one keyword the
+general method does not: `reuse = nothing`, an [`HBReuse`](@ref) which a
+solve fills and every later solve of the same topology, mode grid, tone
+frequencies, precision and backend rebinds (a mismatch is an
+`ArgumentError`); an [`ExternalSolver`](@ref) ignores it. It is refused with
+`returnsystem = true` and `debugJacobian = true`, whose system would be
+rebound under the caller.
 
 # Examples
 ```jldoctest
@@ -460,7 +485,7 @@ out=hbnlsolve(
     frequencies, fi, psc, nm)
 # each entry, the direct current fluxes and the much smaller pump ones
 all(isapprox.(out.nodeflux[:],
-    ComplexF64[15.190314040027383 + 0.0im, 3.029519339060519e-6 - 1.8979297778237774e-8im, 6.835392148519059 + 0.0im, -2.394035835782651e-6 + 1.4998128176724836e-8im, -6.835392148531658 + 0.0im, -5.116465041378017e-6 + 3.2053571232084026e-8im];
+    ComplexF64[15.190313925948457 + 0.0im, 3.029519314860909e-6 - 1.8979297619056064e-8im, 6.835392097204296 + 0.0im, -2.394036246881364e-6 + 1.4998130573195207e-8im, -6.835392097216894 + 0.0im, -5.116465430251802e-6 + 3.2053573482853094e-8im];
     rtol = 1e-8))
 
 # output
@@ -481,7 +506,7 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     frequencies::Frequencies{N}, indices::FourierIndices{N},
     psc::CompiledCircuit, nm::CircuitMatrices;
     iterations = 1000, x0::Vector{ComplexF64} = ComplexF64[],
-    atol = 1e-8, rtol = 0.0, ftol = nothing, switchofflinesearchtol = nothing, alphamin = nothing,
+    atol = 1e-8, rtol = 0.0,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
     keyedarrays::Bool = true,
     sensitivitynames::AbstractVector = String[],
@@ -507,11 +532,6 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     directfactorization = something(
         method isa Newton || method isa QuasiNewton ? method.factorization : nothing,
         defaultfactorization(backend))
-
-    # the deprecated keywords warn, and `ftol` is read as `atol`; in
-    # circuit/legacy.jl
-    atol = deprecatedsolverkeywords(:hbnlsolve, atol; ftol,
-        switchofflinesearchtol, alphamin)
 
     # what the method asks of the setup: which Jacobians are assembled,
     # which representation of the linear term is built, and whether a
@@ -570,7 +590,7 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # iteration evaluates the residual in; for a circuit driven near its
     # characteristic impedance and solved in double precision it is far
     # below `atol`.
-    atol = max(atol, 16*sqrt(length(xr))*eps(precision)*norm(bnmsource))
+    atol = max(atol, roundingfloor(length(xr), precision, bnmsource))
 
     # use this for debugging purposes to return the residual and Jacobian
     # functions along with the ingredients from which the Jacobians are
@@ -638,17 +658,15 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
             atol, rtol, directfactorization, factorizationcache)
     elseif method isa NewtonKrylov
         solvenewtonkrylov!(method; sys, x, F, xr, Fr, modelayout, canonwork,
-            dcplan, dcsol, dccanonical, dcexplicit, Lscale,
-            Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Ljb,
-            Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, fjreal!,
-            backend, iterations, atol, rtol, reuse = reusing ? reuse : nothing,
-            precision)
+            dcplan, dcsol, dccanonical, dcexplicit, Amatrixindicesaliased,
+            Amatrixconjindices, Amatrixmodes, Rbnm, Nmodes, Nbranches, Nfreq,
+            fjreal!, backend, iterations, atol, rtol,
+            reuse = reusing ? reuse : nothing, precision)
     elseif method isa ExternalSolver
         solveexternal!(method; sys, x, F, xr, Fr, modelayout, Jr, canonwork,
-            dcplan, dcsol, dccanonical, dcexplicit, Lscale,
-            Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Ljb,
-            Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, backend,
-            iterations, atol, rtol)
+            dcplan, dcsol, dccanonical, dcexplicit, Amatrixindicesaliased,
+            Amatrixconjindices, Amatrixmodes, Rbnm, Nmodes, Nbranches, Nfreq,
+            backend, iterations, atol, rtol)
     else
         throw(ArgumentError("Method $(method) is not defined."))
     end
@@ -666,10 +684,22 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
 end
 
 """
+    roundingfloor(n, precision, b; margin = 16)
+
+The residual norm below which an iteration in `precision` over `n`
+unknowns cannot drive a residual whose terms are of the size of the source
+`b`: the `sqrt(n)*eps(precision)` accumulation of the rounding of a sum of
+terms of size `norm(b)`, times `margin` for room to spare.
+"""
+roundingfloor(n::Integer, precision::Type{<:AbstractFloat}, b; margin = 16) =
+    margin*sqrt(n)*eps(precision)*norm(b)
+
+"""
     nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes)
 
 The linear term of the nonlinear solve from the circuit matrices `nm`: the
-solver scale (see [`calcsolverscale`](@ref)), and the capacitance,
+solver scale (see [`calcsolverscale`](@ref)) and the reference impedance
+`Z0` it is built on, and the capacitance,
 conductance and inverse inductance matrices with the mode frequencies
 `wmodes` resolved in frequency dependent values, the entries of the
 negative frequency modes conjugated and the rows scaled, as
@@ -691,6 +721,10 @@ function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes)
     # once
     Lscale = Float64(calcsolverscale(w, componenttypes, nm.vvn, nm.portimpedances,
         Lscale))
+    # the reference impedance of that scale, the scale at a unit frequency,
+    # in which the direct current classification measures its voltages
+    Z0 = Float64(calcsolverscale((1.0,), componenttypes, nm.vvn,
+        nm.portimpedances, 1.0))
     # substitute in the mode frequencies for components which have
     # frequency defined symbolically; the result is complex whatever the
     # input
@@ -709,7 +743,7 @@ function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes)
     rmul!(Gnm, Lscale)
     rmul!(invLnm, Lscale)
     return (; Ljb = nm.Ljb, Ljbm = nm.Ljbm, Rbnm = nm.Rbnm, Lb = nm.Lb,
-        Mb = nm.Mb, Cnm, Gnm, invLnm, Lscale, portindices = nm.portindices,
+        Mb = nm.Mb, Cnm, Gnm, invLnm, Lscale, Z0, portindices = nm.portindices,
         portnumbers = nm.portnumbers,
         portimpedances = Vector{Any}(nm.portimpedances), vvn = nm.vvn)
 end
@@ -759,7 +793,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         end
     end
     # the linear term and the branch vectors, from `nonlinearmatrices`
-    (; Ljb, Ljbm, Rbnm, Lb, Mb, Cnm, Gnm, invLnm, Lscale, portindices,
+    (; Ljb, Ljbm, Rbnm, Lb, Mb, Cnm, Gnm, invLnm, Lscale, Z0, portindices,
         portnumbers, portimpedances, vvn) = m
     # Reject non-finite inputs up front: the frequency and source checks
     # below compare against bounds built from these values, and an infinite
@@ -783,11 +817,10 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     conjsourceindices = indices.conjsourceindices
     conjtargetindices = indices.conjtargetindices
     Amatrixmodes = indices.hbmatmodes
-    Amatrixindices = needjx ? collect(indices.hbmatindices) : nothing
     Amatrixconjindices = indices.hbconjmatindices
     # The harmonic balance residual is computed with cyclic Fourier
     # transforms, so its exact Jacobian couples modes whose differences
-    # alias back onto the sampled grid; hbmatind with `alias = true`
+    # alias back onto the sampled grid; hbmatindices with `alias = true`
     # includes those couplings (the sum couplings of hbconjmatind always
     # alias). The exact real Jacobian of `Newton()` is assembled from
     # the aliased difference indices, so it is the exact derivative of the
@@ -796,14 +829,16 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # Jacobian of `QuasiNewton()` keeps the truncated (non-aliased)
     # indices: it is an approximation to the exact Jacobian either way, and
     # the aliased couplings would densify it and slow its factorization.
+    # Both place the mode differences on the untruncated grid of the
+    # transform.
+    grid = calcfreqs(frequencies.Nharmonics, frequencies.Nw, frequencies.Nt)
+    Amatrixindices = needjx ? hbmatindices(grid, Amatrixmodes) : nothing
     # what a previous solve of this circuit built and this one takes over;
     # see `HBReuse`
     Amatrixindicesaliased = if reusing && !isnothing(reuse.indicesaliased)
         reuse.indicesaliased
     else
-        # the aliased indices of the mode differences already formed
-        a = hbmatindices(calcfreqs(frequencies.Nharmonics, frequencies.Nw,
-            frequencies.Nt), Amatrixmodes; alias = true)
+        a = hbmatindices(grid, Amatrixmodes; alias = true)
         reusing && (reuse.indicesaliased = a)
         a
     end
@@ -825,7 +860,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
             if isnumericallyzero(wmodes[m], terms)
                 throw(ArgumentError("The mode tuple $(modes[m]) has a "*
                     "(numerically) zero physical frequency for the drive "*
-                    "frequencies $(w./(2*pi)) Hz, so it would duplicate "*
+                    "frequencies $(w) rad/s, so it would duplicate "*
                     "the DC coordinate: the drive frequencies are "*
                     "commensurate at the retained intermodulation order. "*
                     "Choose incommensurate drive frequencies (for example "*
@@ -893,7 +928,6 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     else
         copy(x0)
     end
-    F = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     # substitute in the mode frequencies for components which have frequency
     # defined symbolically.
     # Inductor branches which participate in mutual coupling are promoted
@@ -955,7 +989,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # interface scales their constant term itself.
     bnmsource = copy(bnm)
     dcplan = dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes,
-        Nnodes)
+        Nnodes, Z0/Lscale)
 
     # The direct current block exists when there is something in it: an
     # average voltage to find, or a scattering block whose zero frequency
@@ -1162,7 +1196,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         # device factorization is compressed by rows, and the assembly writes
         # its values there too; on a host it is the matrix KLU factorizes
         devicej = !(backend isa CPU)
-        Jrs, _ = realjacobianstructure(Amatrixindicesaliased,
+        Jrs = realjacobianstructure(Amatrixindicesaliased,
             Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches, invLnm, Gnm,
             Cnm, modelayout, Float64;
             transposed = devicej, backend = backend)
@@ -1247,8 +1281,8 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # the periodic system is solved as stamped, so the work is not kept.
     canonwork = if hasdc
         tr = transportrows(dcplan, bnmsource, Nmodes)
-        Lc = tobackend(backend, compositelayout(modelayout, frequencies.modes;
-            nvdc = nvoltages(tr)))
+        Lc = compositelayout(modelayout, frequencies.modes;
+            nvdc = nvoltages(tr))
         # a block's zero frequency row is `i = 0` in the stamp; with an
         # average voltage to respond to it becomes the block's own relation,
         # which is what makes it visible at direct current. A block with no
@@ -1371,9 +1405,9 @@ end
 
 function solvenewtonkrylov!(method::NewtonKrylov;
         sys, x, F, xr, Fr, modelayout, canonwork, dcplan, dcsol, dccanonical,
-        dcexplicit, Lscale, Amatrixindicesaliased, Amatrixconjindices,
-        Amatrixmodes, Ljb, Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq,
-        fjreal!, backend, iterations, atol, rtol, reuse, precision)
+        dcexplicit, Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes,
+        Rbnm, Nmodes, Nbranches, Nfreq, fjreal!, backend, iterations, atol,
+        rtol, reuse, precision)
     reusing = !isnothing(reuse)
     # the matrix free real Jacobian
     jvpreal!(Jvr, vr) = jacobianvectorproduct!(Jvr, sys, vr)
@@ -1389,11 +1423,11 @@ function solvenewtonkrylov!(method::NewtonKrylov;
     # precision block factors for two or more tones when they fit in
     # memory (see `resolveautomatic`). On a strongly pumped line a block
     # diagonal alone stalls; escalation rescues it, growing the base
-    # only on repeated linear failures.
+    # only when a linear solve fails.
     #
     # `HarmonicBand(p)` restricts the retained coupling by harmonic
-    # *offset* rather than by column (see `modebandmask`), which is the
-    # restriction the Toeplitz structure of the nonlinear term asks for.
+    # *offset* (see `modebandmask`), which is the restriction the Toeplitz
+    # structure of the nonlinear term asks for.
     # Its fill grows linearly in the mode count where the full
     # Jacobian's grows quadratically, so it overtakes the full
     # factorization once there are enough modes, and it escalates by
@@ -1403,8 +1437,6 @@ function solvenewtonkrylov!(method::NewtonKrylov;
     # subspace. It also rescues the block diagonal, and needs no sparse
     # factorization at all, which suits a GPU; but it is a second
     # answer to the same problem as escalation, and is off by default.
-    # `CoupledModes(1:12)` with no deflation selects the retained modes
-    # by frequency.
     #
     # the preconditioner the method asks for: a mode coupling
     # preconditioner, possibly wrapped in a deflation below
@@ -1423,9 +1455,8 @@ function solvenewtonkrylov!(method::NewtonKrylov;
         rebind!(reuse.preconditioner, sys)
     else
         b = ModeCouplingPreconditioner(sys, Amatrixindicesaliased,
-            Amatrixconjindices, Ljb, Lscale, Rbnm, Nmodes, Nbranches,
-            Nfreq, invLnm, Gnm, Cnm, modelayout; spec = inner,
-            precision = precision, Amatrixmodes = Amatrixmodes)
+            Amatrixconjindices, Rbnm, Nmodes, Nbranches, Nfreq, modelayout;
+            spec = inner, precision = precision, Amatrixmodes = Amatrixmodes)
         if reusing
             reuse.preconditioner = b
             reuse.preconditionerspec = spec
@@ -1438,13 +1469,13 @@ function solvenewtonkrylov!(method::NewtonKrylov;
     xrb = tobackend(backend, convert(Vector{precision}, xr))
     Frb = tobackend(backend, convert(Vector{precision}, Fr))
 
-    # With direct current the canonical layout groups the state by role
-    # rather than by node. It is a permutation, so the iteration is the
-    # same one in a rotated basis and must reach the same point. The
-    # recycling wrapper, when there is one, goes *outside* the canonical
-    # wrapper: its candidates are then corrections of the whole canonical
-    # state, and the Arnoldi factorization it harvests is that of the
-    # operator GMRES actually ran, rather than a restriction of it.
+    # With direct current the iteration runs on the canonical state, the
+    # internal state untouched followed by the average voltages `vdc` of
+    # the direct current block. The recycling wrapper, when there is one,
+    # goes *outside* the canonical wrapper: its candidates are then
+    # corrections of the whole canonical state, and the Arnoldi
+    # factorization it harvests is that of the operator GMRES actually
+    # ran, rather than a restriction of it.
     #
     # The residual, the product and the preconditioner are erased here
     # (see `ErasedFunction`), before the deflation wraps them, so that the
@@ -1483,8 +1514,7 @@ function solvenewtonkrylov!(method::NewtonKrylov;
     floquet = if spec isa Floquet
         prev = reusing ? reuse.recycling : nothing
         # the residual-image form with physical candidates: `harvest`
-        # is the number of singular directions per harvest, the
-        # harmonic Ritz ones coming on top of it
+        # is the number of singular directions per harvest
         state = if prev isa FloquetState && size(prev.X, 1) == length(usolve)
             copy(prev)
         else
@@ -1521,18 +1551,17 @@ end
 
 function solveexternal!(method::ExternalSolver;
         sys, x, F, xr, Fr, modelayout, Jr, canonwork, dcplan, dcsol,
-        dccanonical, dcexplicit, Lscale, Amatrixindicesaliased,
-        Amatrixconjindices, Amatrixmodes, Ljb, Rbnm, invLnm, Gnm, Cnm,
-        Nmodes, Nbranches, Nfreq, backend, iterations, atol, rtol)
+        dccanonical, dcexplicit, Amatrixindicesaliased, Amatrixconjindices,
+        Amatrixmodes, Rbnm, Nmodes, Nbranches, Nfreq, backend, iterations,
+        atol, rtol)
     # hand the caller's root finder the system as a problem object. With
     # direct current the problem carries the augmentation too, so the
     # caller solves the posed system in the canonical unknowns.
     aug = dcexplicit ? DCAugmentation(canonwork, Jr) : nothing
     parts = (Amatrixindicesaliased = Amatrixindicesaliased,
-        Amatrixconjindices = Amatrixconjindices, Ljb = Ljb,
-        Lscale = Lscale, Rbnm = Rbnm, Nmodes = Nmodes,
-        Nbranches = Nbranches, Nfreq = Nfreq, invLnm = invLnm,
-        Gnm = Gnm, Cnm = Cnm, Amatrixmodes = Amatrixmodes)
+        Amatrixconjindices = Amatrixconjindices, Rbnm = Rbnm,
+        Nmodes = Nmodes, Nbranches = Nbranches, Nfreq = Nfreq,
+        Amatrixmodes = Amatrixmodes)
     u0 = if dcexplicit
         v = zeros(Float64, canonicaldim(canonwork.layout))
         gathercanonical!(v, xr, canonwork.layout)
@@ -1551,8 +1580,10 @@ function solveexternal!(method::ExternalSolver;
     Fc = similar(u)
     hbresidual!(Fc, prob, u)
     # the caller's solver says whether it converged, and the root it
-    # returns is held to the tolerance of the solve too
-    converged = extconverged && norm(Fc) <= prob.atol
+    # returns is held to the tolerance of the solve too, which a norm that
+    # is not finite never meets
+    normFc = norm(Fc)
+    converged = extconverged && isfinite(normFc) && normFc <= prob.atol
     if dcexplicit
         dccanonical, dcsol = canonicalresult!(xr, Fr, u, Fc, canonwork,
             dcplan)
@@ -1561,7 +1592,7 @@ function solveexternal!(method::ExternalSolver;
     end
     real_to_complex!(x, xr, modelayout.isreal)
     real_to_complex!(F, Fr, modelayout.isreal)
-    info = IterationInfo(converged, 0, [normF0, norm(Fc)],
+    info = IterationInfo(converged, 0, [normF0, normFc],
         Float64[], Int[], Bool[], [], converged ? :converged : :external)
     return info, dcsol, dccanonical
 end
@@ -1771,7 +1802,7 @@ function nonlinearoutputs(; psc,
             nothing
         end
         HBOperatingPoint(opsys, copy(x), J, modelayout, Lscale, wmodes,
-            coupledbranches, Nmodes, Nnodes, dcop)
+            coupledbranches, Nmodes, dcop)
     else
         nothing
     end
@@ -1834,14 +1865,15 @@ function checkjunctioncurrents(nl::NonlinearHB, psc::CompiledCircuit)
     (isempty(Ljb.nzind) || !any(m -> all(iszero, m), nl.modes)) &&
         return nothing
     frequencies = nl.frequencies
-    indices = fourierindices(frequencies)
+    # the maps between the flux vector and its transform array
+    vectomatmap, conjsourceindices, conjtargetindices =
+        calcphiindices(frequencies, conjsym(frequencies))
     NLj = length(Ljb.nzval)
     phimatrix = zeros(Complex{Float64}, (frequencies.Nw..., NLj))
     phitd, irfftplan, _ = plan_applynl(phimatrix, CPU())
     branchflux = nl.Rbnm*initialguess(nl.nodeflux)
-    phivectortomatrix!(branchflux[nl.Ljbm.nzind], phimatrix,
-        indices.vectomatmap, indices.conjsourceindices,
-        indices.conjtargetindices, NLj)
+    phivectortomatrix!(branchflux[nl.Ljbm.nzind], phimatrix, vectomatmap,
+        conjsourceindices, conjtargetindices, NLj)
     applyifft!(phitd, phimatrix, irfftplan)
     relations = calcjunctionrelations(psc.componenttypes, psc.nodeindices,
         psc.junctioncprs, psc.topology.edge2indexdict, Ljb)
@@ -1891,7 +1923,9 @@ end
 
 The source vector in the branch basis: for each source, the current at
 its port and mode scaled by `Lscale/phi0`, at the index of that port's
-branch and mode; zero elsewhere. See also [`addsources!`](@ref).
+branch and mode; zero elsewhere. A source at a port the circuit does not
+have, at a mode the truncation removed, or at the zero frequency mode with
+a complex amplitude is an `ArgumentError`.
 
 # Examples
 ```jldoctest
@@ -1910,8 +1944,8 @@ JosephsonCircuits.calcsources(modes, sources, portindices, portnumbers,
 
 # output
 8-element Vector{ComplexF64}:
-     1526.863796602709 + 0.0im
- 0.0003053727593205418 + 0.0im
+    1526.8637851180192 + 0.0im
+ 0.0003053727570236038 + 0.0im
                    0.0 + 0.0im
                    0.0 + 0.0im
                    0.0 + 0.0im
@@ -1924,27 +1958,6 @@ function calcsources(modes, sources, portindices, portnumbers, nodeindices,
     edge2indexdict, Lscale, Nnodes, Nbranches, Nmodes)
 
     bbm = zeros(Complex{Float64}, Nbranches*Nmodes)
-
-    addsources!(bbm, modes, sources, portindices, portnumbers,
-        nodeindices, edge2indexdict, Lscale, Nnodes, Nbranches,
-        Nmodes)
-
-    return bbm
-end
-
-"""
-    addsources!(bbm, modes, sources, portindices, portnumbers,
-        nodeindices, edge2indexdict, Lscale, Nnodes, Nbranches, Nmodes)
-
-Fill `bbm` with the source vector of [`calcsources`](@ref). A source at a
-port the circuit does not have, at a mode the truncation removed, or at
-the zero frequency mode with a complex amplitude is an `ArgumentError`.
-"""
-function addsources!(bbm, modes, sources, portindices, portnumbers,
-    nodeindices, edge2indexdict, Lscale, Nnodes, Nbranches, Nmodes)
-
-    # zero the vector
-    fill!(bbm,0)
 
     # port number -> position, and mode -> position
     portdict = Dict{eltype(portnumbers), eltype(portindices)}()
@@ -1988,7 +2001,7 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
         end
     end
 
-    return nothing
+    return bbm
 end
 
 """
@@ -1997,11 +2010,14 @@ end
 
 Add the constant current sources of the netlist to the source vector in
 the branch basis: a `CurrentSource` component of value `I` drives the zero
-frequency mode with `I` flowing out of its first terminal and into its
-second, as the transient reads it, on its own branch and in the
-orientation the graph gave that branch. The mode must be retained: a
-nonzero source without it is an error, so that a netlist carrying a
-constant source is never solved without its bias in silence.
+frequency mode, on its own branch and in the orientation the graph gave
+that branch, as the transient reads it. It drives `I` through itself from
+its first terminal to its second: it draws the current from the node at
+its first terminal and delivers it to the node at its second, the
+opposite sense of a port source, which injects its current into the
+port's first (positive) terminal. The mode must be retained: a nonzero
+source without it is an error, so that a netlist carrying a constant
+source is never solved without its bias in silence.
 """
 function addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
     vvn, topology, modes, Lscale, Nmodes)

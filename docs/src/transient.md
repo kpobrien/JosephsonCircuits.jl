@@ -8,7 +8,9 @@ and adjoint calculate incremental responses about the recorded trajectory.
 ## Example
 
 This one-port junction circuit is driven by a smooth pump and a smaller
-signal. The source returns instantaneous current in amperes.
+signal. The source returns instantaneous current in amperes; the pump and
+signal frequencies `wp` and `ws` are angular, in rad/s, as every frequency
+the package takes.
 
 ```@example transient
 using JosephsonCircuits
@@ -17,16 +19,18 @@ circuit = Circuit([
     (:C1, 1, 0, Capacitor(1e-12)),
     (:Lj1, 1, 0, JosephsonJunction(1e-9)),
 ])
+wp, ws = 2pi*3e9, 2pi*1.1e9
 rise(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : sinpi(t/4e-9)^2
-drive(t) = 0.12e-6*rise(t)*cospi(2*3e9*t) +
-    2e-9*rise(t - 2e-9)*cospi(2*1.1e9*t)
-problem = transientproblem(circuit; sources = [TransientSource(1, drive)])
+drive(wp, ws) = t -> 0.12e-6*rise(t)*cos(wp*t) + 2e-9*rise(t - 2e-9)*cos(ws*t)
+problem = transientproblem(circuit; sources = [TransientSource(1, drive(wp, ws))])
 solution = transientsolve(problem, (0.0, 8e-9); dt = 2e-12)
 @assert all(isfinite, solution.voltage) # hide
 (size(solution.voltage), last(solution.times))
 ```
 
-Rows follow `problem.circuit.ports`; columns are saved times in seconds.
+Rows are the ports in the order of their numbers, `problem.ports`,
+whatever order the circuit lists them in; columns are saved times in
+seconds.
 The main outputs are:
 
 | Field | Meaning |
@@ -42,9 +46,16 @@ amplitude `Ipeak` launches available power `Ipeak^2*R/8`. The same pump's
 HB coefficient is half its peak amplitude; see [conventions](conventions.md).
 
 `TransientSource("I1", waveform)` replaces the constant value of a named
-`CurrentSource`. Multiple waveforms on the same target sum. Source
+`CurrentSource`. Multiple waveforms on the same target sum. Sources into
+a subnetwork that no element connects to ground must balance: the solve
+refuses a net current into it, which would have no path back, and
+accepts sources whose currents cancel, such as two of one waveform, one
+into the subnetwork and one out of it. Source
 functions must return finite real values and be deterministic: response
-calculations and checkpoint replay evaluate them again.
+calculations and checkpoint replay evaluate them again. The solver calls
+them on the host at every step of every condition, so build them as
+closures over their values, as `drive(wp, ws)` does above: a drive that
+reads untyped, non-constant global variables can allocate at every call.
 
 ## Choosing the rule, the step and the record
 
@@ -54,7 +65,7 @@ calculations and checkpoint replay evaluate them again.
 |---|---:|---|
 | `GaussLegendre()` | 4 | Default; low phase error, blocks, lines, and batched conditions |
 | `Trapezoidal()` | 2 | Nondamping reference; supports an optional iterative linear solve |
-| `BackwardEuler()` | 1 | Strongly damping comparison method |
+| `BackwardEuler()` | 1 | Strongly damping comparison method; supports an optional iterative linear solve |
 
 Gauss–Legendre and trapezoidal integration do not damp a resolved linear
 lossless LC oscillation. This does not make large steps accurate: phase
@@ -129,12 +140,13 @@ no adapter from an HB operating point to a transient initial state.
 
 ## Demodulate a port trace
 
-[`transientdemodulate`](@ref) returns a complex peak amplitude at a
-frequency in Hz. Continuing the example above:
+[`transientdemodulate`](@ref) returns a complex peak amplitude at an
+angular frequency in rad/s, here the signal's `ws`. Continuing the example
+above:
 
 ```@example transient
 window(t) = 4e-9 <= t <= 8e-9 ? sinpi((t - 4e-9)/4e-9)^2 : 0.0
-amplitude = transientdemodulate(solution, 1, 1.1e9;
+amplitude = transientdemodulate(solution, 1, ws;
     quantity = :outgoing, window)
 @assert isfinite(amplitude) # hide
 nothing # hide
@@ -155,7 +167,7 @@ This example checks their transpose identity:
 ```@example transient
 recorded = transientsolve(problem, (0.0, 2e-9); dt = 2e-12, record = :phases)
 deltacurrent = zeros(size(recorded.voltage))
-deltacurrent[1, :] .= 1e-9 .* sinpi.(2*1.8e9 .* recorded.times)
+deltacurrent[1, :] .= 1e-9 .* sin.(2pi*1.8e9 .* recorded.times)
 response = transienttangent(recorded, deltacurrent)
 
 weights = zeros(size(recorded.outgoing))
@@ -177,6 +189,15 @@ dimension carries several tangent directions or adjoint objectives through
 the same step factorization. The derivatives are exact for the discretized
 equations to the response-solve tolerances; refine `dt` to check physical
 accuracy.
+
+A tangent's currents into a subnetwork that no element connects to
+ground must cancel, as the sources' must, and are refused otherwise. An
+adjoint's derivative along one source into such a subnetwork depends on
+which node the solver takes as the subnetwork's flux reference: only
+combinations of the targets whose currents cancel there mean anything,
+such as the sum along two sources of one waveform, one into the
+subnetwork and one out of it. A target that no such combination includes
+is refused.
 
 ### Component sensitivities
 
@@ -208,8 +229,8 @@ sources left constant must be the same; only the waveforms differ.
 
 ```@example transient
 base = transientproblem(circuit; sources = [TransientSource(1, t -> 0.0)])
-pump(Ipeak) = t -> Ipeak*rise(t)*cospi(2*3e9*t)
-problems = [transientproblem(base; sources = [TransientSource(1, pump(a))])
+pump(Ipeak, wp) = t -> Ipeak*rise(t)*cos(wp*t)
+problems = [transientproblem(base; sources = [TransientSource(1, pump(a, wp))])
     for a in (0.04e-6, 0.08e-6, 0.12e-6)]
 batch = transientsolve(problems, (0.0, 2e-9); dt = 5e-12, record = :phases)
 member = batch[2]
@@ -228,13 +249,14 @@ constructs a consistent state and demonstrates the error from an
 inconsistent zero initialization. An initial-state `ArgumentError` occurs
 before time integration; it is different from a failed timestep.
 
-Under `GaussLegendre()`, [`TransientStepError`](@ref) identifies the failed
-step, its time in seconds, the original batch condition indices, and the
-cause:
+Under each of the package's rules, `GaussLegendre()`, `Trapezoidal()` and
+`BackwardEuler()`, [`JosephsonCircuits.TransientStepError`](@ref)
+identifies the failed step, its time in seconds, the original batch
+condition indices, and the cause:
 
 | Cause | Meaning | What to check |
 |---|---|---|
-| `:newton` | The implicit stage solve did not converge | Reduce `dt`, smooth sharp drives, inspect the operating regime, and increase `iterations` if residuals are making progress |
+| `:newton` | The implicit solve of the step did not converge | Reduce `dt`, smooth sharp drives, inspect the operating regime, and increase `iterations` if residuals are making progress |
 | `:projection` | The endpoint could not satisfy the algebraic constraints | Check topology and constrained sources; reduce `dt` and inspect the state near failure; the same iteration budget also limits projection corrections |
 
 Do not relax tolerances merely to suppress a failure: inspect the result
@@ -248,7 +270,7 @@ propagating the error to the caller:
 try
     transientsolve(problems, (0.0, 2e-9); dt = 5e-12)
 catch err
-    if err isa TransientStepError
+    if err isa JosephsonCircuits.TransientStepError
         @error "Transient integration failed" step = err.step time = err.time conditions = err.conditions cause = err.cause
         # Rerun a reported member independently with a smaller timestep:
         # transientsolve(problems[first(err.conditions)], (0.0, 2e-9); dt = 2.5e-12)

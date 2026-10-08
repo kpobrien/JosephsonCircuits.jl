@@ -94,13 +94,38 @@ function symbolicfill(S::SparseMatrixCSC, perm::AbstractVector{<:Integer})
 end
 
 """
+    FillOrdering(perm, fill)
+    FillOrdering(perm, fill, rows)
+
+A fill reducing ordering of a sparsity pattern as [`fillordering`](@ref)
+chooses it: the permutation `perm`, `perm[k]` the original index of the
+column of the `k`th pivot, `rows` that of its row, `perm` itself unless
+the diagonal of the pattern has structural zeros, and `fill`, the entries
+of one triangular factor of the pattern under it, diagonal included, as
+[`symbolicfill`](@ref) predicts them. [`kluordered`](@ref) sizes the
+first allocation of a fresh factorization from `fill`, and
+[`sparsefactorbytes`](@ref) the memory of the factors. The choice depends
+only on the pattern, so one serves every factorization of it: a
+[`FactorizationCache`](@ref) holds the one it was handed or chose
+([`seedordering!`](@ref)).
+"""
+struct FillOrdering
+    perm::Vector{Int}
+    fill::Int
+    rows::Vector{Int}
+end
+FillOrdering(perm, fill) = FillOrdering(perm, fill, perm)
+
+# the permutation of an ordering handed to a factorization
+orderingpermutation(o::FillOrdering) = o.perm
+
+"""
     kluordered(A::SparseMatrixCSC; kwargs...)
     kluordered(A::SparseMatrixCSC, ordering; kwargs...)
 
 `KLU.klu(A)` with its fill reducing ordering chosen by measurement
 ([`fillordering`](@ref)), or handed in as `ordering`: a
-[`FillOrdering`](@ref), a bare permutation of the columns of `A`, or
-`nothing` for KLU's own. KLU's
+[`FillOrdering`](@ref), or `nothing` for KLU's own. KLU's
 own default, AMD on the pattern of `A + A'`, is the right ordering for
 most circuit matrices and a pathological one for some of the mode-coupling
 patterns the preconditioners of this package factorize: the harmonic band
@@ -113,11 +138,18 @@ So both permutations are computed, AMD and METIS nested dissection, each
 through the CHOLMOD library that ships with Julia, the flops of the
 factorization each would need are predicted from the elimination tree
 ([`symbolicfill`](@ref)), and the cheaper one is handed to KLU as a given
-ordering. Should either ordering fail, KLU's default is used. Everything
-before the numeric factorization is symbolic and depends only on the
-sparsity pattern: the numeric refactorizations of the pattern reuse the
-whole analysis, and a [`FactorizationCache`](@ref) keeps the ordering for
-every fresh factorization of it.
+ordering; a harmonic balance sweep has METIS order the graph of its nodes
+rather than of its rows ([`fillordering`](@ref)'s `blocksize`). KLU takes
+a given ordering without the maximum transversal it finds for its own, so
+where the diagonal of `A` has structural zeros, as the Jacobian of a
+circuit with scattering blocks can have, a maximum transversal matches its
+rows to columns first: the pattern so permuted is ordered, its fill
+predicted, and KLU is handed the row and the column permutations, a
+zero-free diagonal for its pivots. Should either ordering fail, KLU's
+default is used. Everything before the numeric factorization is symbolic
+and depends only on the sparsity pattern: the numeric refactorizations of
+the pattern reuse the whole analysis, and a [`FactorizationCache`](@ref)
+keeps the ordering for every fresh factorization of it.
 
 KLU has no estimate of the fill of an ordering it is handed, and reserves
 ten times the entries of `A` for each factor, which it trims once the
@@ -128,66 +160,53 @@ grows a factor which pivoting fills beyond it. `kwargs` are `check` and
 `allowsingular` of `KLU.klu`.
 """
 function kluordered(A::SparseMatrixCSC{Tv,Ti},
-    ordering = fillordering(KLUfactorization(), A); check::Bool = true,
-    allowsingular::Bool = false) where {Tv,Ti}
+    ordering::Union{Nothing,FillOrdering} = fillordering(KLUfactorization(), A);
+    check::Bool = true, allowsingular::Bool = false) where {Tv,Ti}
     isnothing(ordering) && return KLU.klu(A; check = check, allowsingular = allowsingular)
     perm = orderingpermutation(ordering)
     nzval = Tv <: Complex ? convert(Vector{ComplexF64}, A.nzval) :
         convert(Vector{Float64}, A.nzval)
     K = KLU.KLUFactorization(size(A, 1), A.colptr .- one(Ti), A.rowval .- one(Ti), nzval)
-    if ordering isa FillOrdering && nnz(A) > 0
+    if nnz(A) > 0
         # KLU reserves `initmem*nnz(A) + n` for each factor of a given
         # ordering; `initmem_amd` is the margin it puts on its own estimate
         K.common.initmem = K.common.initmem_amd*ordering.fill/nnz(A)
     end
-    p = Ti.(perm .- 1)
-    KLU.klu_analyze!(K, p, copy(p); check = check)
+    KLU.klu_analyze!(K, Ti.(ordering.rows .- 1), Ti.(perm .- 1); check = check)
     return KLU.klu_factor!(K; check = check, allowsingular = allowsingular)
 end
 
 """
-    FillOrdering(perm, fill)
+    fillordering(factorization::AbstractFactorization, A; blocksize = 1)
 
-A fill reducing ordering of a sparsity pattern as [`fillordering`](@ref)
-chooses it: the permutation `perm`, `perm[k]` the original index of the
-`k`th pivot, and `fill`, the entries of one triangular factor of the
-pattern under it, diagonal included, as [`symbolicfill`](@ref) predicts
-them. [`kluordered`](@ref) sizes the first allocation of a fresh
-factorization from `fill`, and [`sparsefactorbytes`](@ref) the memory of
-the factors. The choice depends only on the pattern, so one serves every
-factorization of it: a [`FactorizationCache`](@ref) holds the one it was
-handed or chose ([`seedordering!`](@ref)).
-"""
-struct FillOrdering
-    perm::Vector{Int}
-    fill::Int
-end
-Base.:(==)(a::FillOrdering, b::FillOrdering) = a.perm == b.perm && a.fill == b.fill
-Base.hash(o::FillOrdering, h::UInt) = hash(o.fill, hash(o.perm, hash(FillOrdering, h)))
-
-# the permutation of an ordering handed to a factorization: a
-# `FillOrdering`'s, or a bare permutation
-orderingpermutation(o::FillOrdering) = o.perm
-orderingpermutation(o::AbstractVector{<:Integer}) = o
-
-"""
-    fillordering(factorization::AbstractFactorization, A)
-
-The fill reducing ordering `factorization` chooses for the sparsity pattern
-of `A`: for a [`KLUfactorization`](@ref) the better of AMD and METIS
-nested dissection by predicted flops ([`kluordered`](@ref)), as a
+The fill reducing ordering `factorization` chooses for the sparsity
+pattern of `A`: for a [`KLUfactorization`](@ref) the better of AMD and
+METIS nested dissection by predicted flops ([`kluordered`](@ref)), as a
 [`FillOrdering`](@ref) carrying its predicted fill, or `nothing` for KLU's
 own when neither can be formed or `A` is not square; `nothing` for any
-other factorization, which orders a matrix itself. The ordering depends
-only on the pattern, so one choice serves every factorization of it: a
+other factorization, which orders a matrix itself. `blocksize` is the
+number of rows of each node of a pattern whose rows come in contiguous
+node blocks, as a harmonic balance system's modes do: METIS then orders
+the graph of the nodes, and the default of one, or a size which does not
+divide the rows, has it order the rows. The ordering depends only on the
+pattern, so one choice serves every factorization of it: a
 [`FactorizationCache`](@ref) keeps the one it chose, and one chosen
 elsewhere can be handed to it ([`seedordering!`](@ref)).
 """
-fillordering(::AbstractFactorization, A) = nothing
-function fillordering(::KLUfactorization, A::SparseMatrixCSC)
+fillordering(::AbstractFactorization, A; blocksize::Integer = 1) = nothing
+function fillordering(::KLUfactorization, A::SparseMatrixCSC;
+    blocksize::Integer = 1)
     # a matrix which is not square is left to `KLU.klu` to refuse
     size(A, 1) == size(A, 2) || return nothing
-    return try _bestordering(A) catch; nothing end
+    # CHOLMOD reports an ordering it cannot form, its memory exhausted
+    # included, as a `CHOLMODException`, and KLU's own ordering is taken
+    # then; anything else, an interrupt or an error of the code, propagates
+    return try
+        _bestordering(A; blocksize)
+    catch e
+        e isa CHOLMOD.CHOLMODException || rethrow()
+        nothing
+    end
 end
 
 # the symmetric pattern of `A`, as CHOLMOD wants it: `A + A'` with unit
@@ -205,31 +224,106 @@ end
 
 # AMD and METIS nested dissection on the symmetric pattern, the one with
 # the smaller predicted flop count with its fill; `nothing` if neither
-# could be formed
-function _bestordering(A::SparseMatrixCSC)
+# could be formed. With `blocksize` rows a node, a size which divides the
+# rows, METIS orders the graph of the nodes, each node's rows taken in
+# turn: on the graph of the rows its time and memory grow faster than the
+# pattern where the node blocks are banded, rows it cannot merge
+function _bestordering(A::SparseMatrixCSC; blocksize::Integer = 1)
     n = size(A, 1)
     n <= 1 && return nothing
-    S = _symmetricpattern(A)
+    # where the diagonal has structural zeros, the pattern with its columns
+    # matched to the rows is ordered, and the pivots' columns are the
+    # matched ones
+    cols = _transversal(A)
+    S = _symmetricpattern(isnothing(cols) ? A : A[:, cols])
     common = CHOLMOD.getcommon()
     Sc = CHOLMOD.Sparse(S, 1)
+    blocked = blocksize > 1 && n % blocksize == 0
+    Gc = blocked ? CHOLMOD.Sparse(_nodegraph(S, blocksize), 1) : Sc
     best = nothing
     bestflops = Inf
     for order in (:amd, :metis)
-        perm = Vector{Int64}(undef, n)
+        perm = Vector{Int64}(undef, order === :metis && blocked ? n ÷ blocksize : n)
         ok = if order === :amd
             LibSuiteSparse.cholmod_l_amd(Sc, C_NULL, 0, perm, common)
         else
-            LibSuiteSparse.cholmod_l_metis(Sc, C_NULL, 0, true, perm, common)
+            LibSuiteSparse.cholmod_l_metis(Gc, C_NULL, 0, true, perm, common)
         end
         ok == 1 || continue
         perm .+= 1
+        order === :metis && blocked && (perm = _rowordering(perm, blocksize))
         fillcount, flops = symbolicfill(S, perm)
         if flops < bestflops
-            best = FillOrdering(perm, fillcount)
+            best = isnothing(cols) ? FillOrdering(perm, fillcount) :
+                FillOrdering(cols[perm], fillcount, perm)
             bestflops = flops
         end
     end
     return best
+end
+
+# The graph of the nodes of the symmetric pattern `S` whose rows come in
+# contiguous blocks of `blocksize`, which divides them: an entry between
+# two nodes where a row of one has an entry in a row of the other, read
+# off `S` in one pass over its entries.
+function _nodegraph(S::SparseMatrixCSC, blocksize::Integer)
+    rows = rowvals(S)
+    nnodes = size(S, 1) ÷ blocksize
+    colptr = Vector{Int64}(undef, nnodes + 1)
+    rowval = Int64[]
+    mark = zeros(Int, nnodes)
+    colptr[1] = 1
+    for b in 1:nnodes
+        for j in (b - 1)*blocksize + 1:b*blocksize, k in nzrange(S, j)
+            a = (rows[k] - 1) ÷ blocksize + 1
+            mark[a] == b && continue
+            mark[a] = b
+            push!(rowval, a)
+        end
+        colptr[b + 1] = length(rowval) + 1
+        sort!(view(rowval, colptr[b]:length(rowval)))
+    end
+    return SparseMatrixCSC(nnodes, nnodes, colptr, rowval, ones(length(rowval)))
+end
+
+# the ordering of the rows from the ordering `perm` of their nodes of
+# `blocksize` rows each, each node's rows in turn
+_rowordering(perm::Vector{Int64}, blocksize::Integer) =
+    vec([(c - 1)*blocksize + a for a in 1:blocksize, c in perm])
+
+# The columns of `A` matched to its rows by a maximum transversal (BTF's,
+# as KLU finds it for its own ordering), `cols[i]` the column on the
+# diagonal of row `i`, so that `A[:, cols]` has a zero-free diagonal as far
+# as the structural rank allows, rows a singular pattern leaves unmatched
+# taking the columns left over in order; `nothing` where the diagonal of
+# `A` has no structural zero. `maxwork` bounds the search as BTF bounds it,
+# in multiples of the entries of `A`, and zero, KLU's default, leaves it
+# unbounded.
+function _transversal(A::SparseMatrixCSC; maxwork::Real = 0.0)
+    n = size(A, 2)
+    rows = rowvals(A)
+    all(j -> insorted(j, view(rows, nzrange(A, j))), 1:n) && return nothing
+    Ap = convert(Vector{Int64}, SparseArrays.getcolptr(A)) .- 1
+    Ai = convert(Vector{Int64}, rows) .- 1
+    match = Vector{Int64}(undef, n)
+    # from the BTF library Julia ships beside KLU's, called by name as
+    # KLU.jl calls its own, whose wrapper of BTF names no library
+    ccall((:btf_l_maxtrans, :libbtf), Int64, (Int64, Int64, Ptr{Int64}, Ptr{Int64}, Cdouble,
+        Ptr{Cdouble}, Ptr{Int64}, Ptr{Int64}), n, n, Ap, Ai, Float64(maxwork), Ref(0.0), match,
+        Vector{Int64}(undef, 5n))
+    cols = match .+ 1
+    matched = falses(n)
+    for c in cols
+        c > 0 && (matched[c] = true)
+    end
+    left = findall(!, matched)
+    k = 0
+    for i in 1:n
+        cols[i] > 0 && continue
+        k += 1
+        cols[i] = left[k]
+    end
+    return cols
 end
 
 """
@@ -353,9 +447,9 @@ julia> JosephsonCircuits.FactorizationCache(JosephsonCircuits.KLU.klu(JosephsonC
 """
 mutable struct FactorizationCache
     factorization
-    # the fill reducing ordering, a `FillOrdering` or a bare permutation,
-    # and the pattern it was chosen for, the `colptr` and `rowval` of the
-    # matrix; `nothing` until one is chosen
+    # the fill reducing ordering, a `FillOrdering`, and the pattern it was
+    # chosen for, the `colptr` and `rowval` of the matrix; `nothing` until
+    # one is chosen
     ordering
     pattern
 end
@@ -371,15 +465,16 @@ of `A`, so that its fresh factorizations of that pattern take it instead
 of choosing one: how the caches of several workers factorizing one
 pattern, or the successive solves of one pattern, share one choice.
 `ordering` is what [`fillordering`](@ref) returns, a
-[`FillOrdering`](@ref) or `nothing`, or a bare permutation of the columns,
-which carries no fill for KLU to size its factors by. The ordering a
-cache holds, `cache.ordering`, is one to hand to another. Returns `cache`.
+[`FillOrdering`](@ref) or `nothing`. The ordering a cache holds,
+`cache.ordering`, is one to hand to another. Returns `cache`.
 """
-function seedordering!(cache::FactorizationCache, A::SparseMatrixCSC, ordering)
+function seedordering!(cache::FactorizationCache, A::SparseMatrixCSC,
+    ordering::Union{Nothing,FillOrdering})
     isnothing(ordering) || (length(orderingpermutation(ordering)) == size(A, 2) &&
-        isperm(orderingpermutation(ordering))) ||
+        isperm(orderingpermutation(ordering)) && length(ordering.rows) == size(A, 1) &&
+        isperm(ordering.rows)) ||
         throw(ArgumentError(
-            "an ordering is a permutation of the columns of the pattern it is seeded for."))
+            "an ordering is a permutation of the columns and of the rows of the pattern it is seeded for."))
     cache.ordering = ordering
     cache.pattern = (SparseArrays.getcolptr(A), rowvals(A))
     return cache

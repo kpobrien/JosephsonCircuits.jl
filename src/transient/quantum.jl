@@ -8,7 +8,8 @@
 
 A finite-record, positive-frequency temporal-mode measurement. Rows of its
 output are `(X1,P1,X2,P2,...)`, with `[X,P]=im` and vacuum variance `1/2`.
-`coefficients[:,j]` specifies mode j in the positive-frequency Fourier basis;
+`coefficients[:,j]` specifies mode j in the positive-frequency Fourier basis,
+whose bins are at the angular `frequencies`, `2pi*k/(N*dt)` in rad/s;
 `gram` accounts for overlapping modes on the same port. `vacuum` and
 `commutator` are the corresponding real covariance and commutator matrices.
 `ports` are the port numbers of the modes and `rows` the row of each
@@ -32,7 +33,7 @@ end
 
 function transientquantumgrid(times)
     ts, dt = uniformtimes(times)
-    return ts, dt, collect(1:fld(length(ts)-1, 2)) ./ (length(ts)*dt)
+    return ts, dt, 2pi .* collect(1:fld(length(ts)-1, 2)) ./ (length(ts)*dt)
 end
 
 """
@@ -44,25 +45,28 @@ end
 Define photon-normalized temporal modes on a uniformly sampled half-open record
 `[times[1], times[1]+length(times)*dt)`. Do not include the repeated right endpoint.
 For N samples the coefficient rows are Fourier bins `k=1:fld(N-1,2)` at
-`f=k/(N*dt)`; DC and a self-conjugate Nyquist bin are excluded. Each coefficient
-column must have unit Euclidean norm. Different columns may overlap.
+the angular frequencies `w=2pi*k/(N*dt)`; DC and a self-conjugate Nyquist
+bin are excluded. Each coefficient column must have unit Euclidean norm.
+Different columns may overlap.
 `problem` is the [`TransientProblem`](@ref) whose traces the plan measures,
 or a solution of it, and `ports` the port number each mode reads, which
 the plan resolves to the row of the trace.
 
-The frequency convenience form creates bin-aligned monochromatic modes when
+The frequency convenience form takes the angular frequencies `w` of the
+modes in rad/s and creates bin-aligned monochromatic modes when
 `envelopes=nothing`. Otherwise each column of `envelopes[sample,mode]` defines
-`g(t)=envelope(t)*exp(-2pi*im*f*(t-times[1]))`; project it onto positive Fourier
+`g(t)=envelope(t)*exp(-im*w*(t-times[1]))`; project it onto positive Fourier
 bins and normalize the resulting coefficients. Supply enough RF bandwidth to
-resolve the carrier and envelope. Frequencies must lie strictly below Nyquist.
+resolve the carrier and envelope. Frequencies must lie strictly below the
+Nyquist frequency `pi/dt`.
 
 A canonical bin has real physical power wave
-`w(t)=sqrt(h*f/(N*dt))*(X*cos(2pi*f*t)+P*sin(2pi*f*t))`.
-The readout includes the frequency-dependent `1/sqrt(h*f)` weighting before
+`a(t)=sqrt(hbar*w/(N*dt))*(X*cos(w*t)+P*sin(w*t))`.
+The readout includes the frequency-dependent `1/sqrt(hbar*w)` weighting before
 combining bins. A resolved cosine of peak amplitude A in one full-record bin
-has X=A*sqrt(N*dt/(h*f)), P=0 and mean photon number X^2/2.
+has X=A*sqrt(N*dt/(hbar*w)), P=0 and mean photon number X^2/2.
 The P convention is the negative of `imag(transientiq(...))` for that cosine's
-classical phasor. Existing peak-amplitude I/Q conventions remain unchanged.
+classical phasor; `transientiq` and `transientdemodulate` return peak amplitudes.
 
 Windows are finite-record mode definitions, not independent white-noise samples.
 Use `gram`, `vacuum` and `commutator` when modes/windows overlap. The plan is
@@ -75,10 +79,10 @@ Base.@nospecializeinfer function transientquantumplan(@nospecialize(problem), ti
     # compiled once for a problem, a solution or a batch, and for any
     # coefficients, which are read as complex numbers on the host
     p = transientproblemof(problem)::TransientProblem
-    ts, dt, fs = transientquantumgrid(times)
+    ts, dt, ws = transientquantumgrid(times)
     c = ComplexF64.(Array(coefficients))::Matrix{ComplexF64}
     m = size(c, 2)
-    size(c, 1) == length(fs) && m > 0 ||
+    size(c, 1) == length(ws) && m > 0 ||
         throw(DimensionMismatch("Incorrect positive-frequency coefficient shape."))
     length(ports) == m || throw(ArgumentError("Supply one port number per mode."))
     rows = portrows(p, ports)
@@ -89,7 +93,7 @@ Base.@nospecializeinfer function transientquantumplan(@nospecialize(problem), ti
     spectrum = zeros(ComplexF64, n)
     for j in 1:m
         fill!(spectrum, 0)
-        spectrum[2:(length(fs)+1)] .= conj.(c[:, j]) ./ sqrt.(planck_constant .* fs)
+        spectrum[2:(length(ws)+1)] .= conj.(c[:, j]) ./ sqrt.(reduced_planck_constant .* ws)
         # Unnormalized inverse FFT has the positive exponent extracting a_k.
         w = FFTW.bfft(spectrum) .* (2dt/sqrt(n*dt))
         weights[:, 2j-1] .= real.(w)
@@ -108,23 +112,23 @@ Base.@nospecializeinfer function transientquantumplan(@nospecialize(problem), ti
         comm[2j-1, 2k] = r
         comm[2j, 2k-1] = -r
     end
-    return TransientQuantumPlan(backend, ts, fs, Int.(ports), rows, c,
+    return TransientQuantumPlan(backend, ts, ws, Int.(ports), rows, c,
         tobackend(backend, weights), gram, vacuum, comm, dt)
 end
 
 Base.@nospecializeinfer function transientquantumplan(@nospecialize(problem), times, frequencies::AbstractVector;
         ports = fill(porttargets(transientproblemof(problem))[1], length(frequencies)),
         envelopes = nothing, backend::Backend = CPU())
-    ts, dt, fs = transientquantumgrid(times)
-    f = Float64.(frequencies)
-    all(x->isfinite(x) && 0<x<0.5/dt, f) ||
-        throw(ArgumentError("Mode frequencies must be positive and below Nyquist."))
-    n, m = length(ts), length(f)
-    c = zeros(ComplexF64, length(fs), m)
+    ts, dt, ws = transientquantumgrid(times)
+    w = Float64.(frequencies)
+    all(x->isfinite(x) && 0<x<pi/dt, w) ||
+        throw(ArgumentError("Mode frequencies must be positive and below the Nyquist frequency pi/dt, in rad/s."))
+    n, m = length(ts), length(w)
+    c = zeros(ComplexF64, length(ws), m)
     if isnothing(envelopes)
         for j in 1:m
-            k = round(Int, f[j]*n*dt)
-            1 <= k <= length(fs) && isapprox(f[j], fs[k]; rtol = 1e-10) ||
+            k = round(Int, w[j]*n*dt/(2pi))
+            1 <= k <= length(ws) && isapprox(w[j], ws[k]; rtol = 1e-10) ||
                 throw(ArgumentError("Full-record tones must lie on Fourier bins; supply envelopes for other temporal modes."))
             c[k, j] = 1
         end
@@ -132,8 +136,8 @@ Base.@nospecializeinfer function transientquantumplan(@nospecialize(problem), ti
         size(envelopes) == (n, m) && all(isfinite, envelopes) ||
             throw(DimensionMismatch("Envelopes must be a finite samples-by-modes matrix."))
         for j in 1:m
-            g = envelopes[:, j] .* cispi.(-2f[j] .* (ts .- first(ts)))
-            c[:, j] .= FFTW.bfft(g)[2:(length(fs)+1)]
+            g = envelopes[:, j] .* cis.(-w[j] .* (ts .- first(ts)))
+            c[:, j] .= FFTW.bfft(g)[2:(length(ws)+1)]
             norm(view(c, :, j)) > 0 ||
                 throw(ArgumentError("Temporal mode has no positive-frequency support."))
             c[:, j] ./= norm(view(c, :, j))
@@ -244,7 +248,7 @@ response to a coherent displacement, not a ratio of large loaded amplitudes.
 Returns photon gain, QE, QEideal and QE/QEideal. The QE is `G/(2v)`, the
 covariance holding every bath in its state, the input's own included, as
 [`hblinsolve`](@ref)'s is.
-Uses the existing HB ideal-efficiency convention, which `hbsolve` applies to
+Uses the ideal efficiency of harmonic balance, which `hbsolve` applies to
 its idler outputs too. Phase-sensitive gain or
 anisotropic noise is rejected: retain the full gain/covariance for those cases.
 The caller must also verify commutator closure and bath-basis convergence.

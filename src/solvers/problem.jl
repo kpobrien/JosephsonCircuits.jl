@@ -131,9 +131,10 @@ have to know. See [`DCAugmentation`](@ref).
 - `tplan`: the transposed gather maps the vector-Jacobian product walks.
 - `Pwork`, `Qwork`, `betawork`, `dirtd3`: transform workspaces.
 - `augmentation`: the direct current block, or `nothing`.
-- `atol`: the residual tolerance a root is held to, `norm(F) <= atol`: the
-  solve's `atol`, raised to the rounding floor of the source, or its
-  `rtol` times the residual at `u0`, whichever is larger.
+- `atol`: the residual tolerance a root is held to, `norm(F) <= atol` with
+  the norm finite: the solve's `atol`, raised to the rounding floor of the
+  source, or its `rtol` times the residual at `u0` when that is finite,
+  whichever is larger.
 """
 struct HBNonlinearProblem{S,ML,J,X,B,TP,FD,TD,A}
     sys::S
@@ -161,14 +162,15 @@ function HBNonlinearProblem(sys, ml, u0, J, parts; augmentation = nothing,
     # the transposed product a dynamic dispatch, which allocates on each
     # Jacobian application in the innermost Krylov loop; the build itself is
     # a counting sort over the plan's own index arrays and costs nothing.
-    tp = plannonlineartermtranspose(sys.nonlineartermplan, ml,
-        fd, td; backend = sys.nonlineartermplan.backend)
+    tp = plannonlineartermtranspose(sys.nonlineartermplan, ml, fd, td)
     p = HBNonlinearProblem(sys, ml, u0, J, parts, copy(sys.bnm),
         tp, Ref(similar(fd)), Ref(similar(fd)), Ref(similar(td)),
         Ref(similar(td)), augmentation, Ref(0), Float64(atol))
     iszero(rtol) && return p
-    # a relative tolerance is one of the residual at the problem's point
-    tol = max(atol, rtol*norm(hbresidual!(similar(u0), p, u0)))
+    # a relative tolerance is one of the residual at the problem's point,
+    # and a residual whose norm is not finite scales none
+    r0 = norm(hbresidual!(similar(u0), p, u0))
+    tol = isfinite(r0) ? max(atol, rtol*r0) : atol
     return HBNonlinearProblem(p.sys, p.modelayout, p.u0, p.jacobian, p.parts,
         p.bnm0, p.tplan, p.Pwork, p.Qwork, p.betawork, p.dirtd3,
         p.augmentation, p.pointstamp, Float64(tol))
@@ -379,8 +381,9 @@ Krylov.gmres(J, -F; N = preconditioner(prob, u), atol = 0.0)
 
     Krylov.jl defaults to `atol = sqrt(eps())`, about 1.5e-8, which is
     sensible standalone and wrong here. This package's own `gmres!`
-    defaults to `atol = 0.0`, and `nlsolvekrylov!` passes `atol/10`, tying
-    the floor to the nonlinear tolerance rather than to machine epsilon.
+    defaults to `atol = 0.0`, and `nlsolvekrylov!` passes a tenth of its
+    nonlinear tolerance, tying the floor to that rather than to machine
+    epsilon.
 """
 struct JacobianOperator{P<:HBNonlinearProblem,U<:AbstractVector}
     prob::P
@@ -471,24 +474,18 @@ for W in (:(LinearAlgebra.Adjoint), :(LinearAlgebra.Transpose))
 end
 
 """
-    jacobianprototype(prob::HBNonlinearProblem)
-
-A copy of the assembled real Jacobian's sparsity pattern, for solvers which
-want a `jac_prototype`, or `nothing`.
-"""
-jacobianprototype(p::HBNonlinearProblem) =
-    isnothing(p.jacobian) ? nothing : copy(p.jacobian)
-
-
-"""
     preconditioner(prob::HBNonlinearProblem, u; spec = BlockDiagonal(),
         precision = Float64)
 
 The mode coupling preconditioner of `prob` (see
 [`ModeCouplingPreconditioner`](@ref) for `spec`, a member of the mode
-coupling family), updated at `u`, with its factorization in the given
-`precision`. With an explicit direct current block it is wrapped in the
-canonical coordinates with the direct current subsystem solved exactly.
+coupling family), updated at `u`, its matrix assembled in `precision`,
+in which it is factorized too, except that KLU and UMFPACK factorize in
+double precision whatever they are handed and a factorization with a
+`precision` of its own holds its factors in that
+([`factorizationprecision`](@ref)). With an explicit direct current block
+it is wrapped in the canonical coordinates with the direct current
+subsystem solved exactly.
 
 Applied by `ldiv!` and by `mul!`, so it can be handed straight to any
 external Krylov solver: `Krylov.gmres(J, -F; N = preconditioner(prob, u),
@@ -503,9 +500,9 @@ function preconditioner(p::HBNonlinearProblem, u::AbstractVector;
     checklength(p, u, "u")
     d = p.parts
     pc = ModeCouplingPreconditioner(p.sys, d.Amatrixindicesaliased,
-        d.Amatrixconjindices, d.Ljb, d.Lscale, d.Rbnm, d.Nmodes, d.Nbranches,
-        d.Nfreq, d.invLnm, d.Gnm, d.Cnm, p.modelayout; spec = spec,
-        precision = precision, Amatrixmodes = d.Amatrixmodes)
+        d.Amatrixconjindices, d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq,
+        p.modelayout; spec = spec, precision = precision,
+        Amatrixmodes = d.Amatrixmodes)
     # with an explicit direct current block, the same wrapper the internal
     # solve uses: the mode coupling preconditioner in the canonical
     # coordinates, with the direct current subsystem factorized and solved
@@ -517,19 +514,18 @@ function preconditioner(p::HBNonlinearProblem, u::AbstractVector;
 end
 
 """
-    SizedPreconditioner(pc, n, pointstamp = Ref(0))
+    SizedPreconditioner(pc, n, pointstamp)
 
 A preconditioner carrying its dimension, so it satisfies the `size`/
 `eltype`/`mul!` contract external Krylov solvers check, and the point
 stamp of the problem whose evaluation point it sets, which every update
-moves (see [`JacobianOperator`](@ref)); one of no problem's has its own.
+moves (see [`JacobianOperator`](@ref)).
 """
 struct SizedPreconditioner{P} <: AbstractWrappedPreconditioner
     pc::P
     n::Int
     pointstamp::Base.RefValue{Int}
 end
-SizedPreconditioner(pc, n::Integer) = SizedPreconditioner(pc, Int(n), Ref(0))
 innerpreconditioner(p::SizedPreconditioner) = p.pc
 Base.size(p::SizedPreconditioner) = (p.n, p.n)
 Base.size(p::SizedPreconditioner, i::Integer) = p.n
@@ -569,10 +565,12 @@ updatepreconditioner!(p::SizedPreconditioner, u::AbstractVector) =
 
 Scale the drive of `prob` by `scale`, in place, and return the problem.
 
-The residual is `F(u) = B(sin(A*u)) + K*u - b`, and the drive enters only
-through `b`. Scaling it is therefore the one parameter which can be varied
-without rebuilding anything: the sparsity, the plans and the preconditioner
-structure are all untouched.
+The residual is `F(u) = B(f(A*u)) + K*u - b`, with `f` the current-phase
+relation of each junction (`sin` for a Josephson junction, the polynomial
+of a [`PolynomialCPR`](@ref) for a nonlinear inductor), and the drive
+enters only through `b`. Scaling it is therefore the one parameter which
+can be varied without rebuilding anything: the sparsity, the plans and the
+preconditioner structure are all untouched.
 
 This is what makes continuation in pump power possible. `scale = 0` is the
 undriven problem, whose solution is zero and whose Jacobian is the linear
@@ -698,7 +696,9 @@ end
     hbd2F!(out, prob, u, v, w)
 
 The exact second directional derivative
-`H(u)[v,w] = B(-sin(A*u).*(A*v).*(A*w))`.
+`H(u)[v,w] = B(f''(A*u).*(A*v).*(A*w))`, with `f''` the second derivative
+of the current-phase relation of each junction, `-sin` for a Josephson
+junction; the linear term contributes nothing.
 """
 function hbd2F!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, v::AbstractVector{<:Real},
@@ -729,7 +729,9 @@ end
     hbd3F!(out, prob, u, v, w, z)
 
 The exact third directional derivative
-`d3F(u)[v,w,z] = B(-cos(A*u).*(A*v).*(A*w).*(A*z))`.
+`d3F(u)[v,w,z] = B(f'''(A*u).*(A*v).*(A*w).*(A*z))`, with `f'''` the third
+derivative of the current-phase relation of each junction, `-cos` for a
+Josephson junction.
 
 Supplying this exactly rather than by finite differences is what makes a
 continuation library's normal form computation -- cusp, Bogdanov-Takens,
@@ -786,9 +788,10 @@ end
     hbdFdp!(out, prob)
 
 The derivative of the residual with respect to the drive scale, which is
-`-b`: the residual is `B(sin(A*u)) + K*u - scale*b`, so the parameter
-derivative is exact and constant, and a continuation tangent never needs a
-finite difference in the parameter.
+`-b`: the residual is `B(f(A*u)) + K*u - scale*b`, with `f` the
+current-phase relation of each junction, so the parameter derivative is
+exact and constant, and a continuation tangent never needs a finite
+difference in the parameter.
 """
 function hbdFdp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem)
     checklength(p, out, "out")

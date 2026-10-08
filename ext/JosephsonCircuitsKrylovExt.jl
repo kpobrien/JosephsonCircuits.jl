@@ -1,14 +1,15 @@
 """
     JosephsonCircuitsKrylovExt
 
-Krylov.jl as the linear solver of the Newton step of `nlsolvekrylov!`,
-selected with `linearsolver = KrylovJL(:gmres)` (or any other Krylov.jl
+Krylov.jl as the linear solver of the Newton step of `nlsolvekrylov!`, and
+of the transient's step solved iteratively, selected with
+`linearsolver = JosephsonCircuits.KrylovJL(:gmres)` (or any other Krylov.jl
 solver name). Only the linear solve changes: the forcing term, the line
-search, the preconditioner escalation and the stagnation handling are those
-of `nlsolvekrylov!`, and the package's preconditioner is passed to Krylov.jl
-as its right preconditioner `N`. A solve is given the iteration budget of
-the package's own GMRES, and a method which can restart (`:gmres`,
-`:fgmres`, `:fom`) restarts at its restart length. The Krylov.jl
+search, the preconditioner escalation and the stagnation handling are
+those of `nlsolvekrylov!`, and the package's preconditioner is passed to
+Krylov.jl as its right preconditioner `N`. A solve is given the iteration
+budget of the package's own GMRES, and a method which can restart
+(`:gmres`, `:fgmres`, `:fom`) restarts at its restart length. The Krylov.jl
 workspace is made at the first solve of a system and kept in the
 package's workspace for the others. Deflation harvesting is
 unavailable here: it reads the package's own Arnoldi workspace, which
@@ -23,8 +24,9 @@ const JC = JosephsonCircuits
 
 # `nlsolvekrylov!` hands over the Jacobian as an operator supporting
 # `mul!`, which Krylov.jl accepts directly, and the preconditioner as an
-# `AbstractPreconditioner`, which Krylov.jl applies through `mul!`. A bare
-# closure `Mop!(z, r)`, the older spelling, is wrapped into that interface.
+# `AbstractPreconditioner`, which Krylov.jl applies through `mul!`. The
+# transient's step hands over a bare closure `Mop!(z, r)`, which is
+# wrapped into that interface.
 struct MopWrap{F} <: JC.AbstractPreconditioner; Mop!::F; end
 JC.applypreconditioner!(z, m::MopWrap, r) = (m.Mop!(z, r); z)
 aspreconditioner(M::JC.AbstractPreconditioner) = M
@@ -69,11 +71,11 @@ function JC.hblinearsolve!(ls::JC.KrylovJL, deltax, jvp, F, ws, Mop!;
     # zero, and an absolute floor would eventually accept every solve
     # without doing anything. `nlsolvekrylov!` passes a tenth of its own
     # `atol`.
-    # Krylov.jl records the residual history only when asked; without it
-    # every solve reported its starting residual and an unconverged solve
-    # was read as one which made no progress at all. The solver's own
-    # keywords win over all of these, and the tolerances are taken in the
-    # precision of the iteration, which Krylov.jl requires.
+    # Krylov.jl records the residual history only when asked, and the
+    # residual a solve reports is the last of that history, so it is asked
+    # for: without it, a solve would report its starting residual. The
+    # solver's own keywords win over all of these, and the tolerances are
+    # taken in the precision of the iteration, which Krylov.jl requires.
     kw = merge((; atol = atol, history = true), restarts, ls.kwargs)
     kw = merge(kw, (; atol = T(kw.atol)))
     wnames = filter(in(keys(kw)), WORKSPACEKEYWORDS)

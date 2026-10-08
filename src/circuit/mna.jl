@@ -39,14 +39,6 @@ function ismnaresistance(value)
 end
 
 """
-    mnaresistance(value)
-
-Return the real resistance of a value accepted by [`ismnaresistance`](@ref).
-"""
-mnaresistance(value::Real) = value
-mnaresistance(value::Complex) = real(value)
-
-"""
     calcAmna(gaugeindices::Vector{Int}, Ntot::Int)
 
 The constant gauge fixing rows of the augmented harmonic balance system of
@@ -55,9 +47,10 @@ The constant gauge fixing rows of the augmented harmonic balance system of
 graph and zero-frequency mode (see [`calcdcgaugeindices`](@ref)), in an
 `Ntot` square sparse matrix. Because the Kirchhoff current law equations of
 a floating component are consistent but redundant at DC whenever the direct
-current subsystem has a solution, which `dcpinning` checks, this rank-one
-term renders the system nonsingular while the reference node flux is driven
-to exactly zero and all original equations remain satisfied.
+current subsystem has a solution, which `dcpinning` checks, this term, a
+one on the diagonal for each gauge index, renders the system nonsingular
+while the reference node fluxes are driven to exactly zero and all original
+equations remain satisfied.
 
 The augmented state is the `(Nnodes-1)*Nmodes` node fluxes followed by the
 auxiliary variables of the mutually coupled inductor branches
@@ -290,14 +283,15 @@ end
 
 """
     mnavalidatekcl(F::AbstractVector, x::AbstractVector,
-        gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, atol)
+        gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, atol;
+        kclfactor = 10)
 
 Validate the original, ungauged Kirchhoff current law equations at a
 converged solution by reconstructing their residuals with
 [`mnaungaugedkcl`](@ref) and comparing their infinity norm against a
 block-relative infinity-norm tolerance,
 
-`10*atol*(1 + norm(bnm[1:Nnodal], Inf)),`
+`kclfactor*atol*(1 + norm(bnm[1:Nnodal], Inf)),`
 
 so both sides have the same per-row interpretation and the accepted error
 in any one equation does not grow with the number of driven rows. The
@@ -309,12 +303,13 @@ validation. Returns `(ok, normkcl, kcltol)` so a diagnostic can report
 the achieved residual against the applied tolerance.
 """
 function mnavalidatekcl(F::AbstractVector, x::AbstractVector,
-    gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, atol)
+    gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, atol;
+    kclfactor::Real = 10)
     Fkcl = mnaungaugedkcl(F, x, gaugeindices, Nnodal)
     normkcl = norm(Fkcl, Inf)
     T = real(eltype(Fkcl))
     sourcescale = norm(view(bnm, 1:Nnodal), Inf)
-    kcltol = 10*atol*(one(T) + sourcescale)
+    kcltol = kclfactor*atol*(one(T) + sourcescale)
     ok = isfinite(normkcl) && isfinite(sourcescale) && normkcl <= kcltol
     return ok, normkcl, kcltol
 end
@@ -377,14 +372,14 @@ function calcsolverscale(w, componenttypes::Vector{Symbol}, vvn::Vector,
     n = 0
     for z in portimpedances
         if ismnaresistance(z)
-            logsum += log(abs(mnaresistance(z)))
+            logsum += log(abs(real(z)))
             n += 1
         end
     end
     if n == 0
         for i in eachindex(componenttypes)
             if componenttypes[i] == :R && ismnaresistance(vvn[i])
-                logsum += log(abs(mnaresistance(vvn[i])))
+                logsum += log(abs(real(vvn[i])))
                 n += 1
             end
         end
@@ -566,11 +561,8 @@ function mnainitialauxind!(x::AbstractVector, coupledbranches::Vector{Int},
         end
     end
     # a singular matrix, a unit coupling, leaves the currents as they are
-    F = try
-        lu(sparse(I, J, V, nb, nb))
-    catch
-        return x
-    end
+    F = lu(sparse(I, J, V, nb, nb); check = false)
+    issuccess(F) || return x
     # the branch fluxes of the coupled branches, a column per mode
     Rnb = sparse(transpose(Rbn))
     phib = zeros(Complex{Float64}, nb, Nmodes)

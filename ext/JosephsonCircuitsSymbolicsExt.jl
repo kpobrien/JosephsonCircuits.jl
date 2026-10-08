@@ -13,7 +13,6 @@ module JosephsonCircuitsSymbolicsExt
 using Symbolics, SymbolicUtils
 import JosephsonCircuits
 const JC = JosephsonCircuits
-const CV = JosephsonCircuits.CircuitValues
 
 const SymAny = Union{Num,SymbolicUtils.BasicSymbolic}
 

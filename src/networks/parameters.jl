@@ -735,6 +735,18 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     return nothing
 end
 
+@doc """
+    ZtoY(Z)
+
+Convert the impedance matrix `Z` to the admittance matrix `Y`, its inverse,
+and return the result.
+""" ZtoY
+
+"""
+    ZtoY!(Y, Z, tmp)
+
+See [`ZtoY`](@ref) for description.
+"""
 function ZtoY!(Y, Z, tmp)
     # Y = inv(Z), as Z \ I through the factorization of a copy of Z
     copy!(tmp, Z)
@@ -746,6 +758,18 @@ function ZtoY!(Y, Z, tmp)
     return nothing
 end
 
+@doc """
+    YtoZ(Y)
+
+Convert the admittance matrix `Y` to the impedance matrix `Z`, its inverse,
+and return the result.
+""" YtoZ
+
+"""
+    YtoZ!(Z, Y, tmp)
+
+See [`YtoZ`](@ref) for description.
+"""
 function YtoZ!(Z, Y, tmp)
     # the same inversion as ZtoY!
     return ZtoY!(Z, Y, tmp)
@@ -1428,6 +1452,11 @@ Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006.
 """ ABCDtoS
 
+"""
+    ABCDtoS!(ABCD::AbstractMatrix, portimpedances)
+
+See [`ABCDtoS`](@ref) for description.
+"""
 function ABCDtoS!(ABCD::AbstractMatrix,portimpedances)
     checktwoportimpedances(portimpedances)
     return ABCDtoS!(ABCD,first(portimpedances),last(portimpedances))
@@ -1466,6 +1495,11 @@ Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006.
 """ StoABCD
 
+"""
+    StoABCD!(S::AbstractMatrix, portimpedances)
+
+See [`StoABCD`](@ref) for description.
+"""
 function StoABCD!(S::AbstractMatrix,portimpedances)
     checktwoportimpedances(portimpedances)
     return StoABCD!(S,first(portimpedances),last(portimpedances))

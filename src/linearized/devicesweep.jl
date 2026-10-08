@@ -459,16 +459,16 @@ end
 
 """
     needsadjointsolve(arrays::LinearizedArrays,
-        noiseportimpedanceindices, noiseplan = nothing)
+        noiseportimpedanceindices, noiseplan)
 
 Whether the transposed (adjoint) linearized system must be solved at each
 signal frequency: for the scattering parameter sensitivities always, and
 otherwise when a consumer of the adjoint solution (the noise scattering
 parameters, the noise covariances, the quantum efficiency, the occupations,
 the commutation relations, or the adjoint node outputs) is requested
-together with a source of it. The dissipative
-scattering blocks of a [`ScatteringNoisePlan`](@ref) are such a source, as
-the lumped noise ports are.
+together with a source of it. The dissipative scattering blocks of the
+[`ScatteringNoisePlan`](@ref) `noiseplan`, `nothing` without any, are such
+a source, as the lumped noise ports are.
 
 This does not depend on the frequency, and both the host loop and the device
 sweep test it, the latter to decide whether to allocate and solve the
@@ -476,7 +476,7 @@ adjoint direction at all (with cuDSS a whole second factorization, with a
 block factorization a second solve against the same factors).
 """
 function needsadjointsolve(arrays::LinearizedArrays,
-    noiseportimpedanceindices, noiseplan = nothing)
+    noiseportimpedanceindices, noiseplan)
     isempty(arrays.Ssensitivity) || return true
     hassource = !isempty(noiseportimpedanceindices) ||
         !isnothing(noiseplan) ||
@@ -512,8 +512,9 @@ where it was computed, for the noise scattering parameters.
     mode offsets, and the frequencies of the current batch on the host and
     on the device.
 - `fwd`, `adj`: the batch of each direction, `(plan, rowptr, colind,
-    nzval, X, B, equil)` on the sparse device factorization path or `(X,)`
-    on the block path, and `nothing` when no adjoint was asked for.
+    nzval, X, B, B0, equil)` on the sparse device factorization path, `B0`
+    the unscaled right-hand side each batch scales into `B`, or `(X,)` on
+    the block path, and `nothing` when no adjoint was asked for.
 - `fstage`, `astage`: the staging of each direction, `(full, rows, rowsd,
     gathered, host)`.
 - `blocks`: the block path's `(plan, nzval, B, F, X, Xadj)`, or `nothing`.
@@ -528,8 +529,6 @@ struct DeviceSweep{TB,TFw,TAd,TFs,TAs,TBl,TSt,TSa,TPr,TK<:NamedTuple}
     backend::TB
     nb::Int
     F::Int
-    n::Int
-    nrhs::Int
     w::Vector{Float64}
     wpumpmodes::Vector{Float64}
     wshost::Vector{Float64}
@@ -549,7 +548,8 @@ end
 
 """
     devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
-        adjoint = nothing; factorization = nothing, refine = true)
+        adjoint = nothing; factorization = nothing, refine = true,
+        budget = memorybudget(backend))
 
 The [`DeviceSweep`](@ref) which computes the solutions of the linearized
 system on `backend` a batch of frequencies at a time.
@@ -557,6 +557,7 @@ system on `backend` a batch of frequencies at a time.
 [`BlockFactorization`](@ref) takes the batched block path below, anything
 else the cuDSS one. `refine` asks single precision block factors to refine
 against the double residual; `false` is the fully single precision sweep.
+`budget` is the device memory the batch may take.
 
 The sweep is driven by [`solvebatch!`](@ref), which solves the batch of
 frequencies beginning at an index and stages its solutions on the host;
@@ -574,14 +575,18 @@ which touches the device; once it has returned, its batch's frequencies can be
 post-processed by as many workers as the host path uses, because reading a
 solution touches staged host memory and nothing else.
 
-The systems of a batch share one sparsity pattern, so cuDSS analyzes it once
-and then refactorizes and solves the whole batch together, from the values of
-one [`assemblesweep!`](@ref). With a sparse device factorization the batch
-size is capped by [`uniformbatchlimit`](@ref); with a
+The systems of a batch share one sparsity pattern, so cuDSS, or the block
+factorization ([`blockanalysis`](@ref)), analyzes it once and then factorizes
+and solves each batch together, from the values of one
+[`assemblesweep!`](@ref). With a sparse device factorization the batch
+size is capped by [`uniformbatchlimit`](@ref) and by `budget`
+([`memorybudget`](@ref) by default) at cuDSS's own estimate of a system's
+factorization ([`cudsssystembytes`](@ref)) with the values, solutions and
+right hand sides of each direction ([`cudssbatchlimit`](@ref)); with a
 [`BlockFactorization`](@ref) the cap does not apply and the batch is sized by
 [`blocksystembytes`](@ref), the factors, the originals when refining, the
 solutions of both directions and the value matrix of one system, against
-half the backend's free memory and the length of the sweep.
+`budget` and the length of the sweep.
 
 `forward` and `adjoint` each describe what a direction needs, as a named tuple
 `(full, rows)`. With `full` the whole solution is copied back, which the node
@@ -600,7 +605,8 @@ factorization, reading the same factors the other way round
 of values in the stored column order for both.
 """
 function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
-    adjoint = nothing; factorization = nothing, refine::Bool = true)
+    adjoint = nothing; factorization = nothing, refine::Bool = true,
+    budget::Integer = memorybudget(backend))
 
     T = Complex{Float64}
     n = size(lsys.Asparse, 1)
@@ -610,13 +616,14 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     # a block factorization solves both directions from one factorization
     # per frequency, filled from the values assembled in the stored order;
     # its batch is sized by the memory of the factors and the solutions of
-    # one system, within half the device's free memory. The cuDSS batch cap
-    # does not apply to it; the memory and the sweep do
+    # one system, within the device's memory budget. The cuDSS batch cap
+    # does not apply to it; the memory and the sweep do. A cuDSS batch is
+    # held to the same budget, at cuDSS's own estimate of a system's
+    # factorization, from an analysis of the pattern, and the values,
+    # solutions and right hand sides each system holds, in each direction
     usesblocks = factorization isa BlockFactorization
     nb = if usesblocks
-        noderows, adjn = blocknodegraph(lsys.Asparse, lsys.Nmodes)
-        blocksym = clustersymbolic(noderows, adjn, klunodeorder(adjn);
-            target = lsys.Nmodes)
+        blocksym = blocksymbolic(lsys.Asparse, lsys.Nmodes)
         Tf = something(factorization.precision, Float64)
         # the solutions of each direction, the shared right-hand side, the
         # values, and when refining the residual and correction of a solve
@@ -624,9 +631,12 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
         persystem = blocksystembytes(Complex{Tf}, blocksym; refine = refining,
             TA = T) + ((isnothing(adjoint) ? 2 : 3) + (refining ? 2 : 0))*
             n*nrhs*sizeof(T) + nzA*sizeof(T)
-        clamp(freememory(backend) ÷ 2 ÷ persystem, 1, F)
+        clamp(budget ÷ persystem, 1, F)
     else
-        min(uniformbatchlimit(nrhs), F)
+        persystem = (isnothing(adjoint) ? 1 : 2)*(cudsssystembytes(
+            lsys.Asparse, T, nrhs, backend; solverkwargs(factorization)...) +
+            nzA*sizeof(T) + 2n*nrhs*sizeof(T))
+        min(cudssbatchlimit(persystem, nrhs, budget), F)
     end
 
     # the right hand sides do not depend on the frequency, and are the same for
@@ -661,12 +671,13 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
         devicestage(adjoint, n, nrhs, nb, backend)
     # the block path: the values of a batch in the stored (column) order,
     # one shared right-hand side, the solutions of each direction, and the
-    # factorization built on the backend from the pattern
+    # factorization's analysis of the pattern on the backend, which each
+    # batch factorizes from its own values
     blocks = if usesblocks
         plan, _, _ = planfrequencysweep(lsys, backend; adjoint = true)
-        Fb = factorize(factorization, lsys.Asparse;
+        Fb = blockanalysis(factorization, lsys.Asparse;
             blocksize = lsys.Nmodes, backend = backend, nb = nb,
-            refine = refine ? 6 : 0)
+            refine = refine ? BLOCKREFINESTEPS : 0)
         (plan = plan,
             nzval = KernelAbstractions.allocate(backend, T, nzA, nb),
             B = tobackend(backend, bhost), F = Fb,
@@ -685,11 +696,47 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     wshost = zeros(Float64, nb)
     wsdev = tobackend(backend, wshost)
 
-    return DeviceSweep(backend, nb, F, n, nrhs, collect(Float64, w),
+    return DeviceSweep(backend, nb, F, collect(Float64, w),
         collect(Float64, lsys.wpumpmodes), wshost, wsdev, fwd, adj, fstage,
         astage, blocks, scatstamps, scatstampsadjoint, scatproviders,
         Any[nothing, nothing], solverkwargs(factorization), Ref(0))
 end
+
+"""
+    releasesweep!(ds::DeviceSweep)
+
+Return the device memory of a finished sweep at once rather than when the
+collector finds it ([`releasearray!`](@ref)): the factors, values,
+solutions and right-hand sides of its batches, the staging of its
+solutions, and cuDSS's factorizations. The next solve or sweep sizes
+itself against the free memory ([`freememory`](@ref)), which memory the
+collector has not yet found would shrink. `ds` is not used afterwards.
+"""
+function releasesweep!(ds::DeviceSweep)
+    for part in (ds.fwd, ds.adj, ds.blocks, ds.fstage, ds.astage)
+        releasearrays!(part)
+    end
+    for S in ds.sweeps
+        isnothing(S) || _cudss_release!(S)
+    end
+    return nothing
+end
+
+# the arrays of a sweep's batches, through its named tuples, its assembly
+# plans and equilibrations, the block factorization and its blocks
+releasearrays!(x) = nothing
+releasearrays!(x::AbstractArray{<:Number}) = releasearray!(x)
+releasearrays!(x::Union{Tuple,NamedTuple,AbstractVector{<:AbstractArray}}) =
+    foreach(releasearrays!, x)
+releasearrays!(x::AbstractDict) = foreach(releasearrays!, values(x))
+releasearrays!(lu::BlockLU) =
+    foreach(releasearrays!, (lu.D, lu.L, lu.U, lu.Dinv, lu.scratch))
+releasearrays!(F::SparseBlockFactorization) =
+    foreach(releasearrays!, (F.lu, F.original, F.work, F.scale))
+releasearrays!(p::FrequencySweepPlan) =
+    foreach(releasearrays!, (p.colof, p.cst, p.kinvL, p.kG, p.kC, p.wpump))
+releasearrays!(e::SweepEquilibration) =
+    foreach(releasearrays!, (e.rowptr, e.order, e.segptr, e.rowscale, e.scale))
 
 # the uniform batch of one direction on the sparse device factorization
 # path: its sweep plan, pattern, values, solutions and right hand sides
@@ -716,12 +763,13 @@ end
 # the device and any number of workers may do it at once.
 #
 # Gathering only the named rows pays while they are a small part of the
-# solution; past that the whole solution is staged instead. A circuit whose
-# loss is spread along the line reaches this, since its noise ports touch
-# almost every node.
-function devicestage(spec, n::Int, nrhs::Int, nb::Int, backend)
+# solution, below `gatherfraction` of its rows; past that the whole
+# solution is staged instead. A circuit whose loss is spread along the line
+# reaches this, since its noise ports touch almost every node.
+function devicestage(spec, n::Int, nrhs::Int, nb::Int, backend;
+    gatherfraction::Real = 1/4)
     T = Complex{Float64}
-    full = spec.full || 4*length(spec.rows) >= n
+    full = spec.full || length(spec.rows) >= gatherfraction*n
     rows = full ? Int[] : spec.rows
     return (full = full, rows = rows,
         rowsd = tobackend(backend, rows),
@@ -872,5 +920,12 @@ which are formed there rather than brought back (see
 [`devicenoise`](@ref)). A read of the solved batch, so several workers may
 hold different frequencies of it at once.
 """
-adjointdevice(ds::DeviceSweep, i::Integer) =
-    view(ds.adj.X, :, :, batchslot(ds, i))
+function adjointdevice(ds::DeviceSweep, i::Integer)
+    # the view built as such: `view` makes a contiguous view of a GPU array
+    # an array of its own, which shares the batch's memory until the
+    # collector finds it and so keeps a finished sweep's solutions from the
+    # pool (see `releasesweep!`)
+    X = ds.adj.X
+    return SubArray(X, (Base.Slice(axes(X, 1)), Base.Slice(axes(X, 2)),
+        batchslot(ds, i)))
+end

@@ -254,9 +254,10 @@ end
 # with these rows as their equations and the resistor current `G0 P v` as
 # their coupling into the zero frequency nodal rows; a scattering block adds
 # its own zero frequency relation between its port voltages and the port
-# currents the solver already carries. That block of unknowns is small, its
-# rows see no periodic state, and it is built, classified and solved apart
-# from the periodic problem (see the sections below).
+# currents the solver already carries. That block of unknowns, one per
+# floating component and one per block port current, has rows which see no
+# periodic state, and it is built, classified and solved apart from the
+# periodic problem, as a sparse system (see the sections below).
 #
 # It is classified whenever a zero frequency mode exists, and solved only
 # when it has something to find. With no direct current injected every
@@ -292,6 +293,11 @@ rows and the conductance to work from.
 - `conductance`: `G0`, the direct current conductance in the solver's scaled
     units.
 - `reduced`: `Y = P'G0P`, the conductance seen between components.
+- `voltagescale`: `Z0/Lscale`, which puts an average voltage in the units of
+    a block current. In the solver's units a voltage is `V/phi0` and a
+    current `I Lscale/phi0`, so the voltage across the reference impedance
+    `Z0` is `Z0/Lscale` times the current through it. The classification
+    scales the average voltages by it (see [`dcpinning`](@ref)).
 """
 struct DCConductancePlan{Tv,Ti}
     modeindex::Int
@@ -299,7 +305,8 @@ struct DCConductancePlan{Tv,Ti}
     componentof::Vector{Int}
     lift::SparseMatrixCSC{Tv,Ti}
     conductance::SparseMatrixCSC{Tv,Ti}
-    reduced::Matrix{Tv}
+    reduced::SparseMatrixCSC{Tv,Ti}
+    voltagescale::Float64
 end
 
 """
@@ -330,10 +337,13 @@ struct DCConductanceSolution{T}
 end
 
 """
-    dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes, Nnodes)
+    dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes, Nnodes,
+        voltagescale)
 
 Build the [`DCConductancePlan`](@ref), or `nothing` when there is no zero
-frequency mode and so no average voltage at all.
+frequency mode and so no average voltage at all. `voltagescale` is
+`Z0/Lscale`, the reference impedance over the solver scale (see
+[`calcsolverscale`](@ref)).
 
 Neither an empty conductance nor an empty set of floating components is a
 reason to build none. A circuit whose only direct current devices are
@@ -348,7 +358,7 @@ non-finite or non-real entry, which has no direct current meaning.
 """
 function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
         Gnm::SparseMatrixCSC, wmodes::AbstractVector, Nmodes::Integer,
-        Nnodes::Integer)
+        Nnodes::Integer, voltagescale::Real)
 
     m0 = findfirst(iszero, wmodes)
     isnothing(m0) && return nothing
@@ -388,28 +398,30 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
     # has no row of its own; a floating one contributes +g to two diagonals
     # and -g to two off diagonals. So the row sum of G0 at a node is exactly
     # its conductance to ground, which is what tells a grounded component
-    # from a floating one.
-    Y = zeros(eltype(G0), nc, nc)
+    # from a floating one. Each entry of G0 between two floating nodes adds
+    # to the entry of their two components.
     rows = rowvals(G0)
     vals = nonzeros(G0)
+    Yi, Yj, Yv = Int[], Int[], eltype(G0)[]
     for col in 1:n
         b = componentof[col+1]
+        iszero(b) && continue
         for r in nzrange(G0, col)
             a = componentof[rows[r]+1]
-            (a > 0 && b > 0) && (Y[a,b] += vals[r])
+            iszero(a) && continue
+            push!(Yi, a); push!(Yj, b); push!(Yv, vals[r])
         end
     end
+    Y = sparse(Yi, Yj, Yv, nc, nc)
 
+    nlift = sum(c -> count(>(1), c), floatingcomponents; init = 0)
     lift = sparse(
         [p-1 for c in floatingcomponents for p in c if p > 1],
         [k for (k, c) in enumerate(floatingcomponents) for p in c if p > 1],
-        ones(eltype(G0), count(p -> p > 1,
-            reduce(vcat, floatingcomponents; init = Int[]))),
-        n, nc)
-
+        ones(eltype(G0), nlift), n, nc)
 
     return DCConductancePlan(Int(m0), [Int.(c) for c in
-        floatingcomponents], componentof, lift, G0, Y)
+        floatingcomponents], componentof, lift, G0, Y, Float64(voltagescale))
 end
 
 """
@@ -457,7 +469,7 @@ end
 #     [ Jpp  Jpv ]      Jpv = G0 P on the zero frequency nodal rows
 #     [  0   Y   ]
 #
-# which is why an explicit `v` costs a small constant solve and does not
+# which is why an explicit `v` costs a constant sparse solve and does not
 # make the nonlinear problem harder. Solving that triangular system by
 # substitution is exactly the elimination, which is the sense in which the
 # explicit rows and a hand elimination must agree and the reason the tests
@@ -491,7 +503,7 @@ See [`transportrows`](@ref) and [`DCConductancePlan`](@ref).
 """
 struct TransportRows{T}
     plan::DCConductancePlan
-    Y::Matrix{T}
+    Y::SparseMatrixCSC{T,Int}
     j::Vector{T}
     coupling::SparseMatrixCSC{T,Int}
 end
@@ -518,7 +530,8 @@ function transportrows(plan::DCConductancePlan, bnm::AbstractVector,
     T = float(real(eltype(plan.reduced)))
     j = dcsourcecurrent(plan, bnm, Nmodes)
     coupling = SparseMatrixCSC{T,Int}(plan.conductance * plan.lift)
-    return TransportRows(plan, Matrix{T}(plan.reduced), j, coupling)
+    return TransportRows(plan, SparseMatrixCSC{T,Int}(plan.reduced), j,
+        coupling)
 end
 
 """
@@ -728,10 +741,6 @@ end
 
 nports(d::DCBlockDescriptor) = length(d.signalnodes)
 
-# a block without a `dcmodel` field evaluates its own data at zero; every
-# `ScatteringParameters` has the field, so this is a defensive fallback
-dcmodelof(blk) = hasproperty(blk, :dcmodel) ? blk.dcmodel : ScatteringLimit()
-
 """
     dclimit(sb::StampedScatteringBlock, n, atol)
 
@@ -769,7 +778,6 @@ end
 holdsdclimit(p::TabulatedMatrixProvider) = holdsdata(p, 0.0) ||
     p.extrapolation === :constant || p.extrapolation === :linear
 holdsdclimit(p::PiecewiseTabulatedProvider) = holdsdata(p, 0.0)
-holdsdclimit(p::RotatedMatrixProvider) = holdsdclimit(p.provider)
 holdsdclimit(p) = true
 
 """
@@ -800,7 +808,7 @@ function dcblockdescriptor(sb::StampedScatteringBlock; atol::Real = 1e-10,
         required::Bool = true)
     blk = sb.block
     n = blk.nports
-    model = dcmodelof(blk)
+    model = blk.dcmodel
     S0 = if model isa ScatteringLimit
         S0, why = dclimit(sb, n, atol)
         if isnothing(S0)
@@ -868,8 +876,6 @@ struct DCBlockRows{T}
     # exactly as an inductor branch does.
     transportterms::Vector{Tuple{Int,Int,Int}}
 end
-
-Base.isempty(r::DCBlockRows) = isempty(r.descriptors)
 
 """
     dcblockrows(blocks, componentof, Nmodes, modeindex, nnodaldc, scale;
@@ -1001,7 +1007,6 @@ end
 # numbers where the state is tens of thousands.
 function addtransport!(Fc::AbstractVector, work::CanonicalWork,
         u::AbstractVector; residual::Bool = true)
-    isnothing(work.transport) && return Fc
     Fw, uw = work.Fwindow, work.uwindow
     _gatherwindow!(Fw, Fc, work.window)
     _gatherwindow!(uw, u, work.window)
@@ -1052,38 +1057,30 @@ function addtransportwindow!(Fw::AbstractVector, uw::AbstractVector,
 end
 
 # =====================================================================
-# Evaluating in canonical coordinates.
-#
-# The residual, the Jacobian vector product and the preconditioner are all
-# written against the internal layout, and the canonical vector holds that
-# layout in its first block. So each is handed a view of that block and
-# nothing is copied; what is added is the direct current block, on the
-# window.
-
-# =====================================================================
 # The direct current solve, where the state is.
 #
 # The subsystem is constant, so its exact solve is a fixed linear map, but
-# that map cannot be stored as a matrix: the subsystem is ill conditioned
-# (a circuit with a ten million to one impedance ratio gives it a condition
-# number of that order) and its unknowns are large in the solver's scaled
-# units, so an explicit inverse leaves an absolute error the solve cannot
-# drive to zero. It stays a linear solve, and what moves to the device is
-# the factorization rather than the answer: the same factors, permutation
-# and substitution order as the host path, in a kernel with one work item,
-# so the two agree exactly and the window does not cross the bus per
+# that map cannot be stored as a matrix: the subsystem's condition number is
+# of the order of the ratio of the circuit's largest impedance to its
+# smallest, and its unknowns are large in the solver's scaled units, so an
+# explicit inverse leaves an absolute error the solve cannot drive to zero.
+# It stays a linear solve, factorized sparse on the host: there is one
+# unknown per floating static flux component and one per scattering block
+# port current, which a long chain of islands or of blocks makes many. What
+# moves to the device is the factorization rather than the answer: a
+# subsystem of a handful of unknowns is factorized dense and solved there
+# in a kernel with one work item, so the window does not cross the bus per
 # application.
 #
 # One work item because the substitutions are sequential, so the kernel's
 # cost grows with the subsystem while copying it to the host and back costs
 # a fixed latency. It wins for a handful of unknowns and loses badly beyond
-# that. A handful is the common case, since there is one unknown per
-# floating static flux component and one per scattering block port current;
-# a larger subsystem is gathered on the backend, solved on the host with the
-# same factors and scattered back.
+# that. A handful is the common case; a larger subsystem is gathered on the
+# backend, solved on the host with the host's sparse factors and scattered
+# back.
 
-# the largest subsystem the sequential device solve is launched for; the
-# measured crossover against the copies to the host
+# the largest subsystem the sequential device solve is launched for; beyond
+# it the kernel costs more than the copies to the host and back
 const DCDEVICESOLVEMAX = 8
 
 """
@@ -1093,14 +1090,17 @@ The factorization of the direct current subsystem and the indices it acts
 on, resident on a backend.
 
 # Fields
-- `factors`: the packed unit lower and upper triangle `lu` produced.
-- `perm`: its row permutation.
 - `index`: the canonical position of each subsystem coordinate.
+- `perm`, `factors`: for a subsystem of at most `DCDEVICESOLVEMAX`
+    unknowns, the row permutation and the packed unit lower and upper
+    triangle of its dense `lu`, which the kernel substitutes through; empty
+    for a larger one.
 - `work`: a device scratch vector of length `n`, the permuted right hand
     side and then the solution.
 - `n`: the subsystem size.
-- `lu`, `host`: the factorization on the host and a host vector of length
-    `n`, which a subsystem larger than `DCDEVICESOLVEMAX` is solved with.
+- `lu`, `host`: the sparse factorization on the host and a host vector of
+    length `n`, which a subsystem larger than `DCDEVICESOLVEMAX` is solved
+    with.
 """
 struct DCFactorization{V,I,F}
     index::I
@@ -1112,12 +1112,16 @@ struct DCFactorization{V,I,F}
     host::Vector{Float64}
 end
 
-function DCFactorization(F::LinearAlgebra.LU, index::Vector{Int}, backend)
-    n = size(F.factors, 1)
-    return DCFactorization(tobackend(backend, index),
-        tobackend(backend, Vector{Int}(F.p)),
-        tobackend(backend, Vector{Float64}(vec(F.factors))),
-        tobackend(backend, zeros(Float64, n)), n, F, zeros(Float64, n))
+function DCFactorization(A::SparseMatrixCSC, F, index::Vector{Int}, backend)
+    n = size(A, 1)
+    # the dense factors the kernel substitutes through, for a subsystem it
+    # is launched for
+    D = n <= DCDEVICESOLVEMAX ? lu(Matrix(A)) : nothing
+    perm = isnothing(D) ? Int[] : Vector{Int}(D.p)
+    factors = isnothing(D) ? Float64[] : Vector{Float64}(vec(D.factors))
+    return DCFactorization(tobackend(backend, index), tobackend(backend, perm),
+        tobackend(backend, factors), tobackend(backend, zeros(Float64, n)), n,
+        F, zeros(Float64, n))
 end
 
 # One work item: the substitutions are sequential and the system is a
@@ -1145,16 +1149,6 @@ end
     end
 end
 
-# the subsystem's coordinates of `r` into `b`, and back from `b` into `z`
-@kernel function dcgatherkernel!(b, @Const(r), @Const(index))
-    k = @index(Global)
-    @inbounds b[k] = r[index[k]]
-end
-@kernel function dcscatterkernel!(z, @Const(b), @Const(index))
-    k = @index(Global)
-    @inbounds z[index[k]] = b[k]
-end
-
 """
     applydcsolve!(z, r, d::DCFactorization)
 
@@ -1170,12 +1164,13 @@ function applydcsolve!(z::AbstractVector, r::AbstractVector,
         dcsolvekernel!(backend)(z, r, d.index, d.perm, d.factors, d.work,
             d.n; ndrange = 1)
     else
-        dcgatherkernel!(backend, 64)(d.work, r, d.index; ndrange = d.n)
-        KernelAbstractions.synchronize(backend)
+        # the subsystem's coordinates of `r`, solved on the host, and back
+        # into the same coordinates of `z`
+        gathervalues!(d.work, r, d.index)
         copyto!(d.host, d.work)
         ldiv!(d.lu, d.host)
         copyto!(d.work, d.host)
-        dcscatterkernel!(backend, 64)(z, d.work, d.index; ndrange = d.n)
+        scattervalues!(z, d.work, d.index)
     end
     KernelAbstractions.synchronize(backend)
     return z
@@ -1184,26 +1179,45 @@ end
 """
     dcsubsystem(work::CanonicalWork)
 
-The dense direct current block `[v; i]` of the canonical Jacobian: the
-transport rows and the blocks' zero frequency rows, in the order
-[`dcsubsystemindices`](@ref) gives.
+The direct current block `[v; i]` of the canonical Jacobian, as a sparse
+matrix: the transport rows and the blocks' zero frequency rows, in the
+order [`dcsubsystemindices`](@ref) gives, with the reference rows of the
+work's pinning in place of the equations they replace.
 """
 function dcsubsystem(work::CanonicalWork)
+    I, J, V = dcsubsystemterms(work)
+    n = length(dcsubsystemlocal(work))
+    # an entry which cancels, a block whose two terminals share a
+    # component, is no entry
+    A = dropzeros!(sparse(I, J, V, n, n))
+    # the reference rows are written last and unconditionally: the transport
+    # rows carry none, so a circuit with no blocks still needs them
+    pn = work.pinning
+    return isnothing(pn) ? A : dcreferenced(A, pn)
+end
+
+# The terms of the unreferenced subsystem as triplets `(I, J, V)`: the
+# transport rows' conductances, the block currents each component exchanges
+# across its boundary, and each block's own relation `B0 (scale dv) - C0 i`,
+# a term for each terminal of each port. Summed, they are the subsystem;
+# their pattern, before anything cancels, holds every entry of it which the
+# block's walk (`addtransportwindow!`) writes.
+function dcsubsystemterms(work::CanonicalWork)
     t, br = work.transport, work.blockrows
     nc = nvoltages(t)
-    idx = dcsubsystemindices(work)
-    nb = length(idx) - nc
-    A = zeros(Float64, nc + nb, nc + nb)
-    A[1:nc, 1:nc] .= t.Y
-    # the reference rows are written last and unconditionally: the transport
-    # rows carry none, so a circuit with no blocks still needs them. A block
-    # current is named by its window position, as the block rows name it.
     slots = dcsubsystemlocal(work)
-    local_ = Dict(slots[nc+k] => nc + k for k in 1:nb)
+    I, J, V = Int[], Int[], Float64[]
+    Y = t.Y
+    for col in axes(Y, 2), k in nzrange(Y, col)
+        push!(I, rowvals(Y)[k]); push!(J, col); push!(V, nonzeros(Y)[k])
+    end
     if !isnothing(br)
+        # a block current is named by its window position, as the block
+        # rows name it
+        local_ = Dict(slots[k] => k for k in (nc + 1):length(slots))
         # the block currents each component exchanges across its boundary
         for (c, ci, sgn) in br.transportterms
-            A[c, local_[ci]] += sgn
+            push!(I, c); push!(J, local_[ci]); push!(V, sgn)
         end
         # and the blocks' own rows: B0 (scale dv) - C0 i
         for (b, d) in enumerate(br.descriptors)
@@ -1212,21 +1226,30 @@ function dcsubsystem(work::CanonicalWork)
             for p in eachindex(ci)
                 row = local_[ci[p]]
                 for q in eachindex(ci)
-                    A[row, local_[ci[q]]] -= d.C0[p,q]
-                    iszero(sc[q]) || (A[row, sc[q]] += d.B0[p,q]*br.scale)
-                    iszero(rc[q]) || (A[row, rc[q]] -= d.B0[p,q]*br.scale)
+                    push!(I, row); push!(J, local_[ci[q]]); push!(V, -d.C0[p,q])
+                    iszero(sc[q]) || (push!(I, row); push!(J, sc[q]);
+                        push!(V, d.B0[p,q]*br.scale))
+                    iszero(rc[q]) || (push!(I, row); push!(J, rc[q]);
+                        push!(V, -(d.B0[p,q]*br.scale)))
                 end
             end
         end
     end
-    pn = work.pinning
-    if !isnothing(pn)
-        for j in eachindex(pn.rows)
-            A[pn.rows[j], :] .= 0.0
-            A[pn.rows[j], pn.cols[j]] = 1.0
-        end
+    return I, J, V
+end
+
+# the subsystem `A` with each reference row of `pn` in place of the
+# equation it replaces: the single entry which fixes its coordinate
+function dcreferenced(A::SparseMatrixCSC, pn::DCPinning)
+    replaced = falses(size(A, 1))
+    replaced[pn.rows] .= true
+    B = copy(A)
+    rv, nz = rowvals(B), nonzeros(B)
+    for k in eachindex(nz)
+        replaced[rv[k]] && (nz[k] = 0.0)
     end
-    return A
+    pins = sparse(pn.rows, pn.cols, ones(Float64, length(pn.rows)), size(A)...)
+    return dropzeros!(B + pins)
 end
 
 """
@@ -1277,29 +1300,60 @@ end
 # Kirchhoff sums in one place and constitutive relations in another, so its
 # entries carry the circuit's impedance scale. A rank decision on the raw
 # matrix would then depend on that scale: the same circuit written at a
-# different impedance could be called singular or not. Scaling the rows
-# and the columns to unit infinity norm first (two passes) removes the
-# units from a question whose answer is a structural fact about the
-# circuit.
-function equilibrate(A::AbstractMatrix)
+# different impedance could be called singular or not.
+#
+# Its unknowns are first put in one unit. In the solver's units an average
+# voltage is `V/phi0` and a block current `I Lscale/phi0`, so the voltage
+# across the reference impedance is `Z0/Lscale` times the current through
+# it, and the first `nc` columns, the average voltages, are multiplied by
+# `voltagescale = Z0/Lscale`. Scaling the rows and the columns to unit
+# infinity norm (two passes) then removes the circuit's own scale from a
+# question whose answer is a structural fact about the circuit. The passes
+# alone do not balance the units: they stop at the first scaling whose
+# rows and columns all have their largest entry at one, and that is one
+# where a row of conductances alone has set its voltage columns there and a
+# row which mixes average voltages with block currents keeps its voltages
+# at the size of the conductances, far below its currents, which can take
+# a well posed subsystem for a singular one. A subsystem without block
+# currents has one unit only and is left in it.
+#
+# An entry which the scaling takes to zero is dropped, so the pattern of the
+# result is that of its values. The column scaling returned includes the
+# voltages' factor.
+function equilibrate(A::SparseMatrixCSC, nc::Integer, voltagescale::Real)
     dr = ones(Float64, size(A, 1))
     dc = ones(Float64, size(A, 2))
     B = copy(A)
-    for _ in 1:2
-        for i in axes(B, 1)
-            m = maximum(abs, view(B, i, :); init = 0.0)
-            iszero(m) && continue
-            dr[i] /= m
-            view(B, i, :) ./= m
-        end
-        for j in axes(B, 2)
-            m = maximum(abs, view(B, :, j); init = 0.0)
-            iszero(m) && continue
-            dc[j] /= m
-            view(B, :, j) ./= m
+    rv, nz = rowvals(B), nonzeros(B)
+    if nc < size(A, 2)
+        dc[1:nc] .= voltagescale
+        for j in 1:nc, k in nzrange(B, j)
+            nz[k] *= voltagescale
         end
     end
-    return B, dr, dc
+    rmax = zeros(Float64, size(B, 1))
+    for _ in 1:2
+        fill!(rmax, 0.0)
+        for k in eachindex(nz)
+            rmax[rv[k]] = max(rmax[rv[k]], abs(nz[k]))
+        end
+        for i in axes(B, 1)
+            iszero(rmax[i]) || (dr[i] /= rmax[i])
+        end
+        for k in eachindex(nz)
+            m = rmax[rv[k]]
+            iszero(m) || (nz[k] /= m)
+        end
+        for j in axes(B, 2)
+            m = maximum(k -> abs(nz[k]), nzrange(B, j); init = 0.0)
+            iszero(m) && continue
+            dc[j] /= m
+            for k in nzrange(B, j)
+                nz[k] /= m
+            end
+        end
+    end
+    return dropzeros!(B), dr, dc
 end
 
 """
@@ -1362,7 +1416,7 @@ function dccoordinatenames(work::CanonicalWork)
 end
 
 """
-    dcpinning(work::CanonicalWork)
+    dcpinning(work::CanonicalWork; maxdense = 64)
 
 Return the [`DCPinning`](@ref) a singular direct current subsystem needs,
 `nothing` when it is nonsingular, or throw when it has no solution or an
@@ -1374,22 +1428,32 @@ with no reference chosen, which is why this is called once at
 [`CanonicalWork`](@ref) construction, before any reference exists. Choosing
 one earlier, from the resistors alone, can discard a row a block has made
 necessary, and no later check can recover it.
+
+The subsystem is decided in the units of the block currents, its average
+voltages scaled by the plan's `voltagescale`, and equilibrated (see
+`equilibrate`). It falls into blocks which share no row or column, an
+island on its own or the islands and block currents a chain of blocks
+joins, and each is decomposed alone, by its singular values, or by sparse
+QR when it has more than `maxdense` rows or columns (see `dcnullblocks`).
 """
-function dcpinning(work::CanonicalWork)
-    isnothing(work.transport) && return nothing
+function dcpinning(work::CanonicalWork; maxdense::Integer = 64)
     A = dcsubsystem(work)
-    isempty(A) && return nothing
-    B, dr, dc = equilibrate(A)
-    F = svd(B)
-    tol = maximum(F.S; init = 0.0) * maximum(size(B)) * eps()
-    k = count(<=(tol), F.S)
+    size(A, 1) == 0 && return nothing
+    nc, s = nvoltages(work.transport), work.transport.plan.voltagescale
+    B, dr, dc = equilibrate(A, nc, s)
+    blocks, tol = dcnullblocks(B; maxdense)
+    k = sum(blk -> size(blk.right, 2), blocks; init = 0)
     k == 0 && return nothing
 
     # the left null space: directions in which the equations say nothing, so
     # a constant side with a component along one of them cannot be met
-    Y = F.U[:, end-k+1:end]
     b = dcsubsystemrhs(work) .* dr
-    if norm(Y'b) > max(tol, eps()) * max(1.0, norm(b))
+    along = 0.0
+    for blk in blocks
+        isempty(blk.left) && continue
+        along += sum(abs2, transpose(blk.left) * b[blk.rows])
+    end
+    if sqrt(along) > max(tol, eps()) * max(1.0, norm(b))
         throw(ArgumentError(lazy"No direct current solution exists: direct current is injected into a subnetwork which has no path carrying it away. The zero frequency mode is the average voltage, so a subnetwork whose average voltage is unconstrained cannot absorb a net current; give it a path to ground, or drive it differentially."))
     end
 
@@ -1397,23 +1461,22 @@ function dcpinning(work::CanonicalWork)
     # only if the rest of the residual cannot see it, `H N = 0`. Anything
     # else is a physical quantity the circuit leaves undetermined, which is
     # refused rather than pinned to one of infinitely many answers.
-    Nhat = F.V[:, end-k+1:end]
     H = dccoupling(work) * Diagonal(dc)
-    G = Matrix(H * Nhat)
-    hs = maximum(abs, H; init = 0.0)
-    gtol = max(hs, 1.0) * maximum(size(G)) * sqrt(eps())
-    if any(>(gtol), svdvals(G))
+    hs = maximum(abs, nonzeros(H); init = 0.0)
+    gtol = max(hs, 1.0) * max(size(H, 1), k) * sqrt(eps())
+    at = zeros(Int, size(H, 1))
+    if any(blk -> dcvisible(H, blk, at, gtol), blocks)
         names = dccoordinatenames(work)
-        w = vec(maximum(abs, Nhat; dims = 2))
-        seen = String[]
-        for c in eachindex(names)
+        involved = Int[]
+        for blk in blocks, (i, c) in enumerate(blk.cols)
             isempty(names[c]) && continue
-            w[c] <= sqrt(eps()) && continue
-            names[c] in seen || push!(seen, names[c])
+            maximum(abs, view(blk.right, i, :); init = 0.0) <= sqrt(eps()) &&
+                continue
+            push!(involved, c)
         end
         # the joined list is built outside the message: a comma inside a
         # `lazy` interpolation ends the interpolated expression
-        involved = join(seen, ", ")
+        involved = join(unique!(names[sort!(involved)]), ", ")
         throw(ArgumentError(lazy"The direct current network leaves a branch current undetermined, and that current is visible to the rest of the circuit: changing it moves the current at a node, and with it the static flux of any inductor or junction in parallel. The blocks whose zero frequency currents are involved are $(involved). An ideal short or through in parallel with an inductive branch has no unique direct current solution; give the block a finite series impedance at zero frequency, or give the parallel branch one, so that the division is determined."))
     end
 
@@ -1421,23 +1484,117 @@ function dcpinning(work::CanonicalWork)
     # Pivoting on the left null space picks rows which carry the redundancy,
     # so what is left still spans the row space; pivoting on the null space
     # picks coordinates the directions move, so the references are
-    # independent. Both are done in the equilibrated coordinates.
-    rows = sort!(qr(Y', ColumnNorm()).p[1:k])
-    cols = sort!(qr(Nhat', ColumnNorm()).p[1:k])
-    pn = DCPinning(rows, cols)
+    # independent. Both are done in the equilibrated coordinates, block by
+    # block, since a block's null vectors are its own.
+    rows, cols = Int[], Int[]
+    for blk in blocks
+        kl, kr = size(blk.left, 2), size(blk.right, 2)
+        kl > 0 && append!(rows,
+            blk.rows[qr(transpose(blk.left), ColumnNorm()).p[1:kl]])
+        kr > 0 && append!(cols,
+            blk.cols[qr(transpose(blk.right), ColumnNorm()).p[1:kr]])
+    end
+    pn = DCPinning(sort!(rows), sort!(cols))
 
     # the references have to leave a nonsingular system, which the two
     # pivoted choices give but do not guarantee jointly
-    Ap = copy(A)
-    for j in 1:k
-        Ap[rows[j], :] .= 0.0
-        Ap[rows[j], cols[j]] = 1.0
-    end
-    Bp, _, _ = equilibrate(Ap)
-    if minimum(svdvals(Bp)) <= maximum(size(Bp)) * eps()
+    Bp, _, _ = equilibrate(dcreferenced(A, pn), nc, s)
+    if dcsingular(Bp; maxdense)
         error("the direct current references left a singular subsystem, which they must not: this is a bug in `dcpinning`, not a property of the circuit.")
     end
     return pn
+end
+
+# A block of the equilibrated direct current subsystem which shares no row
+# or column with another: its rows and its columns, and its left and right
+# null vectors as orthonormal columns
+struct DCNullBlock
+    rows::Vector{Int}
+    cols::Vector{Int}
+    left::Matrix{Float64}
+    right::Matrix{Float64}
+end
+
+# The null spaces of the equilibrated subsystem `B`, block by block, and
+# the rank tolerance they are decided at. The blocks are the connected
+# components of its pattern (see blockcomponents), each decomposed alone,
+# which is the decomposition of the whole: its singular values are the
+# blocks' together, so each block's are held against `maximum(size(B)) eps`
+# times the largest of them all. A block of more than `maxdense` rows or
+# columns, a cascade of blocks say, is factorized by sparse QR at the same
+# tolerance, whose cost grows with its pattern rather than as the cube of
+# its size: the QR sets last the columns whose remaining norm falls below
+# the tolerance, the largest singular value is bounded there by the norms
+# of the block, and the null vectors are the dependent columns solved
+# through the triangle and the trailing columns of `Q`.
+function dcnullblocks(B::SparseMatrixCSC; maxdense::Integer = 64)
+    parts = blockcomponents(B)
+    empty = ((R, C),) -> isempty(R) || isempty(C)
+    large = ((R, C),) -> max(length(R), length(C)) > maxdense
+    at = zeros(Int, size(B, 1))
+    F = Any[empty(p) ? nothing : large(p) ? B[p[1], p[2]] :
+        svd(densesub!(at, B, p[1], p[2]); full = true) for p in parts]
+    smax = 0.0
+    for f in F
+        f isa SVD && (smax = max(smax, first(f.S)))
+        f isa SparseMatrixCSC && (smax = max(smax, sqrt(opnorm(f, 1)*opnorm(f, Inf))))
+    end
+    tol = smax*maximum(size(B))*eps()
+    blocks = DCNullBlock[]
+    for ((R, C), f) in zip(parts, F)
+        m, n = length(R), length(C)
+        if isnothing(f)
+            # a row or a column without an entry, its own null vector
+            push!(blocks, DCNullBlock(R, C, Matrix(1.0I, m, m),
+                Matrix(1.0I, n, n)))
+        elseif f isa SparseMatrixCSC
+            q = qr(f; tol)
+            r = rank(q)
+            X = Matrix(q.R[1:r, r+1:end])
+            ldiv!(UpperTriangular(q.R[1:r, 1:r]), X)
+            N = zeros(n, n - r)
+            N[q.pcol, :] = vcat(-X, Matrix(1.0I, n - r, n - r))
+            L = zeros(m, m - r)
+            L[q.prow, :] = q.Q*vcat(zeros(r, m - r), Matrix(1.0I, m - r, m - r))
+            push!(blocks, DCNullBlock(R, C, L, r == n ? N : Matrix(qr(N).Q)))
+        else
+            r = count(>(tol), f.S)
+            push!(blocks, DCNullBlock(R, C, f.U[:, r+1:end], f.V[:, r+1:end]))
+        end
+    end
+    return blocks, tol
+end
+
+# Whether the null directions of a block move the current at a node: the
+# largest singular value of `H N` over the nodes its columns reach, held
+# against `gtol`. `at` is the work of `densesub!` over the rows of `H`.
+function dcvisible(H::SparseMatrixCSC, blk::DCNullBlock, at::Vector{Int},
+        gtol::Real)
+    isempty(blk.right) && return false
+    nodes = Int[]
+    for c in blk.cols, q in nzrange(H, c)
+        push!(nodes, rowvals(H)[q])
+    end
+    isempty(nodes) && return false
+    G = densesub!(at, H, sort!(unique!(nodes)), blk.cols)*blk.right
+    return any(>(gtol), svdvals(G))
+end
+
+# Whether the equilibrated subsystem `B` is singular, block by block: a
+# block with more rows than columns or fewer is, and so is one whose
+# smallest singular value is at most `maximum(size(B)) eps`, or, beyond
+# `maxdense` rows, one whose sparse QR finds a column below that norm.
+function dcsingular(B::SparseMatrixCSC; maxdense::Integer = 64)
+    tol = maximum(size(B))*eps()
+    at = zeros(Int, size(B, 1))
+    for (R, C) in blockcomponents(B)
+        length(R) == length(C) || return true
+        singular = length(C) > maxdense ?
+            rank(qr(B[R, C]; tol)) < length(C) :
+            minimum(svdvals(densesub!(at, B, R, C))) <= tol
+        singular && return true
+    end
+    return false
 end
 
 # =====================================================================
@@ -1452,10 +1609,16 @@ end
 # operations rather than a walk over scattered indices, so it can run where
 # the state lives instead of being copied to the host and back.
 #
-# `M` and `c` are read off the scalar implementation by probing it one
-# basis vector at a time rather than assembled a second time by hand, which
-# is one pass over the window per probe, O(window^2) work once, and makes
-# the two forms agree by construction.
+# `M` and `c` are read off the scalar implementation by probing it rather
+# than assembled a second time by hand, which makes the two forms agree by
+# construction; the canonical Jacobian takes its direct current entries
+# from the same probe. The block reads the window only at the coordinates
+# of the direct current subsystem, the average voltages and the block port
+# currents, so only those columns of `M` can be nonzero and only those are
+# probed. A probe is a pass over the window, and one pass reads several
+# columns when no row holds an entry of two of them, each from rows of its
+# own (see `dcprobes`), so a chain of islands or of blocks takes as many
+# passes whatever its length.
 
 """
     DCUpdate
@@ -1495,7 +1658,9 @@ end
     dcupdate(work::CanonicalWork)
 
 Build the [`DCUpdate`](@ref) by probing `addtransportwindow!`, so the matrix
-form and the scalar form agree by construction.
+form and the scalar form agree by construction. The probes are the
+coordinates of the direct current subsystem (`work.dclocal`), the only ones
+the block reads, in the groups [`dcprobes`](@ref) forms.
 """
 function dcupdate(work::CanonicalWork)
     L = work.layout
@@ -1513,21 +1678,84 @@ function dcupdate(work::CanonicalWork)
     addtransportwindow!(Fw, uw, work; residual = true)
     c = copy(Fw)
 
-    # and the linear part, column by column, against the product form which
-    # carries no constant
+    # and the linear part, a group of columns at a time, against the
+    # product form which carries no constant: each entry a pass writes is
+    # read from the rows of the column it belongs to, and one outside them
+    # is a row the pattern does not know of
+    groups, reach = dcprobes(work)
     I, J, V = Int[], Int[], Float64[]
-    for k in 1:nw
-        fill!(Fw, 0.0); fill!(uw, 0.0); uw[k] = 1.0
-        addtransportwindow!(Fw, uw, work; residual = false)
-        for i in 1:nw
-            iszero(Fw[i]) && continue
-            push!(I, i); push!(J, k); push!(V, Fw[i])
+    for group in groups
+        fill!(Fw, 0.0); fill!(uw, 0.0)
+        for s in group
+            uw[work.dclocal[s]] = 1.0
         end
+        addtransportwindow!(Fw, uw, work; residual = false)
+        for s in group, q in nzrange(reach, s)
+            i = rowvals(reach)[q]
+            iszero(Fw[i]) && continue
+            push!(I, i); push!(J, work.dclocal[s]); push!(V, Fw[i])
+            Fw[i] = 0.0
+        end
+        all(iszero, Fw) || error("a probe of the direct current block wrote a row its coordinates do not reach: this is a bug in `dcprobes`, not a property of the circuit.")
     end
     # by rows: the transpose of a column major sparse matrix is the row
     # major form of the original, which is what the kernel walks
     Mt = sparse(J, I, V, nw, nw)
     return DCUpdate(keep, Mt.colptr, Mt.rowval, Mt.nzval, c)
+end
+
+"""
+    dcprobes(work::CanonicalWork)
+
+The coordinates of the direct current subsystem which [`dcupdate`](@ref)
+probes together, as groups, and the window rows each coordinate reaches,
+as the columns of a pattern over the window. Coordinates in one group reach
+no row in common, so one pass reads each of them from rows of its own.
+
+A coordinate reaches the rows of its terms in the subsystem, before
+anything cancels (a cancelling sum depends on the order its terms are
+added in), the reference row which fixes it, its coupling into the nodal
+rows for an average voltage, and its own row for a block current, which
+the block's relation adds to. The groups are a greedy coloring of the
+coordinates which share a row, so their number is bounded by how many
+coordinates one row reaches, not by the size of the circuit.
+"""
+function dcprobes(work::CanonicalWork)
+    I, J, _ = dcsubsystemterms(work)
+    loc = work.dclocal
+    rows, cols = loc[I], copy(J)
+    pn = work.pinning
+    if !isnothing(pn)
+        append!(rows, loc[pn.rows]); append!(cols, pn.cols)
+    end
+    C = work.transport.coupling
+    for s in axes(C, 2), q in nzrange(C, s)
+        push!(rows, rowvals(C)[q]); push!(cols, s)
+    end
+    for s in (nvoltages(work.transport) + 1):length(loc)
+        push!(rows, loc[s]); push!(cols, s)
+    end
+    L = work.layout
+    reach = sparse(rows, cols, ones(length(rows)), L.ndc + L.nvdc, length(loc))
+    shared = sparse(transpose(reach))
+    # each coordinate takes the first group holding none it shares a row
+    # with; `taken[g] == s` marks a group which holds one
+    group = zeros(Int, length(loc))
+    taken = Int[]
+    groups = Vector{Int}[]
+    for s in axes(reach, 2)
+        for q in nzrange(reach, s), p in nzrange(shared, rowvals(reach)[q])
+            g = group[rowvals(shared)[p]]
+            g > 0 && (taken[g] = s)
+        end
+        g = something(findfirst(!=(s), taken), length(groups) + 1)
+        if g > length(groups)
+            push!(taken, 0); push!(groups, Int[])
+        end
+        group[s] = g
+        push!(groups[g], s)
+    end
+    return groups, reach
 end
 
 """

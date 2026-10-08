@@ -1,74 +1,35 @@
 # Examples
 
-These recipes cover complete device models. Start with the
-[quickstart](quickstart.md) if you want a small first calculation. Each page
-lists its dependencies and what to inspect in the output.
+These recipes model complete devices. Start with the
+[quickstart](quickstart.md) for a small first calculation. Each recipe
+lists its dependencies and draws its circuit: `[x]` is the component
+named `x` in the code, `||` joins components in parallel, and node `0` is
+ground.
 
-The original section headings below remain as links so existing bookmarks
-continue to identify the corresponding example.
+| Example | What it calculates |
+|---|---|
+| [Josephson parametric amplifier (JPA)](recipes/jpa.md) | The reflection gain of a current-pumped JPA, against WRspice |
+| [JPA with a frequency dependent environmental impedance](recipes/environment.md) | The same JPA through a cable from a mismatched source, the pump-off reflection against a closed form |
+| [Multi-tone Fourier grids](recipes/multitone.md) | The retained modes and evaluation grids of one, two and three pump tones, and their refinement |
+| [Double-pumped JPA](recipes/double-pump.md) | The gain between two pump tones, against WRspice |
+| [Flux-pumped JPA](recipes/flux-pump.md) | Three-wave mixing in a flux-biased SQUID, against WRspice, and the resonance against the bias |
+| [SNAIL parametric amplifier](recipes/snail.md) | Pump-on and pump-off gain near a Kerr-free point, against WRspice |
+| [Josephson traveling wave parametric amplifier (JTWPA)](recipes/traveling-wave.md) | Gain, idlers, quantum efficiency and commutator of a resonantly phase-matched line, the pump-off line against the chain matrices of its cells |
+| [Floquet JTWPA](recipes/floquet.md) | A tapered line, lossless and with dielectric loss, the pump-off line against the chain matrices of its cells |
+| [Impedance-engineered JPA](recipes/lesa.md) | A snake amplifier built from nested subcircuits, signal and idler in power units, the pump-off reflection against a closed form |
+| [Design parameter sensitivities](recipes/sensitivities.md) | Total and frozen-pump derivatives against finite differences, as gain derivatives |
+| [Sensitivity to frequency dependent scattering parameters](recipes/scattering-sensitivities.md) | The derivative of a reflection phase against the round-trip propagation phase |
+| [Direct current](recipes/dc.md) | Static flux and average voltage, a current source's sign, and a biased junction in time |
+| [Pumped finite-window noise](recipes/pumped-noise.md) | The gain and quantum noise of a pumped amplifier in a finite time window |
+| [Fit a pumped amplifier](recipes/fitted-amplifier.md) | A causal fit of a pumped JPA's conversion and noise, measured in time against the circuit |
+| [Pulsed Josephson line](recipes/transient-line.md) | Ten pulsed signals through a Josephson line in time |
+| [Transient WRspice comparison](recipes/transient-wrspice.md) | A JPA in time against WRspice |
 
-## Josephson parametric amplifier (JPA)
-
-[Josephson parametric amplifier (JPA)](recipes/jpa.md). Calculate reflection gain near the resonance of a current-pumped JPA, then compare with WRspice. The signal-frequency sweep uses the small-signal response about the strong pump. Refine both harmonic limits before interpreting the peak gain.
-
-## JPA with a frequency dependent environmental impedance
-
-[JPA with a frequency dependent environmental impedance](recipes/environment.md). Compare the same JPA with a matched environment and a mismatched cable. This example changes the pump loading as well as the signal response; it is not just a phase correction to the output.
-
-## Double-pumped Josephson parametric amplifier (JPA)
-
-[Double-pumped Josephson parametric amplifier (JPA)](recipes/double-pump.md). Drive the JPA with two independent strong tones and inspect the response between them. Each pump adds a Fourier-grid dimension, so refine the harmonic limits while watching memory use.
-
-See also the [Fourier-grid tutorial and three-tone example](recipes/multitone.md).
-
-## Flux-pumped Josephson parametric amplifier (JPA)
-
-[Flux-pumped Josephson parametric amplifier (JPA)](recipes/flux-pump.md). Bias a SQUID through a mutual inductor and apply a pump near twice its resonance. The DC and three-wave-mixing options retain the modes needed by the flux bias and pump. The final sweep maps the pump-off resonance against bias.
-
-## SNAIL Parametric Amplifier
-
-[SNAIL Parametric Amplifier](recipes/snail.md). Compare pump-on and pump-off gain for an explicitly modeled SNAIL. The quadratic nonlinearity supports three-wave mixing. Similar resonance frequencies in the two curves indicate operation near the chosen Kerr-free point.
-
-## Josephson traveling wave parametric amplifier (JTWPA)
-
-[Josephson traveling wave parametric amplifier (JTWPA)](recipes/traveling-wave.md). Build a resonant-phase-matched JTWPA from repeated cells. Inspect forward and reverse gain, conversion to idlers, quantum efficiency, and the commutator error. This is a full device example; reduce the cell count for a quick syntax check, but do not expect the same gain.
-
-## Floquet JTWPA
-
-[Floquet JTWPA](recipes/floquet.md). Taper the unit-cell parameters of a traveling-wave amplifier, then add dielectric loss. The second section reuses `floquetcircuit` from the first. Compare gain and normalized quantum efficiency, and check convergence of the harmonic truncations.
-
-## Floquet JTWPA with dissipation
-
-[Floquet JTWPA with dissipation](recipes/floquet.md#Floquet-JTWPA-with-dissipation). Taper the unit-cell parameters of a traveling-wave amplifier, then add dielectric loss. The second section reuses `floquetcircuit` from the first. Compare gain and normalized quantum efficiency, and check convergence of the harmonic truncations.
-
-## Impedance-engineered JPA
-
-[Impedance-engineered JPA](recipes/lesa.md). Build an impedance-engineered JPA from nested snake and SQUID subcircuits. The signal and conjugate-idler curves are plotted in power units, so the idler conversion includes the absolute frequency ratio.
-
-## Design parameter sensitivities
-
-[Design parameter sensitivities](recipes/sensitivities.md). Check both total and frozen-pump derivatives against finite differences, then express gain derivatives in dB per fractional parameter change.
-
-## Sensitivity to frequency dependent scattering parameters
-
-[Sensitivity to frequency dependent scattering parameters](recipes/scattering-sensitivities.md). Differentiate the reflection phase with respect to a matched line length. The analytic reference is the round-trip propagation phase. Block derivatives describe the data at one design point; rebuilding a block is required when its captured parameters change.
-
-## Direct current
-
-[Direct current](recipes/dc.md). Distinguish static flux from average voltage, initialize a biased junction consistently in time, and diagnose an initial KCL violation.
-
-## Stability examples
-
-The [stability guide](stability.md) includes a JPA, mode tracking across a sweep,
-a TWPA spatial mode profile, and a delay circuit. It distinguishes an operating
-point that converged from one that is dynamically stable.
-
-## Transient and noise examples
-
-- [Transient solve and response derivatives](transient.md)
-- [A Josephson line with ten pulsed signals](recipes/transient-line.md)
-- [A JPA compared with WRspice in time](recipes/transient-wrspice.md)
-- [Vacuum and thermal noise of a passive two-port](transientnoise.md)
-- [Fit scattering data and simulate the result](scattering.md)
-- [Pumped finite-window gain and quantum noise](recipes/pumped-noise.md)
-- [Export, fit, and simulate a pumped JPA](recipes/fitted-amplifier.md)
+The [stability guide](stability.md) works through a JPA, mode tracking
+across a sweep, a traveling-wave amplifier's spatial mode profile and a
+delay circuit, telling an operating point that converged from one that is
+dynamically stable. The [transient guide](transient.md) solves a circuit
+in time and differentiates its response, the
+[quantum noise guide](transientnoise.md) measures the vacuum and thermal
+noise of a passive two-port, and the [scattering guide](scattering.md)
+fits scattering data and simulates the result.

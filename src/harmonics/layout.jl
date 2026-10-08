@@ -1,30 +1,27 @@
 
 
 """
-    ModeLayout(isreal::AbstractVector{Bool}, dim::Integer, ::Type{Ti}=Int)
+    ModeLayout(isreal::AbstractVector{Bool}, dim::Integer)
 
 Layout of one axis of length `dim` (a complex dimension), built from a length-
 `nmodes` mask of which modes are real. `dim` must be an integer multiple of
-`nmodes`. Complex index `i` owns real slots `ptr[i]:ptr[i+1]-1`; `inv` maps a
-real slot back to its complex index; `rdim` is the resulting real dimension.
-
-`w` is a bit per index recording whether that mode is real.
+`nmodes`. Complex index `i` owns real slots `ptr[i]:ptr[i+1]-1`, one when its
+mode is real and two otherwise; `inv` maps a real slot back to its complex
+index; `rdim` is the resulting real dimension.
 
 # Fields
 - `nmodes`, `dim`, `rdim`: the mode count, the complex dimension and the real
     dimension.
 - `isreal`: the mask over the modes.
 - `ptr`, `inv`: the slot ranges and the inverse map, as above.
-- `w`: the bit per complex index, whether its mode is real.
 """
-struct ModeLayout{Ti<:Integer}
+struct ModeLayout
     nmodes::Int
     dim::Int
     rdim::Int
     isreal::BitVector
-    ptr::Vector{Ti}       # length dim+1
-    inv::Vector{Ti}       # length rdim
-    w::BitVector          # length dim, true where the mode is real
+    ptr::Vector{Int}       # length dim+1
+    inv::Vector{Int}       # length rdim
 end
 
 """
@@ -46,7 +43,7 @@ and the block factorization values.
     end
 end
 
-function ModeLayout(isreal::AbstractVector{Bool}, dim::Integer, ::Type{Ti} = Int) where {Ti<:Integer}
+function ModeLayout(isreal::AbstractVector{Bool}, dim::Integer)
     nmodes = length(isreal)
     nmodes >= 1 || throw(ArgumentError("nmodes must be at least 1"))
     dim >= 0 || throw(ArgumentError("dim must be nonnegative"))
@@ -55,15 +52,13 @@ function ModeLayout(isreal::AbstractVector{Bool}, dim::Integer, ::Type{Ti} = Int
     nreal = count(isreal)
     rdim  = (dim ÷ nmodes) * (2nmodes - nreal)
 
-    ptr     = Vector{Ti}(undef, dim + 1)
-    inv     = Vector{Ti}(undef, rdim)
-    w       = falses(dim)
+    ptr     = Vector{Int}(undef, dim + 1)
+    inv     = Vector{Int}(undef, rdim)
     p = 1
     @inbounds for i in 1:dim
         r = isreal[(i - 1) % nmodes + 1]
         ptr[i] = p
         inv[p] = i
-        w[i] = r
         if !r
             inv[p+1] = i
             p += 2
@@ -72,7 +67,7 @@ function ModeLayout(isreal::AbstractVector{Bool}, dim::Integer, ::Type{Ti} = Int
         end
     end
     @inbounds ptr[dim+1] = p
-    return ModeLayout(nmodes, dim, rdim, BitVector(isreal), ptr, inv, w)
+    return ModeLayout(nmodes, dim, rdim, BitVector(isreal), ptr, inv)
 end
 
 """
@@ -173,16 +168,15 @@ real_to_complex(xr::AbstractVector{T}, isreal::AbstractVector{Bool}) where {T} =
 #  sparse matrices
 
 """
-    complex_to_real(A, rowlayout, collayout, ::Type{Tj}=Ti) -> SparseMatrixCSC{T,Tj}
+    complex_to_real(A, rowlayout, collayout) -> SparseMatrixCSC{T,Ti}
 
 Real form of `x -> A*x` under the row layout of its output and the column
 layout of its input, so that `complex_to_real(A, rl, cl) * complex_to_real(x, cl.isreal)
-== complex_to_real(A*x, rl.isreal)`. `Tj` selects the index type of the
-result; `Int32` halves `rowval` and is worth using whenever the dimensions
-fit. Runs one O(nnz) pass to size the output, then one to fill it.
+== complex_to_real(A*x, rl.isreal)`, with the index type `Ti` of `A`. Runs
+one O(nnz) pass to size the output, then one to fill it.
 """
-function complex_to_real(A::SparseMatrixCSC{Complex{T},Ti}, rl::ModeLayout, cl::ModeLayout,
-                 ::Type{Tj} = Ti) where {T<:Real,Ti,Tj<:Integer}
+function complex_to_real(A::SparseMatrixCSC{Complex{T},Ti}, rl::ModeLayout,
+        cl::ModeLayout) where {T<:Real,Ti<:Integer}
     _checkdims(A, rl, cl)
     n = size(A, 2)
     Ap, Ai, Av = SparseArrays.getcolptr(A), rowvals(A), nonzeros(A)
@@ -198,8 +192,8 @@ function complex_to_real(A::SparseMatrixCSC{Complex{T},Ti}, rl::ModeLayout, cl::
         total += (cptr[j+1] - cptr[j]) * S
     end
 
-    colptr = Vector{Tj}(undef, cl.rdim + 1)
-    rowval = Vector{Tj}(undef, total)
+    colptr = Vector{Ti}(undef, cl.rdim + 1)
+    rowval = Vector{Ti}(undef, total)
     nzval  = Vector{T}(undef, total)
     colptr[1] = 1
     k = 1
@@ -234,7 +228,7 @@ function complex_to_real(A::SparseMatrixCSC{Complex{T},Ti}, rl::ModeLayout, cl::
             colptr[c0+2] = k
         end
     end
-    return SparseMatrixCSC{T,Tj}(rl.rdim, cl.rdim, colptr, rowval, nzval)
+    return SparseMatrixCSC{T,Ti}(rl.rdim, cl.rdim, colptr, rowval, nzval)
 end
 
 @inline function _checkdims(A, rl::ModeLayout, cl::ModeLayout)
@@ -524,18 +518,14 @@ function _scatterwindow!(dest, src, index)
     return dest
 end
 
-# the layout is a host object: the index a device needs is carried by the
-# work built on it, on the backend the state is on
-tobackend(::Backend, L::CompositeLayout) = L
-
 # The direct current block is held in `Float64` whatever precision the
 # periodic solve runs in. It is small, dense and solved exactly, and its
-# conditioning is the worst in the problem (scaled conductances of order
-# 1e-11 against injected currents of order 1e8), so a rank decision or a
-# factorization taken in a lower precision would be the least accurate
-# part of the answer. A single precision solve still converges to single
-# precision, and the block is a few hundred numbers beside a state of tens
-# of thousands, so this costs nothing.
+# conditioning is the worst in the problem, its scaled conductances and the
+# currents injected into it lying many orders of magnitude apart, so a rank
+# decision or a factorization taken in a lower precision would be the least
+# accurate part of the answer. A single precision solve still converges to
+# single precision, and the block is a window of the state rather than the
+# state, so its precision costs little.
 
 """
     DCPinning
@@ -579,16 +569,15 @@ end
 """
     CanonicalWork
 
-The workspaces a canonical evaluation needs, and the direct current block
-when it is explicit.
+The workspaces a canonical evaluation needs, and the explicit direct current
+block.
 
 # Fields
 - `layout`: the [`CompositeLayout`](@ref) the canonical state is written in.
 - `xint`, `Fint`: an internal state and an internal residual, for the
     interfaces which need one of their own; the solve reads and writes the
     internal block of the canonical vector in place.
-- `transport`: the transport rows, or `nothing` when there is no explicit
-    block.
+- `transport`: the [`TransportRows`](@ref).
 - `blockrows`: the scattering blocks' own zero frequency rows, or `nothing`.
 - `dwork`: the resistor current the coupling drives into the nodes.
 - `pinning`: the reference rows, or `nothing`. See [`DCPinning`](@ref).
@@ -598,15 +587,15 @@ when it is explicit.
     is on, for the gather and the scatter.
 - `Fwindow`, `uwindow`: the window itself, on that backend.
 - `update`: the block in its matrix form, where the state lives, or
-    `nothing` on the host and when there is no explicit block, where the
-    scalar walk of `addtransportwindow!` is already the cheaper of the two.
+    `nothing` on the host, where the scalar walk of `addtransportwindow!` is
+    already the cheaper of the two.
 
 The constructor `CanonicalWork(L, proto; transport, blockrows, nnodaldc)`
 checks that the transport coupling drives only the first `nnodaldc` zero
 frequency entries, the flux of each node; any after them belong to
 auxiliary branch currents.
 """
-struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR,I}
+struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR,I,U}
     layout::L
     xint::V
     Fint::V
@@ -619,26 +608,22 @@ struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR,I}
     window::I
     Fwindow::V
     uwindow::V
-    update::Any
+    update::U
 end
 
 function CanonicalWork(L::CompositeLayout, proto::AbstractVector{T};
-        transport = nothing, blockrows = nothing,
-        nnodaldc::Int = L.ndc) where {T}
-    nd = isnothing(transport) ? 0 : size(transport.coupling, 1)
-    if !isnothing(transport)
-        nvoltages(transport) == L.nvdc || throw(DimensionMismatch(
-            lazy"the transport rows carry $(nvoltages(transport)) voltages but the layout has $(L.nvdc)."))
-        nd <= nnodaldc || throw(DimensionMismatch(
-            lazy"the coupling drives $(nd) nodal rows but only $(nnodaldc) of the direct current block are nodal."))
-    end
+        transport, blockrows = nothing, nnodaldc::Int = L.ndc) where {T}
+    nd = size(transport.coupling, 1)
+    nvoltages(transport) == L.nvdc || throw(DimensionMismatch(
+        lazy"the transport rows carry $(nvoltages(transport)) voltages but the layout has $(L.nvdc)."))
+    nd <= nnodaldc || throw(DimensionMismatch(
+        lazy"the coupling drives $(nd) nodal rows but only $(nnodaldc) of the direct current block are nodal."))
     nw = nwindow(L)
     bk = KernelAbstractions.get_backend(proto)
     window = tobackend(bk, windowindices(L))
     w = CanonicalWork(L, similar(proto, L.rdim), similar(proto, L.rdim),
         transport, blockrows, zeros(Float64, nd), nothing, Int[],
         Int[], window, similar(proto, nw), similar(proto, nw), nothing)
-    isnothing(transport) && return w
     # the pinning is read off the subsystem this work describes, so it is
     # found once here and then carried
     full = CanonicalWork(L, w.xint, w.Fint, transport, blockrows, w.dwork,

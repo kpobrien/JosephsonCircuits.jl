@@ -1,5 +1,6 @@
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 using JosephsonCircuits
+using JosephsonCircuits: FullJacobian
 using LinearAlgebra
 using SparseArrays
 using Random
@@ -251,8 +252,6 @@ end
     y = ones(n)
     mul!(y, J, v, 2.0, 3.0)
     @test hbnlp_relerr(y, 2 .* (Jr*v) .+ 3 .* ones(n)) < 1e-12
-    @test JC.jacobianprototype(prob) !== prob.jacobian
-    @test nnz(JC.jacobianprototype(prob)) == nnz(prob.jacobian)
     # the operator keeps its point when the caller moves `u` in place and
     # something else then moves the problem
     u .*= 2
@@ -270,7 +269,6 @@ end
     pa = JC.hbnonlinearproblem(args...; assemblejacobian = true)
     @test isnothing(pf.jacobian)
     @test !isnothing(pa.jacobian)
-    @test isnothing(JC.jacobianprototype(pf))
     # the products are the same either way
     n = length(pf); u = 0.05 .* randn(n); v = randn(n)
     @test hbnlp_relerr(JC.hbjvp!(zeros(n), pf, u, v),

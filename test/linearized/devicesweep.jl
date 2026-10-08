@@ -32,6 +32,12 @@ function JosephsonCircuits._cudss_sweep(rowptr::Vector{<:Integer},
     return HostSweep(length(rowptr) - 1, Vector{Int}(rowptr),
         Vector{Int}(colind), nzval, X, B, NamedTuple(kwargs))
 end
+# and of cuDSS's estimate of a system's device memory: the bytes of its
+# stored values, so that the batch is held to the host's budget as on a
+# device
+JosephsonCircuits._cudss_systembytes(rowptr::Vector{<:Integer},
+    colind::Vector{<:Integer}, nzval::Vector{ComplexF64}, nrhs::Integer;
+    kwargs...) = sizeof(nzval)
 function JosephsonCircuits._cudss_sweepsolve!(S::HostSweep)
     for k in axes(S.nzval, 2)
         # the structure is compressed sparse row, so read as compressed
@@ -394,10 +400,13 @@ end
             reduction = noise(i, inputwave, Snoise, Cnoise)
             @test isapprox(Snoise, host.Snoise[:, :, i]; rtol = 1e-12)
             @test isapprox(Cnoise, host.Cnoise[:, :, i]; rtol = 1e-12)
-            @test isapprox(JC.calcqe(host.S[:, :, i], reduction),
+            # the port terminations are in the vacuum
+            @test isapprox(JC.calcqe!(similar(host.QE[:, :, i]),
+                host.S[:, :, i], reduction; inputnoise = fill(0.5, nrhs)),
                 host.QE[:, :, i]; rtol = 1e-12)
-            @test isapprox(JC.calccm(host.S[:, :, i], wmodes, reduction),
-                host.CM[:, i]; rtol = 1e-12)
+            @test isapprox(JC.calccm!(similar(host.CM[:, i]),
+                host.S[:, :, i], wmodes, reduction), host.CM[:, i];
+                rtol = 1e-12)
         end
     end
 

@@ -7,6 +7,16 @@ solve keeps only the port waveforms and the final state, and the outgoing
 signals, the pump's third harmonic and an intermodulation product are read
 by demodulating the port 2 wave through a smooth window.
 
+```text
+ 1                      2                            65
+ o---[Lj1 || Cj1]-------o---[Lj2 || Cj2]--- ... -----o
+ |                      |                            |
+[P1 || Cg1]           [Cg2]                   [Cend || P2]
+ |                      |                            |
+ o----------------------o----------------------------o
+ 0
+```
+
 ```@example transientline
 using JosephsonCircuits
 
@@ -26,17 +36,20 @@ rise(t, width) = t <= 0 ? 0.0 : t >= width ? 1.0 : sinpi(t/(2width))^2
 pulse(t) = rise(t - 20e-9, 15e-9)*rise(120e-9 - t, 15e-9)
 
 cells, ntones = 64, 10
-frequencies = collect(range(4e9, 6.4e9; length = ntones))
+ws = 2pi .* collect(range(4e9, 6.4e9; length = ntones))
 phases = [pi*j*(j - 1)/ntones for j in 1:ntones]
-fp, Ip, Is = 7.5e9, 2e-6, 5e-9
-function drive(t)
-    pump = Ip*rise(t, 15e-9)*cospi(2fp*t)
-    signals = sum(cospi(2frequencies[j]*t + phases[j]/pi) for j in 1:ntones)
-    return pump + Is*pulse(t)*signals
+wp, Ip, Is = 2pi*7.5e9, 2e-6, 5e-9
+# the drive as a closure over its values, which the solver calls at every step
+function drive(wp, Ip, ws, phases, Is)
+    return function (t)
+        pump = Ip*rise(t, 15e-9)*cos(wp*t)
+        signals = sum(cos(ws[j]*t + phases[j]) for j in eachindex(ws))
+        return pump + Is*pulse(t)*signals
+    end
 end
 
 lineproblem(cells) = transientproblem(transientline(cells);
-    sources = [TransientSource(1, drive)])
+    sources = [TransientSource(1, drive(wp, Ip, ws, phases, Is))])
 nothing # hide
 ```
 
@@ -47,12 +60,12 @@ problem = lineproblem(cells)
 solution = transientsolve(problem, (0.0, 140e-9); dt = 2e-12)
 
 window(t) = 40e-9 <= t <= 100e-9 ? sinpi((t - 40e-9)/60e-9)^2 : 0.0
-for f in frequencies
-    a = transientdemodulate(solution, 2, f; window)
-    println("$(f/1e9) GHz: $(abs(a)) sqrt(W) at $(angle(a)) rad")
+for w in ws
+    a = transientdemodulate(solution, 2, w; window)
+    println("$(round(w/(2pi*1e9); digits = 3)) GHz: $(abs(a)) sqrt(W) at $(angle(a)) rad")
 end
-idler = transientdemodulate(solution, 2, 2fp - first(frequencies); window)
-third = transientdemodulate(solution, 2, 3fp; window)
+idler = transientdemodulate(solution, 2, 2wp - first(ws); window)
+third = transientdemodulate(solution, 2, 3wp; window)
 ```
 
 Repeat with half the step and compare the amplitudes: the step controls
@@ -72,7 +85,7 @@ small = transientsolve(lineproblem(4), (0.0, 24e-9); dt = 4e-12)
 @assert all(isfinite, small.outgoing)
 @assert pulse(23e-9) > 0
 small_window(t) = 21e-9 <= t <= 24e-9 ? sinpi((t - 21e-9)/3e-9)^2 : 0.0
-measured = transientdemodulate(small, 2, first(frequencies); window = small_window)
+measured = transientdemodulate(small, 2, first(ws); window = small_window)
 @assert isfinite(measured) && abs(measured) > 0
 nothing # hide
 ```

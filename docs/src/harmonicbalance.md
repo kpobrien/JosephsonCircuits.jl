@@ -112,7 +112,7 @@ nonlinearity is evaluated on a separate, usually larger grid.
 | `Nmodulationharmonics` | Pump-harmonic offsets retained around the signal |
 | `dc` | Include the zero-frequency mode |
 | `fourwavemixing`, `threewavemixing` | Select the corresponding parity of pump harmonics and signal offsets |
-| `maxpumpintermodorder`, `maxmodulationintermodorder` | Limit intermodulation order by the sum of absolute indices |
+| `maxpumpintermodorder`, `maxmodulationintermodorder` | Keep the modes whose indices have an absolute sum within the order, and every harmonic of a single tone up to its per-tone limit |
 | `frequencywindow` | Bounds on the absolute frequency of retained pump modes |
 
 The default evaluation padding avoids aliasing of the leading cubic
@@ -149,8 +149,8 @@ operating point can produce much larger changes in gain.
 
 A solve that fails to converge returns its last iterate and records the
 failure in `solverinfo`. It may warn about an exhausted work budget, a
-line search, or stagnation. Do not interpret that iterate as a converged
-operating point.
+line search, stagnation, or a residual that is not finite. Do not
+interpret that iterate as a converged operating point.
 
 `Staged()` reuses converged states along a source-continuation path. Its
 history can indicate where the path became difficult, but failure is not
@@ -215,6 +215,7 @@ contains its inner solver records; inspect those when diagnosing a stage.
 | `reason == :work`, repeated GMRES stagnation, or large `residualratio` relative to `forcing` in `stage.krylov` | Inspect preconditioner refresh/escalation and operator-product counts; on a small circuit compare with `Newton()` |
 | `reason == :linesearch`, repeated backtracks or tiny `alpha` | Check units and the initial state; reduce the parameter/drive step or try `Staged()`; a larger GMRES budget alone need not help |
 | `reason == :progress` | Inspect the residual history and continuation stages; the solver has already attempted recovery before declaring a stall |
+| `reason == :nonfinite` | The residual norm was not finite at the start or a restart, and the iteration stopped there; look for an infinite or undefined component value, frequency-dependent closure, source current or initial state `x0` |
 | `converged == true`, but gain changes on harmonic refinement | Refine pump, modulation, and evaluation grids separately; nonlinear iteration tolerance does not control truncation error |
 | A sweep jumps despite convergence | Compare state/response continuity and forward/backward sweeps; inspect cache retry records and check [stability](stability.md) |
 
@@ -245,30 +246,13 @@ small nonzero frequencies instead.
 ## Noise and quantum efficiency
 
 The noise calculation includes the field each port's termination sends
-in and the noise emitted by supported internal losses. A termination is at
-zero temperature, sending in the vacuum, unless it states one:
-`Port(1; termination = MatchedTermination(temperature = 0.05))`. Internal
-component temperatures and block noise models follow the
-[temperature table](conventions.md#Noise-normalization-and-temperature);
-the analysis `temperature` does not warm the ports.
-
-For a selected input/output pair, `QE` is its photon gain divided by twice
-the total noise at the output, with every input in its state, the
-selected input's own included: a warm source lowers the efficiency of a
-measurement of its signal. `QEideal` is the package's ideal-amplifier
-reference at that gain; `QE/QEideal` compares the device with that
-reference. `nbar` is the occupation of the wave leaving each port mode:
-at an output, the photons the measurement receives; at the port facing a
-device, what the circuit sends back toward it.
-
-`Cnoise` contains only the internal added covariance, so a solved device
-can be embedded as a block with `NoiseCovariance(Cnoise)`. `Vout` is the
-whole output covariance, `S*Diagonal(sigma)*S' + Cnoise`, with `sigma` the
-`nbar + 1/2` of every input. `Snoise` describes transfer coefficients and
-is independent of temperature; with `channeltemperatures` it gives each
-internal channel's share of the noise at an output, a noise budget.
-[Noise at the ports](portnoise.md) works these through an input line and
-a readout chain.
+in and the noise emitted by supported internal losses, at the temperatures
+of the [temperature table](conventions.md#Noise-normalization-and-temperature).
+`QE`, `QEideal`, `nbar`, `Vout`, `Cnoise` and `Snoise` are defined in
+[what the solvers report](portnoise.md#What-the-solvers-report), and
+[noise at the ports](portnoise.md) works them through an input line and a
+readout chain. `Cnoise` holds only the noise the circuit adds, so a solved
+device can be embedded as a block with `NoiseCovariance(Cnoise)`.
 
 Continuing the circuit above:
 

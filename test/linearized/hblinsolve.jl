@@ -62,6 +62,30 @@ using Test
         @test close(u.nodeflux[jpanodes], k.nodeflux[jpanodes]; rtol = 1e-8)
     end
 
+    @testset "a loss at the frequency of an idler" begin
+        # a capacitor lossy between 4.8 and 5 GHz only is a noise channel
+        # of a pumped sweep whose signal is below that band and whose idler
+        # 2wp - ws is inside it, and of no sweep with no mode inside it; the
+        # pump modes are outside the band, so the pump is the one of the
+        # lossless capacitor
+        band(w) = 2pi*4.8e9 <= w <= 2pi*5.0e9
+        jpa(C2) = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 2, Capacitor(100e-15)),
+            (:Lj1, 2, 0, JosephsonJunction(1000e-12)), (:C2, 2, 0, C2)])
+        circuit = jpa(Capacitor(FrequencyDependent(w ->
+            band(w) ? 1000e-15*(1 - 0.01im) : 1000e-15 + 0im)))
+        nl = hbnlsolve((2pi*4.75e9,), (4,),
+            [(mode = (1,), port = 1, current = 0.00565e-6)],
+            jpa(Capacitor(1000e-15)))
+        channels(fs) = (s = hblinsolve(2pi*fs, circuit; nonlinear = nl,
+            Nmodulationharmonics = (2,), keyedarrays = false);
+            s.componentnames[s.noiseportimpedanceindices])
+        # the modes of 4.6 GHz are at -4.9, 4.6 and 14.1 GHz, those of 4.72
+        # GHz at -4.78, 4.72 and 14.22 GHz
+        @test channels([4.6e9]) == ["C2"]
+        @test isempty(channels([4.72e9]))
+    end
+
     @testset "an error in the sweep is thrown as it was met" begin
         # a block whose data ends inside the sweep throws when the sweep
         # evaluates it there, from however many batches

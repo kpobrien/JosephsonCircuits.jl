@@ -102,6 +102,23 @@ using Test
         @test_throws ArgumentError S(onec(nothing), Dict())
     end
 
+    @testset "a parameter defined in terms of others" begin
+        # a name defined by an expression in other parameters, to any
+        # depth, means inside an expression what it means as a whole
+        # value; a definition which comes back to itself is refused
+        JosephsonCircuits.@params Lj Lj0 Lj1
+        onel(v) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:l1, 1, 0, Inductor(v)), (:c1, 1, 0, Capacitor(1e-12))])
+        S(c, d) = hblinsolve(ws, c, d; keyedarrays = false).S
+        defs = Dict(Lj => Lj0/2, Lj0 => 2*Lj1, :Lj1 => 1e-9)
+        ref = S(onel(2e-9), Dict())
+        for v in (2*Lj, Lj + Lj1, :Lj0, Lj0, "Lj0")
+            @test S(onel(v), defs) ≈ ref
+        end
+        @test S(onel(:Lj), defs) ≈ S(onel(1e-9), Dict())
+        @test_throws ArgumentError S(onel(Lj), Dict(Lj => Lj0/2, Lj0 => 2*Lj))
+    end
+
     @testset "two junctions on one branch" begin
         # refused naming both, since they cannot be combined into one element
         c = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:Lj1, 1, 0, JosephsonJunction(1e-9)),

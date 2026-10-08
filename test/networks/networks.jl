@@ -396,8 +396,12 @@ import StaticArrays
         A2 = stack(JosephsonCircuits.ABCD_coupled_tline.(Zeven,Zodd,neven*omega/c*l,nodd*omega/c*l))
         @test isapprox(A1,A2)
 
-        # no frequencies give no chain matrices
+        # no frequencies give no chain matrices, and one an array of one,
+        # as a number gives the one matrix
         @test size(JosephsonCircuits.A_coupled_tlines(L, C, l, Float64[])) == (4, 4, 0)
+        A3 = JosephsonCircuits.A_coupled_tlines(L, C, l, omega[3:3])
+        @test size(A3) == (4, 4, 1)
+        @test A3[:, :, 1] == JosephsonCircuits.A_coupled_tlines(L, C, l, omega[3])
 
     end
 

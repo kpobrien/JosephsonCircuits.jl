@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: Floquet
 using LinearAlgebra
 using Test
 using Random
@@ -53,33 +54,24 @@ end
         jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, b)
         @test JC.deflationsize(pc) == 0
-        @test JC.candidatecount(pc) == 0
+        @test size(pc.state.X, 2) == 0
         @test JC.deflationrebuilds(pc) == 0
-        # the integer constructor agrees with the vector one
-        pc2 = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, 20)
-        @test JC.deflationsize(pc2) == 0
 
         @test_throws ArgumentError Floquet(ranktol = 0.0)
         @test_throws ArgumentError Floquet(benefittol = -1.0)
         @test_throws ArgumentError Floquet(size = 8, candidates = 4)
-        @test_throws DimensionMismatch JC.seeddeflation!(pc, randn(7, 2))
-        # a seed which changes the bank marks the active blocks stale even
-        # when the bank's count does not change: with the bank full, an
+        @test_throws DimensionMismatch JC._bankcandidates!(pc, randn(7, 2))
+        # a bank which changes holds candidates the last build did not take
+        # in even when its count does not change: with the bank full, an
         # append trims the oldest unproven candidates and the count stays
         pcb = JC.FloquetPreconditioner(Floquet(size = 2, candidates = 2), DensePC(B0), jvp!, b)
-        JC.seeddeflation!(pcb, randn(20, 2))
-        @test JC.candidatecount(pcb) == 2
+        JC._bankcandidates!(pcb, randn(20, 2))
         JC.updatepreconditioner!(pcb, zeros(20))
-        @test pcb.fresh
-        g = pcb.state.generation
-        JC.seeddeflation!(pcb, randn(20, 2))
-        @test JC.candidatecount(pcb) == 2
-        @test pcb.state.generation > g
-        @test !pcb.fresh
-        # a preconditioner which does not deflate ignores a seed
-        @test JC.candidatecount(DensePC(B0)) == 0
+        @test !JC.hasnewcandidates(pcb)
+        JC._bankcandidates!(pcb, randn(20, 2))
+        @test size(pcb.state.X, 2) == 2
+        @test JC.hasnewcandidates(pcb)
         @test_throws DimensionMismatch JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, b; state = JC.FloquetState(zeros(7)))
-        @test JC.seeddeflation!(DensePC(B0), randn(20, 2)) isa DensePC
     end
 
     # 33.1: the active residual-image subspace is an exact eigenspace of the
@@ -89,9 +81,8 @@ end
         J, B0, Q = defectsystem(n, nbad)
         jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
-        # seed the bad directions themselves, plus noise
-        JC.seeddeflation!(pc, hcat(Q[:, 1:nbad], randn(Random.default_rng(), n, 2));
-            source = :test)
+        # bank the bad directions themselves, plus noise
+        JC._bankcandidates!(pc, hcat(Q[:, 1:nbad], randn(Random.default_rng(), n, 2)))
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) >= nbad
 
@@ -117,8 +108,8 @@ end
         # the same two directions offered five times over, in different
         # scalings and linear combinations
         Xdup = hcat(x, 2.5*x, -x, x*[1.0 1.0; 1.0 -1.0], 1e-3*x)
-        JC.seeddeflation!(pc, Xdup; source = :test)
-        @test JC.candidatecount(pc) == 10
+        JC._bankcandidates!(pc, Xdup)
+        @test size(pc.state.X, 2) == 10
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) == 2
         @test J*pc.X ≈ pc.C atol = 1e-9
@@ -132,7 +123,7 @@ end
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         # columns nbad+1 onward satisfy B0*J*x = x exactly; only the first
         # nbad are missing from the base
-        JC.seeddeflation!(pc, Q[:, 1:6]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 1:6])
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) == nbad
         # each direction kept is one the base misses: its correction
@@ -141,12 +132,12 @@ end
 
         # every candidate handled by the base leaves an empty active set
         pc2 = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
-        JC.seeddeflation!(pc2, Q[:, nbad+1:nbad+4]; source = :test)
+        JC._bankcandidates!(pc2, Q[:, nbad+1:nbad+4])
         JC._rebuildfloquet!(pc2)
         @test JC.deflationsize(pc2) == 0
         # ... and against an exact base nothing is retained at all
         pcx = JC.FloquetPreconditioner(Floquet(), DensePC(inv(J), true), jvp!, zeros(n))
-        JC.seeddeflation!(pcx, Q[:, 1:4]; source = :test)
+        JC._bankcandidates!(pcx, Q[:, 1:4])
         JC.updatepreconditioner!(pcx, zeros(n))
         @test JC.deflationsize(pcx) == 0
     end
@@ -156,7 +147,7 @@ end
         J, B0, Q = defectsystem(n, 8)
         jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(size = 3), DensePC(B0), jvp!, zeros(n))
-        JC.seeddeflation!(pc, Q[:, 1:8]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 1:8])
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) == 3
         # the compression is orthonormal, so the invariants survive it
@@ -171,87 +162,13 @@ end
         pc = JC.FloquetPreconditioner(Floquet(size = 4, candidates = 10), DensePC(B0), jvp!, zeros(n))
         rng = Random.default_rng()
         for _ in 1:20
-            JC.seeddeflation!(pc, randn(rng, n, 3); source = :test)
-            @test JC.candidatecount(pc) <= 10
-            @test length(pc.state.source) == JC.candidatecount(pc)
+            JC._bankcandidates!(pc, randn(rng, n, 3))
+            @test size(pc.state.X, 2) <= 10
         end
         # a zero column carries no direction and is not banked
-        before = JC.candidatecount(pc)
-        JC.seeddeflation!(pc, zeros(n, 2); source = :test)
-        @test JC.candidatecount(pc) == before
-    end
-
-    # 33.4: harmonic Ritz values must find the small eigenvalues.
-    @testset "harmonic Ritz extraction near zero" begin
-        # a full Arnoldi factorization of a matrix with two small
-        # eigenvalues, built here so H is exactly the projection
-        n = 24
-        rng = Random.default_rng()
-        Qm = Matrix(qr(randn(rng, n, n)).Q)
-        d = collect(range(1.0, 3.0; length = n))
-        d[1] = 1e-3; d[2] = 2e-3
-        A = Qm*Diagonal(d)*Qm'
-        m = 16
-        V = zeros(n, m+1); H = zeros(n, m)
-        b = randn(rng, n); V[:, 1] = b/norm(b)
-        for j in 1:m
-            w = A*V[:, j]
-            for i in 1:j
-                H[i, j] = dot(V[:, i], w); w -= H[i, j]*V[:, i]
-            end
-            for i in 1:j   # reorthogonalize
-                c = dot(V[:, i], w); H[i, j] += c; w -= c*V[:, i]
-            end
-            H[j+1, j] = norm(w); V[:, j+1] = w/H[j+1, j]
-        end
-        Hbar = H[1:m+1, 1:m]
-        Y = JC.harmonicritznearzero(Hbar, 2)
-        @test size(Y, 2) >= 2
-        # the harmonic Ritz directions should live in the span of the two
-        # small eigenvectors
-        U = Qm[:, 1:2]
-        for j in axes(Y, 2)
-            q = V[:, 1:m]*Y[:, j]
-            q ./= norm(q)
-            @test norm(U'*q) > 0.9
-        end
-        # a singular projected block gives an empty result rather than an
-        # error, and the caller falls back on the singular directions
-        @test size(JC.harmonicritznearzero(zeros(5, 4), 2), 2) == 0
-        @test size(JC.harmonicritznearzero(Hbar, 0), 2) == 0
-    end
-
-    # 33.5: on a strongly nonnormal matrix the smallest singular direction
-    # and the smallest eigendirection differ; both families are harvested
-    # and the residual image picks a usable subspace.
-    @testset "nonnormal harvesting keeps both families" begin
-        n = 30
-        rng = Random.default_rng()
-        # upper triangular with a large off-diagonal: eigenvectors are far
-        # from orthogonal, so eigen and singular information disagree
-        A = triu(randn(rng, n, n), 1)*8.0 + Diagonal(range(0.05, 2.0; length = n))
-        B0 = Matrix{Float64}(I, n, n)
-        jvp! = DenseProduct(A)
-        pc = JC.FloquetPreconditioner(Floquet(harvest = 2, ritz = 2, size = 8), DensePC(B0), jvp!, zeros(n))
-        # a real Arnoldi factorization of A on a random start
-        m = 12
-        V = zeros(n, m+1); H = zeros(n, m)
-        b = randn(rng, n); V[:, 1] = b/norm(b)
-        for j in 1:m
-            w = A*V[:, j]
-            for i in 1:j
-                H[i, j] = dot(V[:, i], w); w -= H[i, j]*V[:, i]
-            end
-            H[j+1, j] = norm(w); V[:, j+1] = w/H[j+1, j]
-        end
-        JC._harvestfloquet!(pc, V[:, 1:m], H[1:m+1, 1:m])
-        # both families contributed
-        @test JC.candidatecount(pc) >= 3
-        @test all(s -> s === :gmres_floquet, pc.state.source)
-        JC._rebuildfloquet!(pc)
-        @test JC.deflationsize(pc) >= 1
-        @test A*pc.X ≈ pc.C atol = 1e-7
-        @test pc.C'*pc.C ≈ I atol = 1e-9
+        before = size(pc.state.X, 2)
+        JC._bankcandidates!(pc, zeros(n, 2))
+        @test size(pc.state.X, 2) == before
     end
 
     @testset "harvesting does not rebuild under a running solve" begin
@@ -259,7 +176,7 @@ end
         J, B0, Q = defectsystem(n, 2)
         jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
-        JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 1:2])
         JC._rebuildfloquet!(pc)
         rebuilds = JC.deflationrebuilds(pc)
         active = copy(pc.W)
@@ -269,7 +186,7 @@ end
         H = triu(randn(rng, m+1, m), -1)
         JC._harvestfloquet!(pc, V, H)
         # the bank grew but the applied operator did not change
-        @test JC.candidatecount(pc) > 2
+        @test size(pc.state.X, 2) > 2
         @test JC.deflationrebuilds(pc) == rebuilds
         @test pc.W == active
     end
@@ -280,7 +197,7 @@ end
         J, B0, Q = defectsystem(n, 3)
         jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
-        JC.seeddeflation!(pc, Q[:, 1:3]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 1:3])
         JC._rebuildfloquet!(pc)
         rng = Random.default_rng()
         r = randn(rng, n)
@@ -297,7 +214,7 @@ end
         Jmoved = J + 0.01*Q*Diagonal(randn(Random.default_rng(), n))*Q'
         jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
-        JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 1:2])
         JC._rebuildfloquet!(pc)
         @test J*pc.X ≈ pc.C atol = 1e-9
         rebuilds = JC.deflationrebuilds(pc)
@@ -333,7 +250,7 @@ end
         @test out0.converged
 
         pc = JC.FloquetPreconditioner(Floquet(size = 8), base, jvp!, zeros(n))
-        JC.seeddeflation!(pc, Q[:, 1:nbad]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 1:nbad])
         JC._rebuildfloquet!(pc)
         ws2 = JC.GMRESWorkspace(b, 40)
         x2 = zeros(n)
@@ -365,12 +282,11 @@ end
 
         # warm: harvest at the first operator, carry the physical vectors
         jvp! = DenseProduct(J0)
-        warm = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 4, ritz = 2), base, jvp!, zeros(n))
+        warm = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 4), base, jvp!, zeros(n))
         ws = JC.GMRESWorkspace(b, 40); x = zeros(n)
         out0 = JC.gmres!(x, jvp!, b, ws; Mop! = warm, rtol = 1e-10,
-            maxrestarts = 4)
-        JC.harvest!(warm, ws, out0)
-        @test JC.candidatecount(warm) > 0
+            maxrestarts = 4, oncycle = (w, j) -> JC.harvestcycle!(warm, w, j))
+        @test size(warm.state.X, 2) > 0
 
         # move to the second operator; the bank is rebuilt against it
         jvp!.J[] = J1
@@ -411,7 +327,7 @@ end
         # them, which is the situation the per-cycle harvest exists for
         m = 4
 
-        percycle = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 2, ritz = 2, candidates = 64), base, jvp!, zeros(n))
+        percycle = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 2, candidates = 64), base, jvp!, zeros(n))
         @test JC.usescycleharvest(percycle)
         ws = JC.GMRESWorkspace(b, m); x = zeros(n)
         before = copy(percycle.W)
@@ -422,16 +338,8 @@ end
         # the preconditioner did not move under the running solve
         @test percycle.W == before
         @test JC.deflationrebuilds(percycle) == 0
-
-        # against harvesting only the cycle left in the workspace
-        finalonly = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 2, ritz = 2, candidates = 64, cycleharvest = false), base, jvp!, zeros(n))
-        @test !JC.usescycleharvest(finalonly)
-        ws2 = JC.GMRESWorkspace(b, m); x2 = zeros(n)
-        out2 = JC.gmres!(x2, jvp!, b, ws2; Mop! = finalonly, rtol = 1e-10,
-            maxrestarts = 10)
-        JC.harvest!(finalonly, ws2, out2)
-        @test JC.candidatecount(percycle) >
-            JC.candidatecount(finalonly)
+        # the bank holds more than the last cycle's harvest of two
+        @test size(percycle.state.X, 2) > 2
 
         # and what the extra cycles found survives the rebuild
         JC.pointmoved!(percycle)
@@ -440,42 +348,35 @@ end
         @test J*percycle.X ≈ percycle.C atol = 1e-7
     end
 
-    @testset "an external seed takes effect at the next solve; a harvest waits" begin
+    @testset "a harvest waits for the next build" begin
         n = 40
         J, B0, Q = defectsystem(n, 3)
         jvp! = DenseProduct(J)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
-        JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 1:2])
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) == 2
         W = copy(pc.W); rebuilds = JC.deflationrebuilds(pc)
         # a candidate banked by the harvest, mid-solve, leaves the applied
         # operator alone until the point moves
-        JC._bankcandidates!(pc, Q[:, 3:3]; source = :test)
+        JC._bankcandidates!(pc, Q[:, 3:3])
         z = zeros(n)
         JC.applypreconditioner!(z, pc, randn(Random.default_rng(), n))
         @test pc.W == W
         @test JC.deflationrebuilds(pc) == rebuilds
-        # an external seed between solves is active at the next application
-        JC.seeddeflation!(pc, Q[:, 3:3]; source = :external)
+        # and the build after the point moves takes it in
+        JC.pointmoved!(pc)
         JC.applypreconditioner!(z, pc, randn(Random.default_rng(), n))
         @test JC.deflationrebuilds(pc) == rebuilds + 1
         @test JC.deflationsize(pc) == 3
         c = J*Q[:, 3]; c ./= norm(c)
         @test norm(pc.C*(pc.C'*c) - c) < 1e-8
-        # a seed is banked unfiltered and marks the blocks stale; the
-        # rebuild is what removes what it duplicates
-        JC.seeddeflation!(pc, Q[:, 1:1]; source = :external)
-        @test JC.candidatecount(pc) == 4
-        @test !pc.fresh
-        JC.applypreconditioner!(z, pc, randn(Random.default_rng(), n))
-        @test JC.deflationsize(pc) == 3
     end
 
-    @testset "harmonic Ritz through the production path reads the Arnoldi Hessenberg" begin
-        # `gmres!` triangularizes `ws.H` in place with its Givens rotations;
-        # the harmonic Ritz pencil needs the Arnoldi relation, which only
-        # `ws.Harnoldi` still satisfies after a cycle
+    @testset "the harvest reads the Hessenberg the rotations triangularized" begin
+        # `gmres!` triangularizes `ws.H` in place with its Givens rotations,
+        # a left orthogonal transformation of the Arnoldi Hessenberg, which
+        # keeps its singular values and right singular vectors
         n = 24
         rng = Random.default_rng()
         Qm = Matrix(qr(randn(rng, n, n)).Q)
@@ -490,31 +391,29 @@ end
         out = JC.gmres!(x, jvp!, b, ws; rtol = 1e-14, maxrestarts = 1)
         j = out.iterations
         @test j == m
-        Hr = ws.Harnoldi[1:j+1, 1:j]
-        # the Arnoldi relation holds for the raw matrix ...
-        @test A*ws.V[:, 1:j] ≈ ws.V[:, 1:j+1]*Hr atol = 1e-10
+        # the Arnoldi Hessenberg, the projection of `A` on the basis
+        V = ws.V[:, 1:j+1]
+        Hr = V'*A*V[:, 1:j]
+        @test A*V[:, 1:j] ≈ V*Hr atol = 1e-10
         @test all(!iszero, [Hr[i+1, i] for i in 1:j])
-        # ... and not for the rotated one, whose subdiagonal is gone
-        @test all(iszero, [ws.H[i+1, i] for i in 1:j])
-        @test svdvals(Hr) ≈ svdvals(ws.H[1:j+1, 1:j])
-        Y = JC.harmonicritznearzero(Hr, 2)
-        @test size(Y, 2) >= 2
+        # the rotated one has lost its subdiagonal and kept the singular
+        # values, and the right singular vectors of the smallest ones,
+        # which the harvest takes
+        Ht = ws.H[1:j+1, 1:j]
+        @test all(iszero, [Ht[i+1, i] for i in 1:j])
+        @test svdvals(Hr) ≈ svdvals(Ht)
+        Vr = svd(Hr).V[:, j-1:j]
+        Vt = svd(Ht).V[:, j-1:j]
+        @test norm(Vr - Vt*(Vt'*Vr)) < 1e-8
+        # and the harvest, given the workspace, finds the small eigenspace:
+        # the candidates are inv(P)*u = u here
+        pc = JC.FloquetPreconditioner(Floquet(harvest = 2),
+            DensePC(Matrix{Float64}(I, n, n)), jvp!, zeros(n))
+        JC.harvestcycle!(pc, ws, j)
+        @test size(pc.state.X, 2) == 2
         U = Qm[:, 1:2]
-        for c in axes(Y, 2)
-            q = ws.V[:, 1:j]*Y[:, c]
-            q ./= norm(q)
-            @test norm(U'*q) > 0.9
-        end
-        # and the harvest, given the workspace, finds the same subspace
-        pc = JC.FloquetPreconditioner(Floquet(harvest = 0, ritz = 2), DensePC(Matrix{Float64}(I, n, n)), jvp!,
-            zeros(n))
-        JC.harvest!(pc, ws, out)
-        @test JC.candidatecount(pc) >= 2
-        Xc = pc.state.X
-        # the candidates are inv(P)*u = u here, so they should overlap the
-        # small eigenspace
-        for c in axes(Xc, 2)
-            q = Xc[:, c]/norm(Xc[:, c])
+        for c in axes(pc.state.X, 2)
+            q = pc.state.X[:, c]/norm(pc.state.X[:, c])
             @test norm(U'*q) > 0.9
         end
     end

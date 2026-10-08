@@ -4,9 +4,12 @@
 
 Call `f` on the consecutive batches of at most `batchsize` of the
 frequency indices `indices`, each batch a view of them: on the calling
-task when they form a single batch, so that an exception is thrown as it
-is rather than wrapped in a `TaskFailedException`, and otherwise each
-batch on a task of its own. Nothing is called when `indices` is empty.
+task when they form a single batch, and otherwise each batch on a task of
+its own. A failure is thrown once every batch has finished: the exception
+of the first failed batch in their order, unwrapped from its
+`TaskFailedException`, so that a caller sees the exception a single batch
+throws, whatever the number of batches. Nothing is called when `indices`
+is empty.
 """
 function foreachbatch(f::F, indices, batchsize::Integer) where {F}
     n = length(indices)
@@ -15,9 +18,21 @@ function foreachbatch(f::F, indices, batchsize::Integer) where {F}
     elseif batchsize >= n
         f(indices)
     else
-        Threads.@sync for batch in Base.Iterators.partition(1:n, batchsize)
-            Threads.@spawn f(view(indices, batch))
-        end
+        tasks = [Threads.@spawn(f(view(indices, batch)))
+            for batch in Base.Iterators.partition(1:n, batchsize)]
+        foreach(waitbatch, tasks)
+        k = findfirst(istaskfailed, tasks)
+        isnothing(k) || throw(tasks[k].exception)
+    end
+    return nothing
+end
+
+# wait for the task of a batch, leaving its failure to `foreachbatch`
+function waitbatch(task::Task)
+    try
+        wait(task)
+    catch e
+        e isa TaskFailedException || rethrow()
     end
     return nothing
 end
@@ -290,7 +305,7 @@ end
         nbatches::Int = Base.Threads.nthreads())
 
 Connect ports `k` and `l` on the same `m` port microwave network represented
-by the scattering parameter matrix `Sa`, and noise correlation matrix `Ca` 
+by the scattering parameter matrix `Sa`, and noise covariance matrix `Ca`
 resulting in an `(m-2)` port network, as illustrated below:
 
 Input network:
@@ -325,7 +340,7 @@ Output network:
 - `Sa::Array`: Array of scattering parameters representing the network
     with ports along first two dimensions, followed by an arbitrary number
     of other dimensions (eg. frequency).
-- `Ca::Array`: Array of noise correlation parameters of the same dimensions as
+- `Ca::Array`: Array of noise covariances of the same dimensions as
     `Sa`.
 - `k::Int`: First port to connect, with one based indexing.
 - `l::Int`: Second port to connect, with one based indexing.
@@ -440,7 +455,7 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
                            Sa[l,jj,b]*ik_kl_kk_il[i] +
                            Sa[k,jj,b]*il_lk_ll_ik[i]
 
-                        # compute the noise correlation matrix
+                        # compute the noise covariance matrix
                         # Wedge thesis Eq. 3.17
                         Cout[i,j,b] = Ca[ii,jj,b] +
                             Ca[l,k,b]*ik_kl_kk_il[i]*conj(jl_lk_ll_jk) +
@@ -507,9 +522,9 @@ Output network:
 - `Sb::Array`: Array of scattering parameters representing the second network
     with ports along first two dimensions, followed by an arbitrary number
     of other dimensions (eg. frequency).
-- `Ca::Array`: Array of noise correlation parameters of the same dimensions as
+- `Ca::Array`: Array of noise covariances of the same dimensions as
     `Sa`.
-- `Cb::Array`: Array of noise correlation parameters of the same dimensions as
+- `Cb::Array`: Array of noise covariances of the same dimensions as
     `Sb`.
 - `k::Int`: Port on first network, with one based indexing.
 - `l::Int`: Port on second network, with one based indexing.
@@ -1526,23 +1541,33 @@ function add_covariances_and_port_names(networks::AbstractVector)
 end
 
 # the noise covariances given with a network, `(name, S, C)` or
-# `(name, S, C, ports)`, which must be the size of its scattering
-# parameters, or else an empty array
+# `(name, S, C, ports)`, which must be an array of numbers of the size of
+# its scattering parameters, held as an array of their type, or else an
+# empty array
 function givencovariance(network)
-    S = network[2]
-    if length(network) > 2 && typeof(network[3]) == typeof(S)
-        C = network[3]
-        if size(C) != size(S)
-            throw(DimensionMismatch(lazy"The size $(size(C)) of the noise covariances of $(network[1]) must be the size $(size(S)) of its scattering parameters."))
-        end
-        return C
+    name, S = network[1], network[2]
+    given = length(network) == 4 ||
+        (length(network) == 3 && !(network[3] isa AbstractVector{<:Tuple}))
+    given || return calc_noise_covariances(S; noise = false)
+    C = network[3]
+    if !(C isa AbstractArray{<:Number})
+        throw(ArgumentError(lazy"The noise covariances of $(name) must be an array of numbers, not a $(typeof(C))."))
     end
-    return calc_noise_covariances(S; noise = false)
+    if size(C) != size(S)
+        throw(DimensionMismatch(lazy"The size $(size(C)) of the noise covariances of $(name) must be the size $(size(S)) of its scattering parameters."))
+    end
+    C isa typeof(S) && return C
+    if eltype(C) <: Complex && !(eltype(S) <: Complex)
+        throw(ArgumentError(lazy"The noise covariances of $(name) are complex and its scattering parameters real; give the scattering parameters as complex numbers."))
+    end
+    # a covariance of another array type, a real `Matrix` for complex
+    # scattering parameters say, as a copy of their type
+    return copyto!(similar(S), C)
 end
 
 """
     get_ports(network::Tuple{T, N}) where {T,N}
-    get_ports(network::Tuple{T, N, N}) where {T,N}
+    get_ports(network::Tuple{T, N, AbstractArray{<:Number}}) where {T,N}
 
 Return the ports for a network `network` given without port names,
 `(name, S)` or `(name, S, C)`. The ports are generated based on the network
@@ -1556,7 +1581,7 @@ julia> JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0]))
  (:S1, 2)
 ```
 """
-get_ports(network::Union{Tuple{T, N}, Tuple{T, N, N}}) where {T,N} =
+get_ports(network::Union{Tuple{T, N}, Tuple{T, N, AbstractArray{<:Number}}}) where {T,N} =
     calc_port_names(network[1], network[2])
 
 """
@@ -1577,7 +1602,7 @@ function get_ports(network::Tuple{T, N, Vector{Tuple{T, Int}}}) where {T,N}
     return network[3]
 end
 
-function get_ports(network::Tuple{T, N, N, Vector{Tuple{T, Int}}}) where {T,N}
+function get_ports(network::Tuple{T, N, AbstractArray{<:Number}, Vector{Tuple{T, Int}}}) where {T,N}
     return network[4]
 end
 
@@ -2106,9 +2131,8 @@ function connectS_initialize(networks::AbstractVector, connections::AbstractVect
     small_splitters::Bool = true, noise::Union{Bool,Nothing} = nothing,
     Nmodes::Integer = 1)
 
-    if !isnothing(noise)
-        Base.depwarn(lazy"The `noise` kwarg of `connectS_initialize` is deprecated and has no effect: `connectS!` computes the noise covariances of the networks given without them, from their scattering parameters at the time, when it is called with `noise = true`. Please remove it to avoid errors in future versions.", :connectS_initialize; force=true)
-    end
+    # the `noise` keyword of v0.5.4, which warns; in circuit/legacy.jl
+    deprecatedconnectnoise(noise)
 
     networks_flat, connections_flat = flattennetworks(networks, connections;
         small_splitters = small_splitters, Nmodes = Nmodes)
@@ -2256,20 +2280,24 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     fconnectionlist = deepcopy(fconnectionlist)
     fweightlist = deepcopy(fweightlist)
     ports = deepcopy(ports)
-    # we don't modify the scattering parameter matrices that make up
-    # scattering_parameters so there is no need to deepycopy
-    # scattering_parameters.
-    scattering_parameters = copy(scattering_parameters)
+    # the networks' arrays as the `Array`s the connections make: an `Array`
+    # as it is, never modified, so there is no need to deepcopy, and another
+    # array type, a `KeyedArray` say, as an `Array` of its values, taken at
+    # each call so that the networks can be updated in place between calls
+    scattering_parameters = [convert(Array, S) for S in scattering_parameters]
+    noise_covariances = [convert(Array, C) for C in noise_covariances]
     # the passive covariances of networks given without noise covariances
     # are computed now, from their scattering parameters as they are
-    noise_covariances = noise ? passivecovariances(scattering_parameters,
-        noise_covariances) : copy(noise_covariances)
+    if noise
+        noise_covariances = passivecovariances(scattering_parameters,
+            noise_covariances)
+    end
 
     userinput = ones(Bool,length(scattering_parameters))
     # the networks not merged into another by a connection
     remaining = trues(length(scattering_parameters))
-    scattering_parameter_storage = Dict{Int,N}()
-    noise_covariance_storage = Dict{Int,N}()
+    scattering_parameter_storage = Dict{Int,eltype(scattering_parameters)}()
+    noise_covariance_storage = Dict{Int,eltype(noise_covariances)}()
     # find the minimum weight and the second to minimum weight
     # we want unique weights, eg, both shouldn't be the same weight
     minweight = Inf
@@ -2346,7 +2374,12 @@ the two networks being connected and 1 and 2 are integers describing the
 ports to connect, or a vector of pairwise connections
 `(network1, network2, port1, port2)` such as [("network1name",
 "network2name",1,2)]. The scattering parameters of all the networks are
-`Array`s of one type.
+arrays of one type, such as `Array`s, and the connections work on
+`Array`s of their values; as for [`solveS`](@ref), wrapped arrays such as
+`KeyedArray`s are taken when no connection joins more than two ports. A
+noise covariance of another array type than the scattering parameters of
+its network, a real `Matrix` for complex ones say, is taken as one of
+theirs.
 
 The ports joined by a connection must share one real reference impedance.
 This function supports connections between more than two ports by
@@ -2367,8 +2400,9 @@ and one per network they leave unconnected:
 - `C`: with `noise = true`, the vector of their noise covariance arrays.
 - `ports`: the vector of the vectors of their ports, each a tuple of
     network name and port number.
-A network which no connection touches is returned as the array it was
-given, not a copy, and so is its covariance.
+A network which no connection touches is returned as the `Array` it was
+given, not a copy, and so is its covariance; a network of another array
+type is returned as an `Array` of its values.
 
 # Examples
 ```jldoctest
@@ -2927,7 +2961,9 @@ a connection of more than two ports is an ideal lossless junction for it
     splitter and connect the components to it.
 - `noise::Bool = false`: also connect the noise covariance matrices of the
     networks. A network given as `(name, S)` gets the passive covariance
-    `(I - S S')/2`; one given as `(name, S, C)` uses `C`.
+    `(I - S S')/2`; one given as `(name, S, C)` uses `C`, taken as an array
+    of the type of `S` if it is of another, a real `Matrix` for a complex
+    `S` say.
 - `factorization = KLUfactorization()`: the sparse factorization of the
     connection system; [`LUfactorization`](@ref) is another good choice.
     The connection system is singular when the connections close a

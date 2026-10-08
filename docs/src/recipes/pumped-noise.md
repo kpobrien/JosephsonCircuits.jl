@@ -6,6 +6,16 @@ and output windows differ, so the reported gain includes the response to
 the probe's edges and the circuit's memory. Requires `JosephsonCircuits`
 and `Plots`.
 
+```text
+ 1
+ o--------+--------+
+ |        |        |
+[p1]    [jj]     [cj]
+ |        |        |
+ o--------+--------+
+ 0
+```
+
 The calculation propagates Gaussian fluctuations about a nonlinear
 classical trajectory. It does not simulate a full nonlinear quantum state.
 Read the [quantum-noise guide](../transientnoise.md) for normalization and
@@ -13,20 +23,22 @@ the distinction between internal added noise and total output covariance.
 
 ## Ramp from equilibrium
 
-The 500 Ω port loads a parallel junction and capacitor. The pump is zero
-before the record starts and has a smooth 4 ns turn-on. Its 20 nA current
+The 50 Ω port loads a parallel junction and capacitor, a resonance near
+5 GHz of quality factor `50*sqrt(C/Lj)`, about 16. The pump is zero
+before the record starts and has a smooth 4 ns turn-on. Its 200 nA current
 is a **peak time-domain amplitude**, not an HB Fourier coefficient.
 
 ```@example pumpednoise
 using JosephsonCircuits, LinearAlgebra, Plots
 circuit = Circuit([
-    (:p1, 1, 0, Port(1; Z0 = 500.0)),
-    (:jj, 1, 0, JosephsonJunction(1e-9)),
-    (:cj, 1, 0, Capacitor(1e-12)),
+    (:p1, 1, 0, Port(1; Z0 = 50.0)),
+    (:jj, 1, 0, JosephsonJunction(100e-12)),
+    (:cj, 1, 0, Capacitor(10e-12)),
 ])
+wp, ws = 2pi*4.75e9, 2pi*4.6e9
 rise(t) = t <= 0 ? 0.0 : t >= 4e-9 ? 1.0 : sinpi(t/8e-9)^2
-pump(t) = 20e-9*rise(t)*cospi(2*4.75e9*t)
-problem = transientproblem(circuit; sources = [TransientSource(1, pump)])
+pump(wp) = t -> 200e-9*rise(t)*cos(wp*t)
+problem = transientproblem(circuit; sources = [TransientSource(1, pump(wp))])
 T = 24e-9
 function trajectory(dt)
     # N samples cover the half-open Fourier record [0,T).
@@ -55,7 +67,7 @@ window extends four nanoseconds beyond the input window.
 function windowplan(sol, a, b)
     times = sol.times[round(Int, a/sol.dt) + 1:round(Int, b/sol.dt)]
     envelope = reshape(sinpi.((times .- a)./(b - a)).^2, :, 1)
-    transientquantumplan(sol, times, [4.6e9]; ports = [1], envelopes = envelope)
+    transientquantumplan(sol, times, [ws]; ports = [1], envelopes = envelope)
 end
 input = windowplan(solution, 8e-9, 16e-9)
 output = windowplan(solution, 8e-9, 20e-9)
@@ -83,11 +95,11 @@ plot!(p, times .* 1e9, envelope.(times, 8e-9, 20e-9); label = "output window")
 
 Use a bath band broad enough to include pump-converted noise, not only the
 signal bin. Here the first pass uses all positive record bins up to
-20 GHz, with spacing and weight `1/T`. The port termination is the only
-bath and is at zero temperature.
+20 GHz, a `cutoff` of `2pi*20e9` rad/s, with spacing and weight `2pi/T`.
+The port termination is the only bath and is at zero temperature.
 
 ```@example pumpednoise
-noise = transientnoise(solution, output; cutoff = 20e9)
+noise = transientnoise(solution, output; cutoff = 2pi*20e9)
 @assert noise.diagnostics.passed
 @assert isapprox(noise.addedcovariance, zeros(2,2); atol = 1e-12)
 (noise.covariance, noise.diagnostics)
@@ -123,12 +135,12 @@ fine = trajectory(2.5e-12)
 fine_input = windowplan(fine, 8e-9, 16e-9)
 fine_output = windowplan(fine, 8e-9, 20e-9)
 fine_G = transientgain(fine, fine_output, fine_input)
-step_noise = transientnoise(fine, fine_output; cutoff = 20e9)
-cutoff_noise = transientnoise(fine, fine_output; cutoff = 30e9)
-df = 1/(2T)
-bath_frequencies = collect(df:df:30e9)
+step_noise = transientnoise(fine, fine_output; cutoff = 2pi*20e9)
+cutoff_noise = transientnoise(fine, fine_output; cutoff = 2pi*30e9)
+dw = pi/T   # half the record's bin spacing 2pi/T
+bath_frequencies = collect(dw:dw:2pi*30e9)
 grid_noise = transientnoise(fine, fine_output;
-    frequencies = bath_frequencies, weights = fill(df, length(bath_frequencies)))
+    frequencies = bath_frequencies, weights = fill(dw, length(bath_frequencies)))
 
 relative_change(a, b) = norm(a - b)/norm(b)
 changes = (

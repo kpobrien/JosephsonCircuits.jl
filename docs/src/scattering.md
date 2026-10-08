@@ -61,8 +61,8 @@ the interconnected, possibly pumped circuit.
 ## Fit a rational model
 
 This complete example fits synthetic data from a passive low-pass two-port.
-Tabulated input frequencies are angular frequencies; the optional
-`frequencies` keyword used to sample a callable for fitting is in Hz.
+Tabulated input frequencies, like the optional `frequencies` keyword used
+to sample a callable for fitting, are angular frequencies in rad/s.
 
 ```@example fitting
 using JosephsonCircuits, LinearAlgebra
@@ -354,7 +354,7 @@ concerns a block's strong-drive embedding, not small-signal conversion.
 ### Fit for transient use
 
 `RationalScattering(block, npoles; band=...)` fits the harmonic transfer
-functions for time-domain use; `band` is in Hz. Choose a band that covers
+functions for time-domain use; `band` is in rad/s. Choose a band that covers
 the signals and conversion products needed by the calculation. A long
 traveling-wave device usually also needs delay removal. Outside the
 fitted band the filters extrapolate, so convergence with fitting band and

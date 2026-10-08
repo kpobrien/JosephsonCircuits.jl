@@ -1,11 +1,9 @@
-__precompile__(true)
-
 """
     JosephsonCircuits
 
-A frequency domain simulator for superconducting circuits containing
-Josephson junctions, capacitors, inductors, mutual inductors, resistors,
-and multiport scattering parameter blocks.
+A simulator for superconducting circuits containing Josephson junctions,
+capacitors, inductors, mutual inductors, resistors, and multiport
+scattering parameter blocks, in the frequency domain and in time.
 
 Circuits are solved by harmonic balance in a modified nodal analysis
 formulation in the node flux basis. A strong periodic drive (the pump) is
@@ -39,12 +37,12 @@ import KLU
 import SparseArrays.CHOLMOD
 import SparseArrays.LibSuiteSparse
 import KernelAbstractions
-import KernelAbstractions: @kernel, @index, @Const, CPU, Backend
+import KernelAbstractions: @kernel, @index, @Const, @localmem, @synchronize, CPU, Backend
 import Atomix
 import UUIDs
 import AxisKeys
 import PrecompileTools
-import OrderedCollections
+import Random
 import StaticArrays
 import FastInterpolations
 import FunctionWrappers: FunctionWrapper
@@ -55,38 +53,14 @@ using SparseArrays
 using Touchstone
 
 # === physical constants ===
-
-"""
-    const phi0
-
-The reduced magnetic flux quantum `hbar/(2e)` in Weber (equivalently
-H*A). This is the flux scale that relates a Josephson junction's inductance
-to its critical current, `Ic = phi0/Lj`, and the unit in which the branch
-phases of the harmonic balance solution are measured.
-"""
-const phi0 = 3.29105976e-16
-
-"""
-    const Phi0
-
-The magnetic flux quantum `h/(2e)` in Weber (equivalently H*A), equal to
-`2*pi*phi0`.
-"""
-const Phi0 = 2.067833848e-15
-
-"""
-    const speed_of_light
-
-The speed of light in vacuum, 2.99792458e8 m/s, the default phase velocity
-of a [`TransmissionLine`](@ref).
-"""
-const speed_of_light = 2.99792458e8
-
+#
+# The flux quanta follow from the Planck constant and the elementary
+# charge, both exact in the SI.
 
 """
     const planck_constant
 
-The Planck constant `h`, 6.62607015e-34 J*s.
+The Planck constant `h`, 6.62607015e-34 J*s, exact in the SI.
 """
 const planck_constant = 6.62607015e-34
 
@@ -96,6 +70,38 @@ const planck_constant = 6.62607015e-34
 The reduced Planck constant `hbar = h/(2*pi)` in J*s.
 """
 const reduced_planck_constant = planck_constant/(2*pi)
+
+"""
+    const elementary_charge
+
+The elementary charge `e`, 1.602176634e-19 C, exact in the SI.
+"""
+const elementary_charge = 1.602176634e-19
+
+"""
+    const phi0
+
+The reduced magnetic flux quantum `hbar/(2e)` in Weber (equivalently
+H*A). This is the flux scale that relates a Josephson junction's inductance
+to its critical current, `Ic = phi0/Lj`, and the unit in which the branch
+phases of the harmonic balance solution are measured.
+"""
+const phi0 = reduced_planck_constant/(2*elementary_charge)
+
+"""
+    const Phi0
+
+The magnetic flux quantum `h/(2e)` in Weber (equivalently H*A), `2*pi*phi0`.
+"""
+const Phi0 = planck_constant/(2*elementary_charge)
+
+"""
+    const speed_of_light
+
+The speed of light in vacuum, 2.99792458e8 m/s, the default phase velocity
+of a [`TransmissionLine`](@ref).
+"""
+const speed_of_light = 2.99792458e8
 
 """
     const boltzmann_constant
@@ -136,7 +142,7 @@ include("circuit/parse.jl")
 # Flattening the hierarchy (`elaborate`) and lowering it to the integer
 # indexed tables the matrix builders read (`compile`).
 include("circuit/compile.jl")
-include("circuit/graph.jl")      # incidence matrix, spanning tree, loops
+include("circuit/graph.jl")      # the branches and the components of the nodes
 include("circuit/matrices.jl")   # capacitance and inverse inductance matrices
 include("harmonics/sparse.jl")   # sparse matrix helpers shared by the solvers
 include("circuit/bind.jl")       # binding values and pattern-fixed assembly
@@ -260,7 +266,7 @@ with junction inductance `Lj` in Henries.
 # Examples
 ```jldoctest
 julia> LjtoIc(100e-12)
-3.29105976e-6
+3.2910597847545335e-6
 ```
 """
 function LjtoIc(Lj)
@@ -275,8 +281,8 @@ with critical current `Ic` in Amperes.
 
 # Examples
 ```jldoctest
-julia> IctoLj(3.29105976e-6)
-1.0e-10
+julia> IctoLj(1e-6)
+3.291059784754534e-10
 ```
 """
 function IctoLj(Ic)
@@ -464,55 +470,106 @@ function warmupconnect()
     return true
 end
 
-export hbsolve, hbnlsolve, hblinsolve, hbstability, HBStabilityResult, ShiftInvert,
+export hbsolve, hbnlsolve, hblinsolve, hbstability, ShiftInvert,
     DenseSpectrum, ContourIntegral, Monodromy, compile,
-    calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
+    symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     connectS, solveS
 export thermaloccupation, effectivetemperature, noisetemperature,
     noisequanta
 
 # The `CircuitValues` expression type is internal: it is what the
-# parameters of `@params` build and what a parameterized netlist file
-# expression parses to. It is deliberately not exported as a user facing
-# symbolic type, because its closed operator set (see circuit/values.jl)
-# would make a confusing public boundary; users parameterize circuits with
-# symbols, numbers, and ordinary Julia functions. `@params`, which declares
-# parameters as `CircuitValues` symbols, is available as
-# `JosephsonCircuits.@params`.
+# parameters of `@params` build, and what the deprecated netlist file
+# reader parses an expression to. It is deliberately not exported as a
+# user facing symbolic type, because its closed operator set (see
+# circuit/values.jl) would make a confusing public boundary; users
+# parameterize circuits with symbols, numbers, and ordinary Julia
+# functions. `@params`, which declares parameters as `CircuitValues`
+# symbols, is available as `JosephsonCircuits.@params`.
 import .CircuitValues: @params
 # `reset!(cache)` is not exported: packages as common as DataStructures
 # export a `reset!` of their own, and a script using both would have to
 # qualify it; the docstrings name it `JosephsonCircuits.reset!`.
 export FrequencyDependent, LaplaceResponse, designsensitivities, designjacobian,
-    hbcache, hbsolve!, HBCache, HBReuse,
+    hbcache, hbsolve!,
     hbnonlinearproblem, JacobianOperator, preconditioner, hbresidual!,
-    hbjvp!, hbvjp!, hbjacobian!, hbd2F!, hbd3F!, hbdFdp!, jacobianprototype,
+    hbjvp!, hbvjp!, hbjacobian!, hbd2F!, hbd3F!, hbdFdp!,
     setdrive!, drivenresidual!, NewtonKrylov, Newton, QuasiNewton,
-    ExternalSolver, GMRES, KrylovJL, Staged,
-    BlockDiagonal, FullJacobian, HarmonicBand, MeasuredBand, Clusters,
-    CoupledModes, CouplingMask, Automatic,
-    Floquet, Always, Probe, Never, Backtracking, KLUfactorization,
+    ExternalSolver, GMRES, Staged, MeasuredBand, Automatic,
+    Always, Probe, Never, Backtracking, KLUfactorization,
     LUfactorization, QRfactorization, CUDSSFactorization, BlockFactorization
 
 # the typed circuit representation and its component models
-export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
-    Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port, MatchedTermination,
+export Circuit, Interface, Ground, Net, PortRef, PinRef,
+    Inductor, Capacitor, Resistor, CurrentSource, Port, MatchedTermination,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
-    ScatteringParameters, GaussianChannel, TransmissionLine, RationalScattering, VectorFitting,
+    ScatteringParameters, TransmissionLine, RationalScattering, VectorFitting,
     PassivityEnforcement, LinearizedScattering, Passive, Lossless,
     ScatteringLimit, OpenDC, ShortDC, ThroughDC, ScatteringDC,
-    ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native,
-    elaborate, ElaboratedCircuit, quadraturetransform,
-    ComponentNotSupportedError
+    ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native
 
 # the circuit integrated in time
 export TransientSource, TransientState, transientproblem, transientstate, transientsolve, transientsensitivity,
-    transientdemodulate, transienttangent, transientadjoint, transientinjection,
-    Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse, TransientSolution, TransientBatchSolution, TransientStepError,
+    transientdemodulate, transienttangent, transientadjoint,
+    Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse,
     transientiqplan, transientiq!, transientiq, transientiqvjp!,
     transientquantumplan, transientquantum, transientquantum!, transientquantumvjp!,
-    transientnoisebaths, transientnoise, transientgain, transientquantumdiagnostics,
+    transientnoisebaths, transientnoise, transientgain,
     transientquantumefficiency
+
+# The public names which are not exported, written qualified with the
+# module's name: `@params`, `reset!`, the circuit and result types, the
+# errors and the pole matching and passivity checks the manual documents
+# with the analyses, `KrylovJL`, the physical constants, and the network
+# library: its parameters, closed form networks and connections. `public`
+# is a keyword from Julia 1.11.
+if VERSION >= v"1.11"
+    eval(Expr(:public,
+        # the circuit and the analyses
+        Symbol("@params"), :CompiledCircuit, :NonlinearHB, :LinearizedHB, :HB,
+        :HBNonlinearProblem, :matchpoles, :passivityassessment, :reset!,
+        # the results and errors a script receives rather than writes, and
+        # the Krylov.jl linear solver, whose name LinearSolve.jl exports too
+        :HBStabilityResult, :HBCache, :TransientSolution,
+        :TransientBatchSolution, :ComponentNotSupportedError,
+        :TransientStepError, :KrylovJL,
+        # the physical constants
+        :phi0, :Phi0, :elementary_charge, :speed_of_light, :planck_constant,
+        :reduced_planck_constant, :boltzmann_constant,
+        # the network parameters and their conversions
+        :ABCDtoS, :ABCDtoS!, :AtoB, :AtoB!, :AtoS, :AtoS!, :AtoY, :AtoY!,
+        :AtoZ, :AtoZ!, :BtoA, :BtoA!, :BtoS, :BtoS!, :BtoY, :BtoY!, :BtoZ,
+        :BtoZ!, :StoA, :StoA!, :StoABCD, :StoABCD!, :StoB, :StoB!, :StoT,
+        :StoT!, :StoY, :StoY!, :StoZ, :StoZ!, :TtoS, :TtoS!, :YtoA, :YtoA!,
+        :YtoB, :YtoB!, :YtoS, :YtoS!, :YtoZ, :YtoZ!, :ZtoA, :ZtoA!, :ZtoB,
+        :ZtoB!, :ZtoS, :ZtoS!, :ZtoY, :ZtoY!,
+        # the closed form networks
+        :ABCD_PiY, :ABCD_PiY!, :ABCD_TZ, :ABCD_TZ!, :ABCD_attenuator_Pi,
+        :ABCD_attenuator_Pi!, :ABCD_attenuator_T, :ABCD_attenuator_T!,
+        :ABCD_coupled_tline, :ABCD_coupled_tline!, :ABCD_seriesZ,
+        :ABCD_seriesZ!, :ABCD_shuntY, :ABCD_shuntY!, :ABCD_tline, :ABCD_tline!,
+        :A_coupled_tlines, :A_coupled_tlines!, :CoupledLinesBasis,
+        :S_circulator_clockwise, :S_circulator_clockwise!,
+        :S_circulator_counterclockwise, :S_circulator_counterclockwise!,
+        :S_directional_coupler, :S_directional_coupler!,
+        :S_directional_coupler_antisymmetric,
+        :S_directional_coupler_antisymmetric!,
+        :S_directional_coupler_symmetric, :S_directional_coupler_symmetric!,
+        :S_hybrid_coupler_antisymmetric, :S_hybrid_coupler_antisymmetric!,
+        :S_hybrid_coupler_symmetric, :S_hybrid_coupler_symmetric!, :S_match!,
+        :S_open!, :S_short!, :S_splitter!, :Y_C, :Y_C!, :Y_PiY, :Y_PiY!,
+        :Y_invL, :Y_invL!, :Y_seriesY, :Y_seriesY!, :ZC_basis_coupled_tlines,
+        :Z_L, :Z_L!, :Z_TZ, :Z_TZ!, :Z_canonical_coupled_line_circuits,
+        :Z_coupled_tline, :Z_coupled_tline!, :Z_invC, :Z_invC!, :Z_shuntZ,
+        :Z_shuntZ!, :Z_tline, :Z_tline!, :canonical_coupled_line_circuits,
+        :coupling_to_even_odd, :even_odd_to_coupling, :even_odd_to_maxwell,
+        :even_odd_to_mutual, :maxwell_combine, :maxwell_to_even_odd,
+        :maxwell_to_mutual, :mutual_to_even_odd, :mutual_to_maxwell,
+        # the connection of networks
+        :cascadeS, :cascadeS!, :connectS!, :connectS_initialize,
+        :interconnectS, :interconnectS!, :intraconnectS, :intraconnectS!,
+        :solveS!, :solveS_initialize,
+    ))
+end
 
 
 # The precompile workload runs the warmups when the package is installed so
@@ -553,8 +610,8 @@ function warmuptransient()
     transientadjoint(solution, weights; components = ["Lj1"])
     transientadjoint(checkpointed, weights; components = ["C1", "Lj1"])
     # the measured tone on a bin of the record, and the bath on two bins
-    plan = transientquantumplan(solution, solution.times, [9/T])
-    transientnoise(solution, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    plan = transientquantumplan(solution, solution.times, [2pi*9/T])
+    transientnoise(solution, plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan)
     batch = transientsolve([problem, transientproblem(base; sources = [TransientSource(1, t -> pump(t)/2)])],
         (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
     transienttangent(batch, currents)
@@ -563,12 +620,12 @@ function warmuptransient()
     # the batch's noise on both methods, of a member and of a range of
     # members, which are views of the batch, and of a checkpointed batch;
     # the pulsed gain of the solution and of the batch
-    transientnoise(batch, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
-    transientnoise(batch, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan, method = :forward)
-    transientnoise(batch[1], plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
-    transientnoise(batch[1:2], plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    transientnoise(batch, plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan)
+    transientnoise(batch, plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan, method = :forward)
+    transientnoise(batch[1], plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan)
+    transientnoise(batch[1:2], plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan)
     transientnoise(transientsolve([problem, problem], (0.0, T*(n - 1)/n); dt = T/n, record = :checkpoints),
-        plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+        plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan)
     transientgain(solution, plan, plan)
     transientgain(batch, plan, plan)
     transienttangent(batch[1], currents)
@@ -577,8 +634,8 @@ function warmuptransient()
     transienttangent(solution, [currents[1, i] for _ in 1:1, _ in 1:3, i in 1:n, _ in 1:1])
     # a windowed measurement with an envelope
     half = solution.times[1:n÷2]
-    windowed = transientquantumplan(solution, half, [9/T]; envelopes = reshape(sinpi.((half .- half[1]) ./ (T/2)) .^ 2, :, 1))
-    transientnoise(solution, windowed; frequencies = [8/T, 9/T], weights = [1/T, 1/T])
+    windowed = transientquantumplan(solution, half, [2pi*9/T]; envelopes = reshape(sinpi.((half .- half[1]) ./ (T/2)) .^ 2, :, 1))
+    transientnoise(solution, windowed; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T])
     transientgain(solution, windowed, windowed)
     # a line and a lossy rational block ahead of the junction: the line
     # history, the block states and their noise, on both noise methods
@@ -592,8 +649,8 @@ function warmuptransient()
         (0.0, T*(n - 1)/n); dt = T/n, method = GaussLegendre(), record = :phases)
     transienttangent(fronted, currents)
     transientadjoint(fronted, weights)
-    transientnoise(fronted, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
-    transientnoise(fronted, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan, method = :forward)
+    transientnoise(fronted, plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan)
+    transientnoise(fronted, plan; frequencies = 2pi .* [8/T, 9/T], weights = [2pi/T, 2pi/T], inputs = plan, method = :forward)
     # the sensitivity with a line and a block, whose endpoint the
     # components perturb
     transientsensitivity(fronted, ["jj"])

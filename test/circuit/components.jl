@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: ComponentNotSupportedError, elaborate
 using LinearAlgebra
 using Test
 
@@ -142,6 +143,11 @@ using Test
         # thermal equilibrium noise model carries the temperature
         blkT = ScatteringParameters(S; noise = ThermalEquilibrium(20e-3))
         @test blkT.noise.temperature == 20e-3
+        # a noise model or a negative frequency rule the solvers do not
+        # read is refused where the block is built
+        for kw in ((noise = :lossless,), (noise = 4.0,), (negative_frequency = :native,))
+            @test_throws ArgumentError ScatteringParameters(S; kw...)
+        end
         # a temperature is finite and nonnegative, and so is a table's
         # frequency, which a sorted check alone lets through
         @test_throws ArgumentError ThermalEquilibrium(-1.0)
@@ -174,49 +180,6 @@ using Test
         @test d[:,:,2] ≈ conj.(d[:,:,1])
     end
 
-    @testset "gaussian channels" begin
-        # attenuator at zero temperature: exactly at the CP boundary
-        η = 0.5
-        ch = GaussianChannel(sqrt(η)*Matrix(1.0I, 2, 2),
-            (1-η)/2*Matrix(1.0I, 2, 2); nmodes = 1)
-        @test abs(ch.cp_margin) < 1e-10
-        @test ch.nmodes == 1
-        @test JosephsonCircuits.nterminals(ch) == 2
-        # quantum limited phase insensitive amplifier
-        G = 4.0
-        amp = GaussianChannel(sqrt(G)*Matrix(1.0I, 2, 2),
-            (G-1)/2*Matrix(1.0I, 2, 2); nmodes = 1)
-        @test abs(amp.cp_margin) < 1e-10
-        # a noiseless amplifier is not completely positive
-        @test_throws ArgumentError GaussianChannel(
-            sqrt(G)*Matrix(1.0I, 2, 2), zeros(2, 2); nmodes = 1)
-        # Y must be symmetric, to atol of its largest entry: a hot
-        # channel's covariance symmetric to a part in 1e12 is, where an
-        # absolute tolerance would refuse it
-        @test_throws ArgumentError GaussianChannel(Matrix(1.0I, 2, 2),
-            [0.5 0.1; -0.1 0.5]; nmodes = 1)
-        @test GaussianChannel(Matrix(1.0I, 2, 2), [1e6 1e-6; 0.0 1e6]; nmodes = 1).nmodes == 1
-        # odd dimension is rejected
-        @test_throws DimensionMismatch GaussianChannel(zeros(3,3),
-            zeros(3,3))
-        # ideal squeezer: symplectic X, Y = 0 is completely positive
-        r = 0.5
-        sq = GaussianChannel([exp(r) 0.0; 0.0 exp(-r)], zeros(2,2);
-            nmodes = 1)
-        @test abs(sq.cp_margin) < 1e-10
-        # two mode channel from the Bogoliubov form of a two mode squeezer
-        A = cosh(r)*Matrix(1.0I, 2, 2)
-        B = sinh(r)*[0.0 1.0; 1.0 0.0]
-        Xtms = quadraturetransform(A, B)
-        tms = GaussianChannel(Xtms, zeros(4, 4); nmodes = 2)
-        @test abs(tms.cp_margin) < 1e-10
-        # channels embed in circuits and are rejected by the solver bridge
-        cg = Circuit([:ch => GaussianChannel(sqrt(η)*Matrix(1.0I, 2, 2),
-                (1-η)/2*Matrix(1.0I, 2, 2); nmodes = 1, grounded = true)],
-            [((:ch, 1), Ground)])
-        @test_throws ComponentNotSupportedError compile(cg)
-    end
-
     @testset "nonlinear inductors and current phase relations" begin
         jj = JosephsonJunction(100e-12)
         @test jj isa NonlinearInductor
@@ -236,10 +199,8 @@ using Test
         # the linear coefficient must be one
         @test_throws ArgumentError PolynomialCPR([2.0, 0.0])
         @test_throws ArgumentError PolynomialCPR(Float64[])
-        # the solvers know the derivatives of the Josephson relation and
-        # of a polynomial, and of no other callable
+        # a relation which is neither the Josephson one nor a polynomial
         mycpr(x) = x - x^3/6
-        @test_throws ArgumentError JosephsonCircuits.cprderivative(mycpr)
         nl = NonlinearInductor(1e-9, mycpr)
         @test !JosephsonCircuits.issinusoidal(nl)
         # a snail written as its expansion compiles as a junction, with
@@ -306,6 +267,12 @@ using Test
         @test d[2,1,1] ≈ 0.5
         # a conflicting explicit zref is an error
         @test_throws ArgumentError ScatteringParameters(path; zref = 30.0)
+        # the file is tabulated data: its derivatives are read as a
+        # table's, and a form, which only a callable has, is refused
+        dfile = ScatteringParameters(path; derivatives = (L = fill(0.1 + 0im, 2, 2),))
+        JosephsonCircuits.evaluateprovider!(d, Dict(dfile.derivatives)[:L], [2*pi*1.5e9])
+        @test d[:, :, 1] == fill(0.1 + 0im, 2, 2)
+        @test_throws ArgumentError ScatteringParameters(path; form = :inplace)
         # an explicit 50 Ohms is a statement like any other, not an
         # omission: against a 75 Ohm file it conflicts, and omitted the
         # file's value is taken
@@ -419,6 +386,11 @@ using Test
         @test JC.quantumnoisemargin(K/2 .* conj.(turn(wq)), S) < -0.1
         @test abs(hblinsolve([wq], two(rotated); keyedarrays = false, returnCM = true).CM[1, 1]) ≈ 1 atol = 1e-8
         @test_throws ArgumentError hblinsolve([2wq], two(rotated); keyedarrays = false, returnCnoise = true)
+        # a stated zero frequency matrix is held square, finite and real
+        # whatever its element type, `Float64`, the type it is stored as,
+        # among them
+        @test_throws DimensionMismatch ScatteringDC([1.0 0 0; 0 1.0 0])
+        @test_throws ArgumentError ScatteringDC([NaN 0; 0 1.0])
     end
 
     @testset "a derivative is read as the block's data is" begin
@@ -432,14 +404,26 @@ using Test
         blk = ScatteringParameters((fs, S); extrapolation = :constant, interpolation = :linear,
             derivatives = (x = (fs, dS),))
         at(p, w) = JC.evaluateprovider!(zeros(ComplexF64, 1, 1, 1), p, [w])[1]
-        @test at(blk.derivatives.x, 6.0) == at(blk.derivatives.x, 5.0)
-        @test blk.derivatives.x.interpolation == :linear
-        # and a block called one entry at a time may state its derivative
-        # as data, which is not called at all
-        entry = ScatteringParameters((p, q, w) -> 0.1 + 0.01w; nports = 1, form = :entry,
-            derivatives = (x = (fs, dS), y = (p, q, w) -> 0.01 + 0im))
-        @test at(entry.derivatives.x, 2.0) ≈ 0.01
-        @test at(entry.derivatives.y, 2.0) ≈ 0.01
+        x = Dict(blk.derivatives)[:x]
+        @test at(x, 6.0) == at(x, 5.0)
+        @test x.interpolation == :linear
+        # and a block which writes into a destination may state its
+        # derivative as data, which is not called at all
+        inplace = ScatteringParameters((d, w) -> fill!(d, 0.1 + 0.01w); nports = 1, form = :inplace,
+            derivatives = (x = (fs, dS), y = (d, w) -> fill!(d, 0.01 + 0im)))
+        @test first.(inplace.derivatives) == [:x, :y]
+        @test at(Dict(inplace.derivatives)[:x], 2.0) ≈ 0.01
+        @test at(Dict(inplace.derivatives)[:y], 2.0) ≈ 0.01
+    end
+
+    @testset "a block's derivatives are no part of its type" begin
+        # blocks which differ in the names of their derivatives alone are one
+        # type, so what is compiled for a block is compiled once for them
+        fs = collect(range(1.0, 5.0; length = 9))
+        S = reshape(ComplexF64.(0.1 .+ 0.01 .* fs), 1, 1, :)
+        dS = reshape(fill(0.01 + 0im, 9), 1, 1, :)
+        @test typeof(ScatteringParameters((fs, S); derivatives = (a = (fs, dS),))) ===
+            typeof(ScatteringParameters((fs, S); derivatives = (b = (fs, dS),)))
     end
 
     @testset "a rotation moves the reference planes of a covariance" begin

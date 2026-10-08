@@ -230,7 +230,7 @@ using Test
             sol = transientsolve(transientproblem(c;
                 sources = [TransientSource(1, pump)]), (0.0, 60e-9);
                 dt = 4e-12, method = GaussLegendre())
-            got = transientdemodulate(sol, 1, fp; quantity = :voltage, window)
+            got = transientdemodulate(sol, 1, 2pi*fp; quantity = :voltage, window)
             @test got ≈ expected rtol=1e-4
         end
     end
@@ -290,9 +290,9 @@ using Test
             NonlinearInductor(L, PolynomialCPR([1.0, 0.0, -1/6, 0.0, 1/120]))))
         nsol = transientsolve(rest, (0.0, 1e-9 - 2e-12); dt = 2e-12,
             record = :phases, method = GaussLegendre())
-        plan = transientquantumplan(nsol, nsol.times, [4/1e-9])
-        noise = transientnoise(nsol, plan; frequencies = [3/1e-9, 4/1e-9],
-            weights = [1e9, 1e9], inputs = plan)
+        plan = transientquantumplan(nsol, nsol.times, [2pi*4/1e-9])
+        noise = transientnoise(nsol, plan; frequencies = 2pi .* [3/1e-9, 4/1e-9],
+            weights = [2pi*1e9, 2pi*1e9], inputs = plan)
         @test noise.diagnostics.passed
         # at rest the amplifier is a passive reflection with vacuum noise
         @test noise.covariance ≈ [0.5 0.0; 0.0 0.5] atol=1e-6

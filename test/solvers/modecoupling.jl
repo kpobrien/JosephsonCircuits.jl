@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: BlockDiagonal, Clusters, CouplingMask, Floquet, FullJacobian, HarmonicBand
 using LinearAlgebra
 using SparseArrays
 using Random
@@ -21,34 +22,40 @@ using Test
 
     modeslot(layout) = Int[(Int(layout.inv[j]) - 1) % layout.nmodes + 1
         for j in 1:layout.rdim]
+    # the coupling mask which keeps every coupling into the modes `cols`
+    columnmask(N, cols) = [m2 in cols || m1 == m2 for m1 in 1:N, m2 in 1:N]
     # `@allocated` has Julia compile the whole top-level expression it is
     # written in, here this testset, so the allocation checks measure
     # inside functions
     applyallocations(z, p, r) =
         @allocated JosephsonCircuits.applypreconditioner!(z, p, r)
     solveallocations(z, f, r) = @allocated JosephsonCircuits.trysolve!(z, f, r)
-
-    @testset "modecouplingmask" begin
-        @test JosephsonCircuits.modecouplingmask(3, Int[]) == Matrix(I, 3, 3)
-        @test all(JosephsonCircuits.modecouplingmask(3, 1:3))
-        # a retained set keeps its whole columns plus the diagonal, which is
-        # the block lower triangular Gauss-Seidel pattern
-        keep = JosephsonCircuits.modecouplingmask(4, [2, 3])
-        @test keep == Bool[1 1 1 0; 0 1 1 0; 0 1 1 0; 0 1 1 1]
-        @test !keep[1, 4]
-        @test keep[4, 2]
-        @test_throws ArgumentError JosephsonCircuits.modecouplingmask(3, [4])
-        @test_throws ArgumentError JosephsonCircuits.modecouplingmask(0, Int[])
-    end
+    # the bytes the factors of a coupling set would take, as the
+    # preconditioner sizes them for its escalations
+    factorbytes(pc, S, f = pc.factorization) = first(
+        JosephsonCircuits.couplingsize!(pc, S, f, pc.plan; budget = typemax(Int)))
 
     @testset "restrictmodecoupling" begin
         A = [1 -3 5; 3 1 -3; 5 3 1]
         @test JosephsonCircuits.restrictmodecoupling(A,
-            JosephsonCircuits.modecouplingmask(3, [1])) == [1 0 0; 3 1 0; 5 0 1]
+            columnmask(3, [1])) == [1 0 0; 3 1 0; 5 0 1]
         @test JosephsonCircuits.restrictmodecoupling(A,
-            JosephsonCircuits.modecouplingmask(3, 1:3)) == A
+            columnmask(3, 1:3)) == A
         @test_throws DimensionMismatch JosephsonCircuits.restrictmodecoupling(
             A, trues(2, 2))
+    end
+
+    @testset "a band written in integers of any type" begin
+        # a per tone bound is the band of the same bounds whatever integers
+        # it is written in, and a shell count likewise
+        modes = [(i, j) for i in -1:1 for j in -2:2]
+        A = [m1 .- m2 for m1 in modes, m2 in modes]
+        band = HarmonicBand((1, Int32(2)))
+        @test band.p === (1, 2)
+        @test JosephsonCircuits.couplingmask(band, length(modes), A) ==
+            JosephsonCircuits.modebandmask(A, (1, 2))
+        @test HarmonicBand(Int32(1)).p === 1
+        @test_throws ArgumentError HarmonicBand(1.5)
     end
 
     @testset "the restricted assembly equals the masked full Jacobian" begin
@@ -59,8 +66,8 @@ using Test
         ms = modeslot(layout)
 
         for S in (Int[], [1], [1, 3], collect(1:Nmodes))
-            keep = JosephsonCircuits.modecouplingmask(Nmodes, S)
-            P, plan = JosephsonCircuits.structurejacobian(d,
+            keep = columnmask(Nmodes, S)
+            P, plan = structurejacobian(d,
                 JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, keep),
                 JosephsonCircuits.restrictmodecoupling(
@@ -89,14 +96,14 @@ using Test
             circuitdefs; debugJacobian = true)
         Nmodes = d.Nmodes
         pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; spec = JosephsonCircuits.CoupledModes([1, 2]))
-        @test pc.coupling.indices == [1, 2]
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout;
+            spec = CouplingMask(columnmask(Nmodes, [1, 2])))
+        @test pc.coupling.mask == columnmask(Nmodes, [1, 2])
 
         JosephsonCircuits.updatepreconditioner!(pc, 0.3*randn(length(d.xr)))
         ms = modeslot(d.modelayout)
-        retained = [m in pc.coupling.indices for m in 1:Nmodes]
+        retained = [m in (1, 2) for m in 1:Nmodes]
         rows = rowvals(pc.P)
         vals = nonzeros(pc.P)
         # no stored nonzero couples a shell column into a retained row
@@ -108,9 +115,8 @@ using Test
 
         # the block diagonal really is block diagonal
         pc0 = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout)
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout)
         @test pc0.coupling isa JosephsonCircuits.BlockDiagonal
         JosephsonCircuits.updatepreconditioner!(pc0, 0.3*randn(length(d.xr)))
         rows0 = rowvals(pc0.P)
@@ -128,9 +134,8 @@ using Test
         # a band grows at every escalation until it is the full Jacobian,
         # also on this grid of odd harmonics, whose offsets are all even
         pb = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; spec = HarmonicBand((0,)),
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout; spec = HarmonicBand((0,)),
             Amatrixmodes = d.Amatrixmodes)
         stored = [nnz(pb.P)]
         while JosephsonCircuits.escalatepreconditioner!(pb)
@@ -148,11 +153,6 @@ using Test
         z = similar(r)
         JosephsonCircuits.applypreconditioner!(z, pc0, r)
         @test d.Jr*z ≈ r rtol=1e-8
-
-        @test_throws ArgumentError JosephsonCircuits.ModeCouplingPreconditioner(
-            d.sys, d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
-            d.Lscale, d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm,
-            d.Cnm, d.modelayout; spec = JosephsonCircuits.CoupledModes([0]))
     end
 
     @testset "hbnlsolve newtonkrylov agrees with newton" begin
@@ -163,7 +163,7 @@ using Test
 
         for m in (NewtonKrylov(), NewtonKrylov(preconditioner = FullJacobian()),
                 NewtonKrylov(preconditioner = Floquet(size = 20)),
-                NewtonKrylov(preconditioner = CoupledModes([1, 3])))
+                NewtonKrylov(preconditioner = CouplingMask(columnmask(on.Nmodes, [1, 3]))))
             ok = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
                 circuitdefs; method = m, keyedarrays = false)
             @test ok.solverinfo.converged
@@ -172,7 +172,7 @@ using Test
             st = ok.solverinfo.stages[1]
             @test length(st.krylov) >= st.iterations
         end
-        @test_throws ArgumentError Floquet(size = 4, harvest = 0, ritz = 0)
+        @test_throws ArgumentError Floquet(size = 4, harvest = 0)
     end
 
     @testset "deflation forms on a strongly driven chain" begin
@@ -251,8 +251,8 @@ using Test
         Nmodes = d.Nmodes
         ms = modeslot(d.modelayout)
         for S in (Int[], [1], collect(1:Nmodes))
-            keep = JosephsonCircuits.modecouplingmask(Nmodes, S)
-            P, plan = JosephsonCircuits.structurejacobian(d,
+            keep = columnmask(Nmodes, S)
+            P, plan = structurejacobian(d,
                 JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, keep),
                 JosephsonCircuits.restrictmodecoupling(
@@ -473,9 +473,9 @@ using Test
         Nmodes = d.Nmodes
         n = length(d.xr)
         mk(spec; kw...) = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; spec = spec, Amatrixmodes = d.Amatrixmodes, kw...)
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout;
+            spec = spec, Amatrixmodes = d.Amatrixmodes, kw...)
         x = 0.3*randn(Random.default_rng(), n)
         d.fjreal(nothing, d.Jr, x)
         r = randn(Random.default_rng(), n)
@@ -491,20 +491,34 @@ using Test
 
         # the symbolic pieces on a small chain: KLU's order is a
         # permutation with no fill, and along the chain the elimination
-        # tree is a path which amalgamation merges into chains of the target
+        # tree is a path, each node coupled after fill to the next alone,
+        # so only the root joins its child's supernode: that child's
+        # structure is the root and nothing more
         adj = [[2], [1, 3], [2, 4], [3, 5], [4]]
         order = JosephsonCircuits.klunodeorder(adj)
         @test sort(order) == 1:5
         parent, post = JosephsonCircuits.eliminationtree(adj, order)
         @test count(==(0), parent) == 1
         @test sort(post) == 1:5
-        parent, post = JosephsonCircuits.eliminationtree(adj, 1:5)
+        parent, post, later = JosephsonCircuits.eliminationtree(adj, 1:5)
         @test parent == [2, 3, 4, 5, 0]
         @test post == [1, 2, 3, 4, 5]
-        @test JosephsonCircuits.amalgamate(parent, post, fill(2, 5), 6) ==
-            [[1, 2, 3], [4, 5]]
-        @test JosephsonCircuits.amalgamate(parent, post, fill(2, 5), 100) ==
-            [[1, 2, 3, 4, 5]]
+        @test JosephsonCircuits.amalgamate(parent, post, later, fill(2, 5)) ==
+            [[1], [2], [3], [4, 5]]
+        @test JosephsonCircuits.amalgamate(parent, post, later, fill(2, 5);
+            maxrows = 2) == [[1], [2], [3], [4], [5]]
+        # a 3x3 lattice eliminated row by row: the fill couples each node
+        # to the three after it, so the last four are coupled to each
+        # other, a dense block, and merge into one supernode
+        grid = [Int[] for _ in 1:9]
+        for i in 1:3, j in 1:3
+            a = 3(i - 1) + j
+            j < 3 && (push!(grid[a], a + 1); push!(grid[a + 1], a))
+            i < 3 && (push!(grid[a], a + 3); push!(grid[a + 3], a))
+        end
+        parent, post, later = JosephsonCircuits.eliminationtree(grid, 1:9)
+        @test JosephsonCircuits.amalgamate(parent, post, later, fill(2, 9)) ==
+            [[1], [2], [3], [4], [5], [6, 7, 8, 9]]
         # a mask's clusters and singletons; the clusters are closed, which
         # is what the block factorization keeps
         mask = Matrix{Bool}(I, Nmodes, Nmodes)
@@ -519,6 +533,8 @@ using Test
         @test pb.P isa JosephsonCircuits.BlockStructure
         @test length(pb.P.clusters) == 1
         @test isnothing(pb.P.singletons)
+        # the chain's nodes are eliminated one by one, the root pair aside
+        @test pb.P.clusters[1].lu.N >= d.modelayout.dim ÷ Nmodes - 1
         JosephsonCircuits.updatepreconditioner!(pb, x)
         JosephsonCircuits.applypreconditioner!(z, pb, r)
         @test norm(d.Jr*z - r) <= residualbound(pb, z)
@@ -665,9 +681,9 @@ using Test
         # diagonal, and `stalled!` makes the next update remeasure
         d = chain2
         pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; spec = Clusters(factorization = BlockFactorization()),
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, d.Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout;
+            spec = Clusters(factorization = BlockFactorization()),
             Amatrixmodes = d.Amatrixmodes)
         pr = pc.clusterprobe
         @test pr.probes == 0
@@ -683,13 +699,13 @@ using Test
         JosephsonCircuits.updatepreconditioner!(pc, x)
         @test pr.probes == 2
         # the wrappers forward the notification
-        pcw = JosephsonCircuits.SizedPreconditioner(pc, length(d.xr))
+        pcw = JosephsonCircuits.SizedPreconditioner(pc, length(d.xr), Ref(0))
         JosephsonCircuits.stalled!(pcw)
         @test pr.reprobe
         @test_throws DimensionMismatch JosephsonCircuits.ModeCouplingPreconditioner(
-            d.sys, d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
-            d.Lscale, d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm,
-            d.Cnm, d.modelayout; spec = CouplingMask(falses(2, 2)))
+            d.sys, d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm,
+            d.Nmodes, d.Nbranches, d.Nfreq, d.modelayout;
+            spec = CouplingMask(falses(2, 2)))
 
         # end to end, with a sparse and with the block factorization
         on = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
@@ -722,7 +738,7 @@ using Test
         adj = JosephsonCircuits.circuitnodegraph(pairptr, pairrow, sys.invLnm,
             sys.Gnm, sys.Cnm, Nmodes, nnodes)
         order = JosephsonCircuits.klunodeorder(adj)
-        keep = JosephsonCircuits.modecouplingmask(Nmodes, 1:Nmodes)
+        keep = fill(true, Nmodes, Nmodes)
         # the predictor counts every array the cluster allocates, exactly,
         # without allocating any of them
         pred = JosephsonCircuits.blockfactorbytes(Float32, keep, adj, order,
@@ -769,9 +785,9 @@ using Test
         # inverts a double precision residual, through the conversion in
         # `applypreconditioner!`
         pc32 = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            layout; spec = FullJacobian(), precision = Float32,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+            d.Nbranches, d.Nfreq, layout;
+            spec = FullJacobian(), precision = Float32,
             Amatrixmodes = d.Amatrixmodes)
         x32 = 0.3*randn(length(d.xr))
         JosephsonCircuits.updatepreconditioner!(pc32, x32)
@@ -783,11 +799,7 @@ using Test
         @test eltype(z32) === Float64          # the iteration keeps its own
         @test d.Jr*z32 ≈ r32 rtol=1e-4         # single precision accuracy
 
-        # an Automatic carries no factorization of its own: the member it
-        # resolves to takes the backend's default
-        @test JosephsonCircuits.withfactorization(Automatic(),
-            KLUfactorization()) === Automatic()
-        # and the solve through it agrees with the assembled Newton solve
+        # a solve through an Automatic agrees with the assembled Newton solve
         on = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
             defs2; dc = true, odd = true, even = true, method = Newton())
         ok = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
@@ -796,9 +808,9 @@ using Test
         @test ok.solverinfo.converged
         @test isapprox(on.S, ok.S; rtol = 1e-6)
         pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            layout; spec = Automatic(), Amatrixmodes = d.Amatrixmodes)
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+            d.Nbranches, d.Nfreq, layout;
+            spec = Automatic(), Amatrixmodes = d.Amatrixmodes)
         @test pc.coupling isa FullJacobian
         # the full set in single precision is full but not exact: its
         # escalation is the double precision factorization
@@ -810,35 +822,50 @@ using Test
         @test one.solverinfo.converged
         # the memory prediction of any coupling set, from the structure
         # alone, and the escalation budget it is held to
-        @test JosephsonCircuits.couplingbytes(pc, FullJacobian(BlockFactorization(precision = Float32))) == pred
-        @test JosephsonCircuits.couplingbytes(pc, FullJacobian()) > JosephsonCircuits.couplingbytes(pc, BlockDiagonal()) > 0
+        @test factorbytes(pc, FullJacobian(BlockFactorization(precision = Float32))) == pred
+        @test factorbytes(pc, FullJacobian()) > factorbytes(pc, BlockDiagonal()) > 0
         pcb = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            layout; spec = BlockDiagonal(), Amatrixmodes = d.Amatrixmodes)
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+            d.Nbranches, d.Nfreq, layout;
+            spec = BlockDiagonal(), Amatrixmodes = d.Amatrixmodes)
         @test pcb.budget === nothing
         pcb.budget = 0
         @test !JosephsonCircuits.escalatepreconditioner!(pcb)
         @test pcb.coupling isa BlockDiagonal
         @test pcb.escalations == 0
-        pcb.budget = JosephsonCircuits.couplingbytes(pcb, FullJacobian())
+        pcb.budget = factorbytes(pcb, FullJacobian())
         @test JosephsonCircuits.escalatepreconditioner!(pcb)
         @test pcb.coupling isa FullJacobian
         @test pcb.escalations == 1
+        # the sparse factors of a set are bounded from below by its mask
+        # before any pattern is built
+        for S in (BlockDiagonal(), HarmonicBand(1), FullJacobian())
+            keep = JosephsonCircuits.couplingmask(S, Nmodes, d.Amatrixmodes)
+            @test JosephsonCircuits.sparsefactorbound(Float64, keep, pcb.plan,
+                pcb.sys) <= factorbytes(pcb, S)
+        end
         # a measured band and a cluster mask grow at an update only within
         # the same budget: with room for the set they start from and no
         # more, a strongly driven point leaves them as they are, where it
-        # grows them without the budget
+        # grows them without the budget; the set refused is sized once,
+        # however many updates refuse it
         xg = randn(MersenneTwister(5), length(d.xr))
         for spec in (MeasuredBand(), Clusters())
             pg = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-                d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-                d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-                layout; spec = spec, Amatrixmodes = d.Amatrixmodes)
+                d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, Nmodes,
+                d.Nbranches, d.Nfreq, layout;
+                spec = spec, Amatrixmodes = d.Amatrixmodes)
             start = pg.coupling
-            pg.budget = JosephsonCircuits.couplingbytes(pg, start)
+            pg.budget = factorbytes(pg, start)
             JosephsonCircuits.updatepreconditioner!(pg, xg)
             @test pg.coupling === start
+            sized = pg.sizings
+            for _ in 1:3
+                spec isa Clusters && JosephsonCircuits.stalled!(pg)
+                JosephsonCircuits.updatepreconditioner!(pg, xg)
+            end
+            @test pg.coupling === start
+            @test pg.sizings == sized
             zg = similar(xg)
             JosephsonCircuits.applypreconditioner!(zg, pg, xg)
             @test all(isfinite, zg)
@@ -863,11 +890,10 @@ using Test
             method = Newton(), iterations = 0, debugJacobian = true,
             keyedarrays = false)
         pband = JosephsonCircuits.ModeCouplingPreconditioner(d40.sys,
-            d40.Amatrixindicesaliased, d40.Amatrixconjindices, d40.Ljb,
-            d40.Lscale, d40.Rbnm, d40.Nmodes, d40.Nbranches, d40.Nfreq,
-            d40.invLnm, d40.Gnm, d40.Cnm, d40.modelayout;
+            d40.Amatrixindicesaliased, d40.Amatrixconjindices, d40.Rbnm,
+            d40.Nmodes, d40.Nbranches, d40.Nfreq, d40.modelayout;
             spec = HarmonicBand((1, 1)), Amatrixmodes = d40.Amatrixmodes)
-        predicted = JosephsonCircuits.couplingbytes(pband, pband.coupling)
+        predicted = factorbytes(pband, pband.coupling)
         JosephsonCircuits.updatepreconditioner!(pband, 0.3*randn(length(d40.xr)))
         built = nnz(pband.cache.factorization)*(sizeof(Float64) + sizeof(Int))
         @test 0.8 < predicted/built < 1.25
@@ -884,9 +910,9 @@ using Test
         # classification, the sizing and the rebuild of the matrix do not.
         d = chain2
         mk(spec; kw...) = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; spec = spec, Amatrixmodes = d.Amatrixmodes, kw...)
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, d.Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout;
+            spec = spec, Amatrixmodes = d.Amatrixmodes, kw...)
         @test JosephsonCircuits.iterationprecision(d.sys) === Float64
         f32 = CUDSSFactorization(precision = Float32, ir_n_steps = 0)
         pc = mk(FullJacobian(f32))
@@ -940,7 +966,7 @@ using Test
         # factors it builds
         pb = mk(FullJacobian(BlockFactorization(precision = Float32)))
         @test !JosephsonCircuits.isexactpreconditioner(pb)
-        pb.budget = JosephsonCircuits.couplingbytes(pb,
+        pb.budget = factorbytes(pb,
             FullJacobian(BlockFactorization(precision = Float64))) - 1
         @test !JosephsonCircuits.escalatepreconditioner!(pb)
         pb.budget += 1
@@ -965,9 +991,9 @@ using Test
         for spec in (FullJacobian(CUDSSFactorization(precision = Float32)),
                      FullJacobian(BlockFactorization(precision = Float32)))
             p = JosephsonCircuits.ModeCouplingPreconditioner(s.sys,
-                s.Amatrixindicesaliased, s.Amatrixconjindices, s.Ljb, s.Lscale,
-                s.Rbnm, s.Nmodes, s.Nbranches, s.Nfreq, s.invLnm, s.Gnm,
-                s.Cnm, s.modelayout; spec = spec, Amatrixmodes = s.Amatrixmodes)
+                s.Amatrixindicesaliased, s.Amatrixconjindices, s.Rbnm, s.Nmodes,
+                s.Nbranches, s.Nfreq, s.modelayout;
+                spec = spec, Amatrixmodes = s.Amatrixmodes)
             @test JosephsonCircuits.factorprecision(p) === Float32
             @test !JosephsonCircuits.reducedprecision(p)
             @test JosephsonCircuits.isexactpreconditioner(p)
@@ -1007,9 +1033,8 @@ using Test
             case.defs; nonlinearkw(case.kw)..., method = Newton(),
             iterations = 0, debugJacobian = true)
         pb = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; Amatrixmodes = d.Amatrixmodes,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, d.Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout; Amatrixmodes = d.Amatrixmodes,
             spec = FullJacobian(BlockFactorization(precision = Float32)))
         pb.budget = 0
         JosephsonCircuits.updatepreconditioner!(pb, d.xr)
@@ -1017,16 +1042,15 @@ using Test
         @test pb.coupling isa BlockDiagonal
         @test pb.fallbacks == 1
 
-        # at four harmonics the same single precision factors are not
-        # singular but poor: the Krylov solves stagnate, and the escalation
-        # the driver asks for is the double precision factorization of the
-        # same full set, after which the solve converges
+        # at four harmonics the same single precision factors, every node
+        # its own supernode, are not singular and precondition well enough
+        # that nothing escalates to double precision
         sol4 = hbnlsolve((case.wp..., ws), (4, 4), srcs, case.circuit,
             case.defs; nonlinearkw(case.kw)..., atol = 1e-12,
             method = NewtonKrylov(preconditioner =
                 FullJacobian(BlockFactorization(precision = Float32))))
         @test sol4.solverinfo.converged
-        @test count(k -> k.escalated, sol4.solverinfo.stages[end].krylov) >= 1
+        @test !any(k -> k.escalated, sol4.solverinfo.stages[end].krylov)
         ref4 = hbnlsolve((case.wp..., ws), (4, 4), srcs, case.circuit,
             case.defs; nonlinearkw(case.kw)..., atol = 1e-12, method = Newton())
         @test maximum(abs, Array(sol4.S) .- Array(ref4.S)) < 1e-9

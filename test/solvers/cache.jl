@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: BlockDiagonal, FullJacobian
 using LinearAlgebra
 using SparseArrays
 using Test
@@ -159,11 +160,14 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test !cache.converged
 
         # the keywords the cache manages, an unsupported method and a
-        # keyword the compiled solve does not take are refused at
-        # construction, and a solver keyword still reaches the solve
+        # keyword the compiled solve does not take, a deprecated one
+        # included, are refused at construction, and a solver keyword
+        # still reaches the solve
         for bad in ((x0 = zeros(2),), (keyedarrays = true,),
                 (reuse = nothing,), (method = Staged(),), (nosuchkeyword = 1,),
-                (maxharmonics = (8,),), (returnsystem = true,),
+                (maxharmonics = (8,),), (ftol = 1e-10,), (alphamin = 0.1,),
+                (switchofflinesearchtol = 1,),
+                (factorization = KLUfactorization(),), (returnsystem = true,),
                 (debugJacobian = true,))
             @test_throws ArgumentError hbcache(wp, (8,), src, circuit, defs; bad...)
         end

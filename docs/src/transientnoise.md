@@ -25,15 +25,15 @@ circuit = Circuit([
     (:loss, 1, 2, Resistor(30.0)),
 ])
 problem = transientproblem(circuit)
-n, T, f = 512, 1e-9, 3e9
+n, T, w = 512, 1e-9, 2pi*3e9
 solution = transientsolve(problem, (0.0, T*(n - 1)/n);
     dt = T/n, record = :phases)
-measurement = transientquantumplan(solution, solution.times, [f, f]; ports = [1, 2])
+measurement = transientquantumplan(solution, solution.times, [w, w]; ports = [1, 2])
 
 # This circuit is time invariant and the modes are single Fourier bins.
 # Only the bath frequency at that bin contributes to each stationary mode.
 noise = transientnoise(solution, measurement;
-    frequencies = [f], weights = [1/T], inputs = measurement)
+    frequencies = [w], weights = [2pi/T], inputs = measurement)
 @assert noise.diagnostics.passed
 @assert isapprox(noise.covariance, measurement.vacuum; rtol = 1e-5, atol = 1e-6)
 round.(noise.covariance; digits = 4)
@@ -60,14 +60,14 @@ follow the temporal mode's cosine/sine convention.
 quadratures(M) = reduce(vcat, [reduce(hcat,
     [[real(z) imag(z); -imag(z) real(z)] for z in M[j, :]])
     for j in axes(M, 1)])
-hb = hblinsolve([2pi*f], circuit; keyedarrays = false, returnCnoise = true)
+hb = hblinsolve([w], circuit; keyedarrays = false, returnCnoise = true)
 @assert isapprox(noise.gain, quadratures(hb.S[:, :, 1]); rtol = 1e-4, atol = 1e-4)
 
 # Warm only internal loss. The port terminations stay at zero kelvin.
 baths = transientnoisebaths(problem; temperature = 0.3)
-warm = transientnoise(solution, measurement; frequencies = [f],
-    weights = [1/T], baths)
-hbwarm = hblinsolve([2pi*f], circuit; keyedarrays = false,
+warm = transientnoise(solution, measurement; frequencies = [w],
+    weights = [2pi/T], baths)
+hbwarm = hblinsolve([w], circuit; keyedarrays = false,
     temperature = 0.3, returnCnoise = true)
 S = hbwarm.S[:, :, 1]
 expected = quadratures(S*S'/2 + hbwarm.Cnoise[:, :, 1])
@@ -93,24 +93,25 @@ with the [pumped-noise example](recipes/pumped-noise.md).
 
 [`transientquantumplan`](@ref) defines photon-normalized measurements of
 outgoing power waves. A mode is a unit-norm vector of coefficients over
-positive Fourier bins. For `N` samples with spacing `dt`, those bins are
-`k/(N*dt)` for `k=1:fld(N-1,2)`; DC and the self-conjugate Nyquist bin
-are excluded.
+positive Fourier bins. For `N` samples with spacing `dt`, those bins are at
+the angular frequencies `2pi*k/(N*dt)` for `k=1:fld(N-1,2)`; DC and the
+self-conjugate Nyquist bin are excluded.
 
-For a canonical bin of frequency `f_k` over duration `T=N*dt`, the wave is
+For a canonical bin of angular frequency `ω_k` over duration `T=N*dt`, the
+wave is
 
 ```math
-w_k(t)=\sqrt{\frac{h f_k}{T}}
-\left[X_k\cos(2\pi f_k(t-t_0))+P_k\sin(2\pi f_k(t-t_0))\right].
+a_k(t)=\sqrt{\frac{\hbar\omega_k}{T}}
+\left[X_k\cos(\omega_k(t-t_0))+P_k\sin(\omega_k(t-t_0))\right].
 ```
 
-Here `h` is Planck's constant. The quadratures obey `[X,P]=im`; vacuum has
-variance one half in each quadrature. The coherent photon number is
-`(X^2+P^2)/2` for a normalized mode.
+Here `ħ` is the reduced Planck constant. The quadratures obey `[X,P]=im`;
+vacuum has variance one half in each quadrature. The coherent photon number
+is `(X^2+P^2)/2` for a normalized mode.
 
 A frequency-only constructor selects bin-aligned modes. Supplied sampled
 envelopes are projected onto the positive-frequency bins and normalized.
-The weighting `1/sqrt(h*f)` is applied separately at each bin before
+The weighting `1/sqrt(hbar*w)` is applied separately at each bin before
 combination, which matters for broadband pulses. With coefficients `c`,
 the measured annihilator is `A_j=sum(conj(c[k,j])*a_k)`.
 
@@ -148,26 +149,24 @@ resistor baths, and supported scattering-block channels. Each external
 port must own a finite matched termination. An infinite resistor is open
 and adds no bath.
 
-An external port's bath is at the temperature of its termination, zero
-unless `Port(n; termination = MatchedTermination(temperature = T))`
-states one; the analysis temperature does not warm it. An internal
-resistor uses its component temperature or the analysis default passed to
-`transientnoisebaths`.
-Blocks follow their `Passive`, `ThermalEquilibrium`, `Lossless`, or
-`NoiseCovariance` model. The same conventions apply to HB; see the
-[temperature table](conventions.md#Noise-normalization-and-temperature).
+Ports, internal resistors and scattering blocks take the temperatures
+and noise models of the
+[temperature table](conventions.md#Noise-normalization-and-temperature),
+as in harmonic balance; the temperature passed to `transientnoisebaths`
+is that of a resistor which states none.
 
-For a resistor `R` at positive frequency `f`, a quadrature weight `df` in
-Hz gives cosine and sine Norton-current amplitudes
+For a resistor `R` at a positive angular frequency `w`, a quadrature weight
+`dw`, both in rad/s, gives cosine and sine Norton-current amplitudes
 
 ```math
-I_{\mathrm{peak}}=2\sqrt{h f\,df/R}.
+I_{\mathrm{peak}}=2\sqrt{\frac{\hbar\omega\,d\omega}{2\pi R}}.
 ```
 
 Their independent quadratures have variance `nbar + 1/2`, with
-`nbar = thermaloccupation(2pi*f, T)`.
-The bilateral symmetrized current spectral density is
-`h*f/R*coth(h*f/(2kT))`, approaching `2kT/R` at high temperature.
+`nbar = thermaloccupation(w, T)`.
+The current's variance over the band is then
+`(2*hbar*w/R)*coth(hbar*w/(2kT))*dw/(2pi)`, approaching Johnson's
+`4kT/R*dw/(2pi)` at high temperature.
 
 ## The calculation
 
@@ -191,9 +190,10 @@ Both methods contract the same discrete responses.
 ## Choosing the bath grid
 
 With no custom grid, the bath uses all positive Fourier bins of the
-record, at spacing and weight `1/T`, below Nyquist. A `cutoff` in Hz limits
-that grid. Alternatively, supply positive `frequencies` and corresponding
-positive quadrature `weights`, both in Hz.
+record, at the angular frequencies `2pi*k/T` with spacing and weight
+`2pi/T`, below Nyquist. A `cutoff` in rad/s limits that grid.
+Alternatively, supply positive `frequencies` and corresponding positive
+quadrature `weights`, both in rad/s.
 
 For a pulse, begin with enough frequency coverage to include resonances
 and pump-converted contributions to the measured modes. Refine the
@@ -206,7 +206,7 @@ can be written as:
 
 ```julia
 full = transientnoise(solution, measurement)
-bounded = transientnoise(solution, measurement; cutoff = 20e9)
+bounded = transientnoise(solution, measurement; cutoff = 2pi*20e9)
 ```
 
 These calls illustrate grid selection; agreement must be checked for the
@@ -214,7 +214,7 @@ particular trajectory. Smooth measurement envelopes usually suppress
 remote spectral leakage more effectively than rectangular windows.
 
 When `inputs` is supplied for stationary gain, the bath must cover its
-Fourier coefficients on the matching bins with weights `1/T`. Do not use
+Fourier coefficients on the matching bins with weights `2pi/T`. Do not use
 arbitrary integration weights and interpret that gain as the same input
 normalization.
 

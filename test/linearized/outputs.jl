@@ -3,6 +3,18 @@ using Test
 
 @testset verbose=true "the linearized outputs" begin
 
+    # the commutation relations, the quantum efficiency and the noise
+    # reduction into fresh arrays, the inputs and the noise channels in the
+    # vacuum unless given
+    nonoise(n) = JosephsonCircuits.NoiseReduction(zeros(n), zeros(n))
+    cmof(S, w, noise = nonoise(size(S, 1))) =
+        JosephsonCircuits.calccm!(zeros(size(S, 1)), S, w, noise)
+    qeof(S, noise = nonoise(size(S, 1)); inputnoise = fill(0.5, size(S, 2))) =
+        JosephsonCircuits.calcqe!(zeros(size(S)), S, noise; inputnoise)
+    reductionof(Snoise, w, channelnoise = fill(0.5, size(Snoise, 1))) =
+        JosephsonCircuits.noisereduction!(nonoise(size(Snoise, 2)), Snoise,
+            w, channelnoise)
+
     @testset "calcscatteringmatrix! errors" begin
 
         begin
@@ -10,7 +22,7 @@ using Test
             outputwave=[im/sqrt(2), 1/sqrt(2), 0]
             S = zeros(Complex{Float64},2,2)
             @test_throws(
-                DimensionMismatch("First dimension of scattering matrix not consistent with first dimensions of outputwave."),
+                DimensionMismatch,
                 JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave))
         end
 
@@ -19,19 +31,19 @@ using Test
             outputwave=[im/sqrt(2), 1/sqrt(2)]
             S = zeros(Complex{Float64},2,2)
             @test_throws(
-                DimensionMismatch("Second dimension of scattering matrix not consistent with first dimension of input wave."),
+                DimensionMismatch,
                 JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave))
         end
 
         begin
             @test_throws(
-                ErrorException("Unknown component type"),
+                ErrorException,
                 JosephsonCircuits.calcimpedance(30.0,:D,-1.0))
         end
 
         begin
             @test_throws(
-                ErrorException("Unknown component type"),
+                ErrorException,
                 JosephsonCircuits.calcimpedance(
                     JosephsonCircuits.FrequencyDependent(w->30*w),:D,-2.0))
         end
@@ -40,24 +52,25 @@ using Test
     @testset "calccm! errors" begin
         cm=Float64[0,0]
         @test_throws(
-            DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."),
-            JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5],[-1,1,2]))
+            DimensionMismatch,
+            JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5],[-1,1,2],
+                nonoise(2)))
         @test_throws(
-            DimensionMismatch("First dimension of scattering matrix must equal the length of cm."),
-            JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5;0 0;0 0],[-1,1]))
+            DimensionMismatch,
+            JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5;0 0;0 0],[-1,1],
+                nonoise(2)))
         @test_throws(
-            DimensionMismatch("Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."),
-            JosephsonCircuits.noisereduction([1 2;3 4;5 6],[-1,1]))
+            DimensionMismatch,
+            reductionof([1 2;3 4;5 6],[-1,1]))
         @test_throws DimensionMismatch JosephsonCircuits.noisereduction!(
-            JosephsonCircuits.NoiseReduction(zeros(3), zeros(3)), [1 2;3 4], [-1,1])
-        @test_throws DimensionMismatch JosephsonCircuits.noisereduction(
+            nonoise(3), [1 2;3 4], [-1,1], fill(0.5, 2))
+        @test_throws DimensionMismatch reductionof(
             [1 2;3 4], [-1,1], [1.0, 1.0, 1.0])
         @test_throws(
-            DimensionMismatch("First dimension of the scattering parameter matrix must equal the length of the noise reduction."),
-            JosephsonCircuits.calccm!(cm,[1 2;3 4],[-1,1],
-                JosephsonCircuits.noisereduction([1 2 3;4 5 6],[-1,1])))
+            DimensionMismatch,
+            JosephsonCircuits.calccm!(cm,[1 2;3 4],[-1,1],nonoise(3)))
         @test_throws DimensionMismatch JosephsonCircuits.weightedrowpower!(
-            zeros(3), zeros(3), [1 2;3 4], nothing)
+            zeros(3), zeros(3), [1 2;3 4], [-1,1])
     end
 
     @testset "calccm! and calcqe!" begin
@@ -67,8 +80,8 @@ using Test
         G = 1e8
         S = [sqrt(G) sqrt(G-1); sqrt(G-1) sqrt(G)]
         w = [1, -1]
-        @test JosephsonCircuits.calccm(S, w) ≈ [1.0, -1.0] atol = 1e-6
-        @test JosephsonCircuits.calccm(S, w) == JosephsonCircuits.calccm(S .+ 0im, w)
+        @test cmof(S, w) ≈ [1.0, -1.0] atol = 1e-6
+        @test cmof(S, w) == cmof(S .+ 0im, w)
 
         # the noise reduction against the explicit sums, in the vacuum and
         # with warm channels, and against the diagonal of the noise
@@ -78,8 +91,8 @@ using Test
         Snoise = randn(rng, ComplexF64, 5*m, 2*m)
         w = randn(rng, m)
         occ = 0.5 .+ rand(rng, 5*m)
-        n0 = JosephsonCircuits.noisereduction(Snoise, w)
-        n1 = JosephsonCircuits.noisereduction(Snoise, w, occ)
+        n0 = reductionof(Snoise, w)
+        n1 = reductionof(Snoise, w, occ)
         @test n0.symmetrized ≈ vec(sum(abs2, Snoise; dims = 1))/2
         @test n1.symmetrized ≈ vec(sum(occ .* abs2.(Snoise); dims = 1))
         signs = [sign(w[(c-1) % m + 1]) for c in 1:5*m]
@@ -92,50 +105,53 @@ using Test
             for i in axes(Snoise, 2), j in axes(Snoise, 2)]
 
         # the three quantum efficiencies: from the reduction, from the
-        # covariance, and from the explicit formula
+        # diagonal of the covariance, and from the explicit formula
         S = randn(rng, ComplexF64, 2*m, 2*m)
-        qe = JosephsonCircuits.calcqe(S, n1)
-        @test qe ≈ JosephsonCircuits.calcqe_S_Cnoise(S, C)
+        qe = qeof(S, n1)
+        fromC = nonoise(2*m)
+        fromC.symmetrized .= real(diag(C))
+        @test qe ≈ qeof(S, fromC)
         # and with every input in a state of its own
         inputnoise = 0.5 .+ rand(rng, 2*m)
-        @test JosephsonCircuits.calcqe(S, n1; inputnoise) ≈
-            JosephsonCircuits.calcqe_S_Cnoise(S, C; inputnoise)
+        @test qeof(S, n1; inputnoise) ≈ qeof(S, fromC; inputnoise)
         # an ideal phase preserving amplifier of gain G with its signal and
         # idler inputs in states of their own: the signal's output noise is
         # G(ns + 1/2) + (G - 1)(ni + 1/2), its quantum efficiency G over
-        # twice that, by either route
+        # twice that
         G, ns, ni = 20.0, 0.3, 0.05
         amplifier = [sqrt(G) sqrt(G - 1); sqrt(G - 1) sqrt(G)]
         states = [ns + 1/2, ni + 1/2]
         Vs = G*(ns + 1/2) + (G - 1)*(ni + 1/2)
-        @test JosephsonCircuits.outputnoise!(zeros(2), zeros(2), amplifier, states)[1] ≈ Vs
-        @test JosephsonCircuits.calcqe(amplifier; inputnoise = states)[1, 1] ≈ G/(2Vs)
-        @test JosephsonCircuits.calcqe_S_Cnoise(amplifier, zeros(2, 2); inputnoise = states)[1, 1] ≈ G/(2Vs)
+        @test JosephsonCircuits.outputnoise!(zeros(2), zeros(2), amplifier,
+            states, nonoise(2))[1] ≈ Vs
+        @test qeof(amplifier; inputnoise = states)[1, 1] ≈ G/(2Vs)
         @test qe ≈ abs2.(S) ./ (vec(sum(abs2, S; dims = 2)) .+ 2 .* n1.symmetrized)
-        @test JosephsonCircuits.calcqe(S) ≈ abs2.(S) ./ vec(sum(abs2, S; dims = 2))
-        cm = JosephsonCircuits.calccm(S, w, n0)
+        @test qeof(S) ≈ abs2.(S) ./ vec(sum(abs2, S; dims = 2))
+        cm = cmof(S, w, n0)
         colsigns = [sign(w[(j-1) % m + 1]) for j in 1:2*m]
         @test cm ≈ vec(sum(abs2.(S) .* transpose(colsigns); dims = 2)) .+ n0.signed
         # the scratch is the caller's
         qe2 = similar(qe); cm2 = similar(cm)
-        JosephsonCircuits.calcqe!(qe2, S, n1; vout = zeros(2*m), comp = zeros(2*m))
+        JosephsonCircuits.calcqe!(qe2, S, n1; inputnoise = fill(0.5, 2*m),
+            vout = zeros(2*m), comp = zeros(2*m))
         JosephsonCircuits.calccm!(cm2, S, w, n0; comp = zeros(2*m))
         @test qe2 == qe && cm2 == cm
     end
 
     @testset "calcqe! errors" begin
         @test_throws(
-            DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."),
-            JosephsonCircuits.calcqe!([1 2;3 4],[1 2 3;4 5 6]))
+            DimensionMismatch,
+            JosephsonCircuits.calcqe!([1 2;3 4],[1 2 3;4 5 6],nonoise(2);
+                inputnoise = fill(0.5, 3)))
         @test_throws(
-            DimensionMismatch("First dimension of the scattering parameter matrix must equal the length of the noise reduction."),
-            JosephsonCircuits.calcqe!(Float64[1 2;3 4],[1 2;3 4],
-                JosephsonCircuits.noisereduction([1 2 3;4 5 6],[1])))
+            DimensionMismatch,
+            JosephsonCircuits.calcqe!(Float64[1 2;3 4],[1 2;3 4],nonoise(3);
+                inputnoise = fill(0.5, 2)))
     end
 
     @testset "calcqeideal!" begin
         @test_throws(
-            DimensionMismatch("Sizes of QE and S matrices must be equal."),
+            DimensionMismatch,
             JosephsonCircuits.calcqeideal!([1 2;3 4],[1 2 3;4 5 6]))
     end
 
@@ -153,29 +169,8 @@ using Test
 
     @testset "calcCnoise! errors" begin
         @test_throws(
-            DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."),
+            DimensionMismatch,
             JosephsonCircuits.calcCnoise!([1 2;3 4],[1 2 3;4 5 6]))
-
-        @test_throws(
-            DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."),
-            JosephsonCircuits.calcCnoise!([1 2;3 4],[1 2 3;4 5 6],[1 2;3 4]))
-
-        @test_throws(
-            DimensionMismatch("The first dimensions of the scattering parameter and noise scattering parameter matrices must be equal."),
-            JosephsonCircuits.calcCnoise!([1 2;3 4],[1 2;3 4],[1 2;3 4;5 6]))
-
-    end
-
-    @testset "calcqe_S_Cnoise!(qe, S, Cnoise) errors" begin
-
-        @test_throws(
-            DimensionMismatch("The dimensions of the quantum efficiency and scattering parameter matrices must be equal."),
-            JosephsonCircuits.calcqe_S_Cnoise!([1 2;3 4],[1 2 3;4 5 6],[1 2;3 4]))
-
-        @test_throws(
-            DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."),
-            JosephsonCircuits.calcqe_S_Cnoise!([1 2;3 4],[1 2;3 4],[1 2;3 4;5 6]))
-    
     end
 
     @testset "noise wave covariance matrice and QE" begin
@@ -195,21 +190,23 @@ using Test
             # from the resistor and propagating to the other ports.
             Snoise = transpose(S[indices,i])
 
-            # generate the noise wave covariance matrices `C`
-            # C1 will be zero for a passive network and C2 will be non-zero since we
-            # replaced the port with a resistor.
-            # C1 = JosephsonCircuits.calcCnoise(S)
-            C = JosephsonCircuits.calcCnoise(S[indices,indices],transpose(Snoise))
+            # the noise covariance the resistor's channel, in its vacuum,
+            # puts at the other ports
+            C = zeros(ComplexF64, N - 1, N - 1)
+            JosephsonCircuits.calcnoisecovariance!(C, Matrix(Snoise),
+                fill(0.5, 1))
 
             # test that the QE's are equal for the original network and the
             # reduced network, with the scattering parameter based QE calculation
-            QE1 = JosephsonCircuits.calcqe(S)[indices,indices]
-            QE2 = JosephsonCircuits.calcqe(S[indices,indices],
-                JosephsonCircuits.noisereduction(Snoise, [1]))
+            QE1 = qeof(S)[indices,indices]
+            QE2 = qeof(S[indices,indices], reductionof(Snoise, [1]))
             @test isapprox(QE1,QE2; rtol = 1e-12)
 
-            # test the QE computed from the covariance matrix is the same
-            QE3 = JosephsonCircuits.calcqe_S_Cnoise(S[indices,indices],C)
+            # test the QE computed from the diagonal of the covariance is the
+            # same
+            fromC = nonoise(N - 1)
+            fromC.symmetrized .= real(diag(C))
+            QE3 = qeof(S[indices,indices], fromC)
             @test isapprox(QE1,QE3; rtol = 1e-12)
         end
 

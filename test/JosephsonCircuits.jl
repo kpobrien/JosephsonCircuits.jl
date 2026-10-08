@@ -1,8 +1,5 @@
 using JosephsonCircuits
 using SparseArrays
-import AxisKeys
-import AxisKeys.NamedDims
-import AxisKeys.NamedDims: NamedDimsArray
 
 using Test
 
@@ -82,22 +79,30 @@ end
     end
 
     @testset verbose=true "warmupnumericmatrices" begin
-        out1 = JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, [50.0, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
+        out1 = JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], 1.0e-9, [50.0, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
         out2 = warmupnumericmatrices()
         @test JosephsonCircuits.compare(out1,out2)
 
     end
 
     @testset verbose=true "warmuphblinsolve" begin
-        # JosephsonCircuits.testshow(stdout,warmuphblinsolve())
-        out1 = JosephsonCircuits.LinearizedHB(collect(2*pi*(4.5:0.1:5.0)*1e9), [(0,)], AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[0.895270864122939 - 0.4455222551709022im;;;;; 0.8415115570832487 - 0.5402391130743189im;;;;; 0.6457820691998714 - 0.7635217869189669im;;;;; -0.9968560060568034 + 0.07923448231975308im;;;;; 0.9316787544566122 + 0.36328322077158454im;;;;; 0.9988570509555925 + 0.04779740323801577im], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 4}(undef, 0, 0, 0, 0), AxisKeys.KeyedArray(NamedDimsArray([1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), AxisKeys.KeyedArray(NamedDimsArray([0.9999999999999996;;;;; 0.9999999999999996;;;;; 1.0;;;;; 0.9999999999999991;;;;; 1.0;;;;; 0.9999999999999993], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), AxisKeys.KeyedArray(NamedDimsArray([1.0000000000000004;;; 1.0000000000000004;;; 0.9999999999999997;;; 1.0000000000000009;;; 1.0;;; 1.0000000000000007], (:outputmode, :outputport, :freqindex)), ([(0,)], [1], 1:6)), Array{Float64, 2}(undef, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), ["0", "1", "2"], [2 2 2 3 3; 1 1 3 1 1], ["P1", "P1/termination", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Dict("C1" => 3, "C2" => 5, "P1/termination" => 2, "P1" => 1, "Lj1" => 4), String[], [1], [1], [50.0], [0.0], Int64[], Float64[], String[], Int64[], 1, 3, 2, 1, 1)
-        out2 = warmuphblinsolve()
-        @test JosephsonCircuits.compare(out1,out2)
+        # unpumped, the amplifier is its coupling capacitor in series with
+        # the inductance and the capacitance of its junction in parallel,
+        # which the matched port sees as the reflection of that impedance,
+        # lossless: the quantum efficiency and the commutation relations
+        # of a lossless reflection are one
+        out = warmuphblinsolve()
+        Cc, Lj, Cj, Z0 = 100e-15, 1000e-12, 1000e-15, 50.0
+        Z(w) = 1/(im*w*Cc) + 1/(im*w*Cj + 1/(im*w*Lj))
+        @test vec(Array(out.S)) ≈ [(Z(w) - Z0)/(Z(w) + Z0) for w in out.w] rtol = 1e-12
+        @test all(x -> isapprox(x, 1; atol = 1e-12), out.QE)
+        @test all(x -> isapprox(x, 1; atol = 1e-12), out.CM)
     end
 
     @testset verbose=true "warmupvvn" begin
         # the port's slot holds its reference impedance, so every entry is
-        # a quantity and the vector is concretely typed
+        # a quantity, compared by value; the vector is a `Vector{Any}`, as
+        # componentvaluestonumber returns it
         out1 = [50.0, 50.0, 1.0e-13, 1.0e-9, 1.0e-12]
         out2 = warmupvvn()
         @test JosephsonCircuits.compare(out1,out2)

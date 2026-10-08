@@ -4,8 +4,8 @@
 # `Rbnm' * AoLjbm * Rbnm`, where `AoLjbm` is block diagonal in branches: one
 # dense mode block per junction. Precomputing that product as a gather with
 # one entry per contribution is what an assembly plan would ordinarily do,
-# and on a multi tone line that is tens of millions of entries, read at
-# every assembly.
+# and on a multi tone line that gather is larger than the Jacobian it
+# fills, and is read at every assembly.
 #
 # The triple product itself is tiny. A junction touches two nodes, so it
 # deposits its mode block at four ordered node pairs with signs, a table of
@@ -71,11 +71,10 @@ are fixed by the topology and the mode grid.
 - `lmolj`: `Lscale/Lj` per junction, on the backend.
 - `ami`, `amc`: the mode coupling index matrices, on the backend.
 - `nodesandsigns`: the (node, sign) pairs of each branch, on the host.
-- `nmodes`, `nfreq`, `nnodes`: the mode count, the frequency grid stride into
-    `phimatrix`, and the node count.
-- `backend`: where the arrays live.
+- `nmodes`, `nfreq`: the mode count and the frequency grid stride into
+    `phimatrix`.
 """
-struct JunctionStructure{T<:Real,VI,VT,MI,B}
+struct JunctionStructure{T<:Real,VI,VT,MI}
     pairptr::VI
     pairrow::VI
     pairjunc::VI
@@ -88,8 +87,6 @@ struct JunctionStructure{T<:Real,VI,VT,MI,B}
     nodesandsigns::Vector{Vector{Tuple{Int,Float64}}}
     nmodes::Int
     nfreq::Int
-    nnodes::Int
-    backend::B
 end
 
 """
@@ -115,7 +112,7 @@ function junctionstructure(::Type{T}, Amatrixindices::Matrix,
     nnodes = size(Rbnm, 2) ÷ Nmodes
     pairptr, pairrow, pairjunc, paircoef =
         junctionpairtable(Int32, T, Ljb, nodesandsigns, nnodes)
-    lmolj = T[T(Lscale / Ljb.nzval[i]) for i in eachindex(Ljb.nzval)]
+    lmolj = junctioncoefficients(T, Ljb, Lscale)
     d = x -> tobackend(backend, Vector{Int32}(x))
     dt = x -> tobackend(backend, Vector{T}(x))
     ami = tobackend(backend, Matrix{Int32}(Amatrixindices))
@@ -125,10 +122,10 @@ function junctionstructure(::Type{T}, Amatrixindices::Matrix,
     # from the moved arrays
     ptrd = d(pairptr)
     lmoljd = dt(lmolj)
-    return JunctionStructure{T,typeof(ptrd),typeof(lmoljd),typeof(ami),
-        typeof(backend)}(ptrd, d(pairrow), d(pairjunc), dt(paircoef),
-        lmoljd, ami, amc, Vector{Int32}(pairptr), Vector{Int32}(pairrow),
-        ns, Int(Nmodes), Int(Nfreq), nnodes, backend)
+    return JunctionStructure{T,typeof(ptrd),typeof(lmoljd),typeof(ami)}(ptrd,
+        d(pairrow), d(pairjunc), dt(paircoef), lmoljd, ami, amc,
+        Vector{Int32}(pairptr), Vector{Int32}(pairrow), ns, Int(Nmodes),
+        Int(Nfreq))
 end
 
 """
@@ -142,9 +139,15 @@ function refreshvalues!(js::JunctionStructure{T}, Ljb::SparseVector,
         Lscale) where {T}
     length(Ljb.nzval) == length(js.lmolj) || throw(ArgumentError(
         "the junctions changed between points, which a refreshed structure cannot follow; build a new one."))
-    copyto!(js.lmolj, T[T(Lscale / Ljb.nzval[i]) for i in eachindex(Ljb.nzval)])
+    copyto!(js.lmolj, junctioncoefficients(T, Ljb, Lscale))
     return js
 end
+
+# the coefficient `Lscale/Lj` of each junction in precision `T`, the
+# quotient rounded once, which every plan holding one and every refresh of
+# it writes
+junctioncoefficients(::Type{T}, Ljb::SparseVector, Lscale) where {T} =
+    T[T(Lscale/Lj) for Lj in Ljb.nzval]
 
 """
     StructureRealJacobianPlan
@@ -170,10 +173,11 @@ per contribution.
 - `linv`, `lptr`: the mode layout of the rows and the columns, the square
     Jacobian having one, and its inverse, which turn a stored entry back
     into a (node, mode) pair.
-- `slots`: on a host, the decode of every real index of the layout
-    ([`realslot`](@ref)), from which the assembly of a stored column reads
-    the side of its entries the column does not fix; `nothing` on a device,
-    whose kernel decodes both sides of each entry.
+- `slots`: on a host, for a structure in the natural orientation, the
+    decode of every real index of the layout ([`realslot`](@ref)), from
+    which the assembly of a stored column reads the rows of its entries;
+    `nothing` on a device and for a transposed structure, whose kernel
+    decodes both sides of each entry.
 - `assemble!`, `backend`: the compiled kernel, sized at plan time, and the
     KernelAbstractions backend it runs on.
 - `n`: the number of stored entries, checked by
@@ -200,9 +204,9 @@ end
 
 The Josephson contribution to the stored entry of the real Jacobian at row
 `rri` and column `rci`, both decoded here ([`realslot`](@ref)): what the
-device kernel and the block preconditioner's `blockassemblykernel!` compute
-for each entry. The host assembly decodes the side its stored column fixes
-once per column instead, and both sum the contribution with
+per entry kernel and the block preconditioner's `blockassemblykernel!`
+compute for each entry. The per column assembly of a host decodes its stored
+column once instead, and both sum the contribution with
 [`realjosephsonentry`](@ref).
 """
 @inline function realstructureentry(::Type{T}, rri, rci, Nmodes, Nfreq, ami,
@@ -261,27 +265,23 @@ contribution can reach it.
         if !(ind == 0 && indconj == 0)
             lo2 = Int(pairptr[n2]); hi2 = Int(pairptr[n2+1]) - 1
             isre = dr == dc
-            live = isre ? (dr == 0 || (wr == 2 && wc == 2)) :
-                          (dr == 1 ? wr == 2 : wc == 2)
-            if live
-                for k in lo2:hi2
-                    if Int(pairrow[k]) == n1
-                        b = Int(pairjunc[k])
-                        coef = paircoef[k] * lmolj[b]
-                        for which in 1:2
-                            v = which == 1 ? ind : indconj
-                            if v != 0
-                                conjpart = which == 2
-                                if !(conjpart && wc == 1)
-                                    w = phimatrix[abs(v) + Nfreq * (b - 1)]
-                                    if isre
-                                        acc += (dr == 1 && conjpart ? -one(T) : one(T)) *
-                                            coef * real(w)
-                                    else
-                                        s = v < 0 ? -one(T) : one(T)
-                                        acc += (dr == 1 ? s :
-                                                (conjpart ? s : -s)) * coef * imag(w)
-                                    end
+            for k in lo2:hi2
+                if Int(pairrow[k]) == n1
+                    b = Int(pairjunc[k])
+                    coef = paircoef[k] * lmolj[b]
+                    for which in 1:2
+                        v = which == 1 ? ind : indconj
+                        if v != 0
+                            conjpart = which == 2
+                            if !(conjpart && wc == 1)
+                                w = phimatrix[abs(v) + Nfreq * (b - 1)]
+                                if isre
+                                    acc += (dr == 1 && conjpart ? -one(T) : one(T)) *
+                                        coef * real(w)
+                                else
+                                    s = v < 0 ? -one(T) : one(T)
+                                    acc += (dr == 1 ? s :
+                                            (conjpart ? s : -s)) * coef * imag(w)
                                 end
                             end
                         end
@@ -330,56 +330,46 @@ end
     structureassemblerowkernel!(nzval, colptr, rowval, lin, phimatrix, ...)
 
 As [`structureassemblykernel!`](@ref), one work item per stored column
-rather than per stored entry, which is how a host assembles
-([`realjacobiancolumnitem!`](@ref)).
+rather than per stored entry, which is how a host assembles a structure in
+the natural orientation ([`realjacobiancolumnitem!`](@ref)).
 
 The two differ in what they amortize against what they lose. Per entry, the
 column has to be found by a binary search and both sides of the entry are
-decoded; per column, the search is paid once, the side the column fixes is
-decoded once, and the other side is read from a table, but the entries a
-work item writes are contiguous rather than interleaved with its
-neighbours', which costs coalescing on a device and nothing on a host.
+decoded; per column, the search is paid once, the column is decoded once,
+and the rows are read from a table, but the entries a work item writes are
+contiguous rather than interleaved with its neighbours', which costs
+coalescing on a device and nothing on a host.
 """
 @kernel function structureassemblerowkernel!(nzval, @Const(colptr), @Const(rowval),
         @Const(lin), @Const(phimatrix), @Const(pairptr), @Const(pairrow),
         @Const(pairjunc), @Const(paircoef), @Const(lmolj), @Const(ami),
-        @Const(amc), @Const(slots), Nfreq, transposed)
+        @Const(amc), @Const(slots), Nfreq)
     gid = @index(Global)
     realjacobiancolumnitem!(nzval, gid, colptr, rowval, lin,
         phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc,
-        slots, Nfreq, transposed)
+        slots, Nfreq)
 end
 
 """
     realjacobiancolumnitem!(nzval, rr, colptr, rowval, lin, phimatrix,
-        pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc, slots, Nfreq,
-        transposed)
+        pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc, slots, Nfreq)
 
-Assemble the stored column `rr` of a host plan, which the row kernel and the
-host loop share. The side of its entries the column fixes, the Jacobian's
-row when the structure is transposed and its column otherwise, is decoded
-once, and the other side of each entry read from `slots`, the decode of
-every real index (`realslottable`); the entry is then what
-[`realstructureentry`](@ref) gives, plus the linear term.
+Assemble the stored column `rr` of a host plan in the natural orientation,
+which the row kernel and the host loop share. The column is decoded once,
+and the row of each entry read from `slots`, the decode of every real index
+(`realslottable`); the entry is then what [`realstructureentry`](@ref)
+gives, plus the linear term.
 """
 @inline function realjacobiancolumnitem!(nzval, rr, colptr, rowval, lin,
         phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc,
-        slots, Nfreq, transposed)
+        slots, Nfreq)
     T = eltype(nzval)
     @inbounds begin
-        fixed = slots[rr]
-        if transposed
-            for q in Int(colptr[rr]):Int(colptr[rr+1])-1
-                nzval[q] = realjosephsonentry(T, fixed, slots[Int(rowval[q])],
-                    Nfreq, ami, amc, pairptr, pairrow, pairjunc, paircoef,
-                    lmolj, phimatrix) + lin[q]
-            end
-        else
-            for q in Int(colptr[rr]):Int(colptr[rr+1])-1
-                nzval[q] = realjosephsonentry(T, slots[Int(rowval[q])], fixed,
-                    Nfreq, ami, amc, pairptr, pairrow, pairjunc, paircoef,
-                    lmolj, phimatrix) + lin[q]
-            end
+        column = slots[rr]
+        for q in Int(colptr[rr]):Int(colptr[rr+1])-1
+            nzval[q] = realjosephsonentry(T, slots[Int(rowval[q])], column,
+                Nfreq, ami, amc, pairptr, pairrow, pairjunc, paircoef,
+                lmolj, phimatrix) + lin[q]
         end
     end
     return nothing
@@ -426,8 +416,11 @@ function planstructurerealjacobian(Jt, ::Type{T},
 
     # one work item per entry on a device, where coalescing pays for the
     # repeated decode, and one per stored column on a host, where it does
-    # not and the decode of the column's other side is read from a table
-    slots = backend isa CPU ? realslottable(layout, junctions.nmodes) : nothing
+    # not and the decode of the rows is read from a table; a transposed
+    # structure, the device's orientation, takes the per entry kernel
+    # wherever it is
+    slots = backend isa CPU && !transposed ?
+        realslottable(layout, junctions.nmodes) : nothing
     assemble! = isnothing(slots) ? structureassemblykernel!(backend, 64) :
         structureassemblerowkernel!(backend, 64)
     return StructureRealJacobianPlan{Ti,T,typeof(dcolptr),typeof(lin),
@@ -454,7 +447,8 @@ function assemblerealjacobian!(nzval::AbstractVector,
     js = plan.junctions
     colptr, rowval, lin, slots = plan.colptr, plan.rowval, plan.lin, plan.slots
     if isnothing(slots)
-        # a device: one work item per entry, which decodes both sides
+        # a device or a transposed structure: one work item per entry, which
+        # decodes both sides
         plan.assemble!(nzval, colptr, rowval, lin, phimatrix, js.pairptr,
             js.pairrow, js.pairjunc, js.paircoef, js.lmolj, js.ami, js.amc,
             plan.linv, plan.lptr, js.nmodes, js.nfreq, plan.transposed;
@@ -464,13 +458,13 @@ function assemblerealjacobian!(nzval::AbstractVector,
         for rr in 1:length(colptr)-1
             realjacobiancolumnitem!(nzval, rr, colptr, rowval, lin,
                 phimatrix, js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
-                js.lmolj, js.ami, js.amc, slots, js.nfreq, plan.transposed)
+                js.lmolj, js.ami, js.amc, slots, js.nfreq)
         end
         return nzval
     else
         plan.assemble!(nzval, colptr, rowval, lin, phimatrix, js.pairptr,
             js.pairrow, js.pairjunc, js.paircoef, js.lmolj, js.ami, js.amc,
-            slots, js.nfreq, plan.transposed; ndrange = length(colptr) - 1)
+            slots, js.nfreq; ndrange = length(colptr) - 1)
     end
     # a caller assembling many matrices in a row synchronizes once after
     synchronize && KernelAbstractions.synchronize(plan.backend)
@@ -822,17 +816,16 @@ rather than for the whole Jacobian.
 - `colptr`, `rowval`: the stored structure, the transpose when `transposed`.
 - `junctions`: the [`JunctionStructure`](@ref), of which the pair table,
     the junction coefficients and `ami` are read.
-- `perrow`: whether the assembly runs one work item per stored column rather
-    than per stored entry, which is the better trade on a host.
 - `transposed`: as in [`StructureRealJacobianPlan`](@ref).
-- `assemble!`, `backend`: the compiled kernel and its backend.
+- `assemble!`, `backend`: the compiled kernel, one work item per stored
+    column for a host structure in the natural orientation and one per
+    stored entry otherwise, and its backend.
 - `n`: the number of stored entries.
 """
 struct StructureComplexJosephsonPlan{Ti<:Integer,VI,JS<:JunctionStructure,K,B}
     colptr::VI
     rowval::VI
     junctions::JS
-    perrow::Bool
     transposed::Bool
     assemble!::K
     backend::B
@@ -886,25 +879,22 @@ end
 # of `structureassemblerowkernel!`
 @kernel function complexjosephsonrowkernel!(nzval, @Const(colptr), @Const(rowval),
         @Const(phimatrix), @Const(pairptr), @Const(pairrow), @Const(pairjunc),
-        @Const(paircoef), @Const(lmolj), @Const(ami), Nmodes, Nfreq,
-        transposed)
+        @Const(paircoef), @Const(lmolj), @Const(ami), Nmodes, Nfreq)
     gid = @index(Global)
     complexjosephsoncolumnitem!(nzval, gid, colptr, rowval,
         phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, Nmodes,
-        Nfreq, transposed)
+        Nfreq)
 end
 
-# the stored column `gid` of a host plan, which the row kernel and the host
-# loop share; a column of the stored structure is a column of the Jacobian,
-# or a row of it when the transpose is what is stored
+# the stored column `gid` of a host plan in the natural orientation, which
+# the row kernel and the host loop share: a column of the stored structure
+# is a column of the Jacobian
 @inline function complexjosephsoncolumnitem!(nzval, gid, colptr, rowval,
         phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, Nmodes,
-        Nfreq, transposed)
+        Nfreq)
     T = eltype(nzval)
     @inbounds for q in Int(colptr[gid]):Int(colptr[gid+1])-1
-        ri = transposed ? gid : Int(rowval[q])
-        ci = transposed ? Int(rowval[q]) : gid
-        nzval[q] = josephsonentry(T, ri, ci, Nmodes, Nfreq, ami,
+        nzval[q] = josephsonentry(T, Int(rowval[q]), gid, Nmodes, Nfreq, ami,
             pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix)
     end
     return nothing
@@ -922,13 +912,15 @@ function planstructurecomplexjosephson(Jx::SparseMatrixCSC,
     n = nnz(Jx)
     Ti = n < typemax(Int32) ? Int32 : Int
     d = x -> tobackend(backend, convert(Vector{Ti}, x))
-    perrow = backend isa CPU
-    assemble! = perrow ? complexjosephsonrowkernel!(backend, 64) :
+    # one work item per stored column on a host, and per stored entry on a
+    # device and for a transposed structure, as the real plan assembles
+    assemble! = backend isa CPU && !transposed ?
+        complexjosephsonrowkernel!(backend, 64) :
         complexjosephsonkernel!(backend, 64)
     colptr = d(SparseArrays.getcolptr(Jx))
     return StructureComplexJosephsonPlan{Ti,typeof(colptr),typeof(junctions),
         typeof(assemble!),typeof(backend)}(colptr, d(rowvals(Jx)), junctions,
-        perrow, transposed, assemble!, backend, n)
+        transposed, assemble!, backend, n)
 end
 
 """
@@ -942,19 +934,20 @@ function addjosephsonterm!(nzval::AbstractVector,
     length(nzval) == plan.n || throw(DimensionMismatch(
         lazy"`nzval` has length $(length(nzval)) but the plan assembles $(plan.n) entries."))
     js = plan.junctions
-    if hostloop(plan.backend, plan.n)
+    args = (plan.colptr, plan.rowval, phimatrix, js.pairptr, js.pairrow,
+        js.pairjunc, js.paircoef, js.lmolj, js.ami, js.nmodes, js.nfreq)
+    if !(plan.backend isa CPU) || plan.transposed
+        # a device or a transposed structure: one work item per entry
+        plan.assemble!(nzval, args..., plan.transposed; ndrange = plan.n)
+    elseif hostloop(plan.backend, plan.n)
         # the per column assembly of the row kernel as a plain loop
         for gid in 1:length(plan.colptr)-1
-            complexjosephsoncolumnitem!(nzval, gid, plan.colptr, plan.rowval,
-                phimatrix, js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
-                js.lmolj, js.ami, js.nmodes, js.nfreq, plan.transposed)
+            complexjosephsoncolumnitem!(nzval, gid, args...)
         end
         return nzval
+    else
+        plan.assemble!(nzval, args...; ndrange = length(plan.colptr) - 1)
     end
-    plan.assemble!(nzval, plan.colptr, plan.rowval, phimatrix, js.pairptr,
-        js.pairrow, js.pairjunc, js.paircoef, js.lmolj, js.ami,
-        js.nmodes, js.nfreq, plan.transposed;
-        ndrange = plan.perrow ? length(plan.colptr) - 1 : plan.n)
     KernelAbstractions.synchronize(plan.backend)
     return nzval
 end

@@ -6,10 +6,9 @@
 |---|---|
 | HB `ws`, `wp`, and `w` | rad/s |
 | `FrequencyDependent(w -> ...)` | rad/s, evaluated at the magnitude of the mode frequency |
-| Scattering callables and tabulated scattering frequencies | rad/s |
-| `transientdemodulate`, `transientiq`, `transientquantumplan` | Hz |
-| `transientnoise` frequencies, cutoff, and quadrature weights | Hz |
-| `RationalScattering` fitting `frequencies` and pumped fitting `band` | Hz |
+| Scattering callables, tabulated scattering frequencies, and `RationalScattering` fitting `frequencies` and `band` | rad/s |
+| `transientdemodulate`, `transientiqplan`, `transientquantumplan`, and the plans' `frequencies`, `bandwidth3db` and `noisebandwidth` | rad/s |
+| `transientnoise` `frequencies`, `cutoff` and quadrature `weights` | rad/s |
 | Time, line delays, transient step size | s |
 
 Use `w = 2pi*f` to convert Hz to rad/s. For ordinary component values,
@@ -32,11 +31,15 @@ The zero-frequency coefficient is the DC current itself, without doubling.
 real pump is written as `current = Icoeff` in HB and as
 `t -> 2Icoeff*cos(wp*t)` in a transient solve.
 
-A port source is a Norton current injected into the port's positive
-terminal. With a matched termination of resistance `R`, a sinusoid of
-peak current `Ipeak` launches available power `Ipeak^2*R/8`.
-A named `CurrentSource` follows its declared orientation: current flows
-out of its first terminal and into its second.
+A port source is a Norton current injected into the port's first
+(positive) terminal. With a matched termination of resistance `R`, a
+sinusoid of peak current `Ipeak` launches available power `Ipeak^2*R/8`.
+A [`CurrentSource`](@ref) drives its current through itself from its
+first terminal to its second: it draws the current from the node at its
+first terminal and delivers it to the node at its second, the opposite
+sense of a port source. A port and a `CurrentSource` written on the same
+nodes in the same order therefore drive in opposite senses; see the
+[direct current example](recipes/dc.md).
 
 ### Check the convention on a resistor
 
@@ -53,7 +56,8 @@ hb = hbnlsolve((2pi*f,), (1,), [(mode = (1,), port = 1, current = Icoeff)],
     c; keyedarrays = false)
 Vcoeff = im*2pi*f*JosephsonCircuits.phi0*only(hb.nodeflux)
 @assert isapprox(Vcoeff, 50Icoeff; rtol = 1e-10)
-p = transientproblem(c; sources = [TransientSource(1, t -> 2Icoeff*cospi(2f*t))])
+drive(I, f) = t -> 2I*cospi(2f*t)
+p = transientproblem(c; sources = [TransientSource(1, drive(Icoeff, f))])
 initial = transientstate(p; voltage = [2*50Icoeff])
 td = transientsolve(p, (0.0, 1/f); dt = 1/(100f), initialstate = initial)
 @assert isapprox(td.voltage[1, 1], 2real(Vcoeff); rtol = 1e-10)
@@ -137,9 +141,9 @@ symmetrized, `⟨{Δr, Δr†}⟩/2`. A vacuum mode has the covariance `1/2`, an
 a thermal mode `nbar + 1/2`, where `nbar` is its occupation, the mean
 number of photons, zero in the vacuum.
 
-`LinearizedHB.Cnoise` is the noise the circuit **adds**. With the input
-covariance `σ`, which is `I/2` for the vacuum, the output covariance is
-`S*σ*S' + Cnoise`, and its diagonal is `nbar + 1/2` at each output.
+The noise outputs of harmonic balance, `QE`, `QEideal`, `nbar`, `Vout`,
+`Cnoise` and `Snoise`, are defined in
+[what the solvers report](portnoise.md#What-the-solvers-report).
 
 Temporal-mode quadratures are ordered `X1, P1, X2, P2, ...`, with
 `[X, P] = im` and vacuum covariance `I/2` for orthonormal modes. This is
@@ -162,20 +166,36 @@ take none: a ladder covariance counts the vacuum as `I/2`, and
 `ladder_to_quadrature_pair` and `_block` take it to the quadrature
 covariance at `hbar = 1`.
 
+These functions are internal to the package, written qualified with its
+name and documented in the [appendix](api/internals.md). A function ending
+in `_pair` orders the operators of `n` modes in pairs, each mode's two
+together, `(x₁, p₁, x₂, p₂, ...)` or `(a₁, a₁†, ...)`; one ending in
+`_block` orders them in blocks, `(x₁, ..., xₙ, p₁, ..., pₙ)`.
+`pair_to_block`, `block_to_pair` and the `R_` permutations convert
+between the two. The symplectic, Bogoliubov and covariance matrices of
+`n` modes are `2n × 2n`. The predicates (`is_unitary`,
+`is_symplectic_pair`, ...) test a square matrix, dense or sparse, to the
+tolerances of `isapprox`; `is_positive_semi_definite` and the `is_cptp`
+family take a dense one. The decompositions (`williamson_pair`,
+`bloch_messiah_block`, `autonne_takagi`, `polar`, the Iwasawa
+decompositions, `symplectic_normal_form_pair`, ...) take a square dense
+matrix, a view of one, or a `Symmetric` or `Diagonal` matrix;
+`williamson_pair` and `williamson_block` also take a `SparseMatrixCSC`,
+whose Cholesky factorization stays sparse. Give the others a sparse
+matrix as `Matrix(M)`. The Williamson and Bloch–Messiah decompositions
+take real matrices, and `autonne_takagi` a complex or a real symmetric
+one.
+
+Each source of noise takes its temperature as follows, in both solvers:
+
 | Contribution | Temperature or noise model |
 |---|---|
-| External port inputs | The temperature of the port's termination, zero unless `MatchedTermination(temperature = T)` states one, in both solvers |
-| Internal resistor or other supported dissipative element | Its stated temperature; otherwise the analysis default |
+| External port inputs | The temperature of the port's termination, `Port(n; termination = MatchedTermination(temperature = T))`, zero unless it states one; the analysis `temperature` does not warm it |
+| Internal resistor or other supported dissipative element, a resistor across a port included | Its stated temperature; otherwise the analysis default |
 | `Passive()` block | Analysis default |
 | `ThermalEquilibrium(T)` block | Specified `T`, in kelvin |
 | `NoiseCovariance(V)` block | Supplied covariance, independent of the analysis temperature |
 | `Lossless()` block | No emitted noise; the declaration is checked where the model permits |
-
-A port's termination states its temperature,
-`Port(1; termination = MatchedTermination(temperature = T))`; the analysis
-`temperature` does not warm it. A resistor added across a port is an
-internal load with its own noise, not a change to the external input
-state.
 
 ### Temperatures and noise temperatures
 

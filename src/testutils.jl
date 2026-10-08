@@ -85,7 +85,7 @@ true
 julia> JosephsonCircuits.compare(nothing,nothing)
 true
 
-julia> cg = JosephsonCircuits.CircuitGraph(JosephsonCircuits.CircuitTopology(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]));JosephsonCircuits.compare(cg,cg)
+julia> t = JosephsonCircuits.CircuitTopology(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), 2);JosephsonCircuits.compare(t,t)
 true
 ```
 """
@@ -153,33 +153,6 @@ compare(x::JosephsonCircuits.SolverInfo,y::JosephsonCircuits.SolverInfo) = true
 compare(x::JosephsonCircuits.LinearizedHB,y::JosephsonCircuits.LinearizedHB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitMatrices,y::JosephsonCircuits.CircuitMatrices) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CompiledCircuit,y::JosephsonCircuits.CompiledCircuit) = comparestruct(x,y)
-compare(x::JosephsonCircuits.CircuitGraph,y::JosephsonCircuits.CircuitGraph) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitTopology,y::JosephsonCircuits.CircuitTopology) = comparestruct(x,y)
 compare(x::JosephsonCircuits.Frequencies,y::JosephsonCircuits.Frequencies) = comparestruct(x,y)
 compare(x::JosephsonCircuits.PassiveNetwork,y::JosephsonCircuits.PassiveNetwork) = comparestruct(x,y)
-
-"""
-    structurejacobian(d, Amatrixindices, Amatrixconjindices, Ljb, Lscale, Rbnm,
-        Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, layout)
-
-The sparsity structure of the real Jacobian restricted to the mode
-coupling described by `Amatrixindices` and `Amatrixconjindices`, together
-with the [`StructureRealJacobianPlan`](@ref) which assembles it, taking
-the linear term matrices from `d.sys` so that the assembly is the one the
-solver performs. `d` is the named tuple returned by
-`hbnlsolve(...; debugJacobian = true)`. Used only by the tests.
-"""
-function structurejacobian(d, Amatrixindices::Matrix,
-    Amatrixconjindices::Matrix, Ljb, Lscale, Rbnm, Nmodes, Nbranches, Nfreq,
-    invLnm, Gnm, Cnm, layout)
-
-    P, _ = realjacobianstructure(Amatrixindices,
-        Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches, invLnm, Gnm, Cnm,
-        layout)
-    junctions = junctionstructure(eltype(P), Amatrixindices,
-        Amatrixconjindices, Ljb, Lscale, Rbnm, Nmodes, Nbranches, Nfreq, CPU())
-    plan = planstructurerealjacobian(P, eltype(P), junctions, d.sys.invLnm,
-        d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm, d.sys.wmodes2m, layout, CPU();
-        transposed = false)
-    return P, plan
-end

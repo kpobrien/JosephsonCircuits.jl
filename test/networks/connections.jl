@@ -935,6 +935,33 @@ import StaticArrays
         @test isapprox(out7.S, out5.S[1])
     end
 
+    @testset "connectS and solveS take the same arrays" begin
+        # the connections of keyed arrays and of their noise, which solveS
+        # takes, against solveS of the arrays of their values
+        keyed(n) = JosephsonCircuits.AxisKeys.KeyedArray(rand(Complex{Float64}, n, n, 3);
+            out = 1:n, in = 1:n, f = [1.0, 2.0, 3.0])
+        connections = [[("A", 2), ("B", 1)], [("A", 1), ("A", 3)]]
+        networks = [("A", keyed(4)), ("B", keyed(2))]
+        c = JosephsonCircuits.connectS(networks, connections; noise = true)
+        s = JosephsonCircuits.solveS([(name, Array(K)) for (name, K) in networks],
+            connections; noise = true)
+        order = [findfirst(==(port), only(c.ports)) for port in s.ports]
+        @test only(c.S)[order, order, :] ≈ s.S
+        @test only(c.C)[order, order, :] ≈ s.C
+
+        # a covariance of another array type than its scattering
+        # parameters, a real one for complex ones, is taken as theirs, and
+        # a complex one for real ones is refused
+        S = Complex{Float64}[0.0 0.5; 0.5 0.0]
+        C = [0.375 0.0; 0.0 0.375]
+        connections = [[("A", 2), ("B", 1)]]
+        reference = JosephsonCircuits.solveS([("A", S, complex(C)), ("B", S)],
+            connections; noise = true)
+        @test only(JosephsonCircuits.connectS([("A", S, C), ("B", S)], connections;
+            noise = true).C) ≈ reference.C
+        @test_throws ArgumentError JosephsonCircuits.givencovariance(("A", real(S), complex(C)))
+    end
+
     @testset "connectS! solveS! in-place updates" begin
         S1 = rand(Complex{Float64},4,4,10)
         S2 = rand(Complex{Float64},3,3,10)
@@ -1142,21 +1169,24 @@ import StaticArrays
         @test isapprox(sol6[1][1],sol3)
     end
 
-    @testset "solveS on its own task, and on no frequencies" begin
+    @testset "solveS's exceptions, and no frequencies" begin
         # a three port junction with two of its ports joined, a loop of zero
         # length: connectS resolves it to an open; its connection system is
-        # singular, which a single batch reports as the factorization's own
-        # exception, and QR factorization solves
+        # singular, which the factorization reports as its own exception
+        # whatever the number of batches, and QR factorization solves
         Ssplit = JosephsonCircuits.S_splitter!(zeros(Complex{Float64}, 3, 3))
         networks = [("J", Ssplit)]
         connections = [[("J", 2), ("J", 3)]]
         @test isapprox(JosephsonCircuits.connectS(networks, connections).S[1], [1.0;;])
         @test isapprox(JosephsonCircuits.solveS(networks, connections;
             factorization = JosephsonCircuits.QRfactorization()).S, [1.0;;])
-        @test_throws(
-            LinearAlgebra.SingularException,
-            JosephsonCircuits.solveS(networks, connections; nbatches = 1),
-        )
+        twofrequencies = [("J", JosephsonCircuits.S_splitter!(zeros(Complex{Float64}, 3, 3, 2)))]
+        for nbatches in (1, 2)
+            @test_throws(
+                LinearAlgebra.SingularException,
+                JosephsonCircuits.solveS(twofrequencies, connections; nbatches = nbatches),
+            )
+        end
 
         # a lossless ring of zero length, two ports of a perfect through
         # joined, decoupled from the third port: the pairwise connection

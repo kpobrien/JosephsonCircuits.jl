@@ -35,13 +35,17 @@ current point are cached, so repeated products at the same point (eg. the
 many Jacobian-vector products of a Krylov solve) cost only two Fourier
 transforms and the linear term each.
 
-Every field is typed by a parameter of the struct, and the loops are
-behind function barriers which specialize on the concrete argument types.
+Every field the evaluations read is typed by a parameter of the struct,
+and the loops are behind function barriers which specialize on the concrete
+argument types. The Jacobian assembly plans are held untyped, so that the
+type of a system, and everything compiled for it, is the same whichever
+method's plans it holds; an assembly reaches its plan through one dynamic
+dispatch.
 The workspaces of the residual and the matrix-free products are
 parameterized on their array types rather than fixed to `Array`, so they can
 live on whichever KernelAbstractions backend the system was built for.
 """
-struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,TVR,TAC,TAR,TAM,TAB}
+struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TNP,TVC,TVR,TAC,TAR,TAM,TAB}
     # linear term matrices and source vector (complex representation, scaled
     # by Lscale, conjugated for negative frequency modes with conjnegfreq!)
     Rbnm::TR
@@ -76,10 +80,10 @@ struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,
     irfftplan::TIP
     rfftplan::TFP
     # real mode layout
-    modelayout::ModeLayout{Int}
-    # optional precomputed Jacobian assembly plans
-    realjacobianplan::TRJ
-    complexjacobianplan::TCJ
+    modelayout::ModeLayout
+    # optional precomputed Jacobian assembly plans, untyped (see above)
+    realjacobianplan::Any
+    complexjacobianplan::Any
     # the precomputed, device-generic plan for the two linear maps which
     # surround the pointwise time domain nonlinearity, used by the real
     # representation entry points
@@ -570,6 +574,9 @@ end
 end
 
 function _applysincos!(s, c, x)
+    # a kernel launch over nothing fails, and a circuit without junctions
+    # has no phases
+    isempty(x) && return s
     sincoskernel!(KernelAbstractions.get_backend(x))(s, c, x;
         ndrange = length(x))
     return s
@@ -658,12 +665,13 @@ there. Accepts the complex vector of node fluxes or the equivalent real
 representation, dispatched on the element type. Returns `sys`.
 
 A point equal to the one the system holds, handed in as an array of the
-type the system holds it in, is not set again: the branch fluxes and every
-evaluation cached at it (the sine, the cosine and its transform) stay. A
-solver resynchronizing the system after a step, or a preconditioner
-setting the point it is rebuilt at, pays an O(n) comparison rather than a
-transform. The point a system is built with is `NaN`, which no point
-equals.
+type the system holds it in or as a view of one (as the evaluations of the
+canonical state with direct current hand it in), is not set again: the
+branch fluxes and every evaluation cached at it (the sine, the cosine and
+its transform) stay. A solver resynchronizing the system after a step, or a
+preconditioner setting the point it is rebuilt at, pays an O(n) comparison
+rather than a transform. The point a system is built with is `NaN`, which no
+point equals.
 """
 function setpoint!(sys::HBSystem, x::AbstractVector{<:Complex})
     heldpoint(sys.x, x) && return sys
@@ -679,9 +687,10 @@ function setpoint!(sys::HBSystem, xr::AbstractVector{<:Real})
     return _setpoint!(sys, sys.xr)
 end
 
-# whether `x` is the point `held`, compared only where the two are arrays
-# of one type, and so on one backend
-heldpoint(held, x) = typeof(held) === typeof(x) && held == x
+# whether `x` is the point `held`, compared by value where `x` is held in an
+# array of the held one's type, and so on its backend: the array itself or
+# a view of one, which `parent` sees through
+heldpoint(held, x) = typeof(held) === typeof(parent(x)) && held == x
 
 # the time domain branch fluxes at the point, from the forward map of the
 # plan in the representation `z` is in
@@ -841,7 +850,6 @@ tohost(x::AbstractArray) = Array(x)
     jacobian!(Jx::SparseMatrixCSC{<:Complex}, sys::HBSystem)
     jacobian!(Jr::SparseMatrixCSC{<:Real}, sys::HBSystem)
     jacobian!(A::DeviceValuedSparseMatrix, sys::HBSystem)
-    jacobian!(A::DeviceValuedSparseMatrix{<:Complex}, plan, sys::HBSystem)
 
 Assemble the Jacobian of the harmonic balance nonlinear system at the point
 set with [`setpoint!`](@ref), in place, using the precomputed plans.
@@ -850,9 +858,11 @@ holomorphic Jacobian (an approximation to the exact Jacobian, used by the
 [`QuasiNewton`](@ref) method, via [`assemblecomplexjacobian!`](@ref)) and a
 real matrix the exact Jacobian of the equivalent real system (used by the
 [`Newton`](@ref) method, via [`assemblerealjacobian!`](@ref)). A
-[`DeviceValuedSparseMatrix`](@ref) receives the same on its backend. The
-corresponding plan must have been provided when the [`HBSystem`](@ref) was
-constructed; the method taking a plan explicitly is documented below.
+[`DeviceValuedSparseMatrix`](@ref) receives the same into its device values,
+and nothing crosses to the host: the coefficients are already on the backend
+and the assembly runs there. The corresponding plan must have been provided
+when the [`HBSystem`](@ref) was constructed; the method taking a plan
+explicitly is documented below.
 """
 function jacobian!(Jx::SparseMatrixCSC{<:Complex}, sys::HBSystem)
     isnothing(sys.complexjacobianplan) && throw(ArgumentError(
@@ -888,36 +898,19 @@ function jacobian!(Jr::SparseMatrixCSC{<:Real},
     return Jr
 end
 
-"""
-    jacobian!(A::DeviceValuedSparseMatrix, plan::StructureRealJacobianPlan,
-        sys::HBSystem)
-
-Assemble the real Jacobian into the device values of `A`. Nothing crosses to
-the host: the coefficients are already on the backend and the assembly runs
-there.
-"""
-function jacobian!(A::DeviceValuedSparseMatrix,
-    plan::StructureRealJacobianPlan, sys::HBSystem)
-    assemblerealjacobian!(A.nzval, plan, cosphimatrix(sys))
-    return A
-end
-
 function jacobian!(A::DeviceValuedSparseMatrix, sys::HBSystem)
     isnothing(sys.realjacobianplan) && throw(ArgumentError(
         "no real Jacobian plan was provided to this HBSystem."))
-    return jacobian!(A, sys.realjacobianplan, sys)
-end
-
-function jacobian!(A::DeviceValuedSparseMatrix{<:Complex},
-    plan::StructureComplexJacobianPlan, sys::HBSystem)
-    assemblecomplexjacobian!(A.nzval, plan, cosphimatrix(sys))
+    assemblerealjacobian!(A.nzval, sys.realjacobianplan, cosphimatrix(sys))
     return A
 end
 
 function jacobian!(A::DeviceValuedSparseMatrix{<:Complex}, sys::HBSystem)
     isnothing(sys.complexjacobianplan) && throw(ArgumentError(
         "no complex Jacobian plan was provided to this HBSystem."))
-    return jacobian!(A, sys.complexjacobianplan, sys)
+    assemblecomplexjacobian!(A.nzval, sys.complexjacobianplan,
+        cosphimatrix(sys))
+    return A
 end
 
 """

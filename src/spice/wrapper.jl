@@ -1,12 +1,12 @@
 
 """
-    wrspice_input_transient(netlist::String, current, frequency, phase,
+    wrspice_input_transient(netlist::String, current, w, phase,
         sourcenodes, tstep, tstop, trise; maxdata = 2e9, jjaccel = 1,
         dphimax = 0.01, filetype = "binary")
 
 Generate the WRSPICE input for a transient simulation of the circuit in
 `netlist`, driven by one sinusoidal current source per entry of `current`,
-`frequency`, `phase` and `sourcenodes`, with the time step and stop time
+`w`, `phase` and `sourcenodes`, with the time step and stop time
 given. The output file name is left out of the `write` command so it can
 be given on the command line, and no variables are named so that every
 node is saved.
@@ -14,7 +14,7 @@ node is saved.
 # Arguments
 - `netlist`: String containing the circuit netlist, excluding sources.
 - `current`: Vector of current source amplitudes in Ampere.
-- `frequency`: Vector of current source frequencies in Hz.
+- `w`: Vector of current source angular frequencies in radians per second.
 - `phase`: Vector of current source phases in radians.
 - `sourcenodes`: Vector of tuples of nodes `(src, dst)` at which to place the
     current source(s). A source draws its current from `src` and injects it
@@ -36,11 +36,13 @@ node is saved.
     dphimax from the default of pi/5 to a smaller value is critical for
     matching the accuracy of the harmonic balance method simulations. This
     increases simulation time by pi/5/(dphimax).
-- `filetype = "binary" or "ascii"`: Binary files are faster to save and load.
+- `filetype = "binary"`: the format of the rawfile WRSPICE writes, `"binary"`
+    or `"ascii"`. [`spice_run`](@ref) and [`spice_raw_load`](@ref) read the
+    binary format only, so an ASCII rawfile must be read elsewhere.
 
 # Examples
 ```jldoctest
-julia> println(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1,0)],1e-9,100e-9,10e-9))
+julia> println(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],2pi*[5e9,6e9],[3.14,6.28],[(1,0),(1,0)],1e-9,100e-9,10e-9))
 * SPICE Simulation
 * Current source
 * 1-hyperbolic secant rise
@@ -61,7 +63,7 @@ write
 .endc
 ```
 """
-function wrspice_input_transient(netlist::String, current, frequency, phase,
+function wrspice_input_transient(netlist::String, current, w, phase,
     sourcenodes, tstep, tstop, trise; maxdata = 2e9, jjaccel = 1,
     dphimax = 0.01, filetype = "binary")
 
@@ -75,7 +77,7 @@ function wrspice_input_transient(netlist::String, current, frequency, phase,
         end
     end
 
-    if length(current) != length(frequency) || length(current) != length(phase) || length(current) != length(sourcenodes)
+    if length(current) != length(w) || length(current) != length(phase) || length(current) != length(sourcenodes)
         throw(ArgumentError(lazy"Input vector lengths not equal."))
     end
 
@@ -95,8 +97,10 @@ function wrspice_input_transient(netlist::String, current, frequency, phase,
     * 1-hyperbolic secant rise
     """
 
+    # the sources as SPICE writes cos(w*t), the angular frequency in units
+    # of 1e9 radians per second
     for i in 1:length(current)
-        control*="""isrc$(i) $(sourcenodes[i][1]) $(sourcenodes[i][2]) $(current[i]*1e6)u*cos($(2*pi*frequency[i]*1e-9)g*x+$(phase[i]))*(1-2/(exp(x/$trise)+exp(-x/$trise)))\n"""
+        control*="""isrc$(i) $(sourcenodes[i][1]) $(sourcenodes[i][2]) $(current[i]*1e6)u*cos($(w[i]*1e-9)g*x+$(phase[i]))*(1-2/(exp(x/$trise)+exp(-x/$trise)))\n"""
     end
 
     control *="""
@@ -122,9 +126,9 @@ function wrspice_input_transient(netlist::String, current, frequency, phase,
 end
 
 """
-    wrspice_input_ac(netlist, nsteps, fstart, fstop, portnodes, portcurrent;
+    wrspice_input_ac(netlist, nsteps, wstart, wstop, portnodes, portcurrent;
         maxdata = 2e9)
-    wrspice_input_ac(netlist, freqs, portnodes, portcurrent; maxdata = 2e9)
+    wrspice_input_ac(netlist, ws, portnodes, portcurrent; maxdata = 2e9)
 
 Generate the WRSPICE input for an AC small signal simulation of the circuit
 in `netlist`, driven by an AC current source of the complex amplitude
@@ -136,19 +140,23 @@ the magnitude and the phase of `portcurrent`, the phase written in degrees
 as SPICE reads it. The indices address the nets named by the integers
 `0` to `N-1`, index `k` the net `k-1`; a net named by a word cannot be
 driven. The analysis is `.ac lin nsteps fstart fstop`, over linearly
-spaced frequencies from `fstart` to `fstop` in Hz, which WRSPICE answers
-with `nsteps + 2` points when `fstart < fstop`. The second form takes the
-frequencies as a single number, or as a vector or range of which only the
-first and last entries are used: one frequency is written from itself to
-itself, which WRSPICE answers with that one point, and more with
-`length(freqs) - 2` passed as `nsteps`, so that WRSPICE answers with
-`length(freqs)` points. Two frequencies are refused, since WRSPICE
-answers `nsteps = 0` with three points. `maxdata` is the WRSPICE limit on
-the size of the data written, in kilobytes.
+spaced frequencies from the angular frequency `wstart` to `wstop` in
+radians per second, written in Hz as SPICE takes them, which WRSPICE
+answers with `nsteps + 2` points when `wstart < wstop`. The second form
+takes the angular frequencies `ws` as a single number, or as a vector or
+range of uniformly spaced ones: one frequency is written from itself to
+itself, which WRSPICE answers with that one point, and more from the
+first to the last with `length(ws) - 2` passed as `nsteps`, so that
+WRSPICE answers with `length(ws)` points, the frequencies of `ws`. A
+vector which is not uniformly spaced to the tolerance of `isapprox` is
+refused, since WRSPICE would answer at other frequencies, and so are two
+frequencies, since WRSPICE answers `nsteps = 0` with three points.
+`maxdata` is the WRSPICE limit on the size of the data written, in
+kilobytes.
 
 # Examples
 ```jldoctest
-julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",100,4e9,5e9,[1,2],1e-6))
+julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",100,2pi*4e9,2pi*5e9,[1,2],1e-6))
 * SPICE Simulation
 * AC current source into the port
 isrc 0 1 ac 1.0e-6 0.0
@@ -176,7 +184,7 @@ write
 .endc
 ```
 ```jldoctest
-julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",(4:0.01:5)*1e9,[1,2],1e-6))
+julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",2pi*(4:0.01:5)*1e9,[1,2],1e-6))
 * SPICE Simulation
 * AC current source into the port
 isrc 0 1 ac 1.0e-6 0.0
@@ -204,24 +212,31 @@ write
 .endc
 ```
 """
-function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
+function wrspice_input_ac(netlist::String,ws::AbstractVector{<:Real},
     portnodes,portcurrent; maxdata = 2e9)
-    if length(freqs) == 1
-        return wrspice_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent; maxdata = maxdata)
-    elseif length(freqs) >= 3
-        return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent; maxdata = maxdata)
-    else
-        throw(ArgumentError(lazy"WRSPICE answers a linear AC sweep with one point or with three or more, not with $(length(freqs)); give one frequency or at least three."))
+    n = length(ws)
+    if n == 1
+        return wrspice_input_ac(netlist,1,only(ws),only(ws),portnodes,portcurrent; maxdata = maxdata)
+    elseif n < 3
+        throw(ArgumentError(lazy"WRSPICE answers a linear AC sweep with one point or with three or more, not with $(n); give one frequency or at least three."))
     end
+    # WRSPICE answers a linear sweep at equal steps from the first frequency
+    # to the last, whatever lies between
+    isapprox(ws, range(first(ws), last(ws); length = n)) || throw(ArgumentError(
+        "the frequencies of a linear AC sweep must be uniformly spaced, since WRSPICE answers at equal steps from the first to the last."))
+    return wrspice_input_ac(netlist,n-2,first(ws),last(ws),portnodes,portcurrent; maxdata = maxdata)
 end
 
-function wrspice_input_ac(netlist::String,freqs::Float64,
+function wrspice_input_ac(netlist::String,ws::Real,
     portnodes,portcurrent; maxdata = 2e9)
 
-    return wrspice_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent; maxdata = maxdata)
+    return wrspice_input_ac(netlist,1,ws,ws,portnodes,portcurrent; maxdata = maxdata)
 end
 
-function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent; maxdata = 2e9)
+function wrspice_input_ac(netlist,nsteps,wstart,wstop,portnodes,portcurrent; maxdata = 2e9)
+
+    # the frequencies in Hz, as SPICE takes them
+    fstart, fstop = wstart/(2*pi), wstop/(2*pi)
 
     control="""
 
@@ -331,70 +346,4 @@ logical processors by default.
 """
 function spice_run(inputs::AbstractVector, spicecmd; ntasks::Int = Sys.CPU_THREADS)
     return asyncmap(input -> spice_run(input, spicecmd), inputs; ntasks = ntasks)
-end
-
-"""
-    spice_hb_load(filename)
-
-Load the frequency domain output of a Xyce harmonic balance simulation, a
-`.HB.FD.prn` file. Returns a named tuple with the value of each output
-variable at each frequency in `data`, one row per variable in the order
-of the header, the name of each row in `variables`, the frequencies in
-`f`, the index column in `index`, and the column names in `header`. A
-variable printed as the two columns `Re(name)` and `Im(name)` is the row
-`name`, its columns paired by their names; any other column, an
-expression `{...}` say, is a row of its own, with the column as its real
-part.
-"""
-function spice_hb_load(filename)
-
-    data = Float64[]
-    header = SubString{String}[]
-
-    open(filename, "r") do io
-        for line in eachline(io)
-            s = strip(line)
-            isempty(s) && continue
-            if startswith(s, "Index")
-                append!(header, split(s, r"\s+"))
-            elseif s == "End of Xyce(TM) Simulation"
-                break
-            else
-                append!(data, parse.(Float64, split(s, r"\s+")))
-            end
-        end
-    end
-
-    values = reshape(data, length(header), :)
-    index = values[1, :]
-    f = values[2, :]
-
-    # the columns of each variable, its real and imaginary parts by name
-    variables = String[]
-    recolumn = Int[]
-    imcolumn = Int[]
-    for c in 3:length(header)
-        m = match(r"^(Re|Im)\((.*)\)$", header[c])
-        name = isnothing(m) ? String(header[c]) : String(m.captures[2])
-        k = findfirst(==(name), variables)
-        if isnothing(k)
-            push!(variables, name)
-            push!(recolumn, 0)
-            push!(imcolumn, 0)
-            k = length(variables)
-        end
-        if !isnothing(m) && m.captures[1] == "Im"
-            imcolumn[k] = c
-        else
-            recolumn[k] = c
-        end
-    end
-
-    data1 = zeros(Complex{Float64}, length(variables), size(values, 2))
-    for k in eachindex(variables)
-        recolumn[k] > 0 && (data1[k, :] .+= view(values, recolumn[k], :))
-        imcolumn[k] > 0 && (data1[k, :] .+= im .* view(values, imcolumn[k], :))
-    end
-
-    return (data=data1, f=f, index=index, header=header, variables=variables)
 end

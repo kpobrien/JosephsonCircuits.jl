@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: TransientBatchSolution
 using LinearAlgebra
 using Test
 
@@ -31,12 +32,12 @@ using Test
         # Floquet frequencies of the pumped response; the gain and the
         # quantum efficiency to a part in ten thousand
         settle, record, dt = 200e-9, 100e-9, 2.5e-12
-        frequencies = sort!(abs.([fs + 2k*fp for k in -2:2]))
+        frequencies = sort!(abs.([2pi*(fs + 2k*fp) for k in -2:2]))
         gsol = transientsolve(prob, (0.0, settle + record - dt); dt, record = :phases, method = GaussLegendre())
         first = round(Int, settle/dt) + 1
         @test length(gsol.times[first:end]) == round(Int, record/dt)
-        gmeasurement = transientquantumplan(gsol, gsol.times[first:end], [fs])
-        gnoise = transientnoise(gsol, gmeasurement; frequencies, weights = fill(1/record, 5),
+        gmeasurement = transientquantumplan(gsol, gsol.times[first:end], [2pi*fs])
+        gnoise = transientnoise(gsol, gmeasurement; frequencies, weights = fill(2pi/record, 5),
             inputs = gmeasurement, commutationrtol = 3e-3)
         gmetrics = transientquantumefficiency(gnoise.gain, gnoise.covariance; rtol = 3e-3)
         @test gnoise.diagnostics.passed
@@ -54,16 +55,16 @@ using Test
         # the ringing
         make(a) = transientproblem(prob; sources = [TransientSource(1, let a = a; t -> 2a*ramp(t)*cospi(2fp*t); end)])
         settle, record, fs = 20e-9, 20e-9, 4.70e9
-        frequencies = sort!(abs.([fs + 2k*fp for k in -2:2]))
+        frequencies = sort!(abs.([2pi*(fs + 2k*fp) for k in -2:2]))
         batch = transientsolve(make.([0.004e-6, 0.005e-6, ip]), (0.0, settle + record - dt); dt, record = :phases)
         first = round(Int, settle/dt) + 1
-        gmeasurement = transientquantumplan(batch, batch.times[first:end], [fs])
-        bnoise = transientnoise(batch, gmeasurement; frequencies, weights = fill(1/record, 5),
+        gmeasurement = transientquantumplan(batch, batch.times[first:end], [2pi*fs])
+        bnoise = transientnoise(batch, gmeasurement; frequencies, weights = fill(2pi/record, 5),
             inputs = gmeasurement, commutationrtol = 5e-2)
         @test size(bnoise.covariance) == (2, 2, 3) && size(bnoise.gain) == (2, 2, 3) && length(bnoise.diagnostics) == 3
         gains = Float64[]
         for j in 1:3
-            single = transientnoise(batch[j], gmeasurement; frequencies, weights = fill(1/record, 5),
+            single = transientnoise(batch[j], gmeasurement; frequencies, weights = fill(2pi/record, 5),
                 inputs = gmeasurement, commutationrtol = 5e-2)
             @test bnoise.covariance[:, :, j] ≈ single.covariance rtol=1e-9
             @test bnoise.gain[:, :, j] ≈ single.gain rtol=1e-9
@@ -76,7 +77,7 @@ using Test
         # either, is the same contraction in more passes
         JC.noisememorybudget[] = 1
         tnoise = try
-            transientnoise(batch, gmeasurement; frequencies, weights = fill(1/record, 5),
+            transientnoise(batch, gmeasurement; frequencies, weights = fill(2pi/record, 5),
                 inputs = gmeasurement, commutationrtol = 5e-2)
         finally
             JC.noisememorybudget[] = 0
@@ -87,17 +88,17 @@ using Test
         # a range of conditions is a batch of views
         pair = batch[2:3]
         @test pair isa TransientBatchSolution && length(pair) == 2
-        @test transientnoise(pair, gmeasurement; frequencies, weights = fill(1/record, 5),
+        @test transientnoise(pair, gmeasurement; frequencies, weights = fill(2pi/record, 5),
             inputs = gmeasurement, commutationrtol = 5e-2).covariance ≈ bnoise.covariance[:, :, 2:3] rtol=1e-9
         # the forward method on the batch is one tangent over every
         # condition, from each condition's stationary response
-        fnoise = transientnoise(batch, gmeasurement; frequencies, weights = fill(1/record, 5),
+        fnoise = transientnoise(batch, gmeasurement; frequencies, weights = fill(2pi/record, 5),
             inputs = gmeasurement, commutationrtol = 5e-2, method = :forward)
         @test fnoise.covariance ≈ bnoise.covariance rtol=1e-9
         @test fnoise.gain ≈ bnoise.gain rtol=1e-9
         # the noise of a checkpointed record equals the phase record's
         ckpt = transientsolve(make.([0.004e-6, 0.005e-6, ip]), (0.0, settle + record - dt); dt, record = :checkpoints)
-        cnoise = transientnoise(ckpt, gmeasurement; frequencies, weights = fill(1/record, 5),
+        cnoise = transientnoise(ckpt, gmeasurement; frequencies, weights = fill(2pi/record, 5),
             inputs = gmeasurement, commutationrtol = 5e-2)
         @test cnoise.covariance ≈ bnoise.covariance rtol=1e-6
         @test cnoise.gain ≈ bnoise.gain rtol=1e-6
@@ -135,10 +136,10 @@ using Test
         settle, record, dt = 10e-9, 10e-9, 2.5e-12
         sol = transientsolve(prob, (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
         first = round(Int, settle/dt) + 1
-        measurement = transientquantumplan(sol, sol.times[first:end], [fs]; ports = [2])
-        inputs = transientquantumplan(sol, sol.times[first:end], [fs]; ports = [1])
-        frequencies = sort!(abs.([fs + 2k*fp for k in -3:3]))
-        noise = transientnoise(sol, measurement; frequencies, weights = fill(1/record, 7), inputs, commutationrtol = 1e-2)
+        measurement = transientquantumplan(sol, sol.times[first:end], [2pi*fs]; ports = [2])
+        inputs = transientquantumplan(sol, sol.times[first:end], [2pi*fs]; ports = [1])
+        frequencies = sort!(abs.([2pi*(fs + 2k*fp) for k in -3:3]))
+        noise = transientnoise(sol, measurement; frequencies, weights = fill(2pi/record, 7), inputs, commutationrtol = 1e-2)
         @test noise.diagnostics.passed
         metrics = transientquantumefficiency(noise.gain, noise.covariance; rtol = 1e-2)
         @test metrics.gain ≈ abs2(s21) rtol=1e-4
@@ -181,12 +182,12 @@ using Test
                 nm, shift = round(Int, T/dt), round(Int, delay/dt)
                 tin, tout = sol.times[first:first + nm - 1], sol.times[first + shift:first + shift + nm - 1]
                 env = reshape(sinpi.((tin .- tin[1]) ./ T) .^ 2, :, 1)
-                measurement = transientquantumplan(sol, tout, [fs]; ports = [2], envelopes = env)
-                freqs = collect(spacing:spacing:fmax)
-                noise = transientnoise(sol, measurement; frequencies = freqs, weights = fill(spacing, length(freqs)), commutationrtol = 5e-2)
+                measurement = transientquantumplan(sol, tout, [2pi*fs]; ports = [2], envelopes = env)
+                freqs = 2pi .* collect(spacing:spacing:fmax)
+                noise = transientnoise(sol, measurement; frequencies = freqs, weights = fill(2pi*spacing, length(freqs)), commutationrtol = 5e-2)
                 @test noise.diagnostics.passed
                 gain || return (covariance = noise.covariance,)
-                inputs = transientquantumplan(sol, tin, [fs]; ports = [1], envelopes = env)
+                inputs = transientquantumplan(sol, tin, [2pi*fs]; ports = [1], envelopes = env)
                 pulsed = transientgain(sol, measurement, inputs)
                 (gain = sum(abs2, pulsed)/2, covariance = noise.covariance, pulsed)
             end

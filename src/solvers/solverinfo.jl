@@ -33,7 +33,11 @@ Diagnostics describing the nonlinear solution process of
     method specific.
 - `initialresidual`: the norm of the residual at the initial value.
 - `finalresidual`: the norm of the residual at the returned solution.
-- `converged`: whether the solver reported convergence.
+- `converged`: whether the solve converged: the solver reported
+    convergence, and the point it returned satisfies the original, ungauged
+    Kirchhoff current law equations, which an incompatibility absorbed by a
+    gauge fixing equation violates. A [`Staged`](@ref) solve which gave up
+    has not converged, whatever its last attempt reported.
 - `sourcefold`: `NaN`, except for a [`Staged`](@ref) solve which found the
     solution branch ending below the requested drive, where it is the last
     drive fraction the continuation converged at.
@@ -69,20 +73,22 @@ Diagnostics recorded for a call of [`nlsolve!`](@ref) or
     solvers, which take each step from a factorization.
 - `reason`: why the iteration ended. `:converged`; `:iterations` when the
     Newton step budget was spent; `:work` when the Krylov work budget was
-    spent (`nlsolvekrylov!` only); `:linesearch` when the line search found
-    no sufficient decrease along the Newton direction, once with no decrease
-    at all (twice in `nlsolvekrylov!`, which retries the first from a
-    rebuilt preconditioner, and which also reports a direction that is not
-    a descent direction after its exact rescue here) or twice in a row with
-    a decrease short of the Armijo condition, which is a stall; `:progress`
-    when the residual stopped coming down, or comes down too slowly to
-    reach the tolerance within the remaining budget, and its rate is not
-    improving ([`residualstalled`](@ref); a first stall is given a fresh
-    history, with a recovery in `nlsolvekrylov!`, a rebuilt preconditioner
-    and exact Newton steps, and the stall is reported only if it
-    persists); `:external` for an [`ExternalSolver`](@ref) which reported
-    failure or whose root misses the tolerance.
-    [`stallmessage`](@ref) spells each out.
+    spent (`nlsolvekrylov!` only); `:linesearch` when the Newton direction
+    admits no step: a line search with no decrease at all (in
+    `nlsolvekrylov!` again after a retry from a rebuilt preconditioner when
+    the rebuild can change the step), two in a row with a decrease short of
+    the Armijo condition, which is a stall, or a direction which is not a
+    descent direction, or whose merit or slope is not finite (in
+    `nlsolvekrylov!` after its exact rescue); `:progress` when the residual
+    stopped coming down, or comes down too slowly to reach the tolerance
+    within the remaining budget, and its rate is not improving
+    ([`residualstalled`](@ref); a first stall is given a fresh history,
+    with a recovery in `nlsolvekrylov!`, a rebuilt preconditioner and exact
+    Newton steps, and the stall is reported only if it persists);
+    `:nonfinite` when the residual norm at the starting point is not
+    finite, which ends the iteration before any step; `:external` for an
+    [`ExternalSolver`](@ref) which reported failure or whose root misses
+    the tolerance. [`stallmessage`](@ref) spells each out.
 """
 struct IterationInfo <: AbstractStageInfo
     converged::Bool
@@ -145,7 +151,11 @@ end
 Begin the record at a point whose residual `F` holds: the history is
 emptied, the tolerance fixed at `atol` or `rtol*norm(F)`, whichever is
 larger, and convergence decided on the residual before any Jacobian work.
-Returns whether it has converged.
+A norm which is not finite, from an entry which is not or from finite
+entries whose norm overflows, scales no relative tolerance and admits no
+step: the iteration ends there, not converged, with the reason
+`:nonfinite`, and the tolerance is `atol`. Returns whether the iteration
+has ended.
 """
 function tracestart!(tr::NewtonTrace{T}, F, atol, rtol) where {T}
     empty!(tr.normresidual); empty!(tr.alpha)
@@ -153,9 +163,10 @@ function tracestart!(tr::NewtonTrace{T}, F, atol, rtol) where {T}
     tr.backtrackfailures = 0
     tr.converged = false
     tr.reason = :iterations
-    push!(tr.normresidual, norm(F))
-    tr.atol = max(T(atol), T(rtol)*tr.normresidual[1])
-    return traceconverged!(tr)
+    normF = norm(F)
+    push!(tr.normresidual, normF)
+    tr.atol = isfinite(normF) ? max(T(atol), T(rtol)*normF) : T(atol)
+    return tracestarted!(tr)
 end
 
 """
@@ -163,20 +174,29 @@ end
 
 Begin a second attempt at a point whose residual `F` holds, keeping the
 record of the first: the norm is appended to the history, the tolerance
-is the first attempt's, and convergence is decided on the residual.
-Returns whether it has converged.
+is the first attempt's, and the residual decides, as at the start, whether
+the iteration has ended ([`tracestart!`](@ref)), which is returned.
 """
 function tracerestart!(tr::NewtonTrace, F)
     tr.backtrackfailures = 0
     tr.converged = false
     tr.reason = :iterations
     push!(tr.normresidual, norm(F))
+    return tracestarted!(tr)
+end
+
+# whether the iteration ends at the residual it starts from: converged, or
+# at a norm which is not finite, recorded as the outcome
+function tracestarted!(tr::NewtonTrace)
+    isfinite(tr.normresidual[end]) || (tr.reason = :nonfinite; return true)
     return traceconverged!(tr)
 end
 
-# whether the last residual meets the tolerance, recorded as the outcome
+# whether the last residual meets the tolerance, recorded as the outcome; a
+# norm which is not finite meets none
 function traceconverged!(tr::NewtonTrace)
-    if tr.normresidual[end] <= tr.atol
+    r = tr.normresidual[end]
+    if isfinite(r) && r <= tr.atol
         tr.converged = true
         tr.reason = :converged
     end
@@ -259,6 +279,7 @@ function stallmessage(reason::Symbol)
     reason === :work && return "the Krylov work budget (`iterations` restart lengths of Arnoldi steps) was spent"
     reason === :linesearch && return "the line search found no sufficient decrease along the Newton direction (a stall)"
     reason === :progress && return "the residual stopped coming down, or comes down too slowly for the remaining budget, and its rate is not improving (a stall; the recovery did not help)"
+    reason === :nonfinite && return "the residual norm at the starting point is not finite, so no step was taken"
     reason === :external && return "the external solver reported failure, or returned a point whose residual misses the tolerance"
     return "reason $(reason)"
 end

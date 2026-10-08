@@ -48,7 +48,7 @@ docpages = [
         "Numerical references" => "numerical-references.md",
     ],
     "API reference" => [
-        "Overview and existing links" => "reference.md",
+        "Overview" => "reference.md",
         "Circuit construction" => "api/circuits.md",
         "Components and scattering models" => "api/components.md",
         "Harmonic-balance analyses" => "api/harmonicbalance.md",
@@ -56,6 +56,8 @@ docpages = [
         "External solver interface" => "api/interop.md",
         "Transient analyses and responses" => "api/transient.md",
         "Temporal measurements and noise" => "api/noise.md",
-        "Network operations and constants" => "api/networks.md",
+        "Network parameters" => "api/networkparameters.md",
+        "Closed-form networks" => "api/networkmodels.md",
+        "Network connections" => "api/connections.md",
     ],
 ]

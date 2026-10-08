@@ -13,7 +13,7 @@ ScatteringParameters(LaplaceResponse(s -> fill(0.2/(1 + s/1e10), 1, 1));
 
 For a lumped element, `f` returns its component value (ohms, farads or
 henries), not its admittance. For a scattering provider it returns a matrix;
-`form = :inplace` and `:entry` also work, with `f(dest, s)` and `f(p, q, s)`.
+`form = :inplace` also works, with `f(dest, s)`.
 The response must be analytic wherever the pole search evaluates it and
 must represent the intended causal model. Ordinary real components and
 unconverted scattering responses require `f(conj(s)) == conj(f(s))`.
@@ -43,7 +43,6 @@ end
 
 (response::LaplaceResponse)(w::Real) = response.f(im*w)
 (response::LaplaceResponse)(dest::AbstractMatrix, w::Real) = response.f(dest, im*w)
-(response::LaplaceResponse)(p::Integer, q::Integer, w::Real) = response.f(p, q, im*w)
 
 # Only holomorphic operations are accepted in a component expression.
 # In particular real(f(s)), imag(f(s)) and conj(f(s)) are not continuations

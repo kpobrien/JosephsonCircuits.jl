@@ -449,7 +449,8 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lscale,
         f = slotflag[q]
         for (c, (node, sgn)) in enumerate(ns)
             k = (node-1)*Nmodes + j
-            layout.w[k] || (f |= FWIDE)
+            # a mode which is not self conjugate has two real slots
+            layout.ptr[k+1] - layout.ptr[k] == 2 && (f |= FWIDE)
             if isone(c)
                 n1[q] = layout.ptr[k]
                 cn1[q] = k
@@ -484,7 +485,8 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lscale,
     cptr, cidx, ccoef = complexlinearmap(Ti, T, Knm)
 
     lptr = convert(Vector{Ti}, layout.ptr[1:nc])
-    lwide = Int32[layout.w[k] ? 0 : 1 for k in 1:nc]
+    # one where the mode is not self conjugate and the index has two slots
+    lwide = Int32[layout.ptr[k+1] - layout.ptr[k] - 1 for k in 1:nc]
     kptrzero = ones(Ti, length(kptr))
     cptrzero = ones(Ti, length(cptr))
 
@@ -525,15 +527,19 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lscale,
 end
 
 # The three parts of the backward map which carry values rather than
-# structure: the Josephson coefficients `Lscale/Lj` times the incidence entry,
-# and the linear term in each representation. They are built here for the
-# plan and again by `refreshvalues!` when the values move under a fixed
-# structure, so the two cannot disagree.
+# structure: the Josephson coefficients, the incidence entry times the
+# junction's `Lscale/Lj`, and the linear term in each representation.
+# `refreshvalues!` rewrites them through the plan's `ValueMaps` when the
+# values move under a fixed structure, reading the coefficients from the
+# same `junctioncoefficients` and the linear term from the same entries of
+# `Knm`, so a refreshed plan holds what a plan built at the new values
+# holds.
 function backwardjosephsonmap(::Type{Ti}, ::Type{T}, Rbnm::SparseMatrixCSC,
         Ljb::SparseVector, Lscale, Nmodes::Integer, Nmatrix::Integer,
         freqindexmap::Vector{Int}, nc::Integer) where {Ti,T}
     NJJ = length(Ljb.nzval)
     jjofbranch = Dict{Int,Int}(Ljb.nzind[i] => i for i in 1:NJJ)
+    lmolj = junctioncoefficients(T, Ljb, Lscale)
     bptr = Vector{Ti}(undef, nc+1)
     bptr[1] = 1
     bsrc = Ti[]
@@ -547,7 +553,7 @@ function backwardjosephsonmap(::Type{Ti}, ::Type{T}, Rbnm::SparseMatrixCSC,
             iszero(i) && continue
             j = (r-1) % Nmodes + 1
             push!(bsrc, freqindexmap[j] + (i-1)*Nmatrix)
-            push!(bcoef, T(valsrbnm[t])*T(Lscale/Ljb.nzval[i]))
+            push!(bcoef, T(valsrbnm[t])*lmolj[i])
         end
         bptr[k+1] = length(bsrc)+1
     end
@@ -585,7 +591,8 @@ component values can be written into them without rebuilding anything.
   imaginary part, which are `0` or `±1`.
 - `cmap`: for each entry of the complex form, the entry of `Knm`.
 - `bjunc`, `bsgn`: for each Josephson coefficient, its junction and the
-  incidence entry, so the coefficient is `bsgn*Lscale/Lj`.
+  incidence entry, so the coefficient is `bsgn` times the junction's
+  `Lscale/Lj`.
 - `knz`: the entries of `Knm`, on the backend where the plan lives, refilled
   at each refresh.
 
@@ -732,14 +739,14 @@ end
     return nothing
 end
 
-@kernel function refreshjosephsonkernel!(bcoef, @Const(ljnz), @Const(bjunc),
-        @Const(bsgn), lmean)
+@kernel function refreshjosephsonkernel!(bcoef, @Const(lmolj), @Const(bjunc),
+        @Const(bsgn))
     gid = @index(Global)
-    refreshjosephsonitem!(bcoef, ljnz, bjunc, bsgn, lmean, gid)
+    refreshjosephsonitem!(bcoef, lmolj, bjunc, bsgn, gid)
 end
 
-@inline function refreshjosephsonitem!(bcoef, ljnz, bjunc, bsgn, lmean, t)
-    @inbounds bcoef[t] = bsgn[t]*(lmean/ljnz[bjunc[t]])
+@inline function refreshjosephsonitem!(bcoef, lmolj, bjunc, bsgn, t)
+    @inbounds bcoef[t] = bsgn[t]*lmolj[bjunc[t]]
     return nothing
 end
 
@@ -750,13 +757,13 @@ Rewrite the value arrays of a plan through its [`ValueMaps`](@ref): up to
 three passes over the arrays where they live (the real form only when the
 plan has one, the Josephson coefficients only when there are junctions),
 plain loops on the host and kernels on a device; nothing the size of the
-plan is allocated, a junction length vector of inductances is.
+plan is allocated, a junction length vector of coefficients is.
 """
 function refreshvalues!(plan::NonlinearTermPlan{Ti,T}, maps::ValueMaps,
         Knm::SparseMatrixCSC, Ljb::SparseVector, Lscale) where {Ti,T}
     backend = plan.backend
     copyto!(maps.knz, nonzeros(Knm))
-    ljnz = tobackend(backend, convert(Vector{T}, real.(Ljb.nzval)))
+    lmolj = tobackend(backend, junctioncoefficients(T, Ljb, Lscale))
     kcoef, ccoef, bcoef = plan.kcoef, plan.ccoef, plan.bcoef
     if hasrealbackward(plan)
         if hostloop(backend, length(kcoef))
@@ -779,12 +786,11 @@ function refreshvalues!(plan::NonlinearTermPlan{Ti,T}, maps::ValueMaps,
     end
     if hostloop(backend, length(bcoef))
         for t in eachindex(bcoef)
-            refreshjosephsonitem!(bcoef, ljnz, maps.bjunc, maps.bsgn,
-                T(Lscale), t)
+            refreshjosephsonitem!(bcoef, lmolj, maps.bjunc, maps.bsgn, t)
         end
     elseif !isempty(bcoef)
-        refreshjosephsonkernel!(backend, 64)(bcoef, ljnz, maps.bjunc,
-            maps.bsgn, T(Lscale); ndrange = length(bcoef))
+        refreshjosephsonkernel!(backend, 64)(bcoef, lmolj, maps.bjunc,
+            maps.bsgn; ndrange = length(bcoef))
     end
     KernelAbstractions.synchronize(backend)
     return plan

@@ -42,9 +42,14 @@ reflection interpretation; see [`Port`](@ref). Transient noise baths
 require matched port terminations.
 
 Drive amplitudes belong to the analysis. HB uses Fourier coefficients;
-`TransientSource` uses instantaneous current. A [`CurrentSource`](@ref)
-component supplies constant current out of its first terminal and into its
-second. See [current conventions](conventions.md#Current-amplitudes).
+`TransientSource` uses instantaneous current. A port source injects its
+current into the port's first (positive) terminal. A
+[`CurrentSource`](@ref) component drives its constant current through
+itself from its first terminal to its second: it draws the current from
+the node at its first terminal and delivers it to the node at its second,
+the opposite sense of a port source. A port and a `CurrentSource` written
+on the same nodes in the same order therefore drive in opposite senses.
+See [current conventions](conventions.md#Current-amplitudes).
 
 ## The connection-group form
 
@@ -127,6 +132,20 @@ A component value can be a number or a parameter such as `:Lj`. Supply a
 dictionary of parameter values when solving. For expressions involving
 several parameters, use `JosephsonCircuits.@params`; see
 [design sensitivities](recipes/sensitivities.md).
+[`symbolicmatrices`](@ref) gives the circuit's matrices with the
+parameters left as expressions:
+
+```@example parameters
+using JosephsonCircuits
+jpa = Circuit([
+    (:p1, 1, 0, Port(1; Z0 = :R)),
+    (:cc, 1, 2, Capacitor(:Cc)),
+    (:jj, 2, 0, JosephsonJunction(:Lj)),
+    (:cj, 2, 0, Capacitor(:Cj)),
+])
+matrices = symbolicmatrices(jpa)
+(capacitance = matrices.Cnm, conductance = matrices.Gnm)
+```
 
 Frequency-domain analyses also accept complex values and
 [`FrequencyDependent`](@ref) closures. The callable receives nonnegative
@@ -216,8 +235,9 @@ Julia's `isequal`/`hash` contract.
 
 ### Interface changes
 
-See [migration](migration.md) for legacy netlists, frequency-dependent
-expressions, parameterized circuits, and node ordering.
+See [migration](migration.md) for code written for v0.5.4: tuple
+netlists, symbolic values, node order, and frequency-dependent
+expressions.
 
 ## Scattering blocks, transmission lines and fitted data
 
@@ -226,8 +246,8 @@ delays, pumped devices, and noise contracts with separate examples.
 
 ## Noise models and temperatures
 
-A port's input carries the thermal field of its termination, the vacuum
-unless `MatchedTermination(temperature = T)` states a temperature. Internal
-losses use the component's temperature or the analysis default;
-scattering blocks can state a thermal or explicit covariance model. See the
-[temperature table](conventions.md#Noise-normalization-and-temperature).
+Ports, internal losses and scattering blocks take the temperatures and
+noise models of the
+[temperature table](conventions.md#Noise-normalization-and-temperature);
+[noise at the ports](portnoise.md) works through warm ports and a readout
+chain.

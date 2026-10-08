@@ -32,6 +32,7 @@ end
 # so the order only decides when the methods reach the dispatch tables and
 # not what they do once they are there.
 using JosephsonCircuits
+using JosephsonCircuits: BlockDiagonal, Floquet, FullJacobian
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 using Krylov
 using LinearAlgebra
@@ -155,8 +156,10 @@ end
         @test s.solverinfo.converged
         @test isapprox(s.nodeflux, ref.nodeflux; rtol = 1e-8)
     end
-    # with the full Jacobian as the preconditioner and with deflation
-    # recycling, so that the extension's preconditioned path runs
+    # with the full Jacobian as the preconditioner, and with the Floquet
+    # preconditioner, whose base the extension applies, since Krylov.jl
+    # harvests no deflation space, so that the extension's preconditioned
+    # path runs
     for pc in (FullJacobian(), Floquet(BlockDiagonal(); size = 12))
         s = JCX.hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
             atol = 1e-14, method = NewtonKrylov(preconditioner = pc,
@@ -201,7 +204,10 @@ end
     @test solvew().converged
     @test Aw*dw ≈ Fw rtol = 1e-8
     solvew()
-    @test (@allocated solvew()) < 400*nw*sizeof(Float64)/10
+    # measured in a function: `@allocated` compiles the whole expression it
+    # stands in, which here would be this testset
+    allocations() = @allocated solvew()
+    @test allocations() < 400*nw*sizeof(Float64)/10
     @test Aw*dw ≈ Fw rtol = 1e-8
 end
 

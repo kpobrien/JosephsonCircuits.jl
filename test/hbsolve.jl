@@ -506,9 +506,10 @@ using Test
                 for wsi in ws
                     A = copy(lsys.Asparse)
                     Aconj = copy(lsys.Asparse)
-                    JosephsonCircuits.assemblesystemmatrix!(A, lsys, wsi)
-                    JosephsonCircuits.assemblesystemmatrix!(Aconj, lsys, wsi;
-                        conjugatepump = true)
+                    wmodes = wsi .+ lsys.wpumpmodes
+                    JosephsonCircuits.assemblesystemmatrix!(A, lsys, wmodes)
+                    JosephsonCircuits.assemblesystemmatrix!(Aconj, lsys,
+                        wmodes; conjugatepump = true)
                     @test isapprox(Matrix(Aconj), Matrix(transpose(A)),
                         rtol = 1e-10, norm = v->maximum(abs,v))
 
@@ -528,8 +529,8 @@ using Test
                     returnnodefluxadjoint=true, returnSnoise=true, returnQE=true)
                 for (i, wsi) in enumerate(ws)
                     Aconj = copy(lsys.Asparse)
-                    JosephsonCircuits.assemblesystemmatrix!(Aconj, lsys, wsi;
-                        conjugatepump = true)
+                    JosephsonCircuits.assemblesystemmatrix!(Aconj, lsys,
+                        wsi .+ lsys.wpumpmodes; conjugatepump = true)
                     xconj = Matrix(Aconj)\Matrix(d.bnm)
                     @test isapprox(sol.nodefluxadjoint[:,:,i],
                         xconj[1:size(sol.nodefluxadjoint,1),:], rtol = 1e-8,
@@ -735,7 +736,7 @@ using Test
             @test_throws ArgumentError JosephsonCircuits.hblinsolve(ws,
                 circuit, defs; keyedarrays=false, sensitivitynames=["C1"],
                 returnSsensitivity=true,
-                sensitivitynodeflux=zeros(ComplexF64,1,1))
+                sensitivityresidual=zeros(1,1))
         end
 
 
@@ -846,11 +847,14 @@ using Test
             # solves of a frequency allocate a byte or two per element
             n = 8
             circuit, defs = testchaincircuit(n)
+            # one batch whatever the session's threads: each batch builds
+            # its own workspaces, and two frequencies make fewer batches
+            # than four on more than two threads
             solve(nf) = hbsolve(2*pi*collect(range(4.8e9, 5.2e9; length = nf)),
                 (2*pi*7e9,), [(mode=(1,),port=1,current=1e-8)], (4,), (8,),
                 circuit, defs; keyedarrays=false,
                 sensitivitynames=["Lj1", "C1"], returnSsensitivity=true,
-                sensitivitymode=:reverse)
+                sensitivitymode=:reverse, nbatches=1)
             sol = solve(2); solve(4)
             # one port, so the pairs of output modes are those of the modes
             touched = length(sol.linearized.modes)^2*
@@ -901,13 +905,6 @@ using Test
                 sensitivityresidual=good[:, 1:0])
             @test_throws DimensionMismatch lin(
                 sensitivityresidual=vcat(good, good))
-            # wrong sizes for the node flux derivatives
-            @test_throws DimensionMismatch lin(
-                sensitivitynodeflux=zeros(Complex{Float64}, 3, 1))
-            # both inputs at once is ambiguous between the orders
-            @test_throws ArgumentError lin(sensitivityresidual=good,
-                sensitivitynodeflux=zeros(Complex{Float64},
-                    length(op.x), 1))
         end
 
         @testset "no junction operating point sensitivity" begin
@@ -1068,7 +1065,8 @@ using Test
         ws = 2*pi*collect(range(4.41e9, 5.57e9, length = 4))
         kw = (; dc = true, threewavemixing = true, fourwavemixing = true,
             returnSnoise = true, returnnodeflux = true, keyedarrays = false)
-        ra = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs; kw...)
+        ra = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs;
+            factorization = KLUfactorization(), kw...)
         for (f, tol, nb) in ((BlockFactorization(), 1e-10, 1),
                 (BlockFactorization(), 1e-10, 3),
                 (BlockFactorization(precision = Float32), 1e-8, 1))
@@ -1078,6 +1076,42 @@ using Test
                 a = getfield(ra.linearized, name); b = getfield(rb.linearized, name)
                 @test isapprox(a, b; rtol = tol)
             end
+        end
+        # on a meshed circuit too: a 10x10 junction lattice, driven at one
+        # corner and loaded at the other, near 11.5599 GHz, where a
+        # separator of the mesh eliminated as one merged block is ill
+        # conditioned and loses digits that node by node elimination keeps.
+        # The argument types are the chain's above, whose compiled sweep
+        # this reuses
+        let n = 10
+            id(i, j) = string((j - 1)*n + i)
+            netlist = Any[("P1", id(1, 1), "0", Port(1; Z0 = :R)),
+                ("R2", id(n, n), "0", Resistor(:R))]
+            k = 0
+            for i in 1:n, j in 1:n
+                push!(netlist, ("C$(i)_$(j)", id(i, j), "0", Capacitor(:Cg)))
+                i < n && (k += 1; push!(netlist, ("Lx$(k)", id(i, j), id(i + 1, j), JosephsonJunction(:Lj))))
+                j < n && (k += 1; push!(netlist, ("Ly$(k)", id(i, j), id(i, j + 1), JosephsonJunction(:Lj))))
+            end
+            lattice = Circuit(netlist)
+            latticesrc = [(mode=(1,0), port=1, current=0.3e-6),
+                (mode=(0,1), port=1, current=0.3e-6)]
+            latticeS(f) = hbsolve(2*pi*[11.55984e9, 11.55986e9, 11.55988e9],
+                (2*pi*7.0e9, 2*pi*7.3e9), latticesrc, (2,2), (4,4), lattice,
+                defs; factorization = f, keyedarrays = false).linearized.S
+            @test isapprox(latticeS(BlockFactorization()),
+                latticeS(KLUfactorization()); rtol = 1e-10)
+        end
+        # A node block can be singular in a nonsingular matrix: in the
+        # resonator, node 1's own elements resonate at w = 1 with node 2 held
+        # at zero. A block factorization the sweep chose itself gives way to
+        # the sparse one; one given explicitly throws
+        let (resonator, rdefs) = testresonatorcircuit()
+            resonatorS(f) = hbsolve([1.0], (2.3, 3.7), src, (1,1), (1,1), resonator,
+                rdefs; factorization = f, keyedarrays = false).linearized.S
+            @test isapprox(resonatorS(nothing), resonatorS(KLUfactorization());
+                rtol = 1e-12)
+            @test_throws SingularException resonatorS(BlockFactorization())
         end
         # batches of a block factorization run with one BLAS thread, which
         # is a setting of the whole process: two sweeps at once leave it
@@ -1143,27 +1177,21 @@ using Test
         @test isapprox(ra.linearized.S, rr.linearized.S; rtol = 1e-8)
         @test_throws MethodError hbsolve(ws, (w1,w2), src, (2,2), (8,4),
             circuit, defs; precision = Float32, kw...)
-        # the automatic choice: the sparse factorization for one tone, the
-        # block factorization for two or more when it fits, and the sweep
-        # through it agrees with the explicit choices
+        # the automatic choice on the host: the sparse factorization for one
+        # tone, the block factorization for two or more when its factors, a
+        # set per host batch, fit the budget (the device's is tested in
+        # test/gpu)
         lf = JosephsonCircuits.linearizedfactorization
-        d2 = hbsolve(ws[1:1], (w1,w2), src, (2,2), (8,4), circuit, defs;
-            kw...)
         @test lf(sprand(ComplexF64, 20, 20, 0.3) + I, 5, 1, JosephsonCircuits.CPU()) isa KLUfactorization
         Asp = sparse(ComplexF64[1 1 0 0; 1 1 1 0; 0 1 1 1; 0 0 1 1])
         @test lf(Asp, 2, 2, JosephsonCircuits.CPU()) isa BlockFactorization
         @test lf(Asp, 2, 2, JosephsonCircuits.CPU(); budget = 0) isa KLUfactorization
+        bytes = JosephsonCircuits.blocksystembytes(ComplexF64,
+            JosephsonCircuits.blocksymbolic(Asp, 2))
         @test lf(Asp, 2, 2, JosephsonCircuits.CPU(); nbatches = 4,
-            budget = 4*JosephsonCircuits.blocksystembytes(ComplexF64,
-                JosephsonCircuits.clustersymbolic(
-                    JosephsonCircuits.blocknodegraph(Asp, 2)...,
-                    JosephsonCircuits.klunodeorder(
-                        JosephsonCircuits.blocknodegraph(Asp, 2)[2])))) isa BlockFactorization
-        auto = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs; kw...)
-        for name in (:S, :Snoise, :QE, :CM)
-            @test isapprox(getfield(ra.linearized, name),
-                getfield(auto.linearized, name); rtol = 1e-9)
-        end
+            budget = 4*bytes) isa BlockFactorization
+        @test lf(Asp, 2, 2, JosephsonCircuits.CPU(); nbatches = 4,
+            budget = 4*bytes - 1) isa KLUfactorization
         # the choice hblinsolve itself makes, through the sweep: the block
         # factorization for two tones and the sparse one for one tone
         function resolved(wp, Npump, Nmod, sources)
@@ -1215,7 +1243,6 @@ using Test
         F = JosephsonCircuits.factorize(BlockFactorization(), A; blocksize = Nm)
         @test F isa JosephsonCircuits.SparseBlockFactorization
         @test !F.refine
-        @test F.lu.N < Nn        # amalgamated
         B = randn(rng, ComplexF64, n, 5); X = similar(B)
         JosephsonCircuits.myldiv!(X, F, B)
         @test norm(A*X - B)/norm(B) < 1e-12
@@ -1274,6 +1301,56 @@ using Test
         @test nnz(Amoved) == nnz(A)
         @test_throws DimensionMismatch JosephsonCircuits.refactorize!(
             BlockFactorization(), F, Amoved)
+
+        # the linearized solve eliminates node by node, on a chain as on a
+        # lattice, whose separators the preconditioner's clusters merge
+        # (test/solvers/modecoupling.jl). Both solve to KLU's accuracy
+        function nodeblockmatrix(edges, Nn)
+            Ib = Int[]; Jb = Int[]; Vb = ComplexF64[]
+            for (a, b) in [[(a, a) for a in 1:Nn]; edges; reverse.(edges)],
+                    r in 1:Nm, c in 1:Nm
+                push!(Ib, (a-1)*Nm+r); push!(Jb, (b-1)*Nm+c)
+                push!(Vb, randn(rng, ComplexF64))
+            end
+            return sparse(Ib, Jb, Vb, Nn*Nm, Nn*Nm) + 10I
+        end
+        lattice = [(4(i-1)+j, 4(i-1)+j+k) for i in 1:4 for j in 1:4
+            for k in (1, 4) if (k == 1 ? j < 4 : i < 4)]
+        # the bytes the refactorization and the forward and transposed
+        # solves of one frequency allocate
+        function frequencybytes(X, F, A, B)
+            step!() = (JosephsonCircuits.refactorize!(BlockFactorization(),
+                F, A); JosephsonCircuits.myldiv!(X, F, B);
+                JosephsonCircuits.myldiv!(X, transpose(F), B))
+            step!()
+            return @allocated step!()
+        end
+        bytes = Dict{Tuple{Bool,Bool},Int}()
+        for (edges, Nn, islattice) in (([(i, i+1) for i in 1:11], 12, false),
+                (lattice, 16, true))
+            Ab = nodeblockmatrix(edges, Nn)
+            Fb = JosephsonCircuits.factorize(BlockFactorization(), Ab;
+                blocksize = Nm)
+            @test Fb.lu.N == Nn
+            Bb = randn(rng, ComplexF64, Nn*Nm, 3); Xb = similar(Bb)
+            JosephsonCircuits.myldiv!(Xb, Fb, Bb)
+            Xk = JosephsonCircuits.factorize(KLUfactorization(), Ab) \ Bb
+            @test norm(Xb - Xk) <= 1e-12*norm(Xk)
+            for G in (Fb, JosephsonCircuits.factorize(
+                    BlockFactorization(precision = Float32), Ab; blocksize = Nm))
+                bytes[(islattice, G.refine)] = frequencybytes(Xb, G, Ab, Bb)
+            end
+        end
+        # on the host a frequency allocates nothing that grows with the
+        # circuit, in double as in refined single precision: the lattice
+        # no more than the smaller chain. Julia 1.11 allocates the view
+        # wrappers each `mul!` of a slice is handed, which later releases
+        # elide
+        if VERSION >= v"1.12"
+            for refine in (false, true)
+                @test bytes[(true, refine)] <= bytes[(false, refine)]
+            end
+        end
     end
 
     @testset "outputs do not depend on whether S is retained" begin
@@ -1329,6 +1406,9 @@ end
     # a temperature below zero
     @test_throws ArgumentError hblinsolve(ws, circuit, circuitdefs;
         temperature = -0.05)
+    # a factorization without a transposed solve
+    @test_throws ArgumentError hblinsolve(ws, circuit, circuitdefs;
+        factorization = QRfactorization())
     # an operating point of another circuit, with fewer junctions
     nl = hbnlsolve(wp, (4,), sources, circuit, circuitdefs)
     other = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(100e-15)),
@@ -1355,15 +1435,18 @@ end
         circuitdefs; fourwavemixing = false)
     @test_throws ArgumentError hbcache(wp, (4,), sources, circuit,
         circuitdefs; odd = false)
-    # the options of the sweep, refused before the pump is solved, which
-    # given one iteration would warn that it did not converge
+    # the options of the sweep, and a start for a staged solve, which warm
+    # starts its own stages, refused before the pump is solved, which given
+    # one iteration would warn that it did not converge
     for bad in ((temperature = -1.0,), (temperature = NaN,),
             (factorization = CUDSSFactorization(),),
+            (factorization = QRfactorization(),),
             (sensitivitymode = :sideways,),
             (sensitivitynames = ["P1"], returnSsensitivity = true),
             (sensitivitypairs = [("C1", 1, 1.0)], returnSsensitivity = true),
             (sensitivitypairs = [("C1", 1, 1.0)], sensitivitynames = ["C1"],
-                nsensitivityparameters = 1, returnSsensitivity = true))
+                nsensitivityparameters = 1, returnSsensitivity = true),
+            (method = Staged(), x0 = zeros(ComplexF64, 4)))
         @test_logs min_level=Base.CoreLogging.Warn @test_throws(
             ArgumentError, hbsolve(ws, wp, sources, (2,), (4,), circuit,
                 circuitdefs; iterations = 1, bad...))

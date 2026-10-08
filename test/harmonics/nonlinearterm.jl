@@ -102,8 +102,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             maps.kim; ndrange = length(k))
         JC.refreshcomplexkernel!(p.backend, 64)(c, maps.knz, maps.cmap;
             ndrange = length(c))
-        JC.refreshjosephsonkernel!(p.backend, 64)(b, real.(sys.Ljb.nzval),
-            maps.bjunc, maps.bsgn, sys.Lscale; ndrange = length(b))
+        JC.refreshjosephsonkernel!(p.backend, 64)(b,
+            JC.junctioncoefficients(Float64, sys.Ljb, sys.Lscale), maps.bjunc,
+            maps.bsgn; ndrange = length(b))
         sync()
         @test isequal(k, p.kcoef) && isequal(c, p.ccoef) && isequal(b, p.bcoef)
     end
@@ -154,5 +155,34 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             outr, lean, sys.phimatrix, xr)
         @test_throws ArgumentError JosephsonCircuits.applybackwardterm!(
             outr, lean, sys.phimatrix, xr; addlinearterm = false)
+    end
+
+    @testset "a rebound single precision plan is one built at its values" begin
+        # a system rebound to new component values holds what a system built
+        # at them holds, in single precision too, where `Lscale/Lj` rounded
+        # once and the quotient of the rounded `Lscale` and `Lj` differ for
+        # these inductances
+        JC = JosephsonCircuits
+        chain(Ljs) = Circuit(vcat(Any[(:p1, 1, 0, Port(1))],
+            [(Symbol(:jj, i), i, i + 1, JosephsonJunction(Ljs[i]))
+                for i in eachindex(Ljs)],
+            [(Symbol(:c, i), i + 1, 0, Capacitor(40e-15))
+                for i in eachindex(Ljs)]))
+        system(Ljs) = JC.hbnlsolve((2*pi*5e9,), (2,),
+            [(mode = (1,), port = 1, current = 1e-7)], chain(Ljs);
+            returnsystem = true, assemblejacobian = false,
+            method = NewtonKrylov(precision = Float32)).sys
+        s1 = system([100e-12, 110e-12])
+        s2 = system([120e-12, 142.9e-12])
+        r = JC.rebind!(s1, s2.invLnm, s2.Gnm, s2.Cnm,
+            Vector{ComplexF64}(s2.bnm), s2.Ljb, s2.Ljbm, s2.Lscale;
+            maps = JC.valuemaps(s1), relations = nothing)
+        p, q = r.nonlineartermplan, s2.nonlineartermplan
+        @test p.bcoef == q.bcoef && p.kcoef == q.kcoef && p.ccoef == q.ccoef
+        x = Float32.(0.1 .* sin.(1:length(r.xr)))
+        F1, F2 = similar(x), similar(x)
+        JC.residual!(F1, JC.setpoint!(r, x))
+        JC.residual!(F2, JC.setpoint!(s2, x))
+        @test F1 == F2
     end
 end

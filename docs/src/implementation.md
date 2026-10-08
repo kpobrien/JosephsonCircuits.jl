@@ -12,6 +12,9 @@ circuit or choosing an analysis, start with the [user guides](index.md#How-the-d
 | `src/solvers/` | Nonlinear methods, continuation, preconditioners, and factorization |
 | `src/linearized/` | Signal sweeps, temporal poles, output normalization, noise, and sensitivities |
 | `src/transient/` | Time stepping, constraints, responses, temporal measurements, and baths |
+| `src/networks/` | Network parameters and their conversions, closed-form networks, the connection of scattering networks with their noise, and quantum optics |
+| `src/spice/` | SPICE netlist export, the WRspice runs of the comparisons and of the `WRspice` transient method, and SPICE output readers |
+| `ext/` | Extensions loaded with CUDA.jl, CUDSS.jl, Krylov.jl, SciMLBase.jl, Symbolics.jl and XicTools_jll |
 
 The corresponding tests generally mirror these directories. Cross-domain
 and external-reference comparisons live in the top-level test files.
@@ -165,11 +168,12 @@ Named `@example` blocks execute during the build and can share state within
 a page. Keep small reference assertions with the example they validate.
 Plain `julia` fences are display-only; use them for optional dependencies,
 large device runs, or explicitly identified continuations of a setup.
-The double-pump, ten-signal, SNAIL, flux-pump, uniform TWPA, and Floquet
-TWPA recipes share their displayed circuit builders with small executable
-checks; their full-size runs remain optional. These checks cover solver
-convergence and finite responses, with commutator checks for the amplifier
-models. They do not reproduce the published full-device gain curves. Both build
+The amplifier recipes share their displayed circuit builders with small
+executable checks; their full-size runs remain optional. These checks
+cover solver convergence and finite responses, with commutator checks for
+the amplifier models, and compare the pump-off circuit with a closed form
+where the recipe has no other independent reference. They do not
+reproduce the published full-device gain curves. Both build
 entry points also execute the marked README example directly from its
 source, so it cannot silently drift from a copied test fixture. Run that
 check alone with `julia --project=. docs/readme.jl`.
@@ -182,10 +186,13 @@ deploy. Run it when editing links, equations, or executable examples.
 
 Public docstrings are grouped in `docs/src/api/`; `docs/api.jl` defines
 their groups once for both the public pages and the internal appendix.
-Add new public names to the appropriate group. The old `reference.md`
-binding and method anchors are retained as lightweight links; preserve
-them and update their destinations if an entry moves again. Do not add
-new API entries to that compatibility index.
+Add a new exported name to the appropriate group. The network library and
+the SPICE helpers are grouped by the file that documents them, every
+public name of the file, so a name declared `public` in
+`src/JosephsonCircuits.jl` appears there and the files' helpers stay in
+the appendix. The documentation build stops on a name of a public page
+that is neither exported nor public, and on a documented public name that
+no page shows.
 
 `docs/live.jl` runs the VitePress development server and rebuilds when
 source pages change. A package docstring edit needs a Julia restart or

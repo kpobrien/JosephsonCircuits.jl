@@ -61,7 +61,9 @@ at a number of poles.
   enforcement: the residue is taken within the space of the singular
   vectors kept, which the enforcement changes it within and the
   realization spans, so that the block returned is the one made
-  passive.
+  passive. A value stated at zero frequency is met all the same, with or
+  without the enforcement: the constant term takes back the share of it
+  that the parts left out carry.
 - In the fit of a [`LinearizedScattering`](@ref) block, the cosine or
   sine part of a harmonic whose samples all stand below `zerotol` of the
   harmonic's largest is realized as zero, with no state.
@@ -270,7 +272,7 @@ end
 
 """
     RationalScattering(block::ScatteringParameters, npoles;
-        frequencies = nothing, tol = 1e-2, atol = 1e-8,
+        frequencies = nothing, tol = 1e-2, atol = 1e-8, noisetol = 5e-3,
         fitting = VectorFitting(), passivity = PassivityEnforcement(),
         delays = nothing, maxstates = defaultmaxstates(), weights = nothing)
 
@@ -280,10 +282,10 @@ spread over the band or given, are relocated by the relaxed iteration of
 Gustavsen and Semlyen until they settle, and the residues of every entry
 and the constant term follow by least squares, with the numerical
 parameters of `fitting` (see [`VectorFitting`](@ref)).
-The data is sampled at `frequencies` in Hz, by default a tabulated
-block's own. Poles the data does not need drift out of the band or
-coalesce and are pruned, so `npoles` is a budget rather than the order
-returned; too few poles settle on a poor fit. The block returned is
+The data is sampled at the angular `frequencies` in rad/s, by default a
+tabulated block's own. Poles the data does not need drift out of the
+band or coalesce and are pruned, so `npoles` is a budget rather than the
+order returned; too few poles settle on a poor fit. The block returned is
 measured against the samples, by its largest deviation from them in the
 spectral norm as a fraction of the largest response, as the `tol`
 method of the search measures it, and refused where that exceeds `tol`,
@@ -293,7 +295,8 @@ weighted least squares at them bounds, it is refused before the
 passivity enforcement, which keeps the poles. The result is a real state
 space realization, stable by construction, with as many states per pole
 as its residue has rank. The fitted block keeps the reference
-impedances, grounding and noise model of `block`.
+impedances, grounding and noise model of `block`, a stated covariance
+completed (see below).
 
 `weights`, an array of the samples' shape, `(nports, nports, K)` for `K`
 frequencies, of positive numbers, weighs each entry at each sample: the
@@ -361,12 +364,26 @@ mostly loss rather than the data.
 its repair of an active constant term, but still refuses one which the
 same sweep finds above `sqrt(1 + atol)` at some frequency, or does not
 settle within the enforcement's default `maxtime`, 300 s; enforcing
-passivity with a larger `maxtime` gives the sweep longer. A
-block which states its noise with a [`NoiseCovariance`](@ref) may be
+passivity with a larger `maxtime` gives the sweep longer.
+
+A block which states its noise with a [`NoiseCovariance`](@ref) may be
 active, so it is fitted as it is, with neither the enforcement nor the
 validation, and `passivity` is moot; the fit is still stable by
-construction, and the stated covariance is held to what the fitted
-scattering matrix requires wherever a solver evaluates it.
+construction. Its data must meet the commutation relations its
+covariance declares at every sample, to the covariance's `atol`, which
+the fit checks first and refuses otherwise. The fit meets them no
+better than its error, so the fitted block states the covariance
+completed to the commutation relations of the fitted scattering matrix
+(`completed = true`, see [`NoiseCovariance`](@ref)): it adds, at every
+frequency a solver evaluates it at, the noise its own commutator
+requires, and its output obeys the commutation relations exactly. That
+noise is what the fit costs, and the fit is refused when it exceeds, in
+quanta, `noisetol` of the square of the largest entry, or of one where
+the entries are smaller, at the samples and at the midpoints between
+them, as the fit of a [`LinearizedScattering`](@ref) block measures it.
+A covariance the block itself states completed already carries the noise
+the block's own scattering matrix requires, which the fitted block
+carries as well: the fit costs what its completion adds beyond that.
 
 If `block` states its zero frequency behavior, through the `dcmodel` it
 was built with, the fit meets the statement exactly: the value at zero
@@ -388,37 +405,132 @@ fitted dissipation against the data's before trusting the noise of a
 fit.
 """
 function RationalScattering(block::ScatteringParameters, npoles::Integer; frequencies = nothing,
-        tol::Real = 1e-2, atol::Real = 1e-8, fitting::VectorFitting = VectorFitting(),
+        tol::Real = 1e-2, atol::Real = 1e-8, noisetol::Real = 5e-3, fitting::VectorFitting = VectorFitting(),
         passivity::Union{Nothing,PassivityEnforcement} = PassivityEnforcement(), delays = nothing,
         maxstates::Integer = defaultmaxstates(), weights = nothing)
     npoles >= 1 || throw(ArgumentError("fit at least one pole."))
     (isfinite(tol) && tol >= 0) || throw(ArgumentError("tol must be finite and nonnegative."))
-    fs, S, options = fitsetup(block, frequencies, delays; atol, fitting, passivity, maxstates, weights)
-    (; fit, err, contraction, states) = fitsampled(block, S, fs, Int(npoles); tol, options...)
+    ws, S, options, own = fitsetup(block, frequencies, delays; atol, fitting, passivity, maxstates, weights, noisetol)
+    (; fit, err, contraction, states) = fitsampled(block, S, ws, Int(npoles); tol, options...)
     states > maxstates && throw(ArgumentError(lazy"the fit at $(npoles) poles has $(states) states, more than maxstates = $(maxstates): its realization and passivity enforcement would hold dense matrices of that many states. Fit with fewer poles, or raise maxstates where the memory allows."))
     isnothing(fit) && throw(ArgumentError(lazy"no fit at $(npoles) poles comes within the tol of $(tol): every fit with the poles the relocation settled on misses the data by at least $(err) of the largest response over the samples. Fit with more poles or over a narrower band, take a delay out with delays, or raise tol."))
     err <= tol || throw(ArgumentError(lazy"the fit at $(npoles) poles misses the data by $(err) of the largest response over the samples, against the tol of $(tol): fit with more poles or over a narrower band, take a delay out with delays, or raise tol to accept a fit that far from the data."))
+    added = completionnoise(fit, ws, own)
+    added <= noisetol || throw(ArgumentError(lazy"the fit at $(npoles) poles, which misses the data by $(err) of the largest response, adds noise of $(added) of the square of its largest entry to obey the commutation relations its stated covariance is completed to, against the noisetol of $(noisetol) accepted: fit with more poles or over a narrower band, or raise noisetol to accept a block which adds that much."))
     warncontraction(contraction)
     return fit
 end
 
 # The options both fitting methods take, checked, and the block sampled
-# for them with any delay taken out: the frequencies in Hz, the samples,
-# and the options of `fitsampled`, the noise the fitted block carries,
-# and the components of the samples the relocation runs on and their
-# largest response among them, the latter computed once since the order
-# search fits the same samples at every order.
+# for them with any delay taken out: the angular frequencies, the
+# samples, and the options of `fitsampled`, the noise the fitted block
+# carries, and the components of the samples the relocation runs on and
+# their largest response among them, the latter computed once since the
+# order search fits the same samples at every order. A covariance the
+# block states is held against the samples, and the fitted block states
+# it completed (see completednoise); the last return is the noise the
+# block's own completion adds, which the fit is not charged for (see
+# owncompletion).
 function fitsetup(block::ScatteringParameters, frequencies, delays; atol, fitting, passivity,
-        maxstates, weights)
+        maxstates, weights, noisetol)
     checkatol(atol)
     maxstates >= 1 || throw(ArgumentError("maxstates must be at least one."))
+    (isfinite(noisetol) && noisetol >= 0) || throw(ArgumentError("noisetol must be finite and nonnegative."))
     taus = fitdelays(delays, block.nports)
-    fs, S = samplescattering(block, frequencies; delays = taus)
+    ws, S = samplescattering(block, frequencies; delays = taus)
     W = fitweights(weights, size(S))
-    options = (; atol, fitting, passivity, noise = undelaynoise(block.noise, taus), weights = W,
+    noise = undelaynoise(block.noise, taus)
+    checkstatednoise(block, noise, S, ws)
+    options = (; atol, fitting, passivity, noise = completednoise(noise), weights = W,
         components = relocationcolumns(S, W), scale = max(largestopnorm(weightedsamples(S, W)), floatmin(Float64)),
         maxstates = Int(maxstates))
-    return fs, S, options
+    return ws, S, options, owncompletion(block, noise, ws, taus)
+end
+
+# A block which states its noise is fitted where its data meets the
+# commutation relations the covariance declares, at every sample, to the
+# covariance's `atol` (see checkblockcontract), as the samples of a table
+# are held when the block is built, so that what the completion of the
+# fitted block's covariance adds is the fit's own error and never a
+# declaration the data violated. `noise` is the covariance at the
+# reference planes of the samples `S`, any delay taken out of both.
+function checkstatednoise(block::ScatteringParameters, noise, S::AbstractArray{<:Complex,3}, ws::AbstractVector)
+    noise isa NoiseCovariance || return nothing
+    V = similar(S)
+    evaluatesignedprovider!(V, noise.provider, block.negative_frequency, ws, nothing)
+    for k in eachindex(ws)
+        checkblockcontract(block, view(S, :, :, k), view(V, :, :, k), ws[k])
+    end
+    return nothing
+end
+
+# The noise a fitted block states: a covariance completed to the
+# commutation relations of the fitted scattering matrix (see
+# NoiseCovariance), since a fit meets a stated covariance no better than
+# its error, and any other model as it is.
+completednoise(noise::NoiseCovariance) = NoiseCovariance(noise.provider, noise.interpolation,
+    noise.extrapolation, noise.atol, true, noise.padding)
+completednoise(noise) = noise
+
+# The frequencies the noise a fit adds is measured at: the positive
+# sample frequencies `ws` and the midpoints between them, since a solve
+# evaluates the fit at frequencies of its own.
+function noiseprobes(ws::AbstractVector)
+    positive = filter(>(0), ws)
+    return vcat(positive, (positive[1:end - 1] .+ positive[2:end]) ./ 2)
+end
+
+# The noise the completion of a covariance which `block` states completed
+# adds to the block itself, against its own scattering matrix, at the
+# probes of the samples `ws` (see noiseprobes), in the reference planes of
+# the fit: the delays `taus` taken out of the scattering, as `noise`, the
+# covariance, has them taken out. That noise is the block's, and the
+# fitted block, completing the same covariance against the fit, carries
+# it too, so what the fit adds is measured beyond it (see
+# completionnoise). `nothing` for a covariance stated as it is, or none.
+function owncompletion(block::ScatteringParameters, noise, ws::AbstractVector, taus)
+    (noise isa NoiseCovariance && noise.completed) || return nothing
+    probes = noiseprobes(ws)
+    n = block.nports
+    S = zeros(ComplexF64, n, n, length(probes))
+    V = similar(S)
+    evaluatescattering!(S, block, probes)
+    undelayscattering!(S, probes, taus)
+    evaluatesignedprovider!(V, noise.provider, block.negative_frequency, probes, nothing)
+    own = similar(S)
+    for k in eachindex(probes)
+        Sk, Vk = view(S, :, :, k), view(V, :, :, k)
+        K = Matrix{ComplexF64}(I, n, n) - Sk*Sk'
+        own[:, :, k] = negativepart(Vk - K/2) + negativepart(Vk + K/2)
+    end
+    return own
+end
+
+# The noise the completion of a fitted block's covariance adds, the
+# completed covariance less the stated one, less the noise the block's own
+# completion adds where its covariance is stated completed (`own`, see
+# owncompletion), at the probes of the sample frequencies `ws` (see
+# noiseprobes), as its largest eigenvalue relative to the square of the
+# largest entry of the fitted scattering matrix there, or of one where the
+# entries are smaller, as the fit of a pumped block measures it; zero for
+# a block which does not state its noise.
+function completionnoise(fit::ScatteringParameters, ws::AbstractVector, own = nothing)
+    fit.noise isa NoiseCovariance || return 0.0
+    probes = noiseprobes(ws)
+    n = fit.nports
+    S = zeros(ComplexF64, n, n, length(probes))
+    V = similar(S)
+    evaluatescattering!(S, fit, probes)
+    evaluatecovariance!(V, fit, probes)
+    added = 0.0
+    for k in eachindex(probes)
+        Sk, Vk = view(S, :, :, k), view(V, :, :, k)
+        K = Matrix{ComplexF64}(I, n, n) - Sk*Sk'
+        extra = negativepart(Vk - K/2) + negativepart(Vk + K/2)
+        isnothing(own) || (extra -= view(own, :, :, k))
+        added = max(added, maximum(eigvals(Hermitian(extra)))/max(1.0, maximum(abs, Sk))^2)
+    end
+    return added
 end
 
 # The weights a fit takes, checked against the samples' shape `dims`:
@@ -451,44 +563,50 @@ end
 const statebytes = 256
 defaultmaxstates(; share::Real = 0.5) = floor(Int, sqrt(share*Sys.total_memory()/statebytes))
 
-# The sample frequencies a fit accepts, checked once for both fitters: a
-# sample at zero is data, but at least one positive frequency is needed
-# to set the frequency scale, and duplicate frequencies are refused
-# because they make the divided differences of the Loewner pencil
-# singular.
-function checkfrequencies(fs::AbstractVector)
-    all(f -> isfinite(f) && f >= 0, fs) || throw(ArgumentError(
+# The sample angular frequencies a fit accepts, checked once for both
+# fitters: a sample at zero is data, but at least one positive frequency
+# is needed to set the frequency scale, and duplicate frequencies are
+# refused because they make the divided differences of the Loewner
+# pencil singular.
+function checkfrequencies(ws::AbstractVector)
+    all(w -> isfinite(w) && w >= 0, ws) || throw(ArgumentError(
         "the sample frequencies must be finite and nonnegative."))
-    issorted(fs) || throw(ArgumentError("the sample frequencies must be increasing."))
-    any(k -> fs[k] == fs[k + 1], 1:length(fs) - 1) && throw(ArgumentError(
+    issorted(ws) || throw(ArgumentError("the sample frequencies must be increasing."))
+    any(k -> ws[k] == ws[k + 1], 1:length(ws) - 1) && throw(ArgumentError(
         "the sample frequencies must be strictly increasing; two samples share a frequency."))
-    any(>(0), fs) || throw(ArgumentError(
+    any(>(0), ws) || throw(ArgumentError(
         "the fit needs at least one positive frequency; every sample is at zero."))
-    return fs
+    return ws
 end
 
-# The frequencies in Hz the fit is to match the block at, and the block
-# sampled there, split out because the order search fits the same
-# samples many times and a computed provider is not cheap to evaluate.
+# The angular frequencies the fit is to match the block at, a tabulated
+# block's own by default, and the block sampled there, split out because
+# the order search fits the same samples many times and a computed
+# provider is not cheap to evaluate.
 function samplescattering(block::ScatteringParameters, frequencies; delays = nothing)
-    # A tabulated block is evaluated at the angular frequencies it
-    # stores: dividing by 2 pi and multiplying back is off by an ulp,
-    # which puts the first sample outside the table's own range. The
-    # frequencies in Hz are still returned, since that is what the fit
-    # reports in, but nothing is evaluated at them.
     ws = if isnothing(frequencies)
         block.provider isa TabulatedMatrixProvider || throw(ArgumentError(
-            "give the frequencies in Hz to sample the block at; only a tabulated block has its own."))
+            "give the angular frequencies in rad/s to sample the block at; only a tabulated block has its own."))
         copy(block.provider.frequencies)
     else
-        2pi .* Float64.(collect(frequencies))
+        Float64.(collect(frequencies))
     end
-    fs = ws ./ (2pi)
-    checkfrequencies(fs)
+    checkfrequencies(ws)
     S = zeros(ComplexF64, block.nports, block.nports, length(ws))
     evaluatescattering!(S, block, ws)
+    checkfinitesamples(S, ws, "the block")
     undelayscattering!(S, ws, delays)
-    return fs, S
+    return ws, S
+end
+
+# Samples a fit can take: `what`, sampled as `S` at the angular
+# frequencies `ws`, is refused at the first frequency where it is not
+# finite, by name, rather than as the singular least squares or the
+# invalid argument to LAPACK the fit would otherwise meet there.
+function checkfinitesamples(S::AbstractArray{<:Complex,3}, ws::AbstractVector, what::AbstractString)
+    k = findfirst(k -> !all(isfinite, view(S, :, :, k)), axes(S, 3))
+    isnothing(k) || throw(ArgumentError(lazy"$(what) is not finite at $(ws[k]) rad/s, where the fit samples it: sample it at other frequencies, or state the data where it is finite."))
+    return nothing
 end
 
 # One finite nonnegative delay per port, or nothing where none is asked
@@ -530,19 +648,21 @@ function undelaynoise(noise, taus)
         noise.extrapolation, noise.atol, noise.completed, noise.padding)
 end
 
-# One fit of already sampled data at a fixed order, as the fitted block
-# `fit`; its error `err` against the samples (see relativefiterror); the
-# `contraction` the passivity enforcement applied to it, `nothing` for
-# none, which the caller warns of if it returns the fit; the error `raw`
-# of the fit before its enforcement, as a fraction of the largest
-# response alike; and its `states`. `components` are the columns the
-# relocation runs on (see relocationcolumns) and `scale` the samples'
-# largest response, weighted where they are.
+# One fit of the samples `S` at the angular frequencies `ws`, at a fixed
+# order, as the fitted block `fit`; its error `err` against the samples
+# (see relativefiterror); the `contraction` the passivity enforcement
+# applied to it, `nothing` for none, which the caller warns of if it
+# returns the fit; the errors of the fit before its enforcement, its
+# largest deviation `raw` and its rms `rawrms` over every entry and
+# sample, as fractions of the largest response alike; and its `states`.
+# `components` are the columns the relocation runs on (see
+# relocationcolumns) and `scale` the samples' largest response, weighted
+# where they are.
 # A fit of more than `maxstates` states goes no further than the count:
 # no fit is returned, and an error of `Inf`. Nor is one returned where
 # the poles admit no fit within a finite `tol`, which is then not
 # enforced: the error is a lower bound on that of any fit with them.
-function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; tol::Real, atol::Real,
+function fitsampled(block::ScatteringParameters, S, ws, npoles::Int; tol::Real, atol::Real,
         fitting::VectorFitting, passivity::Union{Nothing,PassivityEnforcement},
         components::Matrix{ComplexF64}, scale::Real, maxstates::Int, noise = block.noise,
         weights::Array{Float64,3} = noweights)
@@ -555,16 +675,18 @@ function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; tol::Real, 
     # neither enforced nor tested
     tested = !(noise isa NoiseCovariance)
     enforce = tested && !isnothing(passivity)
-    poles, residues, D = vectorfit(S, 2pi .* fs, npoles, fitting; dc = dc,
+    poles, residues, D = vectorfit(S, ws, npoles, fitting; dc = dc,
         constanttol = enforce ? atol : nothing, constantmargin = enforce ? passivity.margin : 0.0,
         weights = weights, components = components, scale = scale)
-    raw = first(residualerrors(S, 2pi .* fs, poles, residues, D; weights = weights))/scale
+    raw, rawrms = residualerrors(S, ws, poles, residues, D; weights = weights) ./ scale
     # the rank of each residue is decided here, once: the enforcement
     # changes each within its space and the realization spans the same
-    # spaces, so the block has these states
+    # spaces, so the block has these states, and meets a stated value at
+    # zero frequency through them
     spaces = residuespaces(poles, residues, fitting.ranktol)
     states = statecount(spaces)
-    states > maxstates && return (; fit = nothing, err = Inf, contraction = nothing, raw, states)
+    states > maxstates && return (; fit = nothing, err = Inf, contraction = nothing, raw, rawrms, states)
+    dcthroughspaces!(D, poles, residues, spaces, dc)
     contraction = nothing
     if enforce
         # The enforcement changes the residues and the constant and keeps
@@ -574,27 +696,28 @@ function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; tol::Real, 
         # run. The raw fit is one fit with these poles, so where it meets
         # `tol` no bound on them can exceed it.
         if isfinite(tol) && raw > tol
-            bound = isempty(weights) ? deviationfloor(components, 2pi .* fs, poles, size(S, 1), tol*scale) :
-                deviationfloor(S, weights, 2pi .* fs, poles, tol*scale)
-            bound > tol*scale && return (; fit = nothing, err = bound/scale, contraction, raw, states)
+            bound = isempty(weights) ? deviationfloor(components, ws, poles, size(S, 1), tol*scale) :
+                deviationfloor(S, weights, ws, poles, tol*scale)
+            bound > tol*scale && return (; fit = nothing, err = bound/scale, contraction, raw, rawrms, states)
         end
         # samples reciprocal to the block's tolerance have a reciprocal fit,
         # which the correction keeps so far as its spaces allow (see
         # PassivityEnforcement)
         reciprocal = maximum(k -> opnorm(view(S, :, :, k) .- transpose(view(S, :, :, k))),
             axes(S, 3); init = 0.0) <= atol
-        residues, D, contraction = enforcepassivity(poles, residues, D, 2pi .* fs, passivity;
+        residues, D, contraction = enforcepassivity(poles, residues, D, ws, passivity;
             atol = atol, dc = dc, spaces = spaces, reciprocal = reciprocal, weights = weights,
             memory = statebytes*(Float64(maxstates)^2 - Float64(states)^2))
     elseif tested
-        checkrawpassive(poles, residues, D, 2pi .* fs, spaces; atol = atol)
+        checkrawpassive(poles, residues, D, ws, spaces; atol = atol)
     end
     A, B, C = realization(poles, residues, block.nports; spaces = spaces)
     # the fit's passivity is tested on its residues, by the enforcement or
     # checkrawpassive, which the validation of the realization would repeat
     fit = rationalblock(A, B, C, D; zref = block.zref, grounded = block.grounded,
         noise = noise, atol = atol, normtested = true)
-    return (; fit, err = relativefiterror(fit, S, fs; scale = scale, weights = weights), contraction, raw, states)
+    return (; fit, err = relativefiterror(fit, S, ws; scale = scale, weights = weights), contraction, raw, rawrms,
+        states)
 end
 
 # The number of poles the samples can determine, from the numerical
@@ -641,19 +764,21 @@ function supporteddegree(S::AbstractArray{<:Complex,3}, ws::AbstractVector,
 end
 
 # The fewest poles a fit of the samples `S` could meet `tol` with, from
-# the singular values of the samples, the norms of their `components`
-# (see relocationcomponents). A real common pole fit of `N` poles and a
-# constant is a combination of `N + 1` real functions of frequency, so
-# the samples of every entry, stacked as real and imaginary parts, are
-# fitted with an error of Frobenius norm at least that of their best
-# approximation of rank `N + 1`, the root sum of squares of the singular
-# values beyond it (Eckart and Young). Over `K` samples of `n` ports the
-# largest spectral norm of the error at a sample is at least that over
-# `sqrt(K n)`, against `tol` of the largest response, `scale`.
+# the singular values of the samples, those of the columns the
+# relocation runs on, their `components` or the entries themselves (see
+# relocationcomponents), whose Gram matrix is theirs. A real common pole
+# fit of `N` poles and a constant is a combination of `N + 1` real
+# functions of frequency, so the samples of every entry, stacked as real
+# and imaginary parts, are fitted with an error of Frobenius norm at
+# least that of their best approximation of rank `N + 1`, the root sum of
+# squares of the singular values beyond it (Eckart and Young). Over `K`
+# samples of `n` ports the largest spectral norm of the error at a sample
+# is at least that over `sqrt(K n)`, against `tol` of the largest
+# response, `scale`.
 function fewestpoles(components::AbstractMatrix, S::AbstractArray{<:Complex,3}, tol::Real;
         scale::Real = largestopnorm(S))
     n, K = size(S, 1), size(S, 3)
-    squares = [sum(abs2, view(components, :, j)) for j in axes(components, 2)]
+    squares = svdvals([real.(components); imag.(components)]).^2
     tail = reverse!(cumsum(reverse(squares)))
     for N in 0:length(squares)
         beyond = N + 2 <= length(tail) ? tail[N + 2] : 0.0
@@ -753,14 +878,14 @@ function deviationfloor(S::AbstractArray{<:Complex,3}, weights::Array{Float64,3}
     return bound
 end
 
-# How far a fit is from its data, as a fraction of the largest
-# response: the worst sample, not the mean, since a fit which is
-# excellent almost everywhere and wrong at one resonance is not a model
-# of the block. `scale` is the samples' largest response where the caller
-# has it.
-function relativefiterror(fit, S, fs; scale::Union{Nothing,Real} = nothing,
+# How far a fit is from its samples `S` at the angular frequencies `ws`,
+# as a fraction of the largest response: the worst sample, not the mean,
+# since a fit which is excellent almost everywhere and wrong at one
+# resonance is not a model of the block. `scale` is the samples' largest
+# response where the caller has it.
+function relativefiterror(fit, S, ws; scale::Union{Nothing,Real} = nothing,
         weights::Array{Float64,3} = noweights)
-    worst, largest = fitdeviation(fit.provider, 2pi .* fs, S; scale = scale, weights = weights)
+    worst, largest = fitdeviation(fit.provider, ws, S; scale = scale, weights = weights)
     return worst/max(largest, floatmin(Float64))
 end
 # the largest deviation of a provider from the samples `S` at the angular
@@ -838,10 +963,15 @@ end
 # stop on progress)
 const searchprogress = 0.1
 
+# The degree the order search budgets by where the samples determine none
+# (see supporteddegree): fewer than four of them, whose own count then
+# bounds the orders, or none nonzero
+const undetermineddegree = 64
+
 """
     RationalScattering(block::ScatteringParameters; tol, minpoles = 4,
         maxpoles = nothing, noisefloor = 1e-12, frequencies = nothing,
-        atol = 1e-8, fitting = VectorFitting(),
+        atol = 1e-8, noisetol = 5e-3, fitting = VectorFitting(),
         passivity = PassivityEnforcement(), delays = nothing,
         maxstates = defaultmaxstates(), weights = nothing)
 
@@ -887,9 +1017,14 @@ directions it does not probe can be missed; and a constant term
 contributes to it. Data of a high degree, as measured interconnects with
 long lines are, can put the end of the scan hundreds of orders away,
 each dearer than the last, so the scan also stops once the order has
-doubled since the fit's own error, before its passivity enforcement,
-last fell by a tenth of itself, counted from the first fit whose
-error is under the largest response. An error that has stalled can still
+doubled since the fit's own errors before its passivity enforcement,
+its largest deviation over the samples or its rms over every entry and
+sample, last fell by a tenth of themselves, counted from the first fit
+whose largest deviation is under the largest response. The rms is
+counted as well because data of many features of equal strength,
+resonances as strong as one another, holds the largest deviation at a
+feature the fit has yet to take until it has taken them all, while the
+rms falls with each it takes. An error that has stalled can still
 fall again at much higher orders, so this is a budget rather than a
 proof, and the refusal says where the scan stopped and why. `maxpoles`
 overrides all of this and is a hard ceiling, which the scan reaches
@@ -906,7 +1041,10 @@ progress or on `maxstates`, and why any orders failed to fit are
 reported as an error, since a block quietly less accurate than asked for
 is worse than none: loosen `tol`, raise `maxpoles`, sample the block more
 finely, or fit a narrower band. Where no order produced a fit at all,
-the error says so, and names why they failed.
+the error says so, and names why they failed. A block which states its
+noise is returned at the first order which meets `tol` and whose
+completed covariance adds no more than `noisetol` (see the `npoles`
+method), and the error names the orders which met `tol` alone.
 
 A `delays` given here is taken out before the search, so the order it
 reports is the order of what is left after the delay, which for a cable
@@ -931,20 +1069,20 @@ dissipation `I - S S'`, where the error appears roughly doubled.
 """
 function RationalScattering(block::ScatteringParameters; tol::Real,
         minpoles::Integer = 4, maxpoles = nothing, noisefloor::Real = 1e-12,
-        frequencies = nothing, atol::Real = 1e-8, fitting::VectorFitting = VectorFitting(),
+        frequencies = nothing, atol::Real = 1e-8, noisetol::Real = 5e-3, fitting::VectorFitting = VectorFitting(),
         passivity::Union{Nothing,PassivityEnforcement} = PassivityEnforcement(), delays = nothing,
         maxstates::Integer = defaultmaxstates(), weights = nothing)
     (isfinite(tol) && tol > 0) || throw(ArgumentError("tol must be finite and positive."))
     minpoles >= 1 || throw(ArgumentError("give minpoles >= 1."))
     (isfinite(noisefloor) && noisefloor > 0) || throw(ArgumentError("noisefloor must be finite and positive."))
     fitting.start isa Symbol || throw(ArgumentError("the search fits many orders and starting poles given as a vector fix one: fit at their order with RationalScattering(block, npoles), or start the search from a spacing, :linear, :log or :linlog."))
-    fs, S, options = fitsetup(block, frequencies, delays; atol, fitting, passivity, maxstates, weights)
+    ws, S, options, own = fitsetup(block, frequencies, delays; atol, fitting, passivity, maxstates, weights, noisetol)
     # fitting N poles needs N + 1 samples, so a scan from minpoles needs
     # at least that many; refusing here names the samples rather than
     # reporting a scan of no orders
-    length(fs) >= Int(minpoles) + 1 || throw(ArgumentError(
-        lazy"fitting $(minpoles) poles needs at least $(Int(minpoles) + 1) sample frequencies; there are $(length(fs))."))
-    supported = supporteddegree(S, 2pi .* fs, Float64(noisefloor))
+    length(ws) >= Int(minpoles) + 1 || throw(ArgumentError(
+        lazy"fitting $(minpoles) poles needs at least $(Int(minpoles) + 1) sample frequencies; there are $(length(ws))."))
+    supported = supporteddegree(S, ws, Float64(noisefloor))
     # weighted, each entry is fitted by the basis weighed by its own
     # weights, so no bound on the rank of their fit rules out an order
     floorpoles = isempty(options.weights) ? fewestpoles(options.components, S, tol; scale = options.scale) : 0
@@ -952,7 +1090,7 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
     # a pole the fit keeps takes at least one state and poles beyond the
     # degree are decided by directions the samples do not carry
     ceiling = isnothing(maxpoles) ?
-        (supported == typemax(Int) ? 64 : max(supported, Int(minpoles))) : Int(maxpoles)
+        (supported == typemax(Int) ? undetermineddegree : max(supported, Int(minpoles))) : Int(maxpoles)
     minpoles <= ceiling || throw(ArgumentError(lazy"minpoles is $(minpoles) but the search ceiling is $(ceiling); give a smaller minpoles or a larger maxpoles."))
     besterror, bestpoles = Inf, 0
     # why the failed orders failed, keyed by message with the numbers
@@ -962,35 +1100,14 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
     # the orders refused before their enforcement, and the least of the
     # bounds that refused them and its order
     ruledout, leastbound, boundpoles = Int[], Inf, 0
-    # the fit's own error before its enforcement where it last fell by
-    # `searchprogress` of itself, and that order
-    gained, gainedpoles = Inf, 0
-    attempt = np -> begin
-        (; fit, err, contraction, raw, states) = try
-            # past the ceiling every order is enforced: the end of the
-            # scan there is decided by which orders produce a fit at all
-            fitsampled(block, S, fs, np; tol = np <= ceiling ? tol : Inf, options...)
-        catch e
-            e isa ArgumentError || rethrow()
-            # the message without the orders and numbers in it, so that
-            # the same failure at twenty orders is one line and not twenty
-            key = replace(sprint(showerror, e), r"[-+]?[0-9][0-9.e+-]*" => "N")
-            push!(get!(failures, key, Int[]), np)
-            (; fit = nothing, err = Inf, contraction = nothing, raw = Inf, states = 0)
-        end
-        # a fit whose error is the largest response or more has caught
-        # nothing of the data, which zero does as well
-        if raw < 1 && raw < (1 - searchprogress)*gained
-            gained, gainedpoles = raw, np
-        end
-        if isnothing(fit) && isfinite(err)
-            push!(ruledout, np)
-            err < leastbound && ((leastbound, boundpoles) = (err, np))
-        else
-            err < besterror && ((besterror, bestpoles) = (err, np))
-        end
-        return (fit, err, contraction, states)
-    end
+    # the orders which met the tolerance and whose stated covariance adds
+    # more than `noisetol` once completed, and the least it adds and its
+    # order
+    noisy, leastadded, addedpoles = Int[], Inf, 0
+    # the fit's own errors before its enforcement, its largest deviation
+    # and its rms, each where it last fell by `searchprogress` of itself,
+    # and the order at which either last did, with its errors there
+    gained, gainedrms, gainedpoles, gainedat = Inf, Inf, 0, (Inf, Inf)
     # One order at a time from `minpoles` upward, returning the first
     # that meets the tolerance, which is therefore the fewest poles that
     # do. There is nothing to bisect on: more poles do not always fit
@@ -1005,13 +1122,40 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
     # it can be short of what the block needs, so the scan continues to
     # twice the estimate, and never to the sample count, since `N` poles
     # take `N + 1` samples. A caller's `maxpoles` is a wall.
-    stop = isnothing(maxpoles) ? min(2*ceiling, length(fs) - 1) : ceiling
+    stop = isnothing(maxpoles) ? min(2*ceiling, length(ws) - 1) : ceiling
     floorpoles <= stop || throw(ArgumentError(lazy"no fit of at most $(stop) poles can meet a tolerance of $(tol): the samples' own singular values put the error of any fit of that many poles above it. Loosen tol, raise maxpoles, or fit a narrower band."))
     np, barren, stalled, overstates = max(Int(minpoles), floorpoles), 0, false, 0
     while np <= stop
-        fit, err, contraction, states = attempt(np)
+        # past the ceiling every order is enforced: the end of the scan
+        # there is decided by which orders produce a fit at all
+        (; fit, err, contraction, raw, rawrms, states) = searchorder!(failures, block, S, ws, np;
+            tol = np <= ceiling ? tol : Inf, options...)
+        # a fit whose largest deviation is the largest response or more
+        # has caught nothing of the data, which zero does as well; past
+        # it, progress is a fall in the largest deviation or in the rms,
+        # which data of features of equal strength needs: its largest
+        # deviation stays at the features the fit has yet to take while
+        # its rms falls with each one taken
+        if raw < 1
+            fell = false
+            raw < (1 - searchprogress)*gained && ((gained, fell) = (raw, true))
+            rawrms < (1 - searchprogress)*gainedrms && ((gainedrms, fell) = (rawrms, true))
+            fell && ((gainedpoles, gainedat) = (np, (raw, rawrms)))
+        end
+        # an order which meets the tolerance is returned unless the
+        # covariance it states adds more than `noisetol` once completed;
         # only the fit returned warns of its contraction
-        err <= tol && (warncontraction(contraction); return fit)
+        added = err <= tol ? completionnoise(fit, ws, own) : 0.0
+        if added > noisetol
+            push!(noisy, np)
+            added < leastadded && ((leastadded, addedpoles) = (added, np))
+        elseif isnothing(fit) && isfinite(err)
+            push!(ruledout, np)
+            err < leastbound && ((leastbound, boundpoles) = (err, np))
+        else
+            err <= tol && (warncontraction(contraction); return fit)
+            err < besterror && ((besterror, bestpoles) = (err, np))
+        end
         # the states grow with the order, and the memory as their square
         if states > maxstates
             overstates = states
@@ -1033,11 +1177,11 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
         barren = (isfinite(err) || np <= ceiling) ? 0 : barren + 1
         barren >= 4 && break
         # Without `maxpoles` the scan also ends on measured progress: once
-        # the order has doubled since the fit's own error, before its
-        # enforcement, last fell by `searchprogress` of itself. An error that
-        # stalls can still fall again at much higher orders, so this is a
-        # budget rather than a proof; the refusal says where it stopped,
-        # and a `maxpoles` scans on to it.
+        # the order has doubled since the fit's own errors, before its
+        # enforcement, last fell by `searchprogress` of themselves. An
+        # error that stalls can still fall again at much higher orders, so
+        # this is a budget rather than a proof; the refusal says where it
+        # stopped, and a `maxpoles` scans on to it.
         if isnothing(maxpoles) && gainedpoles > 0 && np >= 2*gainedpoles
             stalled = true
             break
@@ -1048,17 +1192,39 @@ function RationalScattering(block::ScatteringParameters; tol::Real,
     why = join(("$(length(v)) of them ($(first(v)) to $(last(v)) poles) with \"$(k)\""
         for (k, v) in sort(collect(failures); by = x -> -length(x[2]))), "; ")
     ended = overstates > 0 ? " The scan ended at $(np) poles, whose fit has $(overstates) states, more than maxstates = $(maxstates); a larger maxstates scans on where the memory allows." :
-        stalled ? " The scan ended at $(np) poles, twice the order at which the fit's own error before its passivity enforcement last fell by $(searchprogress) of itself, to $(gained) at $(gainedpoles) poles; a maxpoles scans on to it." : ""
+        stalled ? " The scan ended at $(np) poles, twice the order at which the fit's own errors before its passivity enforcement, its largest deviation or its rms, last fell by $(searchprogress) of themselves, at $(gainedpoles) poles, where they were $(gainedat[1]) and $(gainedat[2]) of the largest response; a maxpoles scans on to it." : ""
     # with nothing fitted, refused or failed, the first order's states
     # ended the scan
-    (isfinite(besterror) || !isempty(ruledout) || !isempty(failures)) || throw(ArgumentError(
+    (isfinite(besterror) || !isempty(ruledout) || !isempty(failures) || !isempty(noisy)) || throw(ArgumentError(
         lazy"the fit at $(np) poles, where the scan starts, has $(overstates) states, more than maxstates = $(maxstates). Raise maxstates where the memory allows, loosen tol, or fit a narrower band."))
-    (isfinite(besterror) || !isempty(ruledout)) || throw(ArgumentError(lazy"no order between $(minpoles) and $(reached) poles could be fitted at all, while the samples determine a degree of about $(supported): $(why).$(ended) Raise maxpoles, sample the block more finely, or fit a narrower band."))
+    (isfinite(besterror) || !isempty(ruledout) || !isempty(noisy)) || throw(ArgumentError(lazy"no order between $(minpoles) and $(reached) poles could be fitted at all, while the samples determine a degree of about $(supported): $(why).$(ended) Raise maxpoles, sample the block more finely, or fit a narrower band."))
     failed = isempty(failures) ? "" : " Some orders could not be fitted at all: $(why)."
     closest = isfinite(besterror) ? "the closest was $(besterror) at $(bestpoles) poles" :
         "no order came near enough to be made passive"
+    within, raise = "", "maxpoles"
+    if !isempty(noisy)
+        within, raise = " within the noisetol of $(noisetol)", "maxpoles or noisetol"
+        closest = "$(length(noisy)) orders ($(first(noisy)) to $(last(noisy)) poles) met the tolerance, but their stated covariance, completed to the commutation relations of the fit, adds at least $(leastadded) of the square of the largest entry, at $(addedpoles) poles" *
+            (isfinite(besterror) ? "; of the others the closest was $(besterror) at $(bestpoles) poles" : "")
+    end
     refused = isempty(ruledout) ? "" : " $(length(ruledout)) orders ($(first(ruledout)) to $(last(ruledout)) poles) were refused before their passivity enforcement: no fit with the poles they settled on comes within the tolerance, and the nearest, at $(boundpoles) poles, misses the data by at least $(leastbound)."
-    throw(ArgumentError(lazy"no fit between $(minpoles) and $(reached) poles met a tolerance of $(tol): $(closest), while the samples determine a degree of about $(supported).$(ended)$(refused)$(failed) Loosen tol, raise maxpoles, sample the block more finely, or fit a narrower band."))
+    throw(ArgumentError(lazy"no fit between $(minpoles) and $(reached) poles met a tolerance of $(tol)$(within): $(closest), while the samples determine a degree of about $(supported).$(ended)$(refused)$(failed) Loosen tol, raise $(raise), sample the block more finely, or fit a narrower band."))
+end
+
+# One order of the search, fitted by fitsampled with the `options` of the
+# search; where that fails with an `ArgumentError`, no fit, and the
+# failure recorded in `failures` under its message with the orders and
+# numbers in it stripped, so that the same failure at twenty orders is
+# one line and not twenty.
+function searchorder!(failures::Dict{String,Vector{Int}}, block::ScatteringParameters, S, ws, np::Int; options...)
+    try
+        return fitsampled(block, S, ws, np; options...)
+    catch e
+        e isa ArgumentError || rethrow()
+        key = replace(sprint(showerror, e), r"[-+]?[0-9][0-9.e+-]*" => "N")
+        push!(get!(failures, key, Int[]), np)
+        return (; fit = nothing, err = Inf, contraction = nothing, raw = Inf, rawrms = Inf, states = 0)
+    end
 end
 
 # No value stated at zero frequency, which the fit's functions take as an
@@ -1188,9 +1354,10 @@ const fitroundoff = 1e-12
 # times its weight, where the samples carry weights (see
 # RationalScattering).
 weightedsamples(S::AbstractArray{<:Complex,3}, weights::Array{Float64,3}) = isempty(weights) ? S : weights .* S
-# The columns the relocation runs on: the samples' components (see
-# relocationcomponents), or where the samples carry weights, which weigh
-# each entry's rows by its own, the entries, a column each (see relocate).
+# The columns the relocation runs on: the samples' components, or the
+# entries where they are about as many (see relocationcomponents), or
+# where the samples carry weights, which weigh each entry's rows by its
+# own, the entries, a column each (see relocate).
 relocationcolumns(S::AbstractArray{<:Complex,3}, weights::Array{Float64,3}) =
     isempty(weights) ? relocationcomponents(S) : permutedims(reshape(S, :, size(S, 3)))
 # The relocation iterated from `poles`, each iterate measured on the
@@ -1282,8 +1449,7 @@ function fiterrors(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vec
     # conditioned basis, and in one whose large coefficients cancel it is
     # as large as the error the rounding leaves unresolved, where the
     # screen passes over nothing.
-    u = size(X, 2)*eps()
-    reach = 2*u/(1 - u)*norm(X)
+    reach = evaluationreach(X)
     # weighted, by the largest weight at the sample
     bounds = [sqrt(squares[k]) + reach*(weighted ? maximum(view(Wf, :, k)) : 1.0)*
         sqrt(sum(abs2, view(M, k, :)) + sum(abs2, view(M, K + k, :))) for k in 1:K]
@@ -1302,6 +1468,13 @@ function fiterrors(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vec
         worst = max(worst, opnorm(E))
     end
     return worst, sqrt(sum(squares)/length(S))
+end
+# `2 gamma |X|_F` for the coefficients `X`, one row per entry: times the
+# norm of a sample's row of the basis, how far two evaluations of the fit
+# there can differ in the Frobenius norm (see fiterrors)
+function evaluationreach(X::AbstractMatrix)
+    u = size(X, 2)*eps()
+    return 2*u/(1 - u)*norm(X)
 end
 
 # the largest spectral norm and the rms of the deviation of the residues
@@ -1393,30 +1566,41 @@ function prunepoles(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Ve
     # roundoff of the data, which bounds the rms per entry as well as the
     # largest deviation
     worst, rms = fiterrors(S, ws, poles; dc = dc, weights = weights, proper = proper)
-    worstlimit = (1 + fitting.pruneslack)*worst + fitroundoff*scale
-    rmslimit = (1 + fitting.pruneslack)*rms + fitroundoff*scale
-    acceptable(err, _) = err[1] <= worstlimit && err[2] <= rmslimit
-    before = (worst, rms)
+    limits = ((1 + fitting.pruneslack)*worst + fitroundoff*scale, (1 + fitting.pruneslack)*rms + fitroundoff*scale)
+    acceptable(err) = err[1] <= limits[1] && err[2] <= limits[2]
     # dropneedless returns where no drop is acceptable, so a pass whose
     # merge leaves the poles as the drops left them has no successor to
     # change them
     while true
-        poles, before = dropneedless(S, ws, poles, before, acceptable; dc = dc, lastpole = lastpole,
+        poles = dropneedless(S, ws, poles, limits; dc = dc, lastpole = lastpole,
             scale = scale, weights = weights, proper = proper)
         kept = length(poles)
-        poles, before = mergeclusters(S, ws, poles, fitting, before, acceptable; dc = dc,
+        poles = mergeclusters(S, ws, poles, fitting, acceptable; dc = dc,
             components = components, scale = scale, weights = weights, proper = proper)
         length(poles) == kept && break
     end
     return poles
 end
-# a pole and its conjugate are dropped when the fit without them is as
-# close, the pole contributing least to the fit tried first
-function dropneedless(S, ws, poles, before, acceptable; dc::Matrix{Float64} = nodc, lastpole::Symbol = :refuse,
-        scale::Real, weights::Array{Float64,3} = noweights, proper::Bool = false)
+# A pole and its conjugate are dropped when the fit without them, its
+# residues refitted, is as close, within the `limits` on its largest
+# deviation and its rms, the pole contributing least to the fit tried
+# first. Each pass solves the residues at its poles once: the residues
+# order the candidates, and where the solve keeps every direction of its
+# basis it scores each deletion as well (see screenedout), so that a
+# candidate whose errors without the pole exceed `screenmargin` times the
+# limits, beyond the roundoff of the score, is passed over without its
+# refit. The score is exact to roundoff, so whether a pole is dropped
+# stays the refit's to decide: a candidate is passed over only where its
+# refit would exceed the limits too.
+function dropneedless(S, ws, poles, limits::NTuple{2,Float64}; dc::Matrix{Float64} = nodc,
+        lastpole::Symbol = :refuse, scale::Real, weights::Array{Float64,3} = noweights, proper::Bool = false,
+        screenmargin::Real = 2)
     n = size(S, 1)
+    acceptable(err) = err[1] <= limits[1] && err[2] <= limits[2]
     while true
-        residues, _ = fitresidues(S, ws, poles; dc = dc, weights = weights, constant = proper ? zeros(n, n) : nothing)
+        constant = proper ? zeros(n, n) : nothing
+        residues, screen = isempty(weights) ? pruningsolve(S, ws, poles, constant, dc) :
+            (first(fitresidues(S, ws, poles; dc = dc, weights = weights, constant = constant)), nothing)
         # the norm of the residue does not vary over the samples, so it
         # is taken once per pole rather than once per pole and sample;
         # weighted, it does, and the weighed residue's Frobenius norm at
@@ -1432,8 +1616,12 @@ function dropneedless(S, ws, poles, before, acceptable; dc::Matrix{Float64} = no
         for p in candidates
             keep = [q for q in eachindex(poles) if q != p && !(imag(poles[p]) != 0 && poles[q] == conj(poles[p]))]
             trial = poles[keep]
+            if !isempty(trial) && !isnothing(screen) &&
+                    screenedout(screen, setdiff(eachindex(poles), keep), limits, screenmargin)
+                continue
+            end
             err = fiterrors(S, ws, trial; dc = dc, weights = weights, proper = proper)
-            if acceptable(err, before)
+            if acceptable(err)
                 # the last pole is needless where a constant fits the data
                 # as closely as the poles do: refused, returned as the
                 # constant, or kept as the caller asked
@@ -1441,11 +1629,11 @@ function dropneedless(S, ws, poles, before, acceptable; dc::Matrix{Float64} = no
                     lastpole == :refuse && throw(ArgumentError(nopolereason(first(err), scale)))
                     lastpole == :keep && continue
                 end
-                poles, before, dropped = trial, err, true
+                poles, dropped = trial, true
                 break
             end
         end
-        dropped || return poles, before
+        dropped || return poles
     end
 end
 # Why a fit which keeps no pole is refused: a constant which reproduces
@@ -1458,7 +1646,104 @@ function nopolereason(err, scale)
     return "the poles fit the data no closer than a constant, which misses it by $(err/scale) of its largest response: the data turns over the band faster than the poles can follow, as a delay of many turns does. Fit with more poles, over a narrower band, or take a delay out of the data with delays."
 end
 
-function mergeclusters(S, ws, poles, fitting::VectorFitting, before, acceptable;
+# The residue solve of a pass of the pruning, kept to score the deletion
+# of a pole from it (see screenedout): `E` the fit less the samples, the
+# real parts over the imaginary parts, one column per entry, and `total`
+# its sum of squares; `U` the kept left singular vectors of the least
+# squares, `C` the samples' coefficients on them, one row per entry, and
+# `Φ` the map from those to the fit's coefficients `X`, `X = X0 + C Φ'`,
+# `X0` the particular solution of a stated value at zero frequency, empty
+# for none; `rows` the norms of the basis's rows at each sample, which with
+# the coefficients' norm `xnorm` bound the roundoff of evaluating the fit
+# (see evaluationreach); and `trial`, scratch for the residual of a
+# deletion.
+struct PruningSolve
+    E::Matrix{Float64}
+    total::Float64
+    U::Matrix{Float64}
+    C::Matrix{Float64}
+    Φ::Matrix{Float64}
+    X::Matrix{Float64}
+    X0::Matrix{Float64}
+    rows::Vector{Float64}
+    xnorm::Float64
+    trial::Matrix{Float64}
+end
+
+# The residues at `poles` for a pass of the pruning, with `constant` held
+# where it is given and `dc` stated where it is not empty, and the screen
+# of the deletions from their solve; no screen where the least squares
+# leaves a direction out, since a deletion from that solve need not be the
+# refit without the pole, which leaves out directions of its own.
+function pruningsolve(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vector{ComplexF64},
+        constant::Union{Nothing,AbstractMatrix}, dc::Matrix{Float64})
+    n, K = size(S, 1), length(ws)
+    problem = residueproblem(S, ws, poles, constant, dc)
+    (; X, F, C, X0) = residuesolve(problem)
+    residues = coefficientresidues(X, poles, n)
+    length(F.s) == size(F.V, 1) || return residues, nothing
+    (; M, Sf, held, stated, Z) = problem
+    Φ = (F.V ./ transpose(F.s)) ./ F.scale
+    stated && (Φ = Z*Φ)
+    E = M*transpose(X)
+    @inbounds for e in axes(E, 2), k in 1:K
+        E[k, e] -= real(Sf[e, k]) - (isempty(held) ? 0.0 : held[e])
+        E[K + k, e] -= imag(Sf[e, k])
+    end
+    rows = [sqrt(sum(abs2, view(M, k, :)) + sum(abs2, view(M, K + k, :))) for k in 1:K]
+    return residues, PruningSolve(E, sum(abs2, E), F.U, C, Φ, X, X0, rows, norm(X), similar(E))
+end
+
+# Whether the fit with the coefficients `J` of `sc` deleted, its residues
+# refitted, has a largest deviation or an rms over `margin` times its
+# `limits` by more than the roundoff of evaluating both fits (see
+# evaluationreach), so that the refit would exceed the limits too. The
+# deletion holds the coefficients `J` at zero, one more equality of the
+# least squares, which moves the fit along the directions the rows `J` of
+# `Φ` span: with `Φ_J' = Y R`, `Y` orthonormal, each entry's coefficients
+# along `Y` go to `w = R'^-1 x_J = Y' c + R'^-1 x0_J`, the residual takes
+# `U Y w` back, orthogonal to it, and the coefficients lose `Φ Y w`. The
+# deletion's residual is formed as a vector: its sum of squares as a
+# quadratic form in the coefficients would carry the roundoff of terms
+# of their size, which near a needless pole, where the basis is nearly
+# singular and the coefficients large, far exceeds the deletion's error.
+function screenedout(sc::PruningSolve, J::Vector{Int}, limits::NTuple{2,Float64}, margin::Real)
+    F = qr(sc.Φ[J, :]')
+    Y, R = Matrix(F.Q), UpperTriangular(F.R)
+    w = transpose(Y)*transpose(sc.C)
+    isempty(sc.X0) || (w .+= R' \ transpose(sc.X0[:, J]))
+    # the roundoff of evaluating the fit and the refit, whose coefficients
+    # are the fit's less `Φ Y w`; none where the rows `J` of `Φ` are
+    # dependent, the deletion leaving a stated value at zero frequency
+    # nothing to be met by, which is the refit's to judge
+    u = size(sc.X, 2)*eps()
+    reach = 2*u/(1 - u)*(2*sc.xnorm + norm(w)*norm(sc.Φ*Y))
+    isfinite(reach) || return false
+    K, entries = length(sc.rows), size(sc.C, 1)
+    sqrt((sc.total + sum(abs2, w))/(K*entries)) > margin*limits[2] + reach*norm(sc.rows)/sqrt(K*entries) &&
+        return true
+    T = sc.trial
+    mul!(T, sc.U*Y, w)
+    T .= sc.E .- T
+    squares = zeros(K)
+    @inbounds for e in 1:entries, k in 1:K
+        squares[k] += abs2(T[k, e]) + abs2(T[K + k, e])
+    end
+    n = isqrt(entries)
+    E = Matrix{ComplexF64}(undef, n, n)
+    # the samples in decreasing Frobenius norm, until one at or under the
+    # margin's, which no spectral norm from it on can exceed
+    for k in sortperm(squares; rev = true)
+        sqrt(squares[k]) <= margin*limits[1] && break
+        for e in 1:entries
+            E[e] = complex(T[k, e], T[K + k, e])
+        end
+        opnorm(E) > margin*limits[1] + reach*sc.rows[k] && return true
+    end
+    return false
+end
+
+function mergeclusters(S, ws, poles, fitting::VectorFitting, acceptable;
         dc::Matrix{Float64} = nodc, components::Matrix{ComplexF64}, scale::Real,
         weights::Array{Float64,3} = noweights, proper::Bool = false)
     # the resolution of the data at a pole: the spacing of the samples
@@ -1487,11 +1772,10 @@ function mergeclusters(S, ws, poles, fitting::VectorFitting, before, acceptable;
         push!(merged, a)
         imag(a) == 0 || push!(merged, conj(a))
     end
-    length(merged) == length(poles) && return poles, before
+    length(merged) == length(poles) && return poles
     merged = converge(S, ws, merged, fitting; dc = dc, weights = weights, components = components, scale = scale,
         proper = proper)
-    err = fiterrors(S, ws, merged; dc = dc, weights = weights, proper = proper)
-    return acceptable(err, before) ? (merged, err) : (poles, before)
+    return acceptable(fiterrors(S, ws, merged; dc = dc, weights = weights, proper = proper)) ? merged : poles
 end
 
 # the real basis of a pole set: columns of the matrix `Phi(s)` such that a
@@ -1559,8 +1843,99 @@ end
 # larger dimension times the largest singular value, is kept, so the
 # relocation is the same to roundoff, at a cost in proportion to the
 # components rather than to the square of the port count. Returns the
-# components as the columns of a `K x r` matrix.
-function relocationcomponents(S::AbstractArray{<:Complex,3})
+# components as the columns of a `K x r` matrix, or the entries, a column
+# each, where they are about as many.
+#
+# The components are found at a cost in proportion to their number, by
+# a randomized range finder (Halko, Martinsson and Tropp, SIAM Review
+# 53(2), 2011): `block` Gaussian probes of the stacked entries `X` at a
+# time, from a generator seeded with `seed`, so that a fit is the same
+# from call to call, their range grown until a block of them certifies
+# the part of `X` outside it under the threshold the decomposition
+# applies, which it does but with probability `certainty^-block` (their
+# lemma 4.1); the components are then the singular components of `X`
+# within that range. The products with `X` are formed from the samples
+# as they are stored, `E` with a row per entry: `X w` for a real `w` is
+# the real and imaginary parts of `E^T w`, and `q' X` the real part of
+# `E (q_1 - i q_2)` for the halves `q_1`, `q_2` of `q`, so that the probes
+# hold nothing the size of the samples. Where the
+# most components there can be, `m = min(2K, n^2)`, are no more than
+# `wholeblocks` blocks, the decomposition is taken whole, at no more cost
+# than the probes. Each block foresees the rank: what was found, what the block
+# found above the threshold, and as many again as the residual it left
+# has energy for at the energy per direction the block took. Where the
+# rank foreseen passes `share` of `m`, the components would spare the
+# relocation less than that share of its work on the entries, for a
+# compression costing about what a few of its rounds do: the entries
+# are returned where they number no more than `2K`, and they relocate the
+# poles as all their components do. Where they outnumber the samples'
+# `2K`, the decomposition is taken whole instead, and the probes give way
+# to it as well once their work reaches `budget` of the decomposition's,
+# which costs about as much as finding `m/2` components by probes: a rank
+# they have not found by then the decomposition finds at less cost.
+function relocationcomponents(S::AbstractArray{<:Complex,3}; block::Integer = 16, share::Real = 1/2,
+        budget::Real = 1/16, certainty::Real = 10, seed::Integer = 1, wholeblocks::Integer = 4)
+    n, K = size(S, 1), size(S, 3)
+    ne = n*n
+    m = min(2K, ne)
+    m <= wholeblocks*block && return wholecomponents(S)
+    E = reshape(S, ne, K)
+    threshold(s1) = eps(Float64)*max(2K, ne)*s1
+    # the most rank the probes find before giving way
+    most = ne <= 2K ? floor(Int, share*m) : min(floor(Int, share*m), max(floor(Int, budget*m/2), block))
+    # the range found and the stacked entries' coefficients on it, whose
+    # storage doubles as the rank found outgrows it
+    Q, B = Matrix{Float64}(undef, 2K, 2block), Matrix{Float64}(undef, 2block, ne)
+    W = Matrix{ComplexF64}(undef, ne, block)
+    rng = Random.Xoshiro(seed)
+    r, s1 = 0, 0.0
+    while true
+        r > most && return ne <= 2K ? permutedims(E) : wholecomponents(S)
+        if r + block > size(Q, 2)
+            capacity = min(2*size(Q, 2), most + block)
+            Q = hcat(view(Q, :, 1:r), Matrix{Float64}(undef, 2K, capacity - r))
+            B = vcat(view(B, 1:r, :), Matrix{Float64}(undef, capacity - r, ne))
+        end
+        W .= randn(rng, ne, block)
+        Yc = transpose(E)*W
+        Y = [real.(Yc); imag.(Yc)]
+        found = view(Q, :, 1:r)
+        for _ in 1:2
+            r > 0 && (Y .-= found*(transpose(found)*Y))
+        end
+        # the part of `X` outside the range found, certified under the
+        # threshold by the probes
+        r > 0 && certainty*sqrt(2/pi)*maximum(norm, eachcol(Y)) <= threshold(s1) && break
+        probed = sum(abs2, Y)
+        Qn = Matrix(qr!(Y).Q)
+        if r > 0
+            Qn .-= found*(transpose(found)*Qn)
+            Qn = Matrix(qr!(Qn).Q)
+        end
+        Bn = transpose(real.(E*complex.(view(Qn, 1:K, :), .-view(Qn, K + 1:2K, :))))
+        Q[:, r + 1:r + block] .= Qn
+        B[r + 1:r + block, :] .= Bn
+        r == 0 && (s1 = opnorm(Bn))
+        captured = sum(abs2, Bn)
+        r += block
+        # a block which took no more than the threshold's energy per
+        # direction leaves none above it
+        captured <= block*threshold(s1)^2 && break
+        taken = captured/(probed/block)
+        foreseen = r - block + count(>(threshold(s1)), svdvals(Bn)) + max(0.0, block*(1 - taken)/taken)
+        foreseen > share*m && return ne <= 2K ? permutedims(E) : wholecomponents(S)
+    end
+    U, s, _ = LAPACK.gesvd!('S', 'N', B[1:r, :])
+    kept = isempty(s) ? 0 : count(>(threshold(first(s))), s)
+    QU = view(Q, :, 1:r)*view(U, :, 1:kept)
+    C = Matrix{ComplexF64}(undef, K, kept)
+    @inbounds for j in 1:kept, k in 1:K
+        C[k, j] = complex(QU[k, j], QU[K + k, j])*s[j]
+    end
+    return C
+end
+# the components of the decomposition of the stacked entries whole
+function wholecomponents(S::AbstractArray{<:Complex,3})
     n, K = size(S, 1), size(S, 3)
     X = Matrix{Float64}(undef, 2K, n*n)
     @inbounds for j in 1:n, i in 1:n
@@ -1762,30 +2137,38 @@ function FitLeastSquares(A::AbstractMatrix)
     # carries the scale of its basis function, and the smallest singular
     # value of the unscaled basis measures that scale rather than what
     # the samples determine
+    scale = columnscales(A)
+    F = svd(A ./ scale')
+    kept = keptrank(F.S)
+    return FitLeastSquares(F.U[:, 1:kept], F.S[1:kept], F.V[:, 1:kept], scale)
+end
+
+# the norms of the columns of `A`, one for a column of zeros, and the
+# number of the singular values `s`, largest first, above
+# `fitranktolerance` of the largest, which both least squares take
+# (FitLeastSquares, leastsquaressolution!), so that they leave out the same
+# directions
+function columnscales(A::AbstractMatrix)
     scale = [norm(view(A, :, j)) for j in axes(A, 2)]
     for j in eachindex(scale)
         scale[j] > 0 || (scale[j] = 1.0)
     end
-    F = svd(A ./ scale')
-    kept = isempty(F.S) ? 0 : count(>(fitranktolerance*first(F.S)), F.S)
-    return FitLeastSquares(F.U[:, 1:kept], F.S[1:kept], F.V[:, 1:kept], scale)
+    return scale
 end
+keptrank(s::AbstractVector) = isempty(s) ? 0 : count(>(fitranktolerance*first(s)), s)
 
 # The solution FitLeastSquares gives for one right hand side `b`, from the
 # QR of `A`, whose triangle has the singular values of `A`, and the singular
 # value decomposition of the triangle, `N + 1` square, rather than of `A`;
 # `A` and `b` are overwritten.
 function leastsquaressolution!(A::Matrix{Float64}, b::Vector{Float64})
-    scale = [norm(view(A, :, j)) for j in axes(A, 2)]
-    for j in eachindex(scale)
-        scale[j] > 0 || (scale[j] = 1.0)
-    end
+    scale = columnscales(A)
     A ./= transpose(scale)
     F = qr!(A)
     lmul!(F.Q', b)
     k = min(size(A)...)
     T = svd(F.R)
-    kept = isempty(T.S) ? 0 : count(>(fitranktolerance*first(T.S)), T.S)
+    kept = keptrank(T.S)
     return (view(T.V, :, 1:kept)*((transpose(view(T.U, :, 1:kept))*view(b, 1:k)) ./ view(T.S, 1:kept))) ./ scale
 end
 
@@ -1797,16 +2180,18 @@ function fitresidues(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::V
         constant::Union{Nothing,AbstractMatrix} = nothing,
         dc::Matrix{Float64} = nodc, weights::Array{Float64,3} = noweights)
     n, N = size(S, 1), length(poles)
-    fixed = !isnothing(constant)
-    residues = zeros(ComplexF64, n, n, N)
-    D = fixed ? Matrix{Float64}(constant) : zeros(n, n)
     X, _ = fitcoefficients(S, ws, poles; constant = constant, dc = dc, weights = weights)
+    D = isnothing(constant) ? reshape(X[:, N + 1], n, n) : Matrix{Float64}(constant)
+    return coefficientresidues(X, poles, n), D
+end
+# the residue matrices of every entry's coefficients, the rows of `X` (see
+# fitcoefficients)
+function coefficientresidues(X::AbstractMatrix, poles::Vector{ComplexF64}, n::Int)
+    residues = zeros(ComplexF64, n, n, length(poles))
     for j in 1:n, i in 1:n
-        e = (j - 1)*n + i
-        residues[i, j, :] .= complexresidues(view(X, e, 1:N), poles)
-        fixed || (D[i, j] = X[e, N + 1])
+        residues[i, j, :] .= complexresidues(view(X, (j - 1)*n + i, eachindex(poles)), poles)
     end
-    return residues, D
+    return residues
 end
 
 # Every entry's coefficients in the real basis at fixed poles, as the rows
@@ -1822,6 +2207,30 @@ end
 function fitcoefficients(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vector{ComplexF64};
         constant::Union{Nothing,AbstractMatrix} = nothing,
         dc::Matrix{Float64} = nodc, weights::Array{Float64,3} = noweights)
+    problem = residueproblem(S, ws, poles, constant, dc)
+    isempty(weights) && return residuesolve(problem).X, problem.M
+    (; M, Sf, held, stated, Z, t, p, g) = problem
+    W = reshape(weights, size(Sf))
+    X = stated ? weightedcoefficients(M, Sf, W, held, Z, t .* transpose(p), t, g) :
+        weightedcoefficients(M, Sf, W, held, nothing, zeros(size(Sf, 1), 0), zeros(0), zeros(0))
+    return X, M
+end
+
+# The least squares of the residue solve at fixed poles (see
+# fitcoefficients): the basis `M`, the samples `Sf`, one row per entry, and
+# the held constant `held`, empty where none is held. The value at zero
+# frequency is the same combination of the same basis, read at zero
+# instead of on the axis, and linear in the unknowns once the poles are
+# settled, so stating it is one equality per entry, met exactly: a
+# particular solution, then a least squares over the null space `Z` of the
+# equality, each entry's target `t` with the particular solution `p t`,
+# whose samples are `g t`. `stated` is whether a value is stated, the four
+# empty where none is; `Z` has no columns where the equality settles the
+# only coefficient, which is then the particular solution. A sample near
+# zero would instead ask the fit to take that value at a frequency where it
+# does not, at an excursion far worse than the extrapolation it corrects.
+function residueproblem(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vector{ComplexF64},
+        constant::Union{Nothing,AbstractMatrix}, dc::Matrix{Float64})
     n, K, N = size(S, 1), length(ws), length(poles)
     fixed = !isnothing(constant)
     Phi = realbasis(ws, poles)
@@ -1832,38 +2241,33 @@ function fitcoefficients(S::AbstractArray{<:Complex,3}, ws::AbstractVector, pole
     fixed || (M[1:K, N + 1] .= 1.0)
     held = fixed ? vec(Matrix{Float64}(constant)) : zeros(0)
     Sf = reshape(S, n*n, K)
-    # The value at zero frequency is the same combination of the same
-    # basis, read at zero instead of on the axis, and linear in the
-    # unknowns once the poles are settled, so stating it is one equality
-    # per entry, met exactly: a particular solution, then a least squares
-    # over the null space of the equality. A sample near zero would
-    # instead ask the fit to take that value at a frequency where it does
-    # not, at an excursion far worse than the extrapolation it corrects.
-    stated = !isempty(dc)
-    if stated
-        row = vec(real.(realbasis([0.0], poles)))
-        c = fixed ? row : vcat(row, 1.0)
-        cc = dot(c, c)
-        cc > 0 || throw(ArgumentError("the zero frequency row of the basis vanishes, so the value there cannot be stated."))
-        Z = nullspace(reshape(c, 1, :))
-        # the particular solution `c t_e/cc` of each entry's target `t_e`,
-        # and what its samples `g t_e` take from the coefficients
-        g = M*c ./ cc
-        t = vec(real.(dc)) .- (fixed ? held : 0.0)
-    end
-    if !isempty(weights)
-        X = stated ? weightedcoefficients(M, Sf, reshape(weights, n*n, K), held, Z, t .* transpose(c ./ cc), t, g) :
-            weightedcoefficients(M, Sf, reshape(weights, n*n, K), held, nothing, zeros(n*n, 0), zeros(0), zeros(0))
-        return X, M
-    end
+    isempty(dc) && return (; M, Sf, held, stated = false, Z = zeros(0, 0), t = zeros(0), p = zeros(0), g = zeros(0))
+    row = vec(real.(realbasis([0.0], poles)))
+    c = fixed ? row : vcat(row, 1.0)
+    cc = dot(c, c)
+    cc > 0 || throw(ArgumentError("the zero frequency row of the basis vanishes, so the value there cannot be stated."))
+    return (; M, Sf, held, stated = true, Z = nullspace(reshape(c, 1, :)), t = vec(real.(dc)) .- (fixed ? held : 0.0),
+        p = c ./ cc, g = M*c ./ cc)
+end
+
+# The unweighted residue solve of `problem` (see residueproblem): the
+# coefficients `X`, one row per entry, the least squares `F`, the samples'
+# coefficients `C` on its kept left singular vectors, one row per entry,
+# and `X0`, the particular solution of a stated value, empty for none,
+# from which with `C` the coefficients are formed (see pruningsolve).
+function residuesolve(problem)
+    (; M, Sf, held, stated, Z, t, p, g) = problem
+    K = size(Sf, 2)
     if !stated
         F = FitLeastSquares(M)
-        return fitsolutions(F, first(leftcoefficients(F, Sf, held))), M
+        C = first(leftcoefficients(F, Sf, held))
+        return (; X = fitsolutions(F, C), F, C, X0 = zeros(0, 0))
     end
     F = FitLeastSquares(M*Z)
     C, Ut, Ub = leftcoefficients(F, Sf, held)
     C .-= t .* transpose(transpose(Ut)*view(g, 1:K) .+ transpose(Ub)*view(g, K + 1:2K))
-    return t .* transpose(c ./ cc) .+ fitsolutions(F, C)*transpose(Z), M
+    X0 = t .* transpose(p)
+    return (; X = X0 .+ fitsolutions(F, C)*transpose(Z), F, C, X0)
 end
 
 # Weighted, each entry has a least squares of its own, the rows of the
@@ -2035,6 +2439,27 @@ end
 # space each
 statecount(spaces::Vector{Matrix{ComplexF64}}) = sum(Q -> size(Q, 2), spaces; init = 0)
 
+# The constant `D` of a fit which states its value at zero frequency,
+# `dc` not empty, for its residues taken within their `spaces`: the
+# residue `R` of a pole `a` loses its part `P = R - R Q Q'` outside its
+# space `Q`, and with it `-P/a` of the value at zero, which the constant
+# takes back, so that the realization, which spans the same spaces, meets
+# the statement the fit met. Without a statement the constant is the
+# fit's value at infinite frequency and is left alone. `D` is changed in
+# place.
+function dcthroughspaces!(D::AbstractMatrix, poles::Vector{ComplexF64}, residues::AbstractArray{<:Complex,3},
+        spaces::Vector{Matrix{ComplexF64}}, dc::AbstractMatrix)
+    isempty(dc) && return D
+    n = size(D, 1)
+    for p in eachindex(poles)
+        Q = spaces[p]
+        size(Q, 2) < n || continue
+        R = isrealpole(poles[p]) ? complex.(real.(view(residues, :, :, p))) : residues[:, :, p]
+        D .-= real.((R .- (R*Q)*Q') ./ poles[p])
+    end
+    return D
+end
+
 # The multipliers of the least change which meets every linearized
 # passivity constraint at once: with `H` the normal matrix of the fit
 # over the samples and the constraints `Ceq delta <= ceq`, the
@@ -2057,8 +2482,18 @@ statecount(spaces::Vector{Matrix{ComplexF64}}) = sum(Q -> size(Q, 2), spaces; in
 # it, and the least norm multipliers satisfy the gradient test without
 # meeting the constraints. The conditions of the optimum, which
 # dualactiveset tests in full, hold only where the correction meets every
-# constraint.
-function lawsonhanson(G::AbstractMatrix, c::AbstractVector; admittol::Real = 1e-12)
+# constraint. `maxsteps` bounds the constraints the sweep admits and the
+# steps it takes toward each working set's solution.
+#
+# The working set's Gram matrix is factored as the set changes rather
+# than afresh at every step (see WorkingSet): the factor is extended on
+# each admission and loses a constraint on each retirement, at a cost in
+# the square of the set rather than its cube. An admission whose pivot is
+# zero to within its roundoff leaves the set's Gram matrix singular to
+# within it, and the steps after it solve their set afresh (see
+# gramsolve).
+function lawsonhanson(G::AbstractMatrix, c::AbstractVector; admittol::Real = 1e-12,
+        maxsteps::Integer = 4*length(c) + 40)
     m = length(c)
     μ = zeros(m)
     free = falses(m)
@@ -2066,9 +2501,11 @@ function lawsonhanson(G::AbstractMatrix, c::AbstractVector; admittol::Real = 1e-
     # with little loss has them at 1e-10, and a threshold with a unit
     # floor admits nothing and stops immediately
     scale = maximum(abs, c; init = 0.0)
-    cap = 4*m + 40
-    for _ in 1:cap
-        g = G*μ .+ c
+    work = WorkingSet(m)
+    g = zeros(m)
+    for _ in 1:maxsteps
+        mul!(g, G, μ)
+        g .+= c
         admit, worst = 0, -admittol*scale
         for k in 1:m
             free[k] && continue
@@ -2076,9 +2513,10 @@ function lawsonhanson(G::AbstractMatrix, c::AbstractVector; admittol::Real = 1e-
         end
         admit == 0 && return μ
         free[admit] = true
-        for _ in 1:cap
-            P = findall(free)
-            zp = gramsolve(G[P, P], view(c, P))
+        work.factored && (work.factored = admit!(work, G, admit))
+        for _ in 1:maxsteps
+            P = work.factored ? work.set : findall(free)
+            zp = work.factored ? solveset!(work, c) : gramsolve(G[P, P], view(c, P))
             all(isfinite, zp) || return μ
             if minimum(zp) >= 0
                 fill!(μ, 0.0)
@@ -2086,20 +2524,31 @@ function lawsonhanson(G::AbstractMatrix, c::AbstractVector; admittol::Real = 1e-
                 break
             end
             # the longest step toward `zp` which keeps every multiplier
-            # nonnegative; at least one reaches zero and retires
-            α = Inf
+            # nonnegative; the multiplier which sets it reaches zero and
+            # retires, and is put at zero rather than where the step's
+            # rounding leaves it, which can be above zero: a multiplier
+            # left there blocks the next step at its size, and the steps
+            # after it, retiring nothing, spend the sweep's budget
+            α, blocking = Inf, 0
             for (q, k) in enumerate(P)
-                zp[q] < 0 && (α = min(α, μ[k]/(μ[k] - zp[q])))
+                if zp[q] < 0
+                    step = μ[k]/(μ[k] - zp[q])
+                    step < α && ((α, blocking) = (step, k))
+                end
             end
             isfinite(α) || return μ
             for (q, k) in enumerate(P)
                 μ[k] += α*(zp[q] - μ[k])
             end
-            for k in P
-                if μ[k] <= 0
-                    μ[k] = 0.0
-                    free[k] = false
-                end
+            μ[blocking] = 0.0
+            # from the end of the set, which a retirement shortens behind
+            # the positions still to visit
+            for q in reverse(eachindex(P))
+                k = P[q]
+                μ[k] <= 0 || continue
+                μ[k] = 0.0
+                free[k] = false
+                work.factored && retire!(work, q)
             end
             # a degenerate step which retires the constraint just admitted
             # makes no progress, and repeating it would not either
@@ -2107,6 +2556,84 @@ function lawsonhanson(G::AbstractMatrix, c::AbstractVector; admittol::Real = 1e-
         end
     end
     return μ
+end
+
+# The working set of lawsonhanson: its constraints in the order they were
+# admitted, `set`, and while `factored` the Cholesky factor of their Gram
+# matrix, `G[set, set] = R'R` in the leading block of `R`, whose storage
+# doubles as the set outgrows it; `z` holds the set's solution.
+mutable struct WorkingSet
+    R::Matrix{Float64}
+    set::Vector{Int}
+    z::Vector{Float64}
+    factored::Bool
+end
+WorkingSet(m::Int) = WorkingSet(zeros(0, 0), Int[], zeros(m), true)
+
+# `k` admitted to the set of `w`: the factor's new column `r`, from
+# `R' r = G[set, k]`, and its pivot, `sqrt(G_kk - r'r)`. False where the
+# pivot's square is not positive by more than its roundoff,
+# `2 (p + 1) eps G_kk` for a set of `p`, which leaves the set's Gram
+# matrix singular to within it, and the factor is then not carried on.
+function admit!(w::WorkingSet, G::AbstractMatrix, k::Int)
+    p = length(w.set)
+    if size(w.R, 1) <= p
+        capacity = min(length(w.z), 2*(p + 1))
+        R = zeros(capacity, capacity)
+        R[1:p, 1:p] .= view(w.R, 1:p, 1:p)
+        w.R = R
+    end
+    R = w.R
+    for i in 1:p
+        R[i, p + 1] = G[w.set[i], k]
+    end
+    p > 0 && ldiv!(UpperTriangular(view(R, 1:p, 1:p))', view(R, 1:p, p + 1))
+    d = G[k, k]
+    for i in 1:p
+        d -= R[i, p + 1]^2
+    end
+    push!(w.set, k)
+    (isfinite(d) && d > 2*(p + 1)*eps()*G[k, k]) || return false
+    R[p + 1, p + 1] = sqrt(d)
+    return true
+end
+
+# The `q`th constraint of the set of `w` retired: the factor without its
+# row and column, the columns after it moved left and the entries they
+# leave below the diagonal turned into it by plane rotations of the rows,
+# which leave `R'R` as it is.
+function retire!(w::WorkingSet, q::Int)
+    p = length(w.set)
+    R = w.R
+    for j in q + 1:p, i in 1:j
+        R[i, j - 1] = R[i, j]
+    end
+    for j in q:p - 1
+        a, b = R[j, j], R[j + 1, j]
+        r = hypot(a, b)
+        cs, sn = a/r, b/r
+        R[j, j], R[j + 1, j] = r, 0.0
+        for l in j + 1:p - 1
+            x, y = R[j, l], R[j + 1, l]
+            R[j, l] = cs*x + sn*y
+            R[j + 1, l] = cs*y - sn*x
+        end
+    end
+    deleteat!(w.set, q)
+    return nothing
+end
+
+# the solution of `G z = -c` on the set of `w`, in the order of its set
+function solveset!(w::WorkingSet, c::AbstractVector)
+    p = length(w.set)
+    z = view(w.z, 1:p)
+    for i in 1:p
+        z[i] = -c[w.set[i]]
+    end
+    F = UpperTriangular(view(w.R, 1:p, 1:p))
+    ldiv!(F', z)
+    ldiv!(F, z)
+    return z
 end
 
 # The sweep above is finite and exact where the working set is
@@ -2122,15 +2649,21 @@ end
 # along its own coordinate, asks nothing of `G` beyond positive
 # semidefiniteness, converges on a dependent working set where a solve
 # of the equalities cannot, and finds nothing to do where the sweep is
-# already right. It runs to the conditions, not to a count.
-function dualactiveset(G::AbstractMatrix, c::AbstractVector; reltol::Real = 1e-10)
+# already right. It runs until the conditions hold, to `reltol` of the
+# largest constraint, for at most `sweeps` passes over the multipliers;
+# where they do not hold then, the rounds of the enforcement stop on a
+# correction which cannot meet its constraints (see enforcepassivity).
+function dualactiveset(G::AbstractMatrix, c::AbstractVector; reltol::Real = 1e-10,
+        sweeps::Integer = 200)
     m = length(c)
     μ = lawsonhanson(G, c)
     # nonnegative multipliers, a zero gradient where one is positive, and
     # a nonnegative gradient where one is zero: all of the conditions, not
     # the half the sweep checks
+    g = zeros(m)
     residual = ν -> begin
-        g = G*ν .+ c
+        mul!(g, G, ν)
+        g .+= c
         worst = 0.0
         for k in 1:m
             worst = max(worst, ν[k] > 0 ? abs(g[k]) : max(0.0, -g[k]))
@@ -2138,18 +2671,18 @@ function dualactiveset(G::AbstractMatrix, c::AbstractVector; reltol::Real = 1e-1
         worst
     end
     tol = reltol*max(maximum(abs, c; init = 0.0), floatmin(Float64))
-    for _ in 1:200
-        residual(μ) <= tol && break
+    residual(μ) <= tol && return μ, true
+    # the passes read `G` a row at a time, as the columns of a dense copy:
+    # an entry of a symmetric view is read through a branch on its triangle
+    A = Matrix(G)
+    for _ in 1:sweeps
         for k in 1:m
-            G[k, k] > 0 || continue
-            gk = c[k]
-            for j in 1:m
-                gk += G[k, j]*μ[j]
-            end
-            μ[k] = max(0.0, μ[k] - gk/G[k, k])
+            A[k, k] > 0 || continue
+            μ[k] = max(0.0, μ[k] - (c[k] + dot(view(A, :, k), μ))/A[k, k])
         end
+        residual(μ) <= tol && return μ, true
     end
-    return μ, residual(μ) <= tol
+    return μ, false
 end
 
 # `G z = -c` on the working set. Several frequencies, or several singular
@@ -3403,7 +3936,9 @@ end
 # more than `dcchecktol` is an error of the arithmetic.
 # The residues are taken within their `spaces` (see residuespaces) from
 # the start, and the residues returned lie within them, so that the
-# realization through the same spaces is the block made passive.
+# realization through the same spaces is the block made passive; a value
+# `dc` stated at zero frequency is held where `D` meets it through the
+# same spaces (see dcthroughspaces!).
 # `reciprocal` says the samples are, and constrains the transpose of each
 # point as well. `memory` is the bytes a weighted correction's metric may
 # take (see weightedmetricbytes), which is refused before it is built
@@ -3424,18 +3959,6 @@ function enforcepassivity(poles::Vector{ComplexF64}, residues::AbstractArray{<:C
     m = ResidueForm(poles, residues, D, wref, spaces)
     X, D = m.X, m.D
     n = size(D, 1)
-    # A residue taken within its space loses its part `P` outside it, and
-    # with it `-P/a` of the value at zero frequency, `a` its pole; the
-    # constant takes that back, so that a value stated there, which the
-    # fit meets, is the one held from here on.
-    if !isempty(dc)
-        for p in eachindex(poles)
-            Q = spaces[p]
-            size(Q, 2) < n || continue
-            R = isrealpole(poles[p]) ? complex.(real.(view(residues, :, :, p))) : residues[:, :, p]
-            D .-= real.((R .- (R*Q)*Q') ./ poles[p])
-        end
-    end
     # The level the rounds hold the fit to: its dissipation `I - S'S` no
     # lower than `-atol` at any frequency, as the block's samples and its
     # constant term are held (see checkblockcontract and checkpassive), so
@@ -3719,16 +4242,17 @@ functions of its cosine and sine parts (see
 [`ModulatedRationalProvider`](@ref)), strictly proper, since a
 conversion vanishes at infinite frequency. Each is fitted at `npoles`
 poles by the vector fit of the `ScatteringParameters` method, with the
-parameters of `fitting` (see [`VectorFitting`](@ref)), at the
-`frequencies` in Hz, by default the magnitudes of the frequencies the
-harmonic is tabulated at, within `band = (flo, fhi)` in Hz when given:
-a block built from a solve carries every sideband its mode truncation
-reached, far above the band a signal occupies, and a harmonic with no
-sample in the band is realized as zero; no passivity is enforced, since
-a pumped block is lossless as a whole and its parts are not. A
-harmonic is read where its data covers a frequency and is zero beyond
-its tables, and `H_0`, a real function, is read at whichever sign of a
-frequency its data holds and mirrored to the other,
+parameters of `fitting` (see [`VectorFitting`](@ref)), at the angular
+`frequencies` in rad/s, by default the magnitudes of the angular
+frequencies the harmonic is tabulated at, within `band = (wlo, whi)` in
+rad/s when given: a block built from a solve carries every sideband its
+mode truncation reached, far above the band a signal occupies, and a
+harmonic with no sample in the band is realized as zero; no passivity is
+enforced, since the harmonic transfer functions of a pumped block are
+not passive one by one, whatever the block is as a whole. A harmonic is
+read where its data covers a frequency and is zero
+beyond its tables, and `H_0`, a real function, is read at whichever sign
+of a frequency its data holds and mirrored to the other,
 `H_0(-nu) = conj(H_0(nu))`, so a table of one sign fits. A fit
 within a band is an approximation within it: a solve evaluates the
 block at every sideband its harmonics reach from a signal, where such
@@ -3764,7 +4288,10 @@ add for a lossless device, and its output obeys the commutation
 relations exactly. That noise is what the fit costs, and the fit is
 refused when it exceeds, in quanta, `noisetol` of the square of the largest entry
 over the modes the data reaches from its frequencies and from the
-midpoints between them; the block's `atol` stays that of the data. The fit is held to the data as
+midpoints between them; the block's `atol` stays that of the data. A
+covariance the block itself states completed already carries the noise
+its own functions require, over the same ladder, which the fitted block
+carries as well: the fit costs what its completion adds beyond that. The fit is held to the data as
 well, and refused where it misses a sample by more than `tol` of the
 largest response, in the spectral norm, as the `ScatteringParameters`
 method measures a fit: a stated covariance large enough covers the
@@ -3781,7 +4308,7 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
     padding >= 0 || throw(ArgumentError("padding must be nonnegative."))
     (isfinite(tol) && tol >= 0) || throw(ArgumentError("tol must be finite and nonnegative."))
     (isfinite(noisetol) && noisetol >= 0) || throw(ArgumentError("noisetol must be finite and nonnegative."))
-    isnothing(band) || (length(band) == 2 && 0 <= band[1] < band[2]) || throw(ArgumentError("band is (flo, fhi) in Hz with 0 <= flo < fhi."))
+    isnothing(band) || (length(band) == 2 && 0 <= band[1] < band[2]) || throw(ArgumentError("band is (wlo, whi) in rad/s with 0 <= wlo < whi."))
     taus = something(fitdelays(delays, block.nports), zeros(block.nports))
     n = block.nports
     providers = AbstractMatrixProvider[]
@@ -3792,45 +4319,68 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
     end
     # a harmonic at the frequencies its data covers, and zero beyond
     sample(p, nus) = evaluatecovered!(Array{Complex{Float64},3}(undef, n, n, length(nus)), p, nus)
+    # Every harmonic sampled where it is fitted, at the positive and the
+    # negative frequencies where its data covers them and zero beyond,
+    # the data being the samples and what lies between them, and refused
+    # by name where it is not finite: `ws` are those of the harmonic `k`,
+    # empty where the band leaves it none, and `Hp` and `Hm` its samples
+    # at `ws` and `-ws`.
+    sampled = Tuple{Vector{Float64},Array{ComplexF64,3},Array{ComplexF64,3}}[]
+    for (j, k) in enumerate(block.harmonics)
+        p = block.providers[j]
+        knots = tableknots(p)
+        ws = if !isnothing(frequencies)
+            Float64.(collect(frequencies))
+        elseif !isempty(knots)
+            sort!(unique!(filter(>(0), abs.(knots))))
+        else
+            throw(ArgumentError(lazy"give the angular frequencies in rad/s to sample the harmonic $(k) at; only a tabulated harmonic has its own."))
+        end
+        isnothing(band) || filter!(w -> band[1] <= w <= band[2], ws)
+        # the unconverted response is the block's reflection and
+        # transmission, which the fit cannot leave out
+        isempty(ws) && k == 0 && throw(ArgumentError("the band leaves the unconverted response of the block without a sample; widen it to the frequencies the block is tabulated at."))
+        isempty(ws) || checkfrequencies(ws)
+        Hp, Hm = sample(p, ws), sample(p, -ws)
+        checkfinitesamples(Hp, ws, lazy"the harmonic $(k) of the block")
+        checkfinitesamples(Hm, -ws, lazy"the harmonic $(k) of the block")
+        push!(sampled, (ws, Hp, Hm))
+    end
+    # The data must meet the declaration itself, at its own frequencies
+    # and over the modes it holds there, each output with every input
+    # which feeds it, to the tolerance of the block and of a covariance,
+    # so that what the fit adds is its own error alone and never a
+    # declaration the data violated: every block is checked, whatever
+    # kind its data is, since the declaration is the block's and not its
+    # data's, and before any harmonic is fitted, so that a block which
+    # violates it is refused for that and not for a fit it pays for. The
+    # modes are taken by the pump ladders of the frequencies (see
+    # ladderfamilies).
+    nus = reduce(vcat, (tableknots(p) for p in block.providers); init = Float64[])
+    isempty(nus) && !isnothing(frequencies) && (nus = Float64.(collect(frequencies)))
+    nus = sort!(unique!(abs.(nus)))
+    filter!(>(0), nus)
+    declared = declaredtolerance(block)
+    for (rows, cols, K) in ladderfamilies(block, nus)
+        v = pumpedviolation(block, rows, cols, K)
+        v <= declared || throw(ArgumentError(lazy"the block's data does not meet what it declares: over the modes its harmonics reach from $(rows[argmin(abs.(rows))]) rad/s the violation of its losslessness or of the commutation relations of its stated covariance is $(v) of the square of its largest entry, against the $(declared) of its atol and its noise model's; state its noise, or raise atol if that is meant."))
+    end
     # the largest deviation of a fitted function from its data over the
     # samples, in the spectral norm, and the largest response, the data
     # as it is fitted, with the pump phase and the delays folded in
     fiterr, datascale = 0.0, 0.0
-    function measure!(provider, nus, H)
-        worst, scale = fitdeviation(provider, nus, H)
-        fiterr, datascale = max(fiterr, worst), max(datascale, scale)
-        return nothing
-    end
     for (j, k) in enumerate(block.harmonics)
         p = block.providers[j]
-        knots = tableknots(p)
-        fs = if !isnothing(frequencies)
-            Float64.(collect(frequencies))
-        elseif !isempty(knots)
-            sort!(unique!(filter(>(0), abs.(knots ./ (2pi)))))
-        else
-            throw(ArgumentError(lazy"give the frequencies in Hz to sample the harmonic $(k) at; only a tabulated harmonic has its own."))
-        end
-        isnothing(band) || filter!(f -> band[1] <= f <= band[2], fs)
-        if isempty(fs)
-            # a harmonic with nothing in the band converts nothing there;
-            # the unconverted response is the block's reflection and
-            # transmission, which the fit cannot leave out
-            k == 0 && throw(ArgumentError("the band leaves the unconverted response of the block without a sample; widen it to the frequencies the block is tabulated at."))
+        ws, Hp, Hm = sampled[j]
+        if isempty(ws)
+            # a harmonic with nothing in the band converts nothing there
             push!(providers, ModulatedRationalProvider(emptyrational(n), emptyrational(n)))
             continue
         end
-        checkfrequencies(fs)
-        ws = 2pi .* fs
-        # the harmonic at the positive and the negative frequencies where
-        # its data covers them and zero beyond, the data being the
-        # samples and what lies between them, with the block's pump phase
-        # folded in
+        # the block's pump phase and the delays folded in
         rot = cis(k*block.phase)
-        Hp = sample(p, ws)
         Hp .*= rot
         undelay!(Hp, ws, k)
-        Hm = sample(p, -ws)
         Hm .*= rot
         undelay!(Hm, -ws, k)
         if k == 0
@@ -3847,9 +4397,11 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
             # which needs no pole is its constant, with no state
             dc = block.dcmodel isa ScatteringLimit ? nodc : dcscatteringmatrix(block.dcmodel, n)
             poles, residues, D = vectorfit(Hp, ws, Int(npoles), fitting; dc = dc, lastpole = :drop)
-            A, B, C = realization(poles, residues, n; ranktol = fitting.ranktol)
+            spaces = residuespaces(poles, residues, fitting.ranktol)
+            dcthroughspaces!(D, poles, residues, spaces, dc)
+            A, B, C = realization(poles, residues, n; spaces = spaces)
             push!(providers, RationalScatteringProvider(A, B, C, D))
-            measure!(providers[end], ws, Hp)
+            fiterr, datascale = measured(fiterr, datascale, providers[end], ws, Hp)
             continue
         end
         Gc = (Hp .+ conj.(Hm)) ./ 2
@@ -3866,8 +4418,8 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
             push!(parts, RationalScatteringProvider(A, B, C, zeros(n, n)))
         end
         push!(providers, ModulatedRationalProvider(parts[1], parts[2]))
-        measure!(providers[end], ws, Hp)
-        measure!(providers[end], -ws, Hm)
+        fiterr, datascale = measured(fiterr, datascale, providers[end], ws, Hp)
+        fiterr, datascale = measured(fiterr, datascale, providers[end], -ws, Hm)
     end
     # the fit against its data: refused where it misses a sample by more
     # than tol of the largest response
@@ -3897,41 +4449,80 @@ function RationalScattering(block::LinearizedScattering, npoles::Integer; freque
     # stated
     fitted = LinearizedScattering(block.harmonics, providers, block.wp, 0.0, n, block.zref,
         block.grounded, noise, block.dcmodel, block.envelope, block.atol)
-    nus = reduce(vcat, (tableknots(p) for p in block.providers); init = Float64[])
-    isempty(nus) && !isnothing(frequencies) && (nus = 2pi .* Float64.(collect(frequencies)))
-    nus = sort!(unique!(abs.(nus)))
-    filter!(>(0), nus)
-    probes = isempty(nus) ? nus : vcat(nus, (nus[1:end - 1] .+ nus[2:end]) ./ 2)
-    # the data must meet the declaration itself, at its own frequencies
-    # and over the modes it holds there, each output with every input
-    # which feeds it, to the tolerance of the block and of a covariance,
-    # so that what the fit adds is its own error alone and never a
-    # declaration the data violated: every block is checked here,
-    # whatever kind its data is, since the declaration is the block's and
-    # not its data's
-    declared = declaredtolerance(block)
-    for nu in nus
-        rows, cols, K = pumpedfamily(block, (nu,))
-        isempty(rows) && continue
-        v = pumpedviolation(block, rows, cols, K)
-        v <= declared || throw(ArgumentError(lazy"the block's data does not meet what it declares: over the modes its harmonics reach from $(rows[argmin(abs.(rows))]) rad/s the violation of its losslessness or of the commutation relations of its stated covariance is $(v) of the square of its largest entry, against the $(declared) of its atol and its noise model's; state its noise, or raise atol if that is meant."))
-    end
+    probes = noiseprobes(nus)
+    # a covariance the block states completed carries the noise its own
+    # functions require, which the fitted block carries as well: the
+    # block itself, its noise completed over the ladder the fit completes
+    # on, gives that noise, whose waves the delays taken out turn to the
+    # fit's reference planes
+    own = block.noise isa NoiseCovariance && block.noise.completed ?
+        LinearizedScattering(block.harmonics, block.providers, block.wp, block.phase, n, block.zref,
+            block.grounded, NoiseCovariance(block.noise.provider, block.noise.interpolation,
+                block.noise.extrapolation, block.noise.atol, true, Int(padding)),
+            block.dcmodel, block.envelope, block.atol) : nothing
     # the noise the completion adds to the fit, the completed covariance
-    # of the fitted functions less the stated one, over the modes the
-    # data reaches from its frequencies and from the midpoints between
-    # them, since a solve evaluates the fit at frequencies of its own,
-    # relative to the square of the largest entry: what the fit costs,
-    # refused beyond what is accepted
+    # of the fitted functions less the stated one and less the block's own
+    # completion, over the modes the data reaches from its frequencies and
+    # from the midpoints between them, since a solve evaluates the fit at
+    # frequencies of its own, relative to the square of the largest entry:
+    # what the fit costs, refused beyond what is accepted; the modes by
+    # the pump ladders of the frequencies (see ladderfamilies)
     added = 0.0
-    for nu in probes
-        rows, cols, K = pumpedfamily(block, (nu,))
-        isempty(rows) && continue
+    for (rows, cols, K) in ladderfamilies(block, probes)
         S, Kc, V = pumpednoisematrices(fitted, rows, cols, K; complete = false)
         extra = pumpednoisematrices(fitted, rows, cols, K)[3] - V
+        if !isnothing(own)
+            U = Diagonal([cis(rows[m]*taus[p]) for p in 1:n for m in eachindex(rows)])
+            C = pumpednoisematrices(own, rows, cols, K)[3] - pumpednoisematrices(own, rows, cols, K; complete = false)[3]
+            extra -= U*C*U'
+        end
         added = max(added, maximum(real.(eigvals(Hermitian(extra))))/max(1.0, maximum(abs, S))^2)
     end
     added <= noisetol || throw(ArgumentError(lazy"the fit adds noise of $(added) of the square of its largest entry to obey the commutation relations, against the noisetol of $(noisetol) accepted: fit with more poles or over a narrower band, or raise noisetol to accept a block which adds that much."))
     return fitted
+end
+
+# The families of modes (see pumpedfamily) the positive frequencies
+# `nus` reach, by the pump ladders they lie on (see pumpladders). The
+# modes of a ladder are formed from its least frequency `r` as `r + j wp`,
+# since a mode near zero formed from a frequency many pump harmonics up
+# carries that frequency's roundoff, which can put a sample at the edge
+# of a band outside the table which holds it. The family of each of the
+# ladder's frequencies, the modes within the block's harmonics of it, is
+# taken in turn from `r` up, and only where it reaches a mode with data
+# beyond the last family taken: otherwise its modes are among that
+# family's and its matrices are blocks of that family's. A ladder whose
+# data the family of `r` reaches whole is one family.
+function ladderfamilies(block::LinearizedScattering, nus::AbstractVector)
+    wp, kmax = block.wp, maximum(block.harmonics)
+    families = Tuple{Vector{Float64},Vector{Float64},Matrix{Int}}[]
+    for g in pumpladders(wp, nus)
+        r = minimum(nus[i] for i in g)
+        # the highest step from `r` the families taken, and the searches
+        # for data beyond them, have reached
+        reached = typemin(Int)
+        for j0 in sort!(unique!([round(Int, (nus[i] - r)/wp) for i in g]))
+            lo, hi = j0 - kmax, j0 + kmax
+            hi <= reached && continue
+            if lo <= reached
+                beyond = first(pumpedfamily(block, [r + j*wp for j in (reached + 1):hi]; reach = false))
+                reached = hi
+                isempty(beyond) && continue
+            end
+            family = pumpedfamily(block, [r + j*wp for j in lo:hi]; reach = false)
+            reached = hi
+            isempty(first(family)) || push!(families, family)
+        end
+    end
+    return families
+end
+
+# the largest deviation `worst` and the largest response `scale` over the
+# fits of a pumped block so far, with those of `provider` against the
+# data `H` it is fitted to at the frequencies `nus` (see fitdeviation)
+function measured(worst::Float64, scale::Float64, provider, nus::AbstractVector, H::AbstractArray{<:Complex,3})
+    w, s = fitdeviation(provider, nus, H)
+    return max(worst, w), max(scale, s)
 end
 
 # the realization of no states and no feedthrough, the fit of a part

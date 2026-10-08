@@ -29,7 +29,7 @@ and sensitivity adjoints.
 Unlike [`HBSystem`](@ref), no time domain matrix-free product is provided,
 deliberately: a Fourier transform based product computes a cyclic
 convolution on the pump grid, whereas the assembled matrix uses the explicit
-truncation of [`hbmatind`](@ref) (the zeros of `Amatrixindices`), dropping
+truncation of [`hbmatindices`](@ref) (the zeros of `Amatrixindices`), dropping
 the couplings which fall outside the grid instead of wrapping them. The
 assembled matrix defines the linearized solver, so products must match it
 exactly; since the pump modulation contribution is precomputed, assembling
@@ -67,11 +67,10 @@ struct HBLinearizedSystem{TinvL,TG,TC,TF}
     # and the scattering block port currents, and its index map
     Amna0::SparseMatrixCSC{Complex{Float64},Int}
     Amna0indexmap::Vector{Int}
-    # the pump mode frequency offsets of the signal modes, and the numbers
-    # of modes and nodes, for computing the mode frequency matrices
+    # the pump mode frequency offsets of the signal modes, and the number
+    # of modes, for computing the mode frequency matrices
     wpumpmodes::Vector{Float64}
     Nmodes::Int
-    Nnodes::Int
     # the hybrid stamps of the scattering block components (see
     # ScatteringStampSystem), or nothing
     scattering
@@ -83,10 +82,10 @@ end
         phimatrix::Array, invLnmcopy::SparseMatrixCSC,
         Gnmcopy::SparseMatrixCSC, Cnmcopy::SparseMatrixCSC, invLnm, Gnm,
         Cnm, symbolicvalues::Bool, Amna0::SparseMatrixCSC,
-        wpumpmodes, Nnodes::Integer; scattering = nothing)
+        wpumpmodes; scattering = nothing)
 
 Construct an [`HBLinearizedSystem`](@ref) from the signal frequency grid
-index matrix `Amatrixindices` (see [`hbmatind`](@ref)), the Josephson
+index matrix `Amatrixindices` (see [`hbmatindices`](@ref)), the Josephson
 junction data, the Fourier coefficients of `cos(phi(t))` of the pump in
 `phimatrix`, the numeric copies of the linear term matrices (which define
 the sparsity structure) and the possibly symbolic originals, with
@@ -105,8 +104,8 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
     Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
     phimatrix::Array, invLnmcopy::SparseMatrixCSC,
     Gnmcopy::SparseMatrixCSC, Cnmcopy::SparseMatrixCSC, invLnm, Gnm, Cnm,
-    symbolicvalues::Bool, Amna0::SparseMatrixCSC, wpumpmodes,
-    Nnodes::Integer; scattering = nothing)
+    symbolicvalues::Bool, Amna0::SparseMatrixCSC, wpumpmodes;
+    scattering = nothing)
 
     # the sparsity structure must contain the modified nodal analysis
     # augmentation as well, so merge its entries into the numeric copies
@@ -156,7 +155,7 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
     return HBLinearizedSystem(Asparse, complexjacobianplan, AoLjnmnzval,
         invLnm, Gnm, Cnm, invLnmindexmap, Gnmindexmap,
         Cnmindexmap, frequencydependent, symbolicvalues, Amna0,
-        Amna0indexmap, wpumpmodes, Nmodes, Nnodes, scattering)
+        Amna0indexmap, wpumpmodes, Nmodes, scattering)
 end
 
 """
@@ -179,13 +178,10 @@ end
     assemblesystemmatrix!(A::SparseMatrixCSC, lsys::HBLinearizedSystem,
         wmodes::AbstractVector; conjugatepump::Bool = false,
         scatteringwork = ScatteringWorkspace())
-    assemblesystemmatrix!(A::SparseMatrixCSC, lsys::HBLinearizedSystem,
-        ws::Number; conjugatepump::Bool = false)
 
 Assemble the linearized harmonic balance system matrix into `A`, which must
-share the sparsity structure of `lsys.Asparse`, either from the mode
-frequency vector `wmodes` or at the signal frequency `ws` (from which the
-mode frequencies are computed as `wmodes = ws .+ lsys.wpumpmodes`). The
+share the sparsity structure of `lsys.Asparse`, at the mode frequencies
+`wmodes`, `ws .+ lsys.wpumpmodes` at the signal frequency `ws`. The
 frequency scaling, the negative frequency conjugation, and any symbolic
 frequency substitution are applied per column from the mode index, without
 materializing system sized diagonals. With `conjugatepump = true` the complex
@@ -270,10 +266,4 @@ function assemblesystemmatrix!(A::SparseMatrixCSC,
     end
 
     return A
-end
-
-function assemblesystemmatrix!(A::SparseMatrixCSC,
-    lsys::HBLinearizedSystem, ws::Number; conjugatepump::Bool = false)
-    return assemblesystemmatrix!(A, lsys, ws .+ lsys.wpumpmodes;
-        conjugatepump = conjugatepump)
 end

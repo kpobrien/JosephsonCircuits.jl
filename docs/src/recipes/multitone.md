@@ -12,6 +12,17 @@ This small JPA uses weak drives so that several refinements run quickly.
 It illustrates the workflow, not a high-gain amplifier design. The three
 frequencies have no intended common fundamental. For deliberately
 commensurate drives, use one fundamental and excite its harmonics instead.
+The three tones drive port 1:
+
+```text
+ 1                  2
+ o------[cc]--------o--------+
+ |                  |        |
+[p1]              [jj]     [cj]
+ |                  |        |
+ o------------------o--------+
+ 0
+```
 
 ```@example multitone
 using JosephsonCircuits, LinearAlgebra, Plots
@@ -101,16 +112,17 @@ In `hbnlsolve` the parity options are named `odd` and `even`.
 | Selection | Shape/effect |
 |---|---|
 | `Npumpharmonics = H` | Box: `abs(m[j]) <= H[j]` |
-| `maxpumpintermodorder = q` | Diamond in 2D, octahedron in 3D: `sum(abs, m) <= q` |
+| `maxpumpintermodorder = q` | `sum(abs, m) <= q`, a diamond in 2D and an octahedron in 3D, and every harmonic of a single tone up to its cap |
 | Parity and DC options | Remove incompatible parity classes or retain the origin |
 | `frequencywindow = (lo,hi)` | Keep `lo <= abs(sum(m .* wp)) <= hi`, in rad/s; DC follows `dc` |
 
 The corresponding order keyword of `hbnlsolve` is `maxintermodorder`.
 A frequency floor can remove nearly cancelling combinations on a
 multi-tone grid, but also removes their physical mixing paths. Refine
-that cutoff when those low-frequency products matter. Increasing only the
-axis caps has no effect on modes still excluded by an order or frequency
-cut.
+that cutoff when those low-frequency products matter. Raising only the
+axis caps adds the harmonics of a single tone, which the order does not
+cut, but no mixing product the order excludes and no mode outside the
+frequency window.
 
 ## Evaluation is a separate grid
 

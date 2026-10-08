@@ -321,7 +321,7 @@ julia> round(noisequanta(2pi*5e9, 2.0), digits = 3)
 noisequanta(w, T) = boltzmann_constant*T/(reduced_planck_constant*abs(w))
 
 """
-    calcnoisecovariance!(Cnoise, Snoise, channelnoise = nothing,
+    calcnoisecovariance!(Cnoise, Snoise, channelnoise,
         work = similar(Snoise))
 
 The added noise covariance at the output ports,
@@ -332,14 +332,14 @@ which is the `Y` of the Gaussian channel whose `X` is the scattering matrix:
 the map takes an input covariance to `X sigma X' + Y`. `Snoise` describes the
 transformation and `channelnoise` the state of each channel, its symmetrized
 noise `nbar + 1/2` in quanta, so this is where the two meet and where a
-temperature shows up. `nothing` is the vacuum, `1/2` for every channel.
+temperature shows up.
 
 Formed as one matrix product, `transpose(Snoise)*work` with `work` the
 noise scaled conjugate of `Snoise`, as the device sweep forms it; `work` is
 scratch of the size of `Snoise`, which a sweep holds in its workspace.
 """
 function calcnoisecovariance!(Cnoise::AbstractMatrix, Snoise::AbstractMatrix,
-    channelnoise = nothing, work::AbstractMatrix = similar(Snoise))
+    channelnoise::AbstractVector, work::AbstractMatrix = similar(Snoise))
     np = size(Snoise, 2)
     if size(Cnoise) != (np, np)
         throw(DimensionMismatch(lazy"`Cnoise` has size $(size(Cnoise)) but the $(np) output port modes need ($(np), $(np))."))
@@ -347,11 +347,7 @@ function calcnoisecovariance!(Cnoise::AbstractMatrix, Snoise::AbstractMatrix,
     if size(work) != size(Snoise)
         throw(DimensionMismatch(lazy"`work` has size $(size(work)) but `Snoise` has size $(size(Snoise))."))
     end
-    if isnothing(channelnoise)
-        work .= conj.(Snoise) ./ 2
-    else
-        work .= channelnoise .* conj.(Snoise)
-    end
+    work .= channelnoise .* conj.(Snoise)
     return mul!(Cnoise, transpose(Snoise), work)
 end
 
@@ -372,13 +368,10 @@ do not see it at all.
 
 `temperatures` is one temperature per noise channel, in the order
 [`noisechannelnames`](@ref) gives them, or one per port for the port
-modes. `nothing`, and every temperature being zero, both give the vacuum,
-`1/2` everywhere.
+modes; every temperature being zero gives the vacuum, `1/2` everywhere.
 """
-thermalnoise!(channelnoise::AbstractVector, ::Nothing, wmodes,
-    Nmodes::Integer) = fill!(channelnoise, 0.5)
-function thermalnoise!(channelnoise::AbstractVector, temperatures, wmodes,
-    Nmodes::Integer)
+function thermalnoise!(channelnoise::AbstractVector,
+    temperatures::AbstractVector, wmodes, Nmodes::Integer)
     if length(channelnoise) != length(temperatures)*Nmodes
         throw(DimensionMismatch(lazy"`channelnoise` has length $(length(channelnoise)) but $(length(temperatures)) channels of $(Nmodes) modes need $(length(temperatures)*Nmodes)."))
     end
@@ -428,14 +421,12 @@ noise channel, whose current is the one the voltage drives through its own
 impedance: `kval*(V + conj(Z)*V/Z)/2 = kval*real(Z)/Z*V` with `kval` the
 [`portwavescale`](@ref), written as `sqrt(real(Z))/(Z*sqrt(abs(w)))` so
 that an element with no loss at `w`, whose channel carries nothing there,
-gives zero rather than an infinite scale times a zero voltage term.
+gives zero rather than an infinite scale times a zero voltage term. `w` is
+nonzero: the sweep, which reads the noise channels, refuses a mode at zero
+frequency.
 """
 @inline function noisewavescale(portimpedance, w)
-    s = sqrt(Complex(real(portimpedance)))
-    if w == 0
-        return zero(s)
-    end
-    return s/(portimpedance*sqrt(abs(w)))
+    return sqrt(Complex(real(portimpedance)))/(portimpedance*sqrt(abs(w)))
 end
 
 """
@@ -673,9 +664,8 @@ On a circuit whose loss is spread along the line that is a reduction of
 thousands of rows to one number per port mode, so when the noise scattering
 parameters are not themselves an output there is no reason to bring the
 matrix to the host at all: [`devicenoise`](@ref) returns the reduction, and
-the host loop forms it from its matrix with [`noisereduction!`](@ref)
-(allocating: `noisereduction`). Passed
-to [`calcqe!`](@ref) and [`calccm!`](@ref).
+the host loop forms it from its matrix with [`noisereduction!`](@ref).
+Passed to [`calcqe!`](@ref) and [`calccm!`](@ref).
 
 # Fields
 - `symmetrized`: `sum_c channelnoise[c]*abs2(Snoise[c, i])` per output
@@ -687,26 +677,16 @@ struct NoiseReduction{V}
     signed::V
 end
 
-function noisereduction(Snoise::AbstractMatrix{T}, w,
-    channelnoise = nothing, channelsigns = nothing) where {T}
-    np = size(Snoise, 2)
-    R = float(real(T))
-    return noisereduction!(NoiseReduction(zeros(R, np), zeros(R, np)),
-        Snoise, w, channelnoise, channelsigns)
-end
-
 """
-    noisereduction(Snoise::AbstractMatrix, w, channelnoise = nothing,
-        channelsigns = nothing)
-    noisereduction!(noise::NoiseReduction, Snoise, w, channelnoise = nothing,
+    noisereduction!(noise::NoiseReduction, Snoise, w, channelnoise,
         channelsigns = nothing)
 
 Reduce the noise scattering matrix `Snoise`, a row per noise channel mode
 and a column per output port mode, to the two sums the quantum efficiency
-and the commutation relations read; see [`NoiseReduction`](@ref). `w` holds
-the mode frequencies, the mode of row `c` being `(c-1) % length(w) + 1`,
-`channelnoise` the symmetrized noise `nbar + 1/2` of each row, the vacuum
-`1/2` everywhere when `nothing`, and `channelsigns` the sign kind of each
+and the commutation relations read, into `noise`; see
+[`NoiseReduction`](@ref). `w` holds the mode frequencies, the mode of row
+`c` being `(c-1) % length(w) + 1`, `channelnoise` the symmetrized noise
+`nbar + 1/2` of each row, and `channelsigns` the sign kind of each
 channel, the channel of row `c` being `(c-1) ÷ length(w) + 1`, in the second
 sum, one everywhere when `nothing`: `1` and `-1` multiply the sign of the
 row's mode frequency, `2` and `-2` are the fixed signs `1` and `-1` (see
@@ -715,15 +695,17 @@ row's mode frequency, `2` and `-2` are the fixed signs `1` and `-1` (see
 
 # Examples
 ```jldoctest
-julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1]); (n.symmetrized, n.signed)
+julia> Snoise = [1 2; 3 4; 5 6; 7 8]; vacuum = fill(0.5, 4);
+
+julia> n = JosephsonCircuits.noisereduction!(JosephsonCircuits.NoiseReduction(zeros(2), zeros(2)), Snoise, [1, -1], vacuum); (n.symmetrized, n.signed)
 ([42.0, 60.0], [-32.0, -40.0])
 
-julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1], nothing, [1.0, -1.0]); (n.symmetrized, n.signed)
+julia> n = JosephsonCircuits.noisereduction!(JosephsonCircuits.NoiseReduction(zeros(2), zeros(2)), Snoise, [1, -1], vacuum, [1.0, -1.0]); (n.symmetrized, n.signed)
 ([42.0, 60.0], [16.0, 16.0])
 ```
 """
 function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
-    channelnoise = nothing, channelsigns = nothing)
+    channelnoise::AbstractVector, channelsigns = nothing)
     m = length(w)
     np = size(Snoise, 2)
     if mod(size(Snoise, 1), m) != 0
@@ -732,7 +714,7 @@ function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
     if length(noise.symmetrized) != np || length(noise.signed) != np
         throw(DimensionMismatch(lazy"The noise reduction has $(length(noise.symmetrized)) entries but the noise scattering matrix has $(np) output port modes."))
     end
-    if !isnothing(channelnoise) && length(channelnoise) != size(Snoise, 1)
+    if length(channelnoise) != size(Snoise, 1)
         throw(DimensionMismatch(lazy"The channel noise has $(length(channelnoise)) entries but the noise scattering matrix has $(size(Snoise, 1)) noise channel modes."))
     end
     if !isnothing(channelsigns) && length(channelsigns)*m != size(Snoise, 1)
@@ -745,7 +727,7 @@ function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
         d = zero(R); dc = zero(R); s = zero(R); sc = zero(R)
         for c in axes(Snoise, 1)
             a = abs2(Snoise[c, i])
-            f = isnothing(channelnoise) ? R(a/2) : R(channelnoise[c]*a)
+            f = R(channelnoise[c]*a)
             t = d + f
             dc += ifelse(abs(d) >= abs(f), (d - t) + f, (f - t) + d)
             d = t
@@ -769,24 +751,23 @@ end
 
 Overwrite `out[i]` with `sum_j weight_j*abs2(A[i,j])`, the weight of
 column `j` being the sign of the mode frequency `w[(j-1) % length(w) + 1]`
-of the column, or one for every column when `w` is `nothing`. The rows are
-accumulated column by column for cache efficiency, with a
-Kahan-Babuska-Neumaier compensated sum whose corrections live in `comp`,
-one per row: the row of a high gain amplifier is a cancellation between
-large signal and idler terms. Shared by the quantum efficiency and the
-commutation relations.
+of the column, which is the sum of the commutation relations
+([`calccm!`](@ref)). The rows are accumulated column by column for cache
+efficiency, with a Kahan-Babuska-Neumaier compensated sum whose
+corrections live in `comp`, one per row: the row of a high gain amplifier
+is a cancellation between large signal and idler terms.
 """
 function weightedrowpower!(out::AbstractVector, comp::AbstractVector,
     A::AbstractMatrix, w)
     if length(out) != size(A, 1) || length(comp) != size(A, 1)
         throw(DimensionMismatch(lazy"The row sums and their compensation need one entry per row of the matrix, $(size(A, 1))."))
     end
-    m = isnothing(w) ? 1 : length(w)
+    m = length(w)
     R = eltype(out)
     fill!(out, zero(R))
     fill!(comp, zero(R))
     @inbounds for j in axes(A, 2)
-        f = isnothing(w) ? one(R) : R(sign(real(w[(j-1) % m + 1])))
+        f = R(sign(real(w[(j-1) % m + 1])))
         for i in axes(A, 1)
             v = f*abs2(A[i, j])
             t = out[i] + v
@@ -802,42 +783,45 @@ function weightedrowpower!(out::AbstractVector, comp::AbstractVector,
 end
 
 """
-    calccm(S::AbstractMatrix, w, noise = nothing)
-    calccm!(cm, S, w, noise = nothing; comp = similar(cm))
+    calccm!(cm, S, w, noise::NoiseReduction; comp = similar(cm))
 
-Calculate the bosonic commutation relations for a scattering matrix `S` in
-the field ladder operator basis: the sum of `abs2` along each row, each
-column weighted by the sign of its mode frequency `w[(j-1) % length(w) + 1]`,
-plus, with the [`NoiseReduction`](@ref) `noise` of the noise scattering
-matrix of the dissipative elements, the signed noise power `noise.signed`
-at each output. Represents energy conservation. The sum is compensated, and
-`comp` is its scratch, one entry per row. `calccm!` overwrites `cm`.
+Overwrite `cm` with the bosonic commutation relations of a scattering
+matrix `S` in the field ladder operator basis: the sum of `abs2` along
+each row, each column weighted by the sign of its mode frequency
+`w[(j-1) % length(w) + 1]`, plus the signed noise power `noise.signed` of
+the [`NoiseReduction`](@ref) `noise` of the noise scattering matrix of the
+dissipative elements at each output. Represents energy conservation. The
+sum is compensated, and `comp` is its scratch, one entry per row.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.calccm(Complex{Float64}[3/5 4/5;4/5 3/5],[1])
+julia> nonoise = JosephsonCircuits.NoiseReduction(zeros(2), zeros(2));
+
+julia> JosephsonCircuits.calccm!(zeros(2), Complex{Float64}[3/5 4/5;4/5 3/5], [1], nonoise)
 2-element Vector{Float64}:
  1.0
  1.0
 
-julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 0 0 1],[1, -1])
+julia> JosephsonCircuits.calccm!(zeros(2), [1 1e-100 2e-100 1;1 0 0 1], [1, -1], nonoise)
 2-element Vector{Float64}:
  3.0e-200
  0.0
 
-julia> cm=Float64[0,0];JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5],[-1,1]);cm
+julia> JosephsonCircuits.calccm!(zeros(2), [3/5 4/5;4/5 3/5], [-1, 1], nonoise)
 2-element Vector{Float64}:
   0.28000000000000014
  -0.28000000000000014
 
-julia> w = [1, -1]; JosephsonCircuits.calccm([1 2;3 4], w, JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], w))
+julia> w = [1, -1]; n = JosephsonCircuits.noisereduction!(JosephsonCircuits.NoiseReduction(zeros(2), zeros(2)), [1 2; 3 4; 5 6; 7 8], w, fill(0.5, 4));
+
+julia> JosephsonCircuits.calccm!(zeros(2), [1 2;3 4], w, n)
 2-element Vector{Float64}:
  -35.0
  -47.0
 ```
 """
-function calccm!(cm::AbstractVector, S::AbstractMatrix, w, noise = nothing;
-    comp = similar(cm))
+function calccm!(cm::AbstractVector, S::AbstractMatrix, w,
+    noise::NoiseReduction; comp = similar(cm))
 
     m = length(w)
 
@@ -851,58 +835,56 @@ function calccm!(cm::AbstractVector, S::AbstractMatrix, w, noise = nothing;
         throw(DimensionMismatch(lazy"First dimension of scattering matrix must equal the length of cm."))
     end
 
+    if length(noise.signed) != length(cm)
+        throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
+    end
+
     weightedrowpower!(cm, comp, S, w)
 
-    if !isnothing(noise)
-        if length(noise.signed) != length(cm)
-            throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
-        end
-        @inbounds for i in eachindex(cm)
-            cm[i] += noise.signed[i]
-        end
+    @inbounds for i in eachindex(cm)
+        cm[i] += noise.signed[i]
     end
 
     return cm
 end
 
-function calccm(S::AbstractMatrix{T}, w, noise = nothing) where {T}
-    # the commutation relations are real, whatever the matrix is
-    return calccm!(zeros(float(real(T)), size(S, 1)), S, w, noise)
-end
-
 """
-    outputnoise!(vout, comp, S, inputnoise = nothing, noise = nothing)
+    outputnoise!(vout, comp, S, inputnoise, noise::NoiseReduction)
 
 The symmetrized noise at each output `i` of the scattering matrix `S`, the
 diagonal of the output covariance `S*Diagonal(inputnoise)*S' + Cnoise`:
 `sum_j inputnoise[j]*abs2(S[i,j])`, each input carrying its own
-`nbar + 1/2` (the vacuum's `1/2` for every input when `nothing`), plus what
-the noise channels of the [`NoiseReduction`](@ref) `noise` put there. The
-sum is compensated (Kahan-Babuska-Neumaier), its corrections in `comp`,
-one entry per row. The occupation of output `i` is `vout[i] - 1/2` and the
-quantum efficiency `abs2(S[i,j])/(2*vout[i])`.
+`nbar + 1/2`, the vacuum's `1/2` or more, plus what the noise channels of
+the [`NoiseReduction`](@ref) `noise` put there. The sum is compensated
+(Kahan-Babuska-Neumaier), its corrections in `comp`, one entry per row.
+The occupation of output `i` is `vout[i] - 1/2` and the quantum
+efficiency `abs2(S[i,j])/(2*vout[i])`.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.outputnoise!(zeros(2), zeros(2), [3/5 4/5; 4/5 3/5])
+julia> JosephsonCircuits.outputnoise!(zeros(2), zeros(2), [3/5 4/5; 4/5 3/5],
+           [0.5, 0.5], JosephsonCircuits.NoiseReduction(zeros(2), zeros(2)))
 2-element Vector{Float64}:
  0.5
  0.5
 ```
 """
 function outputnoise!(vout::AbstractVector, comp::AbstractVector,
-    S::AbstractMatrix, inputnoise = nothing, noise = nothing)
+    S::AbstractMatrix, inputnoise::AbstractVector, noise::NoiseReduction)
     if length(vout) != size(S, 1) || length(comp) != size(S, 1)
         throw(DimensionMismatch(lazy"The output noise and its compensation need one entry per row of the scattering matrix, $(size(S, 1))."))
     end
-    if !isnothing(inputnoise) && length(inputnoise) != size(S, 2)
+    if length(inputnoise) != size(S, 2)
         throw(DimensionMismatch(lazy"The input noise has $(length(inputnoise)) entries but the scattering matrix has $(size(S, 2)) input modes."))
+    end
+    if length(noise.symmetrized) != size(S, 1)
+        throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
     end
     R = eltype(vout)
     fill!(vout, zero(R))
     fill!(comp, zero(R))
     @inbounds for j in axes(S, 2)
-        d = isnothing(inputnoise) ? R(1/2) : R(inputnoise[j])
+        d = R(inputnoise[j])
         for i in axes(S, 1)
             v = d*abs2(S[i, j])
             t = vout[i] + v
@@ -913,59 +895,55 @@ function outputnoise!(vout::AbstractVector, comp::AbstractVector,
     end
     @inbounds for i in eachindex(vout)
         vout[i] += comp[i]
-    end
-    if !isnothing(noise)
-        if length(noise.symmetrized) != size(S, 1)
-            throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
-        end
-        @inbounds for i in eachindex(vout)
-            vout[i] += noise.symmetrized[i]
-        end
+        vout[i] += noise.symmetrized[i]
     end
     return vout
 end
 
 """
-    calcqe(S::AbstractMatrix, noise = nothing; inputnoise = nothing)
-    calcqe!(qe, S, noise = nothing; inputnoise = nothing,
+    calcqe!(qe, S, noise::NoiseReduction; inputnoise,
         vout = similar(qe, size(S, 1)), comp = similar(vout))
 
-Calculate the quantum efficiency matrix for a scattering matrix `S` in the
-field ladder operator basis: `abs2(S[i,j])` over twice the symmetrized
-noise at output `i` (see [`outputnoise!`](@ref)), which every input brings
-in its own state, `inputnoise[j]`, its `nbar + 1/2`, the vacuum's half
-photon at every input when `nothing`, and the noise channels of the
-[`NoiseReduction`](@ref) `noise` add. The input `j` counts in its own
-state too, so a warm source lowers the efficiency of a measurement of its
-signal even through a lossless circuit. `vout` and `comp` are the scratch
-of that noise and its compensated sum, one entry per row; `vout` holds the
-noise on return. `calcqe!` overwrites `qe`.
+Overwrite `qe` with the quantum efficiency matrix of a scattering matrix
+`S` in the field ladder operator basis: `abs2(S[i,j])` over twice the
+symmetrized noise at output `i` (see [`outputnoise!`](@ref)), which every
+input brings in its own state, `inputnoise[j]`, its `nbar + 1/2`, and the
+noise channels of the [`NoiseReduction`](@ref) `noise` add. The input `j`
+counts in its own state too, so a warm source lowers the efficiency of a
+measurement of its signal even through a lossless circuit. `vout` and
+`comp` are the scratch of that noise and its compensated sum, one entry per
+row; `vout` holds the noise on return.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.calcqe([3/5 4/5;4/5 3/5])
+julia> nonoise = JosephsonCircuits.NoiseReduction(zeros(2), zeros(2)); vacuum = [0.5, 0.5];
+
+julia> JosephsonCircuits.calcqe!(zeros(2, 2), [3/5 4/5;4/5 3/5], nonoise; inputnoise = vacuum)
 2×2 Matrix{Float64}:
  0.36  0.64
  0.64  0.36
 
-julia> JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5])
+julia> JosephsonCircuits.calcqe!(zeros(2, 2), Complex{Float64}[3/5 4/5;4/5 3/5], nonoise; inputnoise = vacuum)
 2×2 Matrix{Float64}:
  0.36  0.64
  0.64  0.36
 
-julia> qe=Float64[1 2;3 4];JosephsonCircuits.calcqe!(qe,[1 2;3 4],JosephsonCircuits.noisereduction([1 4;2 5;3 6],[1]));qe
+julia> n = JosephsonCircuits.noisereduction!(JosephsonCircuits.NoiseReduction(zeros(2), zeros(2)), [1 4;2 5;3 6], [1], fill(0.5, 3));
+
+julia> JosephsonCircuits.calcqe!(zeros(2, 2), [1 2;3 4], n; inputnoise = vacuum)
 2×2 Matrix{Float64}:
  0.0526316  0.210526
  0.0882353  0.156863
 
-julia> JosephsonCircuits.calcqe([1.0 0.0; 0.0 1.0]; inputnoise = [1.5, 0.5])
+julia> JosephsonCircuits.calcqe!(zeros(2, 2), [1.0 0.0; 0.0 1.0], nonoise; inputnoise = [1.5, 0.5])
 2×2 Matrix{Float64}:
  0.333333  0.0
  0.0       1.0
 ```
 """
-function calcqe!(qe::AbstractMatrix, S::AbstractMatrix, noise = nothing;
-    inputnoise = nothing, vout = similar(qe, size(S, 1)), comp = similar(vout))
+function calcqe!(qe::AbstractMatrix, S::AbstractMatrix, noise::NoiseReduction;
+    inputnoise::AbstractVector, vout = similar(qe, size(S, 1)),
+    comp = similar(vout))
 
     if size(qe) != size(S)
         throw(DimensionMismatch(lazy"Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
@@ -980,12 +958,6 @@ function calcqe!(qe::AbstractMatrix, S::AbstractMatrix, noise = nothing;
     end
 
     return qe
-end
-
-function calcqe(S::AbstractMatrix{T}, noise = nothing;
-    inputnoise = nothing) where {T}
-    # the quantum efficiency is real, whatever the matrix is
-    return calcqe!(zeros(float(real(T)), size(S)), S, noise; inputnoise)
 end
 
 
@@ -1103,144 +1075,3 @@ function calcCnoise!(Cnoise::AbstractMatrix, S)
 
     return Cnoise
 end
-
-"""
-    calcCnoise(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}
-
-Calculate the symmetrized noise covariance that the noise channels of
-`Snoise`, each in its vacuum, put at the ports, `Snoise Snoise'/2`, for a
-scattering matrix in the field ladder operator basis. `Snoise` is ports by
-noise channels: `Snoise[i, k]` scatters channel `k` to port `i`, the
-transpose of the `Snoise` of a [`LinearizedHB`](@ref) at one frequency.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcCnoise([3/5 4/5;4/5 3/5],[0.0 0.0;0.0 0.0])
-2×2 Matrix{Float64}:
- 0.0  0.0
- 0.0  0.0
-
-julia> JosephsonCircuits.calcCnoise(Complex{Float64}[3/5 4/5;4/5 3/5],Complex{Float64}[0.0 0.0;0.0 0.0])
-2×2 Matrix{ComplexF64}:
- 0.0+0.0im  0.0+0.0im
- 0.0+0.0im  0.0+0.0im
-```
-"""
-function calcCnoise(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}
-    Cnoise = zeros(typeof(one(T)/2),size(S))
-    return calcCnoise!(Cnoise,S,Snoise)
-end
-
-"""
-    calcCnoise!(Cnoise, S, Snoise)
-
-Calculate the symmetrized noise covariance `Snoise Snoise'/2` of vacuum
-noise channels at the ports, for a scattering matrix in the field ladder
-operator basis. Overwrites `Cnoise` with output.
-
-# Examples
-```jldoctest
-julia> C=zeros(Float64,2,2);JosephsonCircuits.calcCnoise!(C,[1 2;3 4],[0.0 0 0;0 0 0]);C
-2×2 Matrix{Float64}:
- 0.0  0.0
- 0.0  0.0
-```
-"""
-function calcCnoise!(Cnoise, S, Snoise)
-
-    if size(Cnoise) != size(S)
-        throw(DimensionMismatch(lazy"The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
-    end
-
-    if size(S,1) != size(Snoise,1)
-        throw(DimensionMismatch(lazy"The first dimensions of the scattering parameter and noise scattering parameter matrices must be equal."))
-    end
-
-    # add the noise covariance from the noise ports to the
-    # physical ports, each noise port in its vacuum
-    @inbounds for j in 1:size(S,2)
-        for i in 1:size(S,1)
-            Cnoise[i,j] = zero(eltype(Cnoise))
-            for k in 1:size(Snoise,2)
-                # use abs2 as a cludge to make sure QE is identical for
-                # symbolic math with real variables.
-                Cnoise[i,j] += ifelse(i==j,abs2(Snoise[i,k]),Snoise[i,k]*conj(Snoise[j,k]))
-            end
-            Cnoise[i,j] /= 2
-        end
-    end
-
-    return Cnoise
-end
-
-"""
-    calcqe_S_Cnoise(S::AbstractArray, Cnoise::AbstractArray; inputnoise = nothing)
-
-Calculate the quantum efficiency of each output from the scattering
-parameter matrix and the symmetrized noise covariance the network adds,
-both in the field ladder operator (sqrt photon number) basis:
-`abs2(S[i,j])` over twice the symmetrized noise at output `i`,
-`sum(abs2.(S[i,:]) .* inputnoise) + Cnoise[i,i]`, with every input in its
-own state, `inputnoise[j]` its `nbar + 1/2`, the vacuum's half photon at
-every input when `nothing`, as for [`calcqe!`](@ref).
-
-# Examples
-```jldoctest
-julia> S = JosephsonCircuits.ABCDtoS(JosephsonCircuits.ABCD_attenuator_T(50,10));isapprox(JosephsonCircuits.calcqe_S_Cnoise(S,JosephsonCircuits.calcCnoise(S)),[0 0.1;0.1 0])
-true
-
-julia> S = JosephsonCircuits.ABCDtoS(JosephsonCircuits.ABCD_attenuator_T(50,10).+0im);isapprox(JosephsonCircuits.calcqe_S_Cnoise(S,JosephsonCircuits.calcCnoise(S)),[0 0.1;0.1 0])
-true
-```
-"""
-function calcqe_S_Cnoise(S::AbstractArray{T}, Cnoise::AbstractArray{T};
-    inputnoise = nothing) where {T}
-    qe = zeros(T,size(S))
-    return calcqe_S_Cnoise!(qe,S,Cnoise; inputnoise)
-end
-
-function calcqe_S_Cnoise(S::AbstractArray{Complex{T}},
-    Cnoise::AbstractArray{Complex{T}}; inputnoise = nothing) where {T}
-    # QE is real so if the type is complex, use this
-    # parametric method to define a real matrix.
-    qe = zeros(T,size(S))
-    return calcqe_S_Cnoise!(qe,S,Cnoise; inputnoise)
-end
-
-"""
-    calcqe_S_Cnoise!(qe, S, Cnoise; inputnoise = nothing)
-
-Calculate the quantum efficiency matrix from the scattering parameter matrix
-and the symmetrized noise covariance the network adds, both in the field
-ladder operator (sqrt photon number) basis, with the inputs in the states
-`inputnoise` of [`calcqe_S_Cnoise`](@ref). Overwrites qe with output.
-
-"""
-function calcqe_S_Cnoise!(qe, S, Cnoise; inputnoise = nothing)
-
-    if size(qe) != size(S)
-        throw(DimensionMismatch(lazy"The dimensions of the quantum efficiency and scattering parameter matrices must be equal."))
-    end
-
-    if size(S) != size(Cnoise)
-        throw(DimensionMismatch(lazy"The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
-    end
-
-    # the symmetrized noise at each output: every input's in its state and
-    # the diagonal of the added covariance, what a `NoiseReduction`
-    # carries as `symmetrized`
-    vout = zeros(eltype(qe), size(S, 1))
-    outputnoise!(vout, similar(vout), S, inputnoise)
-    @inbounds for i in axes(Cnoise, 1)
-        vout[i] += real(Cnoise[i, i])
-    end
-
-    @inbounds for j in axes(S, 2)
-        for i in axes(S, 1)
-            qe[i, j] = abs2(S[i, j]) / (2*vout[i])
-        end
-    end
-
-    return qe
-end
-

@@ -50,33 +50,27 @@ exact, and it keeps the two paths taking the same iterations.
 struct CanonicalPreconditioner{P,W<:CanonicalWork,F,D} <: AbstractWrappedPreconditioner
     inner::P
     work::W
-    Yfact::F          # the direct current block, factorized; `nothing` without one
-    dcindices::Vector{Int}
+    Yfact::F          # the direct current subsystem, factorized
     dcwork::Vector{Float64}
     device::D         # the same solve, resident where the state is
 end
 
-function CanonicalPreconditioner(inner, work::CanonicalWork, F)
-    # the positions of the subsystem, found when the work was built
-    idx = isnothing(F) ? Int[] : work.dcindex
-    dev = (isnothing(F) || _onhost(work.xint)) ? nothing :
-        DCFactorization(F, idx, KernelAbstractions.get_backend(work.xint))
-    return CanonicalPreconditioner(inner, work, F, idx,
-        zeros(Float64, length(idx)), dev)
-end
-
 function CanonicalPreconditioner(inner, work::CanonicalWork)
-    t = work.transport
-    isnothing(t) && return CanonicalPreconditioner(inner, work, nothing)
-    # The direct current subsystem is small, dense and constant, with one
-    # unknown per static flux component and one per block port current, and
-    # its rows see no periodic state, so it is factorized once and solved
+    # The direct current subsystem is sparse and constant, with one unknown
+    # per static flux component and one per block port current, and its
+    # rows see no periodic state, so it is factorized once and solved
     # exactly. It has to be solved jointly: the transport rows carry the
     # block currents and the block rows carry the average voltages, and
     # solving only the transport half leaves the coupling to the Krylov
-    # iteration, which stalls it.
-    F = lu(dcsubsystem(work))
-    return CanonicalPreconditioner(inner, work, F)
+    # iteration, which stalls it. Where the state is not on the host, it is
+    # solved there, at the positions found when the work was built (see
+    # `DCFactorization`).
+    A = dcsubsystem(work)
+    F = kluordered(A)
+    device = _onhost(work.xint) ? nothing : DCFactorization(A, F,
+        work.dcindex, KernelAbstractions.get_backend(work.xint))
+    return CanonicalPreconditioner(inner, work, F,
+        zeros(Float64, length(work.dcindex)), device)
 end
 
 function updatepreconditioner!(pc::CanonicalPreconditioner, u::AbstractVector)
@@ -92,14 +86,14 @@ end
 # since the transport rows and the block relations see no periodic state,
 # while the average voltages drive the resistor current `G0 P v` into the
 # nodal zero frequency rows and a block current enters its two terminals'
-# rows. Solving `d` exactly, the flux block with the inner preconditioner,
-# and dropping `Jpd` leaves an error whose range is the columns of `Jpd`,
-# one per direct current unknown, and a Krylov iteration removes an error
-# of that rank in as many steps. The exact triangular form, `d` first and
-# `Jpd d` taken off the nodal rows before the inner solve, saves no
-# iterations with an exact inner preconditioner, where both take one step
-# per solve, and costs a pass over the nodal rows per application, so it
-# is not here.
+# rows. Solving `d` exactly, the flux block with an exact inner
+# preconditioner, and dropping `Jpd` leaves the preconditioned operator the
+# identity plus a part, from `Jpd`, whose square is zero: a Krylov
+# iteration takes at most two steps per solve, whatever the number of
+# direct current unknowns, and one when the residual has no direct current
+# part. The exact triangular form, `d` first and `Jpd d` taken off the
+# nodal rows before the inner solve, would save that one step at the cost
+# of a pass over the nodal rows per application, so it is not here.
 function applypreconditioner!(z::AbstractVector, pc::CanonicalPreconditioner,
         r::AbstractVector)
     L = pc.work.layout
@@ -110,14 +104,13 @@ end
 # the direct current coordinates of `z`, solved exactly from `r`
 function _solvedcblock!(z::AbstractVector, pc::CanonicalPreconditioner,
         r::AbstractVector)
-    isnothing(pc.Yfact) && return z
     # where the state is not on the host, the same factors solve the
     # subsystem there (see `applydcsolve!`)
     if !isnothing(pc.device)
         applydcsolve!(z, r, pc.device)
         return z
     end
-    idx = pc.dcindices
+    idx = pc.work.dcindex
     b = pc.dcwork
     @inbounds for k in eachindex(idx)
         b[k] = r[idx[k]]
@@ -138,16 +131,14 @@ end
 # the internal block of the canonical vectors the harvest hooks carry, so
 # forwarding them unchanged is right: the deflation which reads them wraps
 # this one from outside, in canonical coordinates.
+#
+# `isexactpreconditioner` forwards as well, so this is exact when the inner
+# is: what the wrapper then leaves, the dropped `Jpd` block, costs at most
+# one more Arnoldi step per solve, when the residual has a direct current
+# part, which is fewer than the products and exact solves a deflation of
+# it would cost at every Newton step. A recycling wrapper outside this one
+# therefore clears its pair after an escalation rather than learning `Jpd`.
 innerpreconditioner(pc::CanonicalPreconditioner) = pc.inner
-
-# Exact when the inner is: the error the wrapper then leaves, the dropped
-# `Jpd` block, has rank at most the number of direct current unknowns and
-# costs that many Arnoldi steps per solve, which is fewer than the products
-# and exact solves a deflation of it would cost at every Newton step. A
-# recycling wrapper outside this one therefore clears its pair after an
-# escalation rather than learning `Jpd`.
-isexactpreconditioner(pc::CanonicalPreconditioner) =
-    isexactpreconditioner(pc.inner)
 
 # The canonical Jacobian, as a plan.
 #
@@ -180,55 +171,6 @@ struct CanonicalJacobianPlan
     fixedvalue::Vector{Float64}
 end
 
-# The direct current block's constant entries, in the canonical numbering of
-# the whole matrix. This is the same arithmetic the residual does, read as a
-# matrix; it is written once here rather than once per iteration.
-function dcjacobianentries(work::CanonicalWork)
-    L = work.layout
-    n = L.rdim
-    dcpos = L.dcpos
-    I, J, V = Int[], Int[], Float64[]
-    t = work.transport
-    isnothing(t) && return I, J, V
-
-    # the resistor current the voltages drive into the zero frequency nodal
-    # rows, and the transport rows themselves
-    C = t.coupling
-    for j in axes(C, 2), k in nzrange(C, j)
-        push!(I, dcpos[C.rowval[k]]); push!(J, n + j); push!(V, C.nzval[k])
-    end
-    for j in axes(t.Y, 2), i in axes(t.Y, 1)
-        iszero(t.Y[i,j]) && continue
-        push!(I, n + i); push!(J, n + j); push!(V, t.Y[i,j])
-    end
-
-    br = work.blockrows
-    if !isnothing(br)
-        # the block currents each component exchanges across its boundary
-        for (c, ci, sgn) in br.transportterms
-            push!(I, n + c); push!(J, dcpos[ci]); push!(V, float(sgn))
-        end
-        # and each block's own row, replacing the `-i` already in the stamp
-        for (b, d) in enumerate(br.descriptors)
-            ci = br.currentindex[b]
-            sc, rc = br.signalcomponent[b], br.refcomponent[b]
-            for p in eachindex(ci)
-                rp = dcpos[ci[p]]
-                push!(I, rp); push!(J, rp); push!(V, 1.0)
-                for q in eachindex(ci)
-                    push!(I, rp); push!(J, dcpos[ci[q]]); push!(V, -d.C0[p,q])
-                    w = d.B0[p,q]*br.scale
-                    iszero(sc[q]) ||
-                        (push!(I, rp); push!(J, n + sc[q]); push!(V, w))
-                    iszero(rc[q]) ||
-                        (push!(I, rp); push!(J, n + rc[q]); push!(V, -w))
-                end
-            end
-        end
-    end
-    return I, J, V
-end
-
 """
     canonicaljacobianplan(Jint::SparseMatrixCSC, work::CanonicalWork)
 
@@ -236,55 +178,44 @@ Build the [`CanonicalJacobianPlan`](@ref) for an internal Jacobian pattern.
 
 Only the pattern of `Jint` is read, not its values, so the plan is valid for
 every point the solve visits. It stops being valid if that pattern moves,
-which it must not.
+which it must not. The direct current block's entries are those of its
+matrix form, [`dcupdate`](@ref), which is read off the residual, so the
+Jacobian and the residual agree by construction.
 """
 function canonicaljacobianplan(Jint::SparseMatrixCSC, work::CanonicalWork)
     L = work.layout
-    n = L.rdim
-    N = n + L.nvdc
+    up = dcupdate(work)
+    window = windowindices(L)
+
+    # a row the block writes over, a transport row or a reference, keeps
+    # nothing of the internal Jacobian
+    written = Set(window[k] for k in eachindex(up.keep) if iszero(up.keep[k]))
 
     # where each stored entry of the internal Jacobian lands: where it is,
     # since the internal state is the first block of the canonical one
-    di = Vector{Int}(undef, nnz(Jint))
+    di = rowvals(Jint)
     dj = Vector{Int}(undef, nnz(Jint))
     for col in axes(Jint, 2), k in nzrange(Jint, col)
-        di[k] = Jint.rowval[k]
         dj[k] = col
     end
+    keepd = [k for k in eachindex(di) if !(di[k] in written)]
 
-    fi, fj, fv = dcjacobianentries(work)
-
-    # a reference row is a replacement, so nothing else in it survives
-    pn = work.pinning
-    dead = Set{Int}()
-    refi, refj = Int[], Int[]
-    if !isnothing(pn)
-        idx = work.dcindex
-        for j in eachindex(pn.rows)
-            push!(dead, idx[pn.rows[j]])
-            push!(refi, idx[pn.rows[j]])
-            push!(refj, idx[pn.cols[j]])
-        end
+    # the block's constant entries: its matrix, stored by rows on the
+    # window, in the canonical numbering
+    fi, fj = Int[], Int[]
+    for i in eachindex(window), k in up.rowptr[i]:(up.rowptr[i+1] - 1)
+        push!(fi, window[i]); push!(fj, window[up.colval[k]])
     end
 
-    live(i) = !(i in dead)
-    keepd = [k for k in eachindex(di) if live(di[k])]
-    keepf = [k for k in eachindex(fi) if live(fi[k])]
-    I = vcat(di[keepd], fi[keepf], refi)
-    Jc = vcat(dj[keepd], fj[keepf], refj)
-    J = sparse(I, Jc, ones(Float64, length(I)), N, N)
-
+    N = canonicaldim(L)
+    J = sparse(vcat(di[keepd], fi), vcat(dj[keepd], fj),
+        ones(Float64, length(keepd) + length(fi)), N, N)
     source = zeros(Int, length(di))
     for k in keepd
         source[k] = nzposition(J, di[k], dj[k])
     end
-    fixedindex = Int[nzposition(J, fi[k], fj[k]) for k in keepf]
-    fixedvalue = Float64[fv[k] for k in keepf]
-    for k in eachindex(refi)
-        push!(fixedindex, nzposition(J, refi[k], refj[k]))
-        push!(fixedvalue, 1.0)
-    end
-    return CanonicalJacobianPlan(J, source, fixedindex, fixedvalue)
+    fixedindex = Int[nzposition(J, fi[k], fj[k]) for k in eachindex(fi)]
+    return CanonicalJacobianPlan(J, source, fixedindex, up.nzval)
 end
 
 """

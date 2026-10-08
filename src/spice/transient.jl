@@ -45,9 +45,9 @@ zero initial state under WRSPICE's own initial conditions, with
 `record = :ports` or `:phases`. An ideal [`TransmissionLine`](@ref) is
 written as the SPICE lossless line element; the wave record `linewaves`
 stays empty, since WRSPICE keeps the line histories to itself. The
-junctions of every run share one `jj` model, whose subgap loss is set
-as small as the model allows but is not zero, where the package's
-junctions are lossless. The solution's final state fields are NaN,
+junctions of every run share one `jj` model, whose subgap loss is small
+but not zero (`vm = 9.9` of [`exportnetlist`](@ref)), where the
+package's junctions are lossless. The solution's final state fields are NaN,
 since WRSPICE does not hand over a state, and the tangent, the adjoint
 and the noise need a solution of the package's own rules. Its `stats`
 count the steps of the grid, as the package's rules count theirs,
@@ -59,7 +59,7 @@ p = transientproblem(circuit, circuitdefs;
     sources = [TransientSource(1, t -> Ip*sin(wp*t))])
 native = transientsolve(p, (0.0, 100e-9); dt = 1e-12)
 spice = transientsolve(p, (0.0, 100e-9); dt = 1e-12, method = WRspice())
-transientdemodulate(native, 2, wp/(2*pi)), transientdemodulate(spice, 2, wp/(2*pi))
+transientdemodulate(native, 2, wp), transientdemodulate(spice, 2, wp)
 ```
 """
 struct WRspice <: AbstractTransientIntegrator
@@ -134,10 +134,11 @@ function wrspicetransient(p::TransientProblem, tspan, method::WRspice; dt,
     end
 
     N = length(p)
-    return TransientSolution(p, method, h, times, voltage, incident, outgoing,
-        phases, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing,
-        zeros(N), zeros(N), fill(NaN, N), fill(NaN, N),
-        nothing, nothing, nothing, (; steps = nsteps))
+    arrays = (; voltage, incident, outgoing, phases, endphases = nothing, endrates = nothing, linewaves = nothing,
+        history = nothing, flux = nothing, rate = nothing, stages = nothing, checkpoints = nothing, finalwaves = nothing,
+        finalstates = nothing, initialflux = zeros(N), initialrate = zeros(N), finalflux = fill(NaN, N),
+        finalrate = fill(NaN, N), blockstates = nothing, initialwaves = nothing, initialstates = nothing)
+    return TransientSolution(p, method, h, times, arrays, (; steps = nsteps))
 end
 
 # the input of a run: the netlist, the sources and the control block
@@ -239,11 +240,11 @@ function wrspicephasesign(Rbn, b::Int, n1::Int, n2::Int)
 end
 
 # the times, the port voltages and the junction phases of a rawfile,
-# validated against the requested grid, whose times are formed as the
-# stepping rules form theirs so a decimated save holds the times of a
-# full one
+# validated against the requested grid to `printrtol` of the print step,
+# whose times are formed as the stepping rules form theirs so a
+# decimated save holds the times of a full one
 function wrspiceread(out::SpiceRaw, p::TransientProblem, junctions, t0, tf,
-        h, saveevery, nsteps, record::Symbol)
+        h, saveevery, nsteps, record::Symbol; printrtol::Real = 1e-6)
     printstep = h*saveevery
     nsaved = nsteps ÷ saveevery
     haskey(out.values, "S") && haskey(out.values, "V") || throw(ArgumentError(
@@ -252,7 +253,7 @@ function wrspiceread(out::SpiceRaw, p::TransientProblem, junctions, t0, tf,
     length(rawtimes) == nsaved + 1 || throw(ArgumentError(
         lazy"WRSPICE returned $(length(rawtimes)) print points where $(nsaved + 1) were requested."))
     deviation = maximum(abs(rawtimes[j] - (j - 1)*printstep) for j in eachindex(rawtimes))
-    deviation <= 1e-6*printstep || throw(ArgumentError(
+    deviation <= printrtol*printstep || throw(ArgumentError(
         lazy"the print times of WRSPICE are off the requested grid by up to $(deviation) seconds."))
     times = [j == nsteps ? tf : t0 + j*h for j in 0:saveevery:nsteps]
 

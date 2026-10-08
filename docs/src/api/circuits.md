@@ -9,3 +9,13 @@ See the [API overview](../reference.md) for other analyses and
 Modules = [JosephsonCircuits, JosephsonCircuits.CircuitValues]
 Filter = obj -> Main.DocumentationAPI.in_group(obj, :circuits)
 ```
+
+## Physical constants
+
+The flux quanta follow from the exact SI values of the Planck constant
+and the elementary charge.
+
+```@autodocs
+Modules = [JosephsonCircuits]
+Filter = obj -> Main.DocumentationAPI.in_group(obj, :constants)
+```

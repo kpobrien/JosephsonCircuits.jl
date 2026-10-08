@@ -9,13 +9,20 @@ For temporal stability of this pumped circuit, continue with the
 [worked pole-analysis example](../stability.md#stability-jpa),
 including harmonic refinement.
 
-Figures and timings come from the original reference run using 16 threads
-on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
-and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
+A 50 Ω port couples through `cc` to a junction shunted by `cj`:
 
-```julia
+```text
+ 1                  2
+ o------[cc]--------o--------+
+ |                  |        |
+[p1]              [jj]     [cj]
+ |                  |        |
+ o------------------o--------+
+ 0
+```
+
+```@example jpa
 using JosephsonCircuits
-using Plots
 
 R = 50.0
 Cc = 100.0e-15
@@ -36,8 +43,14 @@ Ip = 0.00565e-6
 sources = [(mode=(1,),port=1,current=Ip)]
 Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
+nothing # hide
+```
 
-@time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
+The sweep and its plot:
+
+```julia
+using Plots
+jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
     Npumpharmonics, circuit)
 @assert jpa.nonlinear.solverinfo.converged
 
@@ -58,10 +71,6 @@ plot(
 )
 ```
 
-```
-  0.001817 seconds (12.99 k allocations: 4.361 MiB)
-```
-
 ![JPA simulation with JosephsonCircuits.jl](../assets/examples/jpa.png)
 
 Compare with WRspice. Please note that on Linux you can install the [XicTools_jll](https://github.com/JuliaBinaryWrappers/XicTools_jll.jl/) package which provides WRspice for x86_64. For other operating systems and platforms, you can install WRspice yourself and substitute `XicTools_jll.wrspice()` with `JosephsonCircuits.wrspice_cmd()` which will attempt to provide the path to your WRspice executable.
@@ -73,7 +82,7 @@ wswrspice=2*pi*(4.5:0.01:5.0)*1e9
 n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,wp[1],2*Ip,(0,1),(0,1));
 
-@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
 S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
 
 plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
@@ -82,8 +91,17 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 ```
 
-```
- 12.743245 seconds (32.66 k allocations: 499.263 MiB, 0.41% gc time)
-```
-
 ![JPA simulation with JosephsonCircuits.jl and WRspice](../assets/examples/jpa_WRspice.png)
+
+## A small executable check
+
+The documentation build solves the same circuit and pump at three signal
+frequencies, the middle one the peak of the gain:
+
+```@example jpa
+small = hbsolve(2pi .* [4.6e9, 4.75e9, 4.9e9], wp, sources,
+    Nmodulationharmonics, Npumpharmonics, circuit)
+@assert small.nonlinear.solverinfo.converged
+@assert maximum(abs.(abs.(small.linearized.CM) .- 1)) < 1e-8
+round.(10 .* log10.(abs2.(small.linearized.S((0,), 1, (0,), 1, :))); digits = 2)
+```

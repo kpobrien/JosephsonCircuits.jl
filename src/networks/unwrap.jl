@@ -34,7 +34,7 @@ Unwrap `m` storing the result in `y`, see [`unwrap`](@ref). `dims` must be
 given for an array of more than one dimension.
 """
 function unwrap!(y::AbstractArray{T,N}, m::AbstractArray{T,N}; dims=nothing,
-    range=2T(pi), kwargs...) where {T<:Real,N}
+    range=2T(pi)) where {T<:Real,N}
     if dims === nothing
         if N != 1
             throw(ArgumentError("`unwrap!`: required keyword parameter dims missing"))

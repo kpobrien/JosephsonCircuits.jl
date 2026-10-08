@@ -10,11 +10,40 @@ its published implementation is used unchanged.
 The [home-page bibliography](index.md#References) lists the circuit and
 harmonic-balance texts and the published device comparisons.
 
-For adaptive linear-solve accuracy in Newton–Krylov, see S. C. Eisenstat
-and H. F. Walker, “Choosing the Forcing Terms in an Inexact Newton Method,”
-*SIAM Journal on Scientific Computing* 17(1), 16–32 (1996).
-[DOI](https://doi.org/10.1137/0917003),
-[authors' technical report](https://softlib.rice.edu/pub/CRPC-TRs/reports/CRPC-TR94463.pdf).
+## Nonlinear and linear solvers
+
+- S. C. Eisenstat and H. F. Walker, “Choosing the Forcing Terms in an
+  Inexact Newton Method,” *SIAM Journal on Scientific Computing* 17(1),
+  16–32 (1996). [DOI](https://doi.org/10.1137/0917003),
+  [authors' technical report](https://softlib.rice.edu/pub/CRPC-TRs/reports/CRPC-TR94463.pdf).
+- Y. Saad and M. H. Schultz, “GMRES: A Generalized Minimal Residual
+  Algorithm for Solving Nonsymmetric Linear Systems,” *SIAM Journal on
+  Scientific and Statistical Computing* 7(3), 856–869 (1986).
+  [DOI](https://doi.org/10.1137/0907058).
+- D. G. Anderson, “Iterative Procedures for Nonlinear Integral Equations,”
+  *Journal of the ACM* 12(4), 547–560 (1965).
+  [DOI](https://doi.org/10.1145/321296.321305).
+- H. F. Walker and P. Ni, “Anderson Acceleration for Fixed-Point
+  Iterations,” *SIAM Journal on Numerical Analysis* 49(4), 1715–1735
+  (2011). [DOI](https://doi.org/10.1137/10078356X).
+- J. M. Tang, R. Nabben, C. Vuik, and Y. A. Erlangga, “Comparison of
+  Two-Level Preconditioners Derived from Deflation, Domain Decomposition
+  and Multigrid Methods,” *Journal of Scientific Computing* 39(3), 340–370
+  (2009). [DOI](https://doi.org/10.1007/s10915-009-9272-6).
+
+These cover the forcing terms by which Newton–Krylov sets the accuracy of
+each linear solve, the GMRES that solves it, the Anderson acceleration of
+`QuasiNewton`, and the A-DEF1 form of the optional Floquet deflation.
+
+## Stability
+
+W.-J. Beyn, “An Integral Method for Solving Nonlinear Eigenvalue
+Problems,” *Linear Algebra and its Applications* 436(10), 3839–3863
+(2012). [DOI](https://doi.org/10.1016/j.laa.2011.03.030).
+
+`ContourIntegral` reduces the moments of the inverse of the perturbation
+operator around its circle to the poles inside, as in this paper; see the
+[stability guide](stability.md).
 
 ## Quantum noise
 
@@ -30,6 +59,11 @@ photon of added noise referred to its input, follow
   Amplification,” *Reviews of Modern Physics* 82(2), 1155–1208 (2010).
   [DOI](https://doi.org/10.1103/RevModPhys.82.1155),
   [arXiv](https://arxiv.org/abs/0810.4729).
+
+The noise a passive network emits in equilibrium, `(nbar + 1/2)(I - S*S')`,
+the noise of a passive block and of `calcCnoise`, is Bosma's theorem:
+H. Bosma, *On the Theory of Linear Noisy Systems*, Ph.D. thesis,
+Technische Hogeschool Eindhoven (1967).
 
 ## Gauss collocation
 
@@ -64,11 +98,15 @@ projection and history interpolation require their own analysis.
   *Mathematics of Computation* 22(101), 118–127 (1968).
   [Paper](https://doi.org/10.1090/S0025-5718-1968-0232137-6).
 
-These cover common-pole relocation, relaxed normalization, the per-entry
-reduction used to accelerate multiport fitting, the perturbation of the
-residues by which passivity is enforced, the rank bound below which the
-order search does not fit, and the reweighted least squares by which it
-does not make passive an order that cannot meet its tolerance.
+These cover the relocation of common poles, the relaxed normalization,
+the per-entry reduction that accelerates a multiport fit, and the
+perturbation of the residues that enforces passivity. The last two serve
+the order search: a fit of `N` poles is no closer to the samples than
+their best approximation of rank `N + 1` (Eckart and Young), so an order
+whose bound exceeds the tolerance is not fitted, and Lawson's reweighted
+least squares bounds from below the error of every fit with given poles
+(Rice and Usow), so an order whose poles cannot meet the tolerance is not
+made passive.
 
 ## Transfer-matrix norms
 

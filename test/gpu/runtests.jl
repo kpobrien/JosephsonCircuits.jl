@@ -28,6 +28,7 @@ let pkgpath = normpath(joinpath(@__DIR__, "..", ".."))
 end
 
 using JosephsonCircuits, CUDA, CUDSS, Test, LinearAlgebra
+using JosephsonCircuits: Clusters, CouplingMask, Floquet, FullJacobian
 CUDA.functional() || error("CUDA is not functional on this machine; the GPU test suite needs a working CUDA device.")
 
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
@@ -58,6 +59,16 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             method = NewtonKrylov(), backend = CUDABackend())
         @test rb.solverinfo.converged
         @test agree(ra.S, rb.S)
+    end
+
+    @testset "a circuit without junctions on the device" begin
+        # the junction kernels have nothing to run over: a linear circuit's
+        # pump solve and sweep on the device, against the host
+        resonator, rdefs = testresonatorcircuit()
+        resonatorS(b) = hbsolve([0.9, 1.1], (2.3,), src1, (2,), (4,), resonator,
+            rdefs; keyedarrays = false, backend = b).linearized.S
+        @test agree(resonatorS(CUDABackend()), resonatorS(JosephsonCircuits.CPU());
+            rtol = 1e-10)
     end
 
     @testset "a polynomial current-phase relation" begin
@@ -131,6 +142,30 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         forward = single(:forward)
         @test agree(single(:reverse), forward; rtol = 1e-10)
         @test agree(sa.linearized.Ssensitivity, forward; rtol = 1e-2)
+    end
+
+    @testset "block parameters with a device pump" begin
+        # a scattering block which states its derivative feeding a JPA: the
+        # pump solved on the device, the sweep on the host, which takes a
+        # block sensitivity, the block's parameter in either order against
+        # the host
+        Z0 = 50.0
+        seriesS(theta) = w -> (z = 1/(im*w*theta*Z0); [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
+        dS(theta) = w -> (z = 1/(im*w*theta*Z0); d = -2*z/(theta*(z+2)^2); [d -d; -d d])
+        blk = ScatteringParameters(seriesS(100e-15); nports = 2, grounded = false, derivatives = (theta = dS(100e-15),))
+        bjpa = Circuit([:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :cc => blk,
+                :jj => JosephsonJunction(:Lj), :c2 => Capacitor(1000.0e-15)],
+            [((:p1, 1), (:r1, 1), (:cc, 1, 1)), ((:cc, 2, 1), (:jj, 1), (:c2, 1)),
+             ((:cc, 1, 2), (:cc, 2, 2), (:jj, 2), (:c2, 2), (:r1, 2), (:p1, 2), Ground)])
+        bdefs = Dict(:Lj => 1000.0e-12)
+        bws, bwp = 2pi .* [4.5e9, 4.6e9], (2pi*4.75001e9,)
+        bsrc = [(mode = (1,), port = 1, current = 0.00565e-6)]
+        host = designsensitivities(bjpa, bdefs, bws, bwp, bsrc, (2,), (8,); sensitivitymode = :forward)
+        for mode in (:forward, :reverse)
+            device = designsensitivities(bjpa, bdefs, bws, bwp, bsrc, (2,), (8,); sensitivitymode = mode,
+                backend = CUDABackend())
+            @test agree(host.dSdp, device.dSdp; rtol = 1e-8)
+        end
     end
 
     @testset "hbnlsolve newtonkrylov, two tone" begin
@@ -312,7 +347,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         kw = (; dc = true, threewavemixing = true, fourwavemixing = true,
             returnSnoise = true, keyedarrays = false)
         wl = 2*pi*collect(range(4.41e9, 5.57e9, length = 4))
-        rc = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs; kw...)
+        rc = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs;
+            factorization = KLUfactorization(), kw...)
         for f in (BlockFactorization(), BlockFactorization(precision = Float32))
             rd = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs;
                 backend = CUDABackend(), factorization = f, kw...)
@@ -322,7 +358,7 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             end
         end
         # the automatic choice on the device: the block factorization for
-        # two tones, agreeing with the host
+        # two tones, agreeing with KLU on the host
         auto = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs;
             backend = CUDABackend(), kw...)
         @test agree(rc.linearized.S, auto.linearized.S)
@@ -331,6 +367,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             ComplexF64[1 1 0 0; 1 1 1 0; 0 1 1 1; 0 0 1 1])
         @test JosephsonCircuits.linearizedfactorization(Asp, 2, 2,
             CUDABackend()) isa BlockFactorization
+        @test JosephsonCircuits.linearizedfactorization(Asp, 2, 2,
+            CUDABackend(); budget = 0) isa CUDSSFactorization
         @test JosephsonCircuits.linearizedfactorization(Asp, 2, 1,
             CUDABackend()) isa CUDSSFactorization
         # single precision solutions on the device
@@ -341,6 +379,47 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         for (name, tol) in ((:S, 2e-3), (:Snoise, 1e-3), (:QE, 1e-3), (:CM, 1e-4))
             @test isapprox(getfield(rc.linearized, name),
                 getfield(rs.linearized, name); rtol = tol)
+        end
+    end
+    @testset "a finished sweep leaves its memory to the next" begin
+        JC = JosephsonCircuits
+        # what CUDA.jl's pool holds without an array in it counts as free
+        # memory, since an allocation takes it first
+        GC.gc(); CUDA.reclaim()
+        free = JC.freememory(CUDABackend())
+        x = CUDA.zeros(UInt8, 2^30)
+        CUDA.unsafe_free!(x)
+        @test abs(JC.freememory(CUDABackend()) - free) < 2^26
+        # a sweep returns the arrays of its batches to the pool when it
+        # ends, rather than leaving them to the collector, so that the next
+        # sweep or solve sizes itself against them: after it the pool holds
+        # in arrays less than a tenth of what its batch held, the block
+        # factors of every system at two tones, and at one the values,
+        # solutions and right-hand sides of both directions of a cuDSS
+        # batch (cuDSS allocates its factors itself)
+        chain, chaindefs = testchaincircuit(20)
+        ws = 2*pi*collect(range(4.4e9, 5.6e9, length = 400))
+        for (wp, src, Nmod) in (((w1, w2), src2, (3, 3)), ((w1,), src1, (6,)))
+            Npump = length(wp) == 2 ? (8, 4) : (8,)
+            nl = hbnlsolve(wp, Npump, src, chain, chaindefs;
+                keyedarrays = false, backend = CUDABackend())
+            sweep(w; kw...) = hblinsolve(w, chain, chaindefs; nonlinear = nl,
+                Nmodulationharmonics = Nmod, keyedarrays = false, kw...)
+            d = sweep(ws[1:1]; debuglsys = true)
+            A = d.lsys.Asparse
+            held = if length(wp) == 2
+                length(ws)*JC.blocksystembytes(ComplexF64,
+                    JC.blocksymbolic(A, d.Nmodes))
+            else
+                nrhs = size(d.bnm, 2)
+                2*JC.uniformbatchlimit(nrhs)*16*(JC.SparseArrays.nnz(A) +
+                    2*size(A, 1)*nrhs)
+            end
+            sweep(ws; backend = CUDABackend())
+            GC.gc(); CUDA.reclaim()
+            used = CUDA.used_memory()
+            sweep(ws; backend = CUDABackend())
+            @test CUDA.used_memory() - used < held ÷ 10
         end
     end
     @testset "a lossy coupled inductor on the device" begin
@@ -393,7 +472,33 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
                 @test all(k -> k.iterations <= 2, kr)
             end
         end
+        # a singular diagonal block in one system of a batch throws, naming
+        # that system, once the batch is factorized: two uncoupled node
+        # blocks, the first singular in the second of three systems
+        SA = JosephsonCircuits.SparseArrays
+        A = SA.sparse(ComplexF64[2 1 0 0; 1 2 0 0; 0 0 2 1; 0 0 1 2])
+        vals = repeat(SA.nonzeros(A), 1, 3)
+        vals[1:4, 2] .= 1
+        F = JosephsonCircuits.blockanalysis(BlockFactorization(), A;
+            blocksize = 2, backend = CUDABackend(), nb = 3)
+        err = try
+            JosephsonCircuits.fillandfactorize!(F, CuArray(vals))
+            nothing
+        catch e
+            e
+        end
+        @test err isa SingularException && err.info == 2
         @test JosephsonCircuits.freememory(CUDABackend()) > 0
+        # a node block singular in a nonsingular matrix (test/hbsolve.jl): the
+        # block factorization the device sweep chose itself gives way to
+        # cuDSS, and one given explicitly throws
+        resonator, rdefs = testresonatorcircuit()
+        resonatorS(; kw...) = hbsolve([1.0], (2.3, 3.7), src2, (1,1), (1,1), resonator,
+            rdefs; keyedarrays = false, kw...).linearized.S
+        @test agree(resonatorS(backend = CUDABackend()),
+            resonatorS(factorization = KLUfactorization()); rtol = 1e-10)
+        @test_throws SingularException resonatorS(backend = CUDABackend(),
+            factorization = BlockFactorization())
     end
 
     @testset "single precision cuDSS factors as the preconditioner" begin
@@ -427,9 +532,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         d = hbnlsolve((w1,), (8,), src1, circuit, defs;
             backend = CUDABackend(), debugJacobian = true)
         pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
-            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
-            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; Amatrixmodes = d.Amatrixmodes,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Rbnm, d.Nmodes,
+            d.Nbranches, d.Nfreq, d.modelayout; Amatrixmodes = d.Amatrixmodes,
             spec = FullJacobian(CUDSSFactorization(precision = Float32)))
         @test !JosephsonCircuits.isexactpreconditioner(pc)
         x = CuArray(0.3*randn(length(d.xr)))
@@ -514,7 +618,7 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         ad = transientadjoint(device, weights)
         @test Array(ad.currents) ≈ ah.currents rtol=1e-8 atol=1e-14
         @test Array(ad.initialflux) ≈ ah.initialflux rtol=1e-8 atol=1e-14
-        @test transientdemodulate(device, 2, 3e9) ≈ transientdemodulate(host, 2, 3e9) rtol=1e-8
+        @test transientdemodulate(device, 2, 2pi*3e9) ≈ transientdemodulate(host, 2, 2pi*3e9) rtol=1e-8
         # the sensitivity to the component values, under both rules, from
         # the states and from checkpoints, and the adjoint's
         names = ["c1", "jj", "l"]
@@ -532,16 +636,16 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         qh = transientsolve(quiet, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12)
         qd = transientsolve(quiet, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12,
             backend = CUDABackend())
-        df = 1/(length(qh.times)*2e-12)
-        plan = transientquantumplan(qh, qh.times, [2df, 2df]; ports = [1, 2])
-        dplan = transientquantumplan(qh, qh.times, [2df, 2df]; ports = [1, 2], backend = CUDABackend())
-        nh = transientnoise(qh, plan; frequencies = [2df, 3df], weights = fill(df, 2))
-        nd = transientnoise(qd, dplan; frequencies = [2df, 3df], weights = fill(df, 2))
+        dw = 2pi/(length(qh.times)*2e-12)
+        plan = transientquantumplan(qh, qh.times, [2dw, 2dw]; ports = [1, 2])
+        dplan = transientquantumplan(qh, qh.times, [2dw, 2dw]; ports = [1, 2], backend = CUDABackend())
+        nh = transientnoise(qh, plan; frequencies = [2dw, 3dw], weights = fill(dw, 2))
+        nd = transientnoise(qd, dplan; frequencies = [2dw, 3dw], weights = fill(dw, 2))
         @test nd.covariance ≈ nh.covariance rtol=1e-8
         @test nd.commutator ≈ nh.commutator rtol=1e-8
         # the forward method contracts the device responses with the device
         # measurement, and agrees with the adjoint on the loaded trajectory
-        fd = transientnoise(qd, dplan; frequencies = [2df, 3df], weights = fill(df, 2), method = :forward)
+        fd = transientnoise(qd, dplan; frequencies = [2dw, 3dw], weights = fill(dw, 2), method = :forward)
         @test fd.covariance ≈ nd.covariance rtol=1e-8
         @test fd.commutator ≈ nd.commutator rtol=1e-8
         # the Gauss-Legendre rule on the device: the complex stage
@@ -561,8 +665,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         gqh = transientsolve(quiet, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre())
         gqd = transientsolve(quiet, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12,
             method = GaussLegendre(), backend = CUDABackend())
-        gnh = transientnoise(gqh, plan; frequencies = [2df, 3df], weights = fill(df, 2))
-        gnd = transientnoise(gqd, dplan; frequencies = [2df, 3df], weights = fill(df, 2))
+        gnh = transientnoise(gqh, plan; frequencies = [2dw, 3dw], weights = fill(dw, 2))
+        gnd = transientnoise(gqd, dplan; frequencies = [2dw, 3dw], weights = fill(dw, 2))
         @test gnd.covariance ≈ gnh.covariance rtol=1e-8
         @test gnd.commutator ≈ gnh.commutator rtol=1e-8
         # a batch of conditions on the uniform cuDSS batch, and one larger
@@ -581,25 +685,25 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         qmake(a) = transientproblem(quietbase; sources = [TransientSource(1, let a = a; t -> t <= 0 ? 0.0 : a*sinpi(2*3e9*t); end)])
         qb = qmake.([0.05e-6, 0.1e-6])
         nbh = transientnoise(transientsolve(qb, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12), plan;
-            frequencies = [2df, 3df], weights = fill(df, 2))
+            frequencies = [2dw, 3dw], weights = fill(dw, 2))
         nbd = transientnoise(transientsolve(qb, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, backend = CUDABackend()), dplan;
-            frequencies = [2df, 3df], weights = fill(df, 2))
+            frequencies = [2dw, 3dw], weights = fill(dw, 2))
         @test nbd.covariance ≈ nbh.covariance rtol=1e-8
         @test nbd.commutator ≈ nbh.commutator rtol=1e-8
         nfd = transientnoise(transientsolve(qb, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, backend = CUDABackend()), dplan;
-            frequencies = [2df, 3df], weights = fill(df, 2), method = :forward)
+            frequencies = [2dw, 3dw], weights = fill(dw, 2), method = :forward)
         @test nfd.covariance ≈ nbh.covariance rtol=1e-8
         # a warm attenuator's channels on the device against the host
         ac = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.3e-12)),
             (:att, 1, 2, ScatteringParameters([0.0 0.6; 0.6 0.0]; zref = 50.0, noise = ThermalEquilibrium(0.3))),
             (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         ap = transientproblem(ac; sources = [TransientSource(1, t -> t <= 0 ? 0.0 : 0.05e-6*sinpi(2*3e9*t))])
-        aplan = transientquantumplan(qh, qh.times, [2df, 3df]; ports = [1, 2])
-        adplan = transientquantumplan(qh, qh.times, [2df, 3df]; ports = [1, 2], backend = CUDABackend())
+        aplan = transientquantumplan(qh, qh.times, [2dw, 3dw]; ports = [1, 2])
+        adplan = transientquantumplan(qh, qh.times, [2dw, 3dw]; ports = [1, 2], backend = CUDABackend())
         anh = transientnoise(transientsolve(ap, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre()), aplan;
-            frequencies = [2df, 3df], weights = fill(df, 2))
+            frequencies = [2dw, 3dw], weights = fill(dw, 2))
         and = transientnoise(transientsolve(ap, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre(), backend = CUDABackend()), adplan;
-            frequencies = [2df, 3df], weights = fill(df, 2))
+            frequencies = [2dw, 3dw], weights = fill(dw, 2))
         @test and.covariance ≈ anh.covariance rtol=1e-8
         @test and.addedcovariance ≈ anh.addedcovariance rtol=1e-8
         @test and.commutator ≈ anh.commutator rtol=1e-8
@@ -616,6 +720,54 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         pweights = [cospi(2*1.7e9*t + k) for k in 1:2, t in ph.times]
         @test Array(transienttangent(pd, pcurrents).outgoing) ≈ transienttangent(ph, pcurrents).outgoing rtol=1e-8
         @test Array(transientadjoint(pd, pweights).currents) ≈ transientadjoint(ph, pweights).currents rtol=1e-8
+        # a lattice of junctions without capacitance, every node algebraic
+        # and every endpoint projected, each condition on its own kept
+        # factorization of the projection: a batch whose strongest drive
+        # refreshes its factorization as the junctions' stiffness moves,
+        # the tangent, the adjoint and both noise methods through the
+        # projection, and the trapezoidal rule's endpoint and forward noise,
+        # against the host; and forty steps of the device's stepper on one
+        # factorization of its projection
+        xsite(i, j) = "n$(i)_$(j)"
+        xlattice = Any[("P1", xsite(1, 1), "0", Port(1; Z0 = 50.0)), ("P2", xsite(4, 4), "0", Port(2; Z0 = 50.0))]
+        for i in 1:4, j in 1:4
+            i < 4 && push!(xlattice, ("Jv$(i)_$(j)", xsite(i, j), xsite(i + 1, j), JosephsonJunction(100e-12)))
+            j < 4 && push!(xlattice, ("Jh$(i)_$(j)", xsite(i, j), xsite(i, j + 1), JosephsonJunction(100e-12)))
+        end
+        xfree = transientproblem(Circuit(xlattice); sources = [TransientSource(1, t -> 0.0)])
+        xmake(a) = transientproblem(xfree; sources = [TransientSource(1, let a = a; t -> t <= 0 ? 0.0 : a*sinpi(1e10*t); end)])
+        xbatch = xmake.([2e-6, 6e-6, 12e-6])
+        xh = transientsolve(xbatch, (0.0, 100e-12); dt = 1e-12, record = :phases)
+        xd = transientsolve(xbatch, (0.0, 100e-12); dt = 1e-12, record = :phases, backend = CUDABackend())
+        @test Array(xd.voltage) ≈ xh.voltage rtol=1e-8 atol=1e-14
+        @test Array(xd.phases) ≈ xh.phases rtol=1e-8 atol=1e-14
+        xtimes = xh[1].times
+        xcurrents = [1e-8*sinpi(2*1.1e9*t)^2*cospi(2*0.7e9*t + k) for k in 1:2, t in xtimes]
+        xweights = [cospi(2*1.7e9*t + k) for k in 1:2, t in xtimes]
+        @test Array(transienttangent(xd[3], xcurrents).outgoing) ≈ transienttangent(xh[3], xcurrents).outgoing rtol=1e-8 atol=1e-14
+        @test Array(transientadjoint(xd[3], xweights).currents) ≈ transientadjoint(xh[3], xweights).currents rtol=1e-8 atol=1e-14
+        xdw = 2pi/(length(xtimes)*1e-12)
+        xplan = transientquantumplan(xh[1], xtimes, [2xdw, 2xdw]; ports = [1, 2])
+        xdplan = transientquantumplan(xh[1], xtimes, [2xdw, 2xdw]; ports = [1, 2], backend = CUDABackend())
+        xnh = transientnoise(xh, xplan; frequencies = [2xdw, 3xdw], weights = fill(xdw, 2))
+        xnd = transientnoise(xd, xdplan; frequencies = [2xdw, 3xdw], weights = fill(xdw, 2))
+        xnf = transientnoise(xd, xdplan; frequencies = [2xdw, 3xdw], weights = fill(xdw, 2), method = :forward)
+        @test xnd.covariance ≈ xnh.covariance rtol=1e-8
+        @test xnf.covariance ≈ xnh.covariance rtol=1e-8
+        @test xnf.commutator ≈ xnh.commutator rtol=1e-8
+        xth = transientsolve(xbatch[3], (0.0, 100e-12); dt = 1e-12, method = Trapezoidal(), record = :phases)
+        xtd = transientsolve(xbatch[3], (0.0, 100e-12); dt = 1e-12, method = Trapezoidal(), record = :phases, backend = CUDABackend())
+        @test Array(xtd.voltage) ≈ xth.voltage rtol=1e-8 atol=1e-14
+        @test transientnoise(xtd, xdplan; frequencies = [2xdw, 3xdw], weights = fill(xdw, 2), method = :forward).covariance ≈
+            transientnoise(xth, xplan; frequencies = [2xdw, 3xdw], weights = fill(xdw, 2)).covariance rtol=1e-8
+        xsys = JosephsonCircuits.transientsystem(xbatch[1], 1e-12, GaussLegendre(), CUDABackend(),
+            JosephsonCircuits.steppingfactorization(nothing, CUDABackend()))
+        xst = JosephsonCircuits.gaussstepper(xsys, [xbatch[1]], 1e-9, 1e-10, 15, JosephsonCircuits.gaussbatchfactor(xsys, 1))
+        JosephsonCircuits.setstate!(xst, zeros(length(xbatch[1]), 1), zeros(length(xbatch[1]), 1), nothing)
+        for k in 1:40
+            JosephsonCircuits.advance!(xst, (k - 1)*1e-12, k*1e-12, k)
+        end
+        @test xst.pw.factorizations[1] <= 4
         # a constant scattering block on the device against the host: the
         # attenuator and the circulator, whose transposed solves are a
         # second cuDSS factorization
@@ -646,9 +798,9 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test Array(ld.linewaves) ≈ lh.linewaves rtol=1e-8 atol=1e-14
         # the noise of a line before a pumped junction on the device
         lnh = transientnoise(transientsolve(lp, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre()), plan;
-            frequencies = [2df, 3df], weights = fill(df, 2))
+            frequencies = [2dw, 3dw], weights = fill(dw, 2))
         lnd = transientnoise(transientsolve(lp, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre(), backend = CUDABackend()), dplan;
-            frequencies = [2df, 3df], weights = fill(df, 2))
+            frequencies = [2dw, 3dw], weights = fill(dw, 2))
         @test lnd.covariance ≈ lnh.covariance rtol=1e-8
         @test lnd.commutator ≈ lnh.commutator rtol=1e-8
         # a rational block on the device against the host
@@ -666,8 +818,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         rwts = [cospi(2*1.7e9*t + k) for k in 1:2, t in rph.times]
         @test Array(transienttangent(rpd, rcur).outgoing) ≈ transienttangent(rph, rcur).outgoing rtol=1e-8
         @test Array(transientadjoint(rpd, rwts).currents) ≈ transientadjoint(rph, rwts).currents rtol=1e-8
-        rnh = transientnoise(rph, plan; frequencies = [2df, 3df], weights = fill(df, 2))
-        rnd = transientnoise(rpd, dplan; frequencies = [2df, 3df], weights = fill(df, 2))
+        rnh = transientnoise(rph, plan; frequencies = [2dw, 3dw], weights = fill(dw, 2))
+        rnd = transientnoise(rpd, dplan; frequencies = [2dw, 3dw], weights = fill(dw, 2))
         @test rnd.covariance ≈ rnh.covariance rtol=1e-8
         # a checkpointed record replayed on the device against the host
         ch = transientsolve(problems, (0.0, 0.5e-9); dt = 2e-12, record = :checkpoints, checkpointevery = 50, rtol = 1e-12)
@@ -697,6 +849,44 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test Array(transientadjoint(pdv, pweights).currents) ≈ transientadjoint(ph, pweights).currents rtol=1e-8 atol=1e-14
         pcurrents = [1e-9*sinpi(2*2.9e9*t) for _ in 1:1, t in ph.times]
         @test Array(transienttangent(pdv, pcurrents).outgoing) ≈ transienttangent(ph, pcurrents).outgoing rtol=1e-8 atol=1e-14
+        # a tangent's currents given on the device into a floating branch
+        # a port reads, two sources of one waveform into it and out of it,
+        # judged on the host form the steps take, against the host (review
+        # of bundle 8, finding 2)
+        flc = Circuit([("C1", "1", "2", Capacitor(1e-12)), ("P1", "1", "2", Port(1; Z0 = 50.0)),
+            ("I1", "0", "1", CurrentSource(0.0)), ("I2", "2", "0", CurrentSource(0.0))])
+        flwave(t) = 1e-6*sinpi(2e9*t)
+        flp = transientproblem(flc; sources = [TransientSource(:I1, flwave), TransientSource(:I2, flwave)])
+        for method in (GaussLegendre(), Trapezoidal())
+            flh = transientsolve(flp, (0.0, 0.2e-9); dt = 1e-12, method, record = :phases)
+            fld = transientsolve(flp, (0.0, 0.2e-9); dt = 1e-12, method, record = :phases, backend = CUDABackend())
+            fl = 1e-7 .* cospi.(3e9 .* flh.times)
+            @test Array(transienttangent(fld, CuArray(permutedims([fl fl])); targets = ["I1", "I2"]).voltage) ≈
+                transienttangent(flh, permutedims([fl fl]); targets = ["I1", "I2"]).voltage rtol=1e-8 atol=1e-14
+            @test_throws ArgumentError transienttangent(fld, CuArray(permutedims([fl zero(fl)])); targets = ["I1", "I2"])
+        end
+        # the column maxima the Newton control of a batch reads, by one
+        # kernel on the device, against the host's loop and the reductions
+        # of CUDA.jl on the same arrays: more rows than a workgroup has
+        # items, a row far over its tolerance, and junction currents with
+        # rows and without
+        JC = JosephsonCircuits
+        n, N = 600, 3
+        res, tol, delta, X, rhs = (randn(n, N, 2) for _ in 1:5)
+        tol .= abs.(tol) .+ 0.1
+        res[7, 2, 2] = 50.0
+        x = randn(n, N)
+        for nj in (5, 0)
+            jcur = randn(nj, N, 2)
+            host = JC.columnmaxima!(zeros(JC.COLUMNMAXIMA, N), nothing, res, tol, delta, x, X, jcur, rhs, JC.CPU())
+            d = CuArray.((res, tol, delta, x, X, jcur, rhs))
+            dev = JC.columnmaxima!(zeros(JC.COLUMNMAXIMA, N), CUDA.zeros(Float64, JC.COLUMNMAXIMA, N), d..., CUDABackend())
+            @test dev == host
+            colmax(a) = vec(Array(maximum(abs, a; dims = (1, 3), init = 0.0)))
+            @test dev == permutedims(hcat(vec(Array(mapreduce((r, t) -> abs(r)/t, max, d[1], d[2]; dims = (1, 3), init = 0.0))),
+                vec(Array(mapreduce((r, t) -> abs(r) > t ? abs(r) : 0.0, max, d[1], d[2]; dims = (1, 3), init = 0.0))),
+                colmax(d[3]), vec(Array(maximum(abs, d[4]; dims = 1, init = 0.0))), colmax(d[6]), colmax(d[5]), colmax(d[7])))
+        end
     end
 
     @testset "the batched cuDSS policy reaches both of its callers" begin
@@ -770,6 +960,18 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             method = GaussLegendre(), rtol = 1e-12)
         @test Array(tdev.outgoing) ≈ thost.outgoing rtol=1e-8 atol=1e-14
         @test Array(tdev2.outgoing) ≈ thost.outgoing rtol=1e-8 atol=1e-14
+    end
+
+    @testset "cuDSS factors of a complex host matrix" begin
+        # the Gauss-Legendre step matrix of a host transient is complex:
+        # cuDSS factorizes it from the host, and solves the columns of host
+        # matrices, which cross to the device through a host vector
+        A = JosephsonCircuits.SparseArrays.sparse(ComplexF64[4 1im 0; 1 4 1; 0 -1im 4])
+        F = JosephsonCircuits.factorize(CUDSSFactorization(), A)
+        B = ComplexF64[1 2im; 3 4; 5im 6]
+        X = zeros(ComplexF64, 3, 2)
+        JosephsonCircuits.matrixsolve!(view(X, :, 1:2), F, view(B, :, 1:2))
+        @test X ≈ Matrix(A) \ B
     end
 
     @testset "the linearized sweep through cuDSS with a scattering block" begin
@@ -876,6 +1078,23 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             @test CUDSS.cudss_get(solver, "pivot_epsilon") == 1e-6
             @test CUDSS.cudss_get(solver, "ir_n_steps") == 3
         end
+
+        # the batch is held to the memory budget at cuDSS's estimate of a
+        # system, which holds at least the factors cuDSS reports for the
+        # pattern; a budget below one system solves one at a time
+        bytes = JC.cudsssystembytes(lsys.Asparse, ComplexF64, size(b, 2),
+            CUDABackend())
+        probe = CudssSolver(CUDA.CUSPARSE.CuSparseMatrixCSR(A), "G", 'F')
+        cudss("analysis", probe, CUDA.zeros(ComplexF64, size(A, 1)),
+            CUDA.zeros(ComplexF64, size(A, 1)))
+        @test bytes >= CUDSS.cudss_get(probe, "lu_nnz")*sizeof(ComplexF64)
+        single = JC.devicesolutions(lsys, b, ws, CUDABackend(), spec, spec;
+            factorization = CUDSSFactorization(), budget = 1)
+        @test single.nb == 1
+        JC.solvebatch!(single, 2)
+        JC.assemblesystemmatrix!(A, lsys, ws[2] .+ d.wpumpmodes)
+        JC.forwardsolution!(X, single, 2)
+        @test X ≈ A \ b rtol = 1e-8
     end
 
     @testset "a sweep a frequency dependent value keeps on the host" begin
@@ -974,6 +1193,17 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test all(s -> imag(s) >= 0, jhost.poles)
         @test agree(jhost.poles, jdevice.poles; rtol = 1e-12)
         @test alike(jhost.nodevoltage, jdevice.nodevoltage; rtol = 1e-10)
+        # a junction behind a transmission line, whose history the map
+        # carries as each line port's run of coordinates
+        behind = Circuit([(:p, 1, 0, Port(1; Z0 = 20.0)), (:line, 1, 2, TransmissionLine(10.0, 1.0; vp = 1.0)),
+            (:j, 2, 0, JosephsonJunction(1.0)), (:c, 2, 0, Capacitor(1.0))])
+        bpump = hbnlsolve((0.8,), (12,), [(mode = (1,), port = 1, current = 0.04*JosephsonCircuits.phi0)], behind;
+            method = Newton(), atol = 1e-12, keyedarrays = false)
+        bmapped(backend) = hbstability(behind; nonlinear = bpump, Nmodulationharmonics = (4,),
+            method = Monodromy(; nev = 2, steps = 64, backend))
+        bhost, bdevice = bmapped(JosephsonCircuits.CPU()), bmapped(CUDABackend())
+        @test length(bdevice.poles) == length(bhost.poles) == 2
+        @test agree(bhost.poles, bdevice.poles; rtol = 1e-10)
         # an isolated multiplier beside a defective block, whose right
         # vectors are singular together, and the same turned into every
         # coordinate by a reflection, whose inverse holds no left vector to

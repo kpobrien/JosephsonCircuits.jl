@@ -287,8 +287,7 @@ end
         Nbranches::Integer, invLnm, Gnm, Cnm, layout::ModeLayout,
         ::Type{T} = Float64; transposed = false, backend = CPU())
 
-The sparsity structure of the real Jacobian, and the branch incidence the
-assembly needs with it: `(P, nodesandsigns)`. The Jacobian is square, its
+The sparsity structure `P` of the real Jacobian. The Jacobian is square, its
 rows and columns both in the real representation `layout`.
 
 `P` is a `SparseMatrixCSC` with zero values on a host and a
@@ -315,10 +314,9 @@ function realjacobianstructure(Amatrixindices::Matrix,
         (invLnm, Gnm, Cnm), backend)
     Cx = transposed ? transposepattern(C, backend) : C
     Pd = deviceexpandrealpattern(Cx.colptr, Cx.rowval, layout, n, backend)
-    P = backend isa CPU ?
+    return backend isa CPU ?
         SparseMatrixCSC(Pd.m, Pd.n, Array(Pd.colptr), Array(Pd.rowval),
             zeros(T, nnz(Pd))) : Pd
-    return P, nodesandsigns
 end
 
 """
@@ -418,9 +416,9 @@ end
 """
     DeviceValuedSparseMatrix{Tv,P,V} <: AbstractMatrix{Tv}
 
-A sparse matrix whose *structure* lives on the host and whose *values* live on
-a device, in the stored order of a compressed sparse row matrix built from that
-structure.
+A sparse matrix whose *values* live on a device, in the stored order of a
+compressed sparse row matrix, and whose *structure* is a
+[`DeviceSparsePattern`](@ref) on the same backend.
 
 The structure is held as the **transpose**, because the compressed columns of
 the transpose are the compressed rows of this matrix: `patterntranspose` is
@@ -429,21 +427,16 @@ matrix can be built from it with no conversion at all. That is also the form
 [`realjacobianstructure`](@ref) produces directly when asked for it with
 `transposed = true`, which is why nothing here permutes anything.
 
-`patterntranspose` carries the sparsity structure only; its stored values are
-whatever they were last set to and must not be read. Use `nonzeros` to
-reach the device values, and [`rowpointer`](@ref) and
-[`columnindices`](@ref) to reach the structure.
-
-A factorization which does not have a method for this type will fail on it
-rather than silently reading the pattern, which is deliberate: the values in
-`patterntranspose` are stale by construction.
+Use `nonzeros` to reach the device values, and [`rowpointer`](@ref) and
+[`columnindices`](@ref) to reach the structure. An entry is not read one at a
+time, so a factorization which does not have a method for this type fails on
+it rather than reading it element by element.
 
 # Fields
-- `patterntranspose`: the stored transpose, a `SparseMatrixCSC` on the host
-    or a [`DeviceSparsePattern`](@ref) (the type parameter `P`).
+- `patterntranspose`: the stored transpose, a [`DeviceSparsePattern`](@ref).
 - `nzval`: the values on the device, in the stored order of the transpose.
 """
-struct DeviceValuedSparseMatrix{Tv,P,V<:AbstractVector{Tv}} <: AbstractMatrix{Tv}
+struct DeviceValuedSparseMatrix{Tv,P<:DeviceSparsePattern,V<:AbstractVector{Tv}} <: AbstractMatrix{Tv}
     patterntranspose::P
     nzval::V
 end
@@ -454,10 +447,7 @@ end
 The compressed sparse row pointer of `A`, which is the column pointer of the
 transpose it stores.
 """
-rowpointer(A::DeviceValuedSparseMatrix{<:Any,<:SparseMatrixCSC}) =
-    SparseArrays.getcolptr(A.patterntranspose)
-rowpointer(A::DeviceValuedSparseMatrix{<:Any,<:DeviceSparsePattern}) =
-    A.patterntranspose.colptr
+rowpointer(A::DeviceValuedSparseMatrix) = A.patterntranspose.colptr
 
 """
     columnindices(A::DeviceValuedSparseMatrix)
@@ -465,10 +455,7 @@ rowpointer(A::DeviceValuedSparseMatrix{<:Any,<:DeviceSparsePattern}) =
 The compressed sparse row column indices of `A`, which are the row indices of
 the transpose it stores.
 """
-columnindices(A::DeviceValuedSparseMatrix{<:Any,<:SparseMatrixCSC}) =
-    rowvals(A.patterntranspose)
-columnindices(A::DeviceValuedSparseMatrix{<:Any,<:DeviceSparsePattern}) =
-    A.patterntranspose.rowval
+columnindices(A::DeviceValuedSparseMatrix) = A.patterntranspose.rowval
 
 Base.size(A::DeviceValuedSparseMatrix) = reverse(size(A.patterntranspose))
 Base.size(A::DeviceValuedSparseMatrix, d::Integer) = size(A)[d]
@@ -494,21 +481,15 @@ solution of the linearized system.
 hostsparse(A::SparseMatrixCSC) = A
 function hostsparse(A::DeviceValuedSparseMatrix)
     p = A.patterntranspose
-    colptr, rowval = if p isa SparseMatrixCSC
-        (p.colptr, rowvals(p))
-    else
-        (Array(p.colptr), Array(p.rowval))
-    end
-    m, n = size(p)
     # the stored transpose, as a host matrix, and then the matrix itself
-    At = SparseMatrixCSC(m, n, convert(Vector{Int}, colptr),
-        convert(Vector{Int}, rowval), Array(A.nzval))
+    At = SparseMatrixCSC(p.m, p.n, convert(Vector{Int}, Array(p.colptr)),
+        convert(Vector{Int}, Array(p.rowval)), Array(A.nzval))
     return SparseMatrixCSC(transpose(At))
 end
 
-# reading an entry would read the stale host values, so it is refused
+# the values are on a device, so an entry is not read one at a time
 function Base.getindex(A::DeviceValuedSparseMatrix, ::Integer, ::Integer)
-    throw(ArgumentError("A DeviceValuedSparseMatrix holds its values on a device; its host structure carries the sparsity pattern only and its stored values are stale. Index the device vector returned by `nonzeros` instead."))
+    throw(ArgumentError("A DeviceValuedSparseMatrix holds its values on a device and is not read an entry at a time. Index the device vector returned by `nonzeros` instead."))
 end
 
 # one work item per row of the matrix, which the stored transpose makes a

@@ -13,10 +13,6 @@ capS(C, Z0, a = 1.0) = w -> fill(a*(1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
 # with respect to C
 seriesS(C) = w -> (z = 1/(im*w*C*50.0); [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
 dseriesS(C) = w -> (z = 1/(im*w*C*50.0); d = -2*z/(C*(z+2)^2); [d -d; -d d])
-# an entry-wise callable: d on the diagonal, o12 above it and o21 below,
-# times the reflection of a capacitor C to ground from 50 ohms
-entryS(d, o12 = d, o21 = o12; C = 0.0) = (p, q, w) ->
-    (p == q ? d : p < q ? o12 : o21)*(1 - im*w*C*50.0)/(1 + im*w*C*50.0)
 # a callable of the constant matrix M, which construction cannot read
 constS(M::Matrix{ComplexF64}) = w -> copy(M)
 
@@ -548,31 +544,25 @@ end
     @test !JosephsonCircuits.candeviceevaluate(cd.lsys.scattering)
 end
 
-@testset "the three callable forms give identical results" begin
+@testset "the two callable forms give identical results" begin
     # A callable which returns a fresh matrix is the natural way to write
     # a block by hand and is the default. On a line whose every cell is a
     # block those matrices dominate the allocation of a sweep, so a
-    # callable may instead write into a destination, or return one entry
-    # at a time. The last is the only form a kernel can call, and so the
-    # only one which lets a callable block be evaluated on a backend.
-    # All three must give exactly the same answer.
+    # callable may instead write into a destination. Both must give
+    # exactly the same answer.
     ws, wp, sources = jpadrive()
     Cval = 1000.0e-15
     ret = ScatteringParameters(capS(Cval, 50.0); nports = 1, grounded = true)
     inp = ScatteringParameters((d, w) -> (d[1,1] =
             (1 - im*w*Cval*50.0)/(1 + im*w*Cval*50.0); d);
         nports = 1, grounded = true, form = :inplace)
-    ent = ScatteringParameters(entryS(1.0; C = Cval);
-        nports = 1, grounded = true, form = :entry)
     wtest = 2*pi*[0.0, 4.13e9, -5.27e9]
     B1 = zeros(ComplexF64,1,1,3); C1 = zeros(ComplexF64,1,1,3)
     JosephsonCircuits.evaluatehybrid!(B1, C1, ret, wtest, JosephsonCircuits.HybridWorkspace())
-    for other in (inp, ent)
-        B2 = similar(B1); C2m = similar(C1)
-        JosephsonCircuits.evaluatehybrid!(B2, C2m, other, wtest, JosephsonCircuits.HybridWorkspace())
-        @test B1 == B2
-        @test C1 == C2m
-    end
+    B2 = similar(B1); C2m = similar(C1)
+    JosephsonCircuits.evaluatehybrid!(B2, C2m, inp, wtest, JosephsonCircuits.HybridWorkspace())
+    @test B1 == B2
+    @test C1 == C2m
 
     # and through the whole solve
     mk(b) = Circuit(
@@ -582,135 +572,19 @@ end
         Any[((:p1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
             ((:jj,2), (:p1,2), Ground)])
     s1 = hbsolve(ws, wp, sources, (8,), (8,), mk(ret); keyedarrays = false)
-    for other in (inp, ent)
-        s2 = hbsolve(ws, wp, sources, (8,), (8,), mk(other);
-            keyedarrays = false)
-        @test s1.linearized.S == s2.linearized.S
-    end
+    s2 = hbsolve(ws, wp, sources, (8,), (8,), mk(inp); keyedarrays = false)
+    @test s1.linearized.S == s2.linearized.S
 
     # the form says how a function is called, so it belongs to a
     # callable; anything else is a mistake worth naming rather than a
     # missing method, and an unknown form likewise
     @test_throws ArgumentError ScatteringParameters([0.0 0.5; 0.5 0.0];
-        form = :entry)
+        form = :inplace)
     @test_throws ArgumentError ScatteringParameters(
         ([1.0e9, 2.0e9], zeros(ComplexF64,1,1,2)); nports = 1,
         grounded = true, form = :inplace)
     @test_throws ArgumentError ScatteringParameters(capS(Cval, 50.0);
         nports = 1, grounded = true, form = :elementwise)
-end
-
-@testset "entry-wise callables are evaluated on the backend" begin
-    # An entry-wise callable is the one form a kernel can call. It needs
-    # the closures to live in a device array, which needs them to capture
-    # only numbers and to share a type: blocks built from one helper do,
-    # which is how a generated circuit is written. Anything else falls
-    # back to the host.
-    _, wp, sources = jpadrive()
-    Cval = 1000.0e-15
-    blk = ScatteringParameters(entryS(1.0; C = Cval); nports = 1,
-        grounded = true, form = :entry)
-    circuit = Circuit(
-        Any[:p1 => Port(1; Z0 = 50.0),
-            :cc => Capacitor(100.0e-15),
-            :jj => JosephsonJunction(1000.0e-12), :c2 => blk,
-            :rl => Resistor(1.0e5)],
-        Any[((:p1,1), (:cc,1)),
-            ((:cc,2), (:jj,1), (:c2,1), (:rl,1)),
-            ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
-    nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
-    psc = JosephsonCircuits.compile(circuit)
-    sf = JosephsonCircuits.truncfreqs(
-        JosephsonCircuits.calcfreqsdft((4,)); dc = true, odd = false,
-        even = true, maxintermodorder = Inf)
-    wsweep = 2*pi*collect(range(4.13e9, 5.27e9, length = 7))
-    d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
-    ssys = d.lsys.scattering
-    @test JosephsonCircuits.candeviceevaluate(ssys)
-
-    A = copy(d.lsys.Asparse)
-    nz = JosephsonCircuits.SparseArrays.nnz(A)
-    perm = JosephsonCircuits.cscvaluepermutation(A)
-    host = Matrix{ComplexF64}(undef, nz, length(wsweep))
-    for (i, w) in enumerate(wsweep)
-        JosephsonCircuits.assemblesystemmatrix!(A, d.lsys,
-            w .+ d.wpumpmodes)
-        host[:, i] .= JosephsonCircuits.SparseArrays.nonzeros(A)
-    end
-    plan, _, _ = JosephsonCircuits.planfrequencysweep(d.lsys,
-        JosephsonCircuits.CPU(); adjoint = false)
-    got = Matrix{ComplexF64}(undef, nz, length(wsweep))
-    JosephsonCircuits.assemblesweep!(got, plan, wsweep)
-    st = JosephsonCircuits.plandevicescattering(ssys,
-        JosephsonCircuits.sweepdestinations(A, ssys.Aindex, false),
-        nz, length(wsweep), JosephsonCircuits.CPU(), d.Nmodes)
-    dp = JosephsonCircuits.plandeviceproviders(ssys, length(wsweep),
-        JosephsonCircuits.CPU(), d.wpumpmodes, ssys.scale)
-    @test !isnothing(dp)
-    JosephsonCircuits.stagedeviceproviders!(st.values, dp, wsweep, 1,
-        length(wsweep))
-    JosephsonCircuits.applyscatteringstamps!(got, st)
-    @test got[invperm(perm), :] == host
-
-    # A two port block whose scattering matrix is not symmetric, so the
-    # kernel reading S[q,p] where it should read S[p,q] is a failure
-    # rather than a no-op. A one port block cannot see that at all.
-    two = ScatteringParameters(entryS(0.1, 0.2, 0.7; C = 1e-12); nports = 2,
-        grounded = false, form = :entry)
-    tcircuit = Circuit(
-        Any[:p1 => Port(1; Z0 = 50.0), :cc => two,
-            :jj => JosephsonJunction(1000.0e-12),
-            :c2 => Capacitor(1000.0e-15)],
-        Any[((:p1,1), (:cc,1,1)),
-            ((:cc,2,1), (:jj,1), (:c2,1)),
-            ((:cc,1,2), (:cc,2,2), (:jj,2), (:c2,2), (:p1,2),
-             Ground)])
-    tnl = hbnlsolve(wp, (16,), sources, tcircuit; keyedarrays = false)
-    tpsc = JosephsonCircuits.compile(tcircuit)
-    td = JosephsonCircuits.hblinsolve(wsweep, tpsc,
-        Dict{Symbol,Number}(), sf; nonlinear = tnl, debuglsys = true)
-    tssys = td.lsys.scattering
-    @test JosephsonCircuits.candeviceevaluate(tssys)
-    tA = copy(td.lsys.Asparse)
-    tnz = JosephsonCircuits.SparseArrays.nnz(tA)
-    tperm = JosephsonCircuits.cscvaluepermutation(tA)
-    thost = Matrix{ComplexF64}(undef, tnz, length(wsweep))
-    for (i, w) in enumerate(wsweep)
-        JosephsonCircuits.assemblesystemmatrix!(tA, td.lsys,
-            w .+ td.wpumpmodes)
-        thost[:, i] .= JosephsonCircuits.SparseArrays.nonzeros(tA)
-    end
-    tplan, _, _ = JosephsonCircuits.planfrequencysweep(td.lsys,
-        JosephsonCircuits.CPU(); adjoint = false)
-    tgot = Matrix{ComplexF64}(undef, tnz, length(wsweep))
-    JosephsonCircuits.assemblesweep!(tgot, tplan, wsweep)
-    tst = JosephsonCircuits.plandevicescattering(tssys,
-        JosephsonCircuits.sweepdestinations(tA, tssys.Aindex, false),
-        tnz, length(wsweep), JosephsonCircuits.CPU(), td.Nmodes)
-    tdp = JosephsonCircuits.plandeviceproviders(tssys, length(wsweep),
-        JosephsonCircuits.CPU(), td.wpumpmodes, tssys.scale)
-    JosephsonCircuits.stagedeviceproviders!(tst.values, tdp, wsweep, 1,
-        length(wsweep))
-    JosephsonCircuits.applyscatteringstamps!(tgot, tst)
-    @test tgot[invperm(tperm), :] == thost
-
-    # a closure which captures something that is not a number cannot live
-    # in a device array, so it stays on the host
-    buf = [1.0]
-    heavy = ScatteringParameters((p, q, w) ->
-            (1 - im*w*buf[1]*1e-12*50.0)/(1 + im*w*buf[1]*1e-12*50.0);
-        nports = 1, grounded = true, form = :entry)
-    hcircuit = Circuit(
-        Any[:p1 => Port(1; Z0 = 50.0),
-            :cc => Capacitor(100.0e-15),
-            :jj => JosephsonJunction(1000.0e-12), :c2 => heavy],
-        Any[((:p1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
-            ((:jj,2), (:p1,2), Ground)])
-    hnl = hbnlsolve(wp, (16,), sources, hcircuit; keyedarrays = false)
-    hpsc = JosephsonCircuits.compile(hcircuit)
-    hd = JosephsonCircuits.hblinsolve(wsweep[1:3], hpsc,
-        Dict{Symbol,Number}(), sf; nonlinear = hnl, debuglsys = true)
-    @test !JosephsonCircuits.candeviceevaluate(hd.lsys.scattering)
 end
 
 @testset "a lossy non-reciprocal block: the adjoint is a transpose" begin
@@ -727,103 +601,99 @@ end
     # solution driven at the port.
     _, wp, sources = jpadrive()
     a = 0.7
-    for (lbl, blk) in (
-            ("constant", ScatteringParameters(ComplexF64[0 0; a 0];
-                nports = 2, grounded = false)),
-            ("entry", ScatteringParameters(entryS(0.0, 0.0, a);
-                nports = 2, grounded = false, form = :entry)))
-        circuit = Circuit(
-            Any[:p1 => Port(1; Z0 = 50.0), :iso => blk,
-                :jj => JosephsonJunction(1000.0e-12),
-                :cg => Capacitor(500.0e-15),
-                :p2 => Port(2; Z0 = 50.0),
-                :cl => Capacitor(200.0e-15), :rl => Resistor(2.0e4)],
-            Any[((:p1,1), (:iso,1,1)),
-                ((:iso,2,1), (:jj,1), (:cg,1), (:p2,1), (:cl,1)),
-                ((:cl,2), (:rl,1)),
-                ((:iso,1,2), (:iso,2,2), (:jj,2), (:cg,2), (:p1,2), (:p2,2), (:rl,2), Ground)])
-        nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
-        psc = JosephsonCircuits.compile(circuit)
-        sf = JosephsonCircuits.truncfreqs(
-            JosephsonCircuits.calcfreqsdft((2,)); dc = true, odd = false,
-            even = true, maxintermodorder = Inf)
-        wsweep = 2*pi*collect(range(4.13e9, 5.27e9, length = 5))
-        d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
-        lsys = d.lsys
-        @test !isnothing(lsys.scattering)
+    blk = ScatteringParameters(ComplexF64[0 0; a 0]; nports = 2,
+        grounded = false)
+    circuit = Circuit(
+        Any[:p1 => Port(1; Z0 = 50.0), :iso => blk,
+            :jj => JosephsonJunction(1000.0e-12),
+            :cg => Capacitor(500.0e-15),
+            :p2 => Port(2; Z0 = 50.0),
+            :cl => Capacitor(200.0e-15), :rl => Resistor(2.0e4)],
+        Any[((:p1,1), (:iso,1,1)),
+            ((:iso,2,1), (:jj,1), (:cg,1), (:p2,1), (:cl,1)),
+            ((:cl,2), (:rl,1)),
+            ((:iso,1,2), (:iso,2,2), (:jj,2), (:cg,2), (:p1,2), (:p2,2), (:rl,2), Ground)])
+    nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
+    psc = JosephsonCircuits.compile(circuit)
+    sf = JosephsonCircuits.truncfreqs(
+        JosephsonCircuits.calcfreqsdft((2,)); dc = true, odd = false,
+        even = true, maxintermodorder = Inf)
+    wsweep = 2*pi*collect(range(4.13e9, 5.27e9, length = 5))
+    d = JosephsonCircuits.hblinsolve(wsweep, psc, Dict{Symbol,Number}(), sf; nonlinear = nl, debuglsys = true)
+    lsys = d.lsys
+    @test !isnothing(lsys.scattering)
 
-        # the circuit must actually be non-reciprocal and must actually
-        # need the adjoint, or this tests nothing it is here for
-        arrays = JosephsonCircuits.LinearizedArrays(; requestS = true,
-            requestSnoise = false, requestSsensitivity = false,
-            requestQE = true, requestCM = true, requestnodeflux = false,
-            requestnodefluxadjoint = false, requestvoltage = false,
-            requestvoltageadjoint = false, Nports = 2,
-            Nmodes = d.Nmodes,
-            Nnoisechannels = length(d.noiseportimpedanceindices),
-            Ncomponents = 0, Nnodes = d.Nnodes,
-            Nfrequencies = length(wsweep))
-        @test JosephsonCircuits.needsadjointsolve(arrays,
-            d.noiseportimpedanceindices)
-        sol = hbsolve(wsweep, wp, sources, (16,), (2,), circuit)
-        @test maximum(abs, sol.linearized.S((0,),2,(0,),1,:)) > 0.1
-        @test maximum(abs, sol.linearized.S((0,),1,(0,),2,:)) < 1e-10
+    # the circuit must actually be non-reciprocal and must actually
+    # need the adjoint, or this tests nothing it is here for
+    arrays = JosephsonCircuits.LinearizedArrays(; requestS = true,
+        requestSnoise = false, requestSsensitivity = false,
+        requestQE = true, requestCM = true, requestnodeflux = false,
+        requestnodefluxadjoint = false, requestvoltage = false,
+        requestvoltageadjoint = false, Nports = 2,
+        Nmodes = d.Nmodes,
+        Nnoisechannels = length(d.noiseportimpedanceindices),
+        Ncomponents = 0, Nnodes = d.Nnodes,
+        Nfrequencies = length(wsweep))
+    @test JosephsonCircuits.needsadjointsolve(arrays,
+        d.noiseportimpedanceindices, nothing)
+    sol = hbsolve(wsweep, wp, sources, (16,), (2,), circuit)
+    @test maximum(abs, sol.linearized.S((0,),2,(0,),1,:)) > 0.1
+    @test maximum(abs, sol.linearized.S((0,),1,(0,),2,:)) < 1e-10
 
-        # the forward system and its transpose, which for this block are
-        # genuinely different matrices, each reproduced by the device
-        # assembly: the adjoint direction of a sweep stamps the block
-        # into the transposed structure, so its destinations differ from
-        # the forward ones while its values do not
-        A = copy(lsys.Asparse)
-        nz = JosephsonCircuits.SparseArrays.nnz(A)
-        perm = JosephsonCircuits.cscvaluepermutation(A)
-        JosephsonCircuits.assemblesystemmatrix!(A, lsys,
-            wsweep[1] .+ d.wpumpmodes)
-        # a non-reciprocal block makes the system genuinely
-        # non-symmetric, so its transpose is a different matrix
-        @test A != JosephsonCircuits.SparseArrays.sparse(transpose(A))
+    # the forward system and its transpose, which for this block are
+    # genuinely different matrices, each reproduced by the device
+    # assembly: the adjoint direction of a sweep stamps the block
+    # into the transposed structure, so its destinations differ from
+    # the forward ones while its values do not
+    A = copy(lsys.Asparse)
+    nz = JosephsonCircuits.SparseArrays.nnz(A)
+    perm = JosephsonCircuits.cscvaluepermutation(A)
+    JosephsonCircuits.assemblesystemmatrix!(A, lsys,
+        wsweep[1] .+ d.wpumpmodes)
+    # a non-reciprocal block makes the system genuinely
+    # non-symmetric, so its transpose is a different matrix
+    @test A != JosephsonCircuits.SparseArrays.sparse(transpose(A))
 
-        for isadjoint in (false, true)
-            dest = JosephsonCircuits.sweepdestinations(lsys.Asparse,
-                lsys.scattering.Aindex, isadjoint)
-            host = Matrix{ComplexF64}(undef, nz, length(wsweep))
-            for (i, w) in enumerate(wsweep)
-                JosephsonCircuits.assemblesystemmatrix!(A, lsys,
-                    w .+ d.wpumpmodes)
-                host[:, i] .=
-                    JosephsonCircuits.SparseArrays.nonzeros(A)
-            end
-            plan, _, _ = JosephsonCircuits.planfrequencysweep(lsys,
-                JosephsonCircuits.CPU(); adjoint = isadjoint)
-            got = Matrix{ComplexF64}(undef, nz, length(wsweep))
-            JosephsonCircuits.assemblesweep!(got, plan, wsweep)
-            st = JosephsonCircuits.plandevicescattering(lsys.scattering,
-                dest, nz, length(wsweep), JosephsonCircuits.CPU(),
-                d.Nmodes)
-            dp = JosephsonCircuits.plandeviceproviders(lsys.scattering,
-                length(wsweep), JosephsonCircuits.CPU(), d.wpumpmodes,
-                lsys.scattering.scale)
-            if isnothing(dp)
-                JosephsonCircuits.stagescatteringstamps!(st, wsweep, 1,
-                    length(wsweep), d.wpumpmodes)
-            else
-                JosephsonCircuits.stagedeviceproviders!(st.values, dp,
-                    wsweep, 1, length(wsweep))
-            end
-            JosephsonCircuits.applyscatteringstamps!(got, st)
-            # a sweep of the system itself stores its values in
-            # compressed sparse row order; one of the transpose stores
-            # them in the system's own order, because compressed sparse
-            # row of the transpose is compressed sparse column of the
-            # matrix, which is how the host holds it
-            @test (isadjoint ? got : got[invperm(perm), :]) == host
+    for isadjoint in (false, true)
+        dest = JosephsonCircuits.sweepdestinations(lsys.Asparse,
+            lsys.scattering.Aindex, isadjoint)
+        host = Matrix{ComplexF64}(undef, nz, length(wsweep))
+        for (i, w) in enumerate(wsweep)
+            JosephsonCircuits.assemblesystemmatrix!(A, lsys,
+                w .+ d.wpumpmodes)
+            host[:, i] .=
+                JosephsonCircuits.SparseArrays.nonzeros(A)
         end
-
-        # the commutation relations, which the isolator's own vacuum
-        # noise closes and a confusion of the two systems does not
-        @test all(x -> isapprox(abs(x), 1.0; atol = 1e-9),
-            sol.linearized.CM)
+        plan, _, _ = JosephsonCircuits.planfrequencysweep(lsys,
+            JosephsonCircuits.CPU(); adjoint = isadjoint)
+        got = Matrix{ComplexF64}(undef, nz, length(wsweep))
+        JosephsonCircuits.assemblesweep!(got, plan, wsweep)
+        st = JosephsonCircuits.plandevicescattering(lsys.scattering,
+            dest, nz, length(wsweep), JosephsonCircuits.CPU(),
+            d.Nmodes)
+        dp = JosephsonCircuits.plandeviceproviders(lsys.scattering,
+            length(wsweep), JosephsonCircuits.CPU(), d.wpumpmodes,
+            lsys.scattering.scale)
+        if isnothing(dp)
+            JosephsonCircuits.stagescatteringstamps!(st, wsweep, 1,
+                length(wsweep), d.wpumpmodes)
+        else
+            JosephsonCircuits.stagedeviceproviders!(st.values, dp,
+                wsweep, 1, length(wsweep))
+        end
+        JosephsonCircuits.applyscatteringstamps!(got, st)
+        # a sweep of the system itself stores its values in
+        # compressed sparse row order; one of the transpose stores
+        # them in the system's own order, because compressed sparse
+        # row of the transpose is compressed sparse column of the
+        # matrix, which is how the host holds it
+        @test (isadjoint ? got : got[invperm(perm), :]) == host
     end
+
+    # the commutation relations, which the isolator's own vacuum
+    # noise closes and a confusion of the two systems does not
+    @test all(x -> isapprox(abs(x), 1.0; atol = 1e-9),
+        sol.linearized.CM)
 end
 
 @testset "the device sweep assembly reproduces the host assembler" begin
@@ -1087,7 +957,7 @@ end
         psc = JosephsonCircuits.compile(mk(noise))
         ssys = JosephsonCircuits.scatteringstampsystem(
             psc.scatteringblocks, 1;
-            auxoffset = 0, Ntotal = 64, scale = 1.0)
+            auxoffset = 0, Ntotal = 64, scale = 1.0, modeoffsets = zeros(1))
         @test isnothing(JosephsonCircuits.planscatteringnoise(ssys)) !=
             haschannels
     end
@@ -1253,9 +1123,7 @@ end
             ("constant", ScatteringParameters(ComplexF64[0.3im 0; 0.8 0.2];
                 grounded = false)),
             ("tabulated", ScatteringParameters((ftab, tabvals); nports = 2,
-                grounded = false, extrapolation = :constant)),
-            ("entry callable", ScatteringParameters(entryS(0.2, 0.6);
-                nports = 2, grounded = false, form = :entry)))
+                grounded = false, extrapolation = :constant)))
         circuit = Circuit(
             Any[:p1 => Port(1; Z0 = 50.0), :x => blk,
                 :l1 => Inductor(1000.0e-12), :p2 => Port(2; Z0 = 50.0)],
@@ -1296,19 +1164,12 @@ end
             d.wpumpmodes, ssys.scale)
         @test !isnothing(dp)
         got = zeros(ComplexF64, nrows, nrhs)
-        if isnothing(dp.funcs)
-            JosephsonCircuits.blocknoisefactorkernel!(backend, 64)(
-                bp.factors, bp.factorentries, bp.blockindex,
-                bp.factoroff, dp.nports, dp.freqoff, dp.nfreq, dp.freqs,
-                dp.valoff, dp.vals, dp.curv, dp.slopeoff, dp.eslopes,
-                dp.conjsym, dp.zeroout, wmodes, Nmodes;
-                ndrange = bp.nfactors*Nmodes)
-        else
-            JosephsonCircuits.blocknoiseentryfactorkernel!(backend, 64)(
-                bp.factors, bp.factorentries, bp.blockindex,
-                bp.factoroff, dp.nports, dp.funcs, dp.conjsym, wmodes,
-                Nmodes; ndrange = bp.nfactors*Nmodes)
-        end
+        JosephsonCircuits.blocknoisefactorkernel!(backend, 64)(
+            bp.factors, bp.factorentries, bp.blockindex,
+            bp.factoroff, dp.nports, dp.freqoff, dp.nfreq, dp.freqs,
+            dp.valoff, dp.vals, dp.curv, dp.slopeoff, dp.eslopes,
+            dp.conjsym, dp.zeroout, wmodes, Nmodes;
+            ndrange = bp.nfactors*Nmodes)
         JosephsonCircuits.blocknoisecontractkernel!(backend, 64)(got,
             phiadj, bp.factors, bp.blockindex, bp.factoroff, bp.auxbase,
             dp.nports, bp.channelentry, bp.channellocal, wmodes, Nmodes,
@@ -1328,8 +1189,8 @@ end
                   :channellocal, :factorentries)
             @test getfield(other, f) === getfield(bp, f)
         end
-        @test (other.nfactors, other.nchannels, other.nmodes) ==
-            (bp.nfactors, bp.nchannels, bp.nmodes)
+        @test (other.nfactors, other.nchannels) ==
+            (bp.nfactors, bp.nchannels)
     end
 end
 
@@ -1540,11 +1401,10 @@ end
     # symptom, so hblinsolve warns about it; this is the condition it
     # warns on.
     Z0 = 50.0
-    matrixform = ScatteringParameters(capS(0.0, Z0, 0.5); nports = 1,
+    callable = ScatteringParameters(capS(0.0, Z0, 0.5); nports = 1,
         grounded = true)
-    entryform = ScatteringParameters(entryS(0.5); nports = 1,
-        grounded = true, form = :entry)
-    for (blk, ok) in ((matrixform, false), (entryform, true))
+    constant = ScatteringParameters(fill(0.5 + 0im, 1, 1); grounded = true)
+    for (blk, ok) in ((callable, false), (constant, true))
         circuit = Circuit(
             Any[:p1 => Port(1; Z0 = Z0),
                 :cc => Capacitor(100.0e-15), :x => blk],
@@ -1902,12 +1762,6 @@ end
     )
     @test_throws ArgumentError hblinsolve(2*pi*[5e9], stamped;
         sensitivitynames = ["c2/port1"], returnSsensitivity = true)
-    # gaussian channels remain unsupported
-    η = 0.5
-    cg = Circuit([:ch => GaussianChannel(sqrt(η)*Matrix(1.0I, 2, 2),
-            (1-η)/2*Matrix(1.0I, 2, 2); nmodes = 1, grounded = true)],
-        [((:ch, 1), Ground)])
-    @test_throws ComponentNotSupportedError compile(cg)
 end
 
 @testset "one block definition used as several instances" begin
@@ -1933,7 +1787,7 @@ end
         @test [b.path for b in cc.scatteringblocks] == ["b1", "b2"]
         sys = JosephsonCircuits.scatteringstampsystem(
             cc.scatteringblocks, 2;
-            auxoffset = 0, Ntotal = 1000, scale = 1.0)
+            auxoffset = 0, Ntotal = 1000, scale = 1.0, modeoffsets = zeros(2))
         @test length(sys.blocks) == 2
         @test allunique([b.signalnodes for b in sys.blocks])
     end
@@ -1969,7 +1823,8 @@ end
 
     for Nmodes in (1, 2, 4)
         a = JC.scatteringstampsystem(cc.scatteringblocks, Nmodes;
-            auxoffset = 7, Ntotal = 200, scale = 1.5)
+            auxoffset = 7, Ntotal = 200, scale = 1.5,
+            modeoffsets = zeros(Nmodes))
         @test length(a.blocks) == 3
         # the auxiliary currents of each instance follow the one before
         @test [x.auxbase for x in a.blocks] ==
@@ -1987,10 +1842,11 @@ end
     Nmodes = 2
     wmodes = 2pi*[4.5e9, -5.5e9]
     base = JC.scatteringstampsystem(cc.scatteringblocks, Nmodes;
-        auxoffset = 7, Ntotal = 200, scale = 1.5)
+        auxoffset = 7, Ntotal = 200, scale = 1.5, modeoffsets = zeros(Nmodes))
     k = 1/3.7e-9
     scaled = JC.scatteringstampsystem(cc.scatteringblocks, Nmodes;
-        auxoffset = 7, Ntotal = 200, scale = 1.5, iscale = k)
+        auxoffset = 7, Ntotal = 200, scale = 1.5, modeoffsets = zeros(Nmodes),
+        iscale = k)
     @test base.iscale == 1.0 && scaled.iscale == k
     @test scaled.kcl ≈ k*base.kcl
     work = JC.ScatteringWorkspace()
@@ -2096,7 +1952,7 @@ end
         single = LinearizedScattering(onef.linearized, 2pi*fp)
         alonef = hbsolve(ws[3:3], (2pi*fp,), [], (8,), (16,), Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, single)]))
         @test maximum(abs, S(alonef) .- S(onef)) < 1e-9
-        between = JC.evaluateharmonics!(zeros(ComplexF64, 1, 1, length(single.harmonics), 2), single,
+        between = JC.evaluatecoveredharmonics!(zeros(ComplexF64, 1, 1, length(single.harmonics), 2), single,
             [ws[3] + pi*fp, ws[3] - 3pi*fp])
         @test maximum(abs, between) == 0
         # behind a matched pad and a line: the pump reaches the junction
@@ -2256,12 +2112,12 @@ end
         bare = hbsolve(ws3, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
             Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); atol = 1e-14, returnCnoise = true)
         blk3 = LinearizedScattering(s3.linearized, 2pi*fp2; noise = NoiseCovariance(s3.linearized.Cnoise))
-        fit3 = RationalScattering(blk3, 16; band = (4.5e9, 9.5e9), delays = [0.0, len3/vp3], tol = 0.1, noisetol = 0.1)
+        fit3 = RationalScattering(blk3, 16; band = (2pi*4.5e9, 2pi*9.5e9), delays = [0.0, len3/vp3], tol = 0.1, noisetol = 0.1)
         @test fit3.noise isa NoiseCovariance && fit3.noise.completed && fit3.atol == blk3.atol && fit3.noise.atol == blk3.noise.atol
         # the tables of a solve, declared lossless anew, are checked as
         # any data is, and the device has loss
         @test_throws ArgumentError RationalScattering(LinearizedScattering(blk3.providers, 2pi*fp2;
-            harmonics = blk3.harmonics, nports = 2, zref = Z0, noise = Lossless()), 4; band = (4.5e9, 9.5e9))
+            harmonics = blk3.harmonics, nports = 2, zref = Z0, noise = Lossless()), 4; band = (2pi*4.5e9, 2pi*9.5e9))
         modes = collect(JosephsonCircuits.AxisKeys.axiskeys(s3.linearized.S, 1))
         inband = [findfirst(==(m), modes) for m in ((0,), (-2,))]
         db(a, b) = maximum(abs, Array(a)[inband, :, inband, :, :] .- Array(b)[inband, :, inband, :, :])
@@ -2304,7 +2160,7 @@ end
             @test worst < 1e-12
         end
         @test_throws ArgumentError RationalScattering(blk3, 8; delays = [0.0])
-        @test_throws ArgumentError RationalScattering(blk3, 8; band = (6e9, 5e9))
+        @test_throws ArgumentError RationalScattering(blk3, 8; band = (2pi*6e9, 2pi*5e9))
     end
 
     @testset "the noise of a pumped block converted by the circuit" begin
@@ -2510,25 +2366,25 @@ end
     # that the fitted block's tolerance covers the fit's error alone; a
     # declaration the data meets is fitted and reproduced
     H0(w) = fill(2*(wp - im*w)/(wp + im*w), 1, 1)
-    fsfit = collect(range(0.1e9, 0.9e9; length = 10))
+    wsfit = 2pi .* collect(range(0.1e9, 0.9e9; length = 10))
     for noise in (Lossless(), NoiseCovariance([fill(1.0, 1, 1)]))
-        @test_throws ArgumentError RationalScattering(LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0, noise), 2; frequencies = fsfit)
+        @test_throws ArgumentError RationalScattering(LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0, noise), 2; frequencies = wsfit)
     end
     valid = RationalScattering(LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
-        noise = NoiseCovariance([fill(1.5, 1, 1)])), 2; frequencies = fsfit)
+        noise = NoiseCovariance([fill(1.5, 1, 1)])), 2; frequencies = wsfit)
     @test valid.atol == 1e-6
     ov = hblinsolve([0.4wp], one(valid); keyedarrays = false, returnCnoise = true)
     @test abs(ov.Cnoise[1, 1, 1] - 1.5) < 1e-9 && abs(abs(ov.CM[1, 1]) - 1) < 1e-9
     # a covariance's own tolerance admits the data as the solve does
     close = LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
         noise = NoiseCovariance([fill(1.5 - 1e-4, 1, 1)]; atol = 1e-3))
-    @test RationalScattering(close, 2; frequencies = fsfit).noise.atol == 1e-3
+    @test RationalScattering(close, 2; frequencies = wsfit).noise.atol == 1e-3
     # a sample at which the response is zero is data, a notch, and a
     # notch is not lossless
     w0 = 0.5wp
     notch(w) = fill((w0^2 - w^2)/(w0^2 - w^2 + 2im*1e-8*wp*w), 1, 1)
     @test_throws ArgumentError RationalScattering(LinearizedScattering([notch], wp; harmonics = [0], nports = 1, zref = Z0), 2;
-        frequencies = [0.1e9, 0.3e9, 0.5e9, 0.7e9, 0.9e9])
+        frequencies = 2pi .* [0.1e9, 0.3e9, 0.5e9, 0.7e9, 0.9e9])
     # a fit states the noise its commutator requires, a covariance
     # completed to the commutation relations, so its output obeys them
     # exactly and what it adds is what the fit costs: a fit which adds
@@ -2536,41 +2392,40 @@ end
     # stays the data's, so that the pump solve still sees a conjugate
     # coupling the fit has, whatever the fit's accuracy
     allpass(w) = fill(prod((a*wp - im*w)/(a*wp + im*w) for a in (0.2, 0.7, 1.5)), 1, 1)
-    fswide = collect(range(0.1e9, 2e9; length = 30))
-    @test_throws ArgumentError RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 1; frequencies = fswide)
-    coarse = RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 1; frequencies = fswide, tol = 10.0, noisetol = 10.0)
+    wswide = 2pi .* collect(range(0.1e9, 2e9; length = 30))
+    @test_throws ArgumentError RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 1; frequencies = wswide)
+    coarse = RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 1; frequencies = wswide, tol = 10.0, noisetol = 10.0)
     @test coarse.atol == 1e-6 && coarse.noise isa NoiseCovariance && coarse.noise.completed
     oc = hblinsolve([0.4wp], one(coarse); keyedarrays = false, returnCnoise = true)
     @test abs(abs(oc.CM[1, 1]) - 1) < 1e-9
     @test real(oc.Cnoise[1, 1, 1]) ≈ (1 - abs2(oc.S[1, 1, 1]))/2 atol = 1e-9
-    fine = RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 3; frequencies = fswide)
+    fine = RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 3; frequencies = wswide)
     of = hblinsolve([0.4wp], one(fine); keyedarrays = false, returnCnoise = true)
     @test abs(abs(of.CM[1, 1]) - 1) < 1e-9 && abs(of.Cnoise[1, 1, 1]) < 1e-2
     lowpass(w) = fill(0.1wp/(wp + im*w), 1, 1)
     coupled = RationalScattering(LinearizedScattering([allpass, lowpass], wp; harmonics = [0, 2], nports = 1, zref = Z0,
-        noise = NoiseCovariance([fill(100.0, 1, 1), zero1])), 1; frequencies = fswide, tol = 10.0, noisetol = 10.0)
+        noise = NoiseCovariance([fill(100.0, 1, 1), zero1])), 1; frequencies = wswide, tol = 10.0, noisetol = 10.0)
     @test_throws ArgumentError hbnlsolve((wp,), (6,), [(mode = (1,), port = 1, current = 1e-9)], one(coupled))
     # the noise a fit adds says nothing of its accuracy: a covariance
     # large enough covers the commutator of a poor fit at no noise, so
     # the fit is held to the data as well, to tol of the largest response
     delayed(w) = fill(0.5*cis(-w*0.3e-9), 1, 1)
-    fsdelay = collect(range(0.1e9, 2e9; length = 60))
+    wsdelay = 2pi .* collect(range(0.1e9, 2e9; length = 60))
     @test_throws ArgumentError RationalScattering(LinearizedScattering([delayed], wp; harmonics = [0], nports = 1, zref = Z0,
-        noise = NoiseCovariance([ones(1, 1)])), 2; frequencies = fsdelay, noisetol = 0.0)
+        noise = NoiseCovariance([ones(1, 1)])), 2; frequencies = wsdelay, noisetol = 0.0)
     loose = RationalScattering(LinearizedScattering([delayed], wp; harmonics = [0], nports = 1, zref = Z0,
-        noise = NoiseCovariance([ones(1, 1)])), 2; frequencies = fsdelay, noisetol = 0.0, tol = 0.2)
+        noise = NoiseCovariance([ones(1, 1)])), 2; frequencies = wsdelay, noisetol = 0.0, tol = 0.2)
     @test loose.noise.completed
     # a constant unconverted response beside a dynamic conversion, or
     # none, is realized as its constant with no state
     for H0c in (ones(1, 1), zeros(1, 1))
         constant = RationalScattering(LinearizedScattering([H0c, lowpass], wp; harmonics = [0, 1], nports = 1, zref = Z0,
-            noise = NoiseCovariance([fill(100.0, 1, 1), zero1])), 2; frequencies = fsfit)
+            noise = NoiseCovariance([fill(100.0, 1, 1), zero1])), 2; frequencies = wsfit)
         @test size(constant.providers[1].A) == (0, 0) && constant.providers[1].D ≈ H0c
         @test constant.providers[2] isa JC.ModulatedRationalProvider && size(constant.providers[2].cosine.A, 1) > 0
     end
     # a harmonic tabulated at one sign of frequency alone is read there,
     # the unconverted response mirrored from it, without extrapolation
-    wsfit = 2pi .* fsfit
     Hall = reshape([(wp - im*w)/(wp + im*w) for w in wsfit], 1, 1, :)
     for (w, H) in ((wsfit, Hall), (-reverse(wsfit), conj.(reverse(Hall; dims = 3))))
         onesided = RationalScattering(LinearizedScattering([(w, H)], wp; harmonics = [0], nports = 1, zref = Z0), 1)

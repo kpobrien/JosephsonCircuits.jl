@@ -69,11 +69,13 @@ parameter spacing, and check [stability](stability.md).
 
 ## Harmonic-balance solvers
 
-The default `Automatic()` preconditioner uses the full sparse Jacobian for
-one pump. With multiple pumps it prefers full single-precision node-block
-factors when their estimated memory fits within half the available memory;
-otherwise it uses a measured harmonic band. Stalled iterations can expand
-the coupling or increase precision within the memory budget.
+The default `Automatic()` preconditioner chooses by the number of tones,
+not of pumps: commensurate pumps written as harmonics of one tone are one
+tone. For one tone it uses the full sparse Jacobian. For two or more it
+takes full single-precision node-block factors when their memory fits
+within half the available memory, and otherwise a measured harmonic band.
+A linear solve which fails can grow the coupling or raise the factors'
+precision within the memory budget.
 
 For a large multi-tone grid, reducing retained coupling lowers factor
 storage but can increase Krylov work. Compare total solve time, convergence,
@@ -110,10 +112,11 @@ while retaining separate factorizations and convergence checks. This
 amortizes kernel launches on a GPU and can matter more than accelerating
 one small trajectory.
 
-Under `Trapezoidal()`, `linearsolver=GMRES()` uses matrix-free corrections
-with a reused factorization as preconditioner. Direct factorization is
-often efficient for a one-dimensional sparse line. Iteration is more
-attractive when factor fill makes refactorization expensive.
+Under `Trapezoidal()` and `BackwardEuler()`, `linearsolver=GMRES()` uses
+matrix-free corrections with a reused factorization as preconditioner.
+Direct factorization is often efficient for a one-dimensional sparse line.
+Iteration is more attractive when factor fill makes refactorization
+expensive.
 
 ## Noise calculation cost
 
@@ -175,11 +178,8 @@ harmonic limits or time step, requested outputs, and whether setup and
 compilation are included. Distinguish first-call time from repeated calls
 with the same argument types and from cache reuse.
 
-The displayed timings retained in older amplifier examples came from
-16 threads on an AMD Ryzen 9 9950X under Linux. They are historical context,
-not a benchmark of the current solver revision. The scripts under
-`benchmark/` provide reproducible workloads; include their parameters when
-reporting a new measurement.
+The scripts under `benchmark/` provide reproducible workloads; include
+their parameters when reporting a new measurement.
 
 ### A reproducible CPU measurement
 

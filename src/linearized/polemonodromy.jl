@@ -52,14 +52,13 @@ interpolation also adds error.
 - `CPU()` computes all multipliers through a real Schur decomposition,
   then forms only the selected left/right vectors on the session's BLAS
   threads.
-- `CUDABackend()` requires CUDA.jl 5.6 or newer with CUDSS.jl, the first
-  with cuSOLVER's `geev`, and a CUDA runtime whose cuSOLVER is 11.7.1 or
-  newer, which CUDA.jl's wrapper checks at the eigensolve. The device
-  computes all right vectors and obtains selected left vectors from
-  their basis, each checked against its residual; a singular or
-  ill-conditioned basis falls back to the CPU's Schur vectors.
-  Balancing, selection, orbit initialization, and constraint setup stay
-  on the host.
+- `CUDABackend()` requires CUDA.jl and CUDSS.jl, and a CUDA runtime
+  with cuSOLVER 11.7.1 or newer for its `geev`, which CUDA.jl's wrapper
+  checks at the eigensolve. The device computes all right vectors and
+  obtains selected left vectors from their basis, each checked against
+  its residual; a singular or ill-conditioned basis falls back to the
+  CPU's Schur vectors. Balancing, selection, orbit initialization, and
+  constraint setup stay on the host.
 
 For map dimension `d`, storage is `O(d^2)` and the dense eigensolve is
 `O(d^3)` even for small `nev`. Reducing `nev` saves selected-vector and
@@ -443,8 +442,16 @@ function historymaps(p::TransientProblem, rows::Vector{Int}, cols::Vector{Int}, 
     unit = [phi0/sqrt(p.lines[(r + 1) ÷ 2].Z) for r in rows]
     ii, jj, vv = Int[], Int[], Float64[]
     fi, fj, fv = Int[], Int[], Float64[]
-    for r in unique(rows)
-        ks = findall(==(r), rows)
+    k1 = 0
+    while k1 < length(rows)
+        # the port's coordinates, the run of its rows
+        k0 = k1 + 1
+        r = rows[k0]
+        k1 = k0
+        while k1 < length(rows) && rows[k1 + 1] == r
+            k1 += 1
+        end
+        ks = k0:k1
         # the finer step's column of the port's first coordinate
         c1 = npres - refinement*(npre - cols[first(ks)])
         for c in max(c1, 1):npres

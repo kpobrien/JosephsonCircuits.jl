@@ -152,26 +152,9 @@ samematrices(a, b) = a.Cnm == b.Cnm && a.Gnm == b.Gnm &&
         @test any(startswith("B1 "), lines)
     end
 
-    @testset "parsecomponenttype" begin
-        @test_throws(
-            ArgumentError("parsecomponenttype() currently only works for two letter components"),
-            JosephsonCircuits.parsecomponenttype("BAD1",["Lj","BAD","L","C","K","I","R","P"])
-        )
-
-        @test_throws(
-            ArgumentError("No component in allowedcomponents matches the name B1."),
-            JosephsonCircuits.parsecomponenttype("B1",["Lj","L","C","K","I","R","P"])
-        )
-    end
-
-    @testset "checkcomponenttypes" begin
-        @test_throws(
-            ArgumentError("Allowed components parsing check has failed for Lj. This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents."),
-            JosephsonCircuits.checkcomponenttypes(["L","Lj","C","K","I","R","P"])
-        )
-        # the order the tuple netlist reads its prefixes in
-        @test JosephsonCircuits.checkcomponenttypes(
-            JosephsonCircuits.legacyallowedcomponents)
+    @testset "a name without a type prefix is refused" begin
+        @deprecated @test_throws ArgumentError Circuit([("P1", "1", "0", 1),
+            ("R1", "1", "0", 50.0), ("B1", "1", "0", 1e-9)])
     end
 
     @testset "tuple round trip" begin
@@ -487,10 +470,10 @@ end
         compiled = @test_logs (:warn,) hbsolve(ws, wp[1], Ip, 1, 2,
             compile(circuit), circuitdefs; pumpports = [1], keyedarrays = true)
         @test compiled.nonlinear.nodeflux == old.nonlinear.nodeflux
-        # the line search keywords it took are ignored, with a warning of
-        # their own besides the form's
+        # the line search keywords it took are ignored, named in the form's
+        # warning
         for kw in ((switchofflinesearchtol = 1,), (alphamin = 0.1,))
-            sol = @test_logs (:warn,) (:warn,) hbsolve(ws, wp[1], Ip, 1, 2,
+            sol = @test_logs (:warn,) hbsolve(ws, wp[1], Ip, 1, 2,
                 circuit, circuitdefs; pumpports = [1], keyedarrays = true, kw...)
             @test sol.nonlinear.nodeflux == old.nonlinear.nodeflux
         end
@@ -527,6 +510,13 @@ end
                 circuitdefs; keyedarrays = false, kw...)
             @test lin.S == linref.S
         end
+        # given to hbsolve, they warn once, as a deprecation of hbsolve
+        logs, sol = Test.collect_test_logs(min_level = Base.CoreLogging.Warn) do
+            hbsolve(ws, wp, sources, (2,), (2,), circuit, circuitdefs;
+                keyedarrays = false, returnZ = true)
+        end
+        @test only(logs).id[2] === :hbsolve
+        @test same(sol)
     end
 
     @testset "ftol is atol" begin
@@ -543,6 +533,75 @@ end
         @test olds.linearized.S == news.linearized.S
     end
 
+    @testset "hbnlsolve's factorization is the Newton method's" begin
+        circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 0, Capacitor(1e-12)), (:Lj1, 1, 0, JosephsonJunction(1e-9))])
+        wp = (2pi*5e9,)
+        src = [(mode = (1,), port = 1, current = 1e-8)]
+        old = @test_logs (:warn,) match_mode = :any hbnlsolve(wp, (2,), src,
+            circuit; factorization = LUfactorization(), keyedarrays = false)
+        new = hbnlsolve(wp, (2,), src, circuit;
+            method = Newton(factorization = LUfactorization()), keyedarrays = false)
+        @test old.nodeflux == new.nodeflux
+        @test_throws ArgumentError hbnlsolve(wp, (2,), src, circuit;
+            factorization = LUfactorization(), method = QuasiNewton(), keyedarrays = false)
+    end
+
+    @testset "the deprecations of one call warn together" begin
+        # a deprecation warning is shown once per calling frame and function
+        # name, so the deprecations one call meets are named in one warning
+        # rather than the first of them alone
+        circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 0, Capacitor(1e-12)), (:Lj1, 1, 0, JosephsonJunction(1e-9))])
+        netlist = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0),
+            ("C1", "1", "0", 1e-12), ("Lj1", "1", "0", 1e-9)]
+        wp = (2pi*5e9,)
+        src = [(mode = (1,), port = 1, current = 1e-8)]
+        ws = 2pi*[4e9]
+        for (call, named) in (
+                (() -> hbnlsolve(wp, (2,), src, circuit; keyedarrays = false,
+                    ftol = 1e-10, alphamin = 0.1, switchofflinesearchtol = 1,
+                    factorization = LUfactorization()),
+                    ("ftol", "alphamin", "switchofflinesearchtol", "factorization")),
+                (() -> hbsolve(ws, wp, src, (1,), (2,), circuit; keyedarrays = false,
+                    ftol = 1e-10, maxpumpharmonics = (2,), returnZ = true),
+                    ("ftol", "maxpumpharmonics", "returnZ")),
+                # the single pump form, of a tuple netlist
+                (() -> hbsolve(ws, wp[1], [1e-8], 1, 2, netlist, Dict();
+                    keyedarrays = false, alphamin = 0.1, returnZ = true),
+                    ("alphamin", "returnZ", JosephsonCircuits.tuplenetlistmessage)))
+            logs, _ = Test.collect_test_logs(call; min_level = Base.CoreLogging.Warn)
+            @test length(logs) == 1
+            @test all(n -> occursin(n, string(only(logs).message)), named)
+        end
+    end
+
+    @testset "typed calls do not infer the tuple netlist's conversion" begin
+        # A call inference cannot see the circuit of, a global read in a
+        # function or a netlist of unknown entries, also infers the tuple
+        # forms; the conversion they share is behind an inference barrier,
+        # inferred only for a tuple netlist given, with its own types. No
+        # call passes `AbstractVector` itself, so an instance of the
+        # conversion specialized on it was made by such inference.
+        JC = JosephsonCircuits
+        function abstractconversions()
+            n = 0
+            for name in names(JC; all = true)
+                occursin(r"legacycircuit|legacycomponent|legacyportimpedances|compilenetlist", string(name)) || continue
+                f = getfield(JC, name)
+                for m in methods(f), mi in Base.specializations(m)
+                    any(==(AbstractVector), mi.specTypes.parameters) && (n += 1)
+                end
+            end
+            return n
+        end
+        before = abstractconversions()
+        Base.return_types(hbnlsolve, Tuple{Tuple{Float64}, Tuple{Int},
+            Vector{@NamedTuple{mode::Tuple{Int}, port::Int, current::Float64}}, Any})
+        Base.return_types(Circuit, Tuple{AbstractVector})
+        @test abstractconversions() == before
+    end
+
     @testset "solveS! without the fill reducing ordering" begin
         # the argument list v0.5.4 took, without the ordering
         # solveS_initialize now returns last
@@ -553,6 +612,25 @@ end
         new = copy(JosephsonCircuits.solveS!(init...)[1])
         old = @test_logs (:warn,) JosephsonCircuits.solveS!(init[1:end-1]...)
         @test old[1] ≈ new
+    end
+
+    @testset "spice_hb_load reads a Xyce harmonic balance output" begin
+        # the real and imaginary columns of a variable paired by their
+        # names, and an expression column a real variable of its own
+        mktempdir() do dir
+            path = joinpath(dir, "out.HB.FD.prn")
+            write(path, """
+                Index   FREQ   Re(V(1))   Im(V(1))   {V(2)+1.0}   Re(V(3))   Im(V(3))
+                0   1.0e9   1.0   2.0   3.0   4.0   5.0
+                1   2.0e9   6.0   7.0   8.0   9.0   10.0
+                End of Xyce(TM) Simulation
+                """)
+            out = @test_logs (:warn,) JosephsonCircuits.spice_hb_load(path)
+            @test out.variables == ["V(1)", "{V(2)+1.0}", "V(3)"]
+            @test out.data == [1+2im 6+7im; 3 8; 4+5im 9+10im]
+            @test out.f == [1.0e9, 2.0e9]
+            @test out.index == [0.0, 1.0]
+        end
     end
 
 end

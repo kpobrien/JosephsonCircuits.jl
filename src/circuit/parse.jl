@@ -98,23 +98,6 @@ struct Net{N,E}
 end
 
 """
-    Instance(definition)
-
-An explicit instance wrapper around a component definition. `:id => model`
-and `:id => Instance(model)` are equivalent. Keyword overrides (parameters,
-thermal bindings) are reserved for future use and currently raise an error.
-"""
-struct Instance{D}
-    definition::D
-    function Instance(definition; kwargs...)
-        if !isempty(kwargs)
-            throw(ArgumentError(lazy"Instance overrides are not yet supported; got keywords $(keys(kwargs)). Remove the keywords or construct a separate definition."))
-        end
-        return new{typeof(definition)}(definition)
-    end
-end
-
-"""
     Interface(; pins, ports = nothing)
 
 The interface of a hierarchical circuit, exposing internal endpoints as
@@ -294,8 +277,16 @@ function Circuit(netlist::AbstractVector; pins = nothing, ports = nothing)
         throw(ArgumentError("The netlist mixes entries whose last element is a typed component with entries which are not; a netlist is one or the other."))
     end
     # entries ending in values rather than components are the deprecated
-    # tuple netlist, which circuit/legacy.jl reads
-    return legacycircuit(netlist, nothing; pins = pins, ports = ports)
+    # tuple netlist, which circuit/legacy.jl reads. The branch is chosen at
+    # run time, so inference of every typed netlist reaches it: the
+    # conversion is called behind an inference barrier, its result the one
+    # type of circuit it gives. Given an interface, which a tuple netlist
+    # has not, the call is direct, and inference sees it refuse before the
+    # conversion
+    isnothing(pins) && isnothing(ports) ||
+        return legacycircuit(netlist, nothing; pins = pins, ports = ports)
+    return Base.inferencebarrier(legacycircuit)(netlist, nothing)::Circuit{
+        Vector{Pair{Any,Any}},Vector{Net{String,Vector{Any}}},Nothing}
 end
 
 # an entry of the netlist form ends in a component model; a tuple netlist
@@ -348,15 +339,14 @@ function netlistcircuit(netlist::AbstractVector; pins = nothing,
 end
 
 # The components whose terminals come in ports, a pair per port, or one
-# per port when the component is grounded: the scattering blocks and the
-# Gaussian channels.
-const MultiportComponent = Union{ScatteringParameters,LinearizedScattering,GaussianChannel}
+# per port when the component is grounded: the scattering blocks.
+const MultiportComponent = Union{ScatteringParameters,LinearizedScattering}
 
 # The endpoints of a netlist entry go straight into their node groups,
 # one dispatch per component, without a vector of endpoints or a slice of
 # the entry in between.
 netlistterminalcount(def, name) = nterminals(def)
-function netlistterminalcount(def::MultiportComponent, name)
+Base.@nospecializeinfer function netlistterminalcount(@nospecialize(def::MultiportComponent), name)
     return isgrounded(def) ? componentnports(def) : 2*componentnports(def)
 end
 function netlistterminalcount(def::Circuit, name)
@@ -397,8 +387,8 @@ function appendnetlistnodes!(groups, nodeorder, entry, def, name)
     end
     return nothing
 end
-function appendnetlistnodes!(groups, nodeorder, entry,
-        def::MultiportComponent, name)
+Base.@nospecializeinfer function appendnetlistnodes!(groups, nodeorder, @nospecialize(entry),
+        @nospecialize(def::MultiportComponent), name)
     if isgrounded(def)
         for p in 1:componentnports(def)
             appendnetlistnode!(groups, nodeorder,
@@ -441,28 +431,21 @@ end
 
 The number of scalar electrical terminals of a component model. Two
 terminal lumped components have 2; a [`ScatteringParameters`](@ref) has two per
-port; a [`GaussianChannel`](@ref) has two per mode; a hierarchical
-[`Circuit`](@ref) has one per interface pin; a
-[`MutualInductor`](@ref) has none because it couples branches, not nets; a
-[`Ground`](@ref) instance has one, which is the reference net itself.
+port; a [`MutualInductor`](@ref) has none because it couples branches, not
+nets; a [`Ground`](@ref) instance has one, which is the reference net
+itself. The terminals of a hierarchical [`Circuit`](@ref) are the pins of
+its [`Interface`](@ref), which the parse and the elaboration read there.
 """
 nterminals(::GroundType) = 1
 nterminals(::Inductor) = 2
 nterminals(::Capacitor) = 2
 nterminals(::Resistor) = 2
 nterminals(::CurrentSource) = 2
-nterminals(::VoltageSource) = 2
 nterminals(::Port) = 2
 nterminals(::NonlinearInductor) = 2
 nterminals(::MutualInductor) = 0
-nterminals(c::MultiportComponent) = 2*componentnports(c)
-function nterminals(c::Circuit)
-    if isnothing(c.interface)
-        throw(ArgumentError("A Circuit used as a component must have an Interface."))
-    end
-    return length(c.interface.pins)
-end
-nterminals(c) = throw(ArgumentError(lazy"$(typeof(c)) is not a known component model."))
+Base.@nospecializeinfer nterminals(@nospecialize(c::MultiportComponent)) = 2*componentnports(c)
+nterminals(c) =throw(ArgumentError(lazy"$(typeof(c)) is not a known component model."))
 
 """
     hasports(component)
@@ -478,13 +461,12 @@ hasports(c) = false
     componentnports(c)
 
 The number of ports of a multiport component: the ports of a
-[`ScatteringParameters`](@ref), the modes of a [`GaussianChannel`](@ref).
+[`ScatteringParameters`](@ref) or a [`LinearizedScattering`](@ref).
 Part of the connector protocol with [`nterminals`](@ref) and
 [`hasports`](@ref).
 """
-componentnports(c::ScatteringParameters) = c.nports
-componentnports(c::LinearizedScattering) = c.nports
-componentnports(c::GaussianChannel) = c.nmodes
+Base.@nospecializeinfer componentnports(@nospecialize(c::ScatteringParameters)) = c.nports
+Base.@nospecializeinfer componentnports(@nospecialize(c::LinearizedScattering)) = c.nports
 
 """
     isgrounded(c)
@@ -493,7 +475,7 @@ Whether a multiport component's second terminals are all tied to ground,
 so that only its first terminals connect (`grounded = true` at
 construction).
 """
-isgrounded(c::MultiportComponent) = c.grounded
+Base.@nospecializeinfer isgrounded(@nospecialize(c::MultiportComponent)) = c.grounded
 
 # === interface key lookup ===
 
@@ -565,9 +547,8 @@ end
 
 # === component table ===
 
-# The instances of one circuit level: their identifiers, their definitions
-# (with `Instance` wrappers removed), and a lookup from identifier to
-# position.
+# The instances of one circuit level: their identifiers, their
+# definitions, and a lookup from identifier to position.
 # The identifiers and the component definitions are held as they came,
 # heterogeneous, so that the parsed representation encodes neither the
 # topology nor the mixture of models in its type; the connectivity is
@@ -604,9 +585,6 @@ function componenttable(components, interfacecache = IdDict{Any,InterfaceIndex}(
         name = string(id)
         if occursin('/', name)
             throw(ArgumentError(lazy"Instance identifier $(id) contains the reserved hierarchical path separator \"/\"."))
-        end
-        if def isa Instance
-            def = def.definition
         end
         if def isa Circuit && isnothing(def.interface)
             throw(ArgumentError(lazy"The Circuit used as instance $(id) has no Interface. A subcircuit must expose pins through an Interface."))
@@ -657,7 +635,7 @@ function scalarterminal(def::MutualInductor, id, k)
     throw(ArgumentError(lazy"The mutual inductor $(id) couples two inductor branches and has no terminals; it must not appear in connections."))
 end
 
-function scalarterminal(def::MultiportComponent, id, k)
+Base.@nospecializeinfer function scalarterminal(@nospecialize(def::MultiportComponent), id, k)
     if isgrounded(def)
         if !(k isa Integer) || !(1 <= k <= componentnports(def))
             throw(ArgumentError(lazy"The grounded multiport $(id) has ports 1:$(componentnports(def)); got $(k)."))

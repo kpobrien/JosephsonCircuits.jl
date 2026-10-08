@@ -10,7 +10,7 @@ function testtransientiq(backend = JosephsonCircuits.CPU())
     prob = iqtestproblem()
     rng = Random.default_rng()
     times = collect(range(0.31e-9; step = 2e-12, length = 401))
-    frequencies = [5e9, 8e9, 6.7e9]
+    frequencies = 2pi .* [5e9, 8e9, 6.7e9]
     ports = [1, 2, 1]
     traces = randn(rng, 2, length(times))
     @testset "Finite-window I/Q: $backend" begin
@@ -24,15 +24,15 @@ function testtransientiq(backend = JosephsonCircuits.CPU())
                 (j, n) in enumerate(plan.ntaps:plan.stride:length(times))
 
                 expected[c, j] = 2sum(plan.taps[k+1] * traces[plan.rows[c], n-k] *
-                                      exp(-2pi*im*frequencies[c]*(times[n-k]-plan.phasereference))
+                                      exp(-im*frequencies[c]*(times[n-k]-plan.phasereference))
                 for k in 0:(plan.ntaps-1))
             end
             @test Array(measured) ≈ expected rtol=3e-12 atol=1e-14
             @test plan.times == times[plan.ntaps:7:end]
             @test plan.centertimes ≈ plan.times .- 0.1e-9
             @test plan.groupdelay ≈ 0.1e-9
-            @test plan.noisebandwidth ≈ sum(abs2, plan.taps)/(2plan.dt)
-            at3db = sum(plan.taps[k+1]*exp(-2pi*im*plan.bandwidth3db*k*plan.dt)
+            @test plan.noisebandwidth ≈ pi*sum(abs2, plan.taps)/plan.dt
+            at3db = sum(plan.taps[k+1]*exp(-im*plan.bandwidth3db*k*plan.dt)
             for k in 0:(plan.ntaps-1))
             @test abs2(at3db) ≈ 0.5 rtol=1e-12
             weights = randn(rng, ComplexF64, size(expected))
@@ -61,7 +61,7 @@ function testtransientiq(backend = JosephsonCircuits.CPU())
         t = collect((0:499) .* 2e-12)
         A, phi = 1.7, 0.37
         plan = transientiqplan(
-            prob, t, [5e9]; duration = 99*2e-12, window = :rectangular, backend)
+            prob, t, [2pi*5e9]; duration = 99*2e-12, window = :rectangular, backend)
         rf = reshape(A .* cospi.(2*5e9 .* t .+ phi/pi), 1, :)
         @test Array(transientiq(plan, device(rf))) ≈
               fill(A*exp(im*phi), 1, length(plan.times)) rtol=2e-13
@@ -81,18 +81,18 @@ if !@isdefined(TRANSIENTBACKENDTESTS)
     @testset "I/Q input contract" begin
         t = collect((0:100) .* 1e-12)
         two = iqtestproblem()
-        @test_throws ArgumentError transientiqplan(two, t, [5e9]; duration = 1e-9)
-        @test_throws ArgumentError transientiqplan(two, t, [5e9]; duration = 20e-12, stride = 0)
-        @test_throws ArgumentError transientiqplan(two, t, [5e9]; duration = 20e-12, window = :unknown)
+        @test_throws ArgumentError transientiqplan(two, t, [2pi*5e9]; duration = 1e-9)
+        @test_throws ArgumentError transientiqplan(two, t, [2pi*5e9]; duration = 20e-12, stride = 0)
+        @test_throws ArgumentError transientiqplan(two, t, [2pi*5e9]; duration = 20e-12, window = :unknown)
         @test_throws ArgumentError transientiqplan(two, t, [0.0]; duration = 20e-12)
-        @test_throws ArgumentError transientiqplan(two, t, [6e11]; duration = 20e-12)
-        @test_throws ArgumentError transientiqplan(two, t .^ 2, [5e9]; duration = 20e-12)
+        @test_throws ArgumentError transientiqplan(two, t, [2pi*6e11]; duration = 20e-12)
+        @test_throws ArgumentError transientiqplan(two, t .^ 2, [2pi*5e9]; duration = 20e-12)
         # a carrier names a port by its number, which must exist
-        @test_throws ArgumentError transientiqplan(two, t, [5e9]; duration = 20e-12, ports = [3])
-        p = transientiqplan(two, t, [5e9]; duration = 20e-12)
+        @test_throws ArgumentError transientiqplan(two, t, [2pi*5e9]; duration = 20e-12, ports = [3])
+        p = transientiqplan(two, t, [2pi*5e9]; duration = 20e-12)
         @test_throws DimensionMismatch transientiq(p, zeros(1, 100))
         @test_throws ArgumentError transientiq(p, zeros(ComplexF64, 1, 101))
-        static = transientiqplan(two, t, [5e9]; duration = 20e-12, backend = JosephsonCircuits.CPU(; static = true))
+        static = transientiqplan(two, t, [2pi*5e9]; duration = 20e-12, backend = JosephsonCircuits.CPU(; static = true))
         @test transientiq(static, ones(1, 101)) ≈ transientiq(p, ones(1, 101)) rtol=1e-13
     end
 end

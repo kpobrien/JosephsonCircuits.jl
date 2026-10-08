@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: Floquet
 using LinearAlgebra
 using SpecialFunctions
 using Test

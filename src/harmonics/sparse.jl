@@ -160,48 +160,6 @@ function spaddkeepzeros(A::SparseMatrixCSC, B::SparseMatrixCSC)
 end
 
 """
-    sprandsubset(A::SparseMatrixCSC, p::AbstractFloat, dropzeros = true)
-
-Given a sparse matrix `A`, return a sparse matrix with random values in some
-fraction of the non-zero elements with probability p. If `dropzeros = false`,
-then the zeros will be retained as structural zeros otherwise they are dropped.
-
-This is used for testing non-allocating sparse matrix addition.
-
-# Examples
-```jldoctest
-A = JosephsonCircuits.SparseArrays.sprand(2,2,0.5)
-B = JosephsonCircuits.sprandsubset(A, 0.1)
-length(A.nzval) >= length(B.nzval)
-
-# output
-true
-```
-```jldoctest
-A = JosephsonCircuits.SparseArrays.sprand(100,100,0.5)
-B = JosephsonCircuits.sprandsubset(A, 0.1)
-length(A.nzval) >= length(B.nzval)
-
-# output
-true
-```
-"""
-function sprandsubset(A::SparseMatrixCSC, p::AbstractFloat, dropzeros = true)
-    B = copy(A)
-    for i in 1:nnz(A)
-        if rand(1)[1] <= p
-            B.nzval[i] = 0
-        else
-            B.nzval[i] = A.nzval[i]
-        end
-    end
-    if dropzeros
-        dropzeros!(B)
-    end
-    return B
-end
-
-"""
     sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC, indexmap)
 
 Add sparse matrices `A` and `c*As` and return the result in `A`. The sparse

@@ -511,6 +511,11 @@ function Z_L(L::AbstractMatrix,w::Number)
     return im*w*L
 end
 
+"""
+    Z_L!(Z, L, w)
+
+In place version of [`Z_L`](@ref), writing into `Z`.
+"""
 function Z_L!(Z::AbstractMatrix,L::AbstractMatrix,w::Number)
     if size(Z) != size(L)
         throw(ArgumentError(lazy"The size of the input $(size(L)) must equal the size of the output $(size(Z))."))
@@ -530,6 +535,11 @@ function Z_invC(invC,w)
     return invC/(im*w)
 end
 
+"""
+    Z_invC!(Z, invC, w)
+
+In place version of [`Z_invC`](@ref), writing into `Z`.
+"""
 function Z_invC!(Z,invC,w)
     if size(Z) != size(invC)
         throw(ArgumentError(lazy"The size of the input $(size(invC)) must equal the size of the output $(size(Z))."))
@@ -549,6 +559,11 @@ function Y_C(C,w)
     return im*w*C
 end
 
+"""
+    Y_C!(Y, C, w)
+
+In place version of [`Y_C`](@ref), writing into `Y`.
+"""
 function Y_C!(Y,C,w)
     if size(Y) != size(C)
         throw(ArgumentError(lazy"The size of the input $(size(C)) must equal the size of the output $(size(Y))."))
@@ -559,15 +574,20 @@ function Y_C!(Y,C,w)
 end
 
 """
-    Y_invL(L,w)
+    Y_invL(invL,w)
 
 The admittance matrix `Y` for a network of inductors and mutual inductors is
-the inverse of the inductance matrix `L` divided by im*w.
+the inverse `invL` of its inductance matrix divided by im*w.
 """
 function Y_invL(invL,w)
     return invL/(im*w)
 end
 
+"""
+    Y_invL!(Y, invL, w)
+
+In place version of [`Y_invL`](@ref), writing into `Y`.
+"""
 function Y_invL!(Y,invL,w)
     if size(Y) != size(invL)
         throw(ArgumentError(lazy"The size of the input $(size(invL)) must equal the size of the output $(size(Y))."))
@@ -804,7 +824,9 @@ Returns the 2mx2m chain (ABCD) matrix for a port number symmetric multi-port
 network of m coupled transmission lines described by a symmetric mxm
 Maxwell inductance (per unit length) matrix `L`, a symmetric mxm Maxwell
 capacitance matrix (per unit length) `Cmaxwell`, a physical length `l`, and an
-angular frequency `omega`.
+angular frequency `omega`. For an array of angular frequencies `omega`, of
+any length, it returns a 2mx2mxn array of the chain matrices along its
+third dimension, as the other per frequency networks do.
 ```
 V_1, I_1 -->  ======== <-- I_{m+1}, V_{m+1}
 V_2, I_2 -->  ======== <-- I_{m+2}, V_{m+2}
@@ -877,8 +899,9 @@ function A_coupled_tlines(L,Cmaxwell,l,omega)
     # allocate a temporary array
     phi_tmp = zeros(Complex{Float64},N,N)
 
-    # define the output matrix
-    A = zeros(Complex{Float64},ifelse(length(omega)>1,(2*N,2*N,length(omega)),(2*N,2*N)))
+    # the chain matrix of a number, and an array of them, one per frequency,
+    # for an array of frequencies
+    A = zeros(Complex{Float64}, omega isa Number ? (2*N, 2*N) : (2*N, 2*N, length(omega)))
 
     # loop over the frequencies
     for i in eachindex(omega)
@@ -934,7 +957,7 @@ Maxwell capacitance per unit length matrix `Cmaxwell`.
 
 # Arguments
 - `L`: inductance per unit length matrix.
-- `C`: Maxwell capacitance per unit length matrix.
+- `Cmaxwell`: Maxwell capacitance per unit length matrix.
 
 # Returns
 - `ZC`: characteristic impedance matrix.
@@ -1083,7 +1106,9 @@ end
     maxwell_to_even_odd(L, Cmaxwell)
 
 Return the even and odd mode impedances and the even and odd mode indices from
-the inductance matrix `L` and the Maxwell capacitance matrix `Cmaxwell`.
+the inductance matrix `L` and the Maxwell capacitance matrix `Cmaxwell` of two
+identical coupled lines: both must be symmetric 2 by 2 matrices with equal
+diagonal entries, which is not checked.
 
 # Examples
 ```jldoctest
@@ -1201,7 +1226,7 @@ end
 
 Return the coupling in dB `couplingdB` and system characteristic impedance
 `Z0` for a directional coupler made from two coupled transmission lines with
-with even and odd mode impedances `Zeven` and `Zodd`.
+even and odd mode impedances `Zeven` and `Zodd`.
 
 # Examples
 ```jldoctest
@@ -1484,7 +1509,7 @@ end
 """
     S_short!(S::AbstractArray)
 
-Return the scattering parameters for a N port ideal short. Overwrite`S` with
+Return the scattering parameters for a N port ideal short. Overwrite `S` with
 the output.
 
 # Examples
@@ -1506,7 +1531,7 @@ end
 """
     S_open!(S::AbstractArray)
 
-Return the scattering parameters for a N port ideal open. Overwrite`S` with
+Return the scattering parameters for a N port ideal open. Overwrite `S` with
 the output.
 
 # Examples
@@ -1548,7 +1573,7 @@ end
 """
     S_match!(S::AbstractArray)
 
-Return the scattering parameters for a N port ideal match. Overwrite`S` with
+Return the scattering parameters for a N port ideal match. Overwrite `S` with
 the output.
 
 # Examples
@@ -1633,7 +1658,7 @@ The voltage coupling coefficient c is a real number where α = √(1-c^2) and
 
 * An anti-symmetric directional coupler has θ = 0 and ϕ = π.
 
-* A symmetric hybrid coupler (a 90 degree or quadature hybrid) has c = 1/√2
+* A symmetric hybrid coupler (a 90 degree or quadrature hybrid) has c = 1/√2
 and θ = ϕ = π/2.
 
 * An anti-symmetric hybrid coupler (a magic-T hybrid or a rat-race hybrid or
@@ -1738,7 +1763,7 @@ end
     S_hybrid_coupler_symmetric()
 
 Return the scattering parameter matrix for an ideal symmetric hybrid
-(3 dB) coupler (a 90 degree or quadature hybrid) with the convention that if
+(3 dB) coupler (a 90 degree or quadrature hybrid) with the convention that if
 a wave is input at port 1, then port 2 is the through, port 3 is the coupled
 port, and port 4 is the isolated port:
 

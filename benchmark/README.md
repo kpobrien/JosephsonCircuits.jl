@@ -20,8 +20,9 @@ julia --startup-file=no --project=. benchmark/circuit-preparation.jl main
   where the setup of each call is most of the cost, and for every one.
 - `solve.jl`: the hard solves of a resonantly phase matched JTWPA: the
   pumped gain sweep of a 512 cell line, the pump solve of two tones of
-  equal strength and of a strong pump on a long line, and a batch of four
-  pumped transients. Each row ends with whether the solve converged.
+  equal strength and the gain sweep under them, the pump solve of a strong
+  pump on a long line, and a batch of four pumped transients. Each row
+  ends with whether the solve converged or what it reached.
 - `latency.jl`: the load time, the first solves of a JPA in frequency and
   in time and of a two tone JTWPA, their compile times, and the number of
   methods the package defines and of method instances each first solve

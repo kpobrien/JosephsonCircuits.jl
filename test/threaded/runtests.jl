@@ -151,14 +151,14 @@ end
     reuse = TransientReuse()
     tangent = transienttangent(sol, currents; reuse)
     adjoint = transientadjoint(sol, weights; reuse)
-    plan = transientquantumplan(sol, sol.times, [2/T]; ports = [2])
-    noise = transientnoise(sol, plan; frequencies = [1/T, 2/T, 3/T],
-        weights = fill(1/T, 3), inputs = plan, reuse)
+    plan = transientquantumplan(sol, sol.times, [2pi*2/T]; ports = [2])
+    noise = transientnoise(sol, plan; frequencies = 2pi .* [1/T, 2/T, 3/T],
+        weights = fill(2pi/T, 3), inputs = plan, reuse)
     gain = transientgain(sol, plan, plan; reuse)
     # one workspace per chunk, so a threaded run keeps more than one
     @test length([reuse; reuse.children]) >= (Threads.nthreads() > 1 ? 2 : 1)
-    @test transientnoise(sol, plan; frequencies = [1/T, 2/T, 3/T],
-        weights = fill(1/T, 3), inputs = plan, reuse).covariance ≈
+    @test transientnoise(sol, plan; frequencies = 2pi .* [1/T, 2/T, 3/T],
+        weights = fill(2pi/T, 3), inputs = plan, reuse).covariance ≈
         noise.covariance
     # a batched problem's sensitivities are the single problem's
     for j in (1, 4, 7)
@@ -181,8 +181,8 @@ end
         zref = 50.0, noise = NoiseCovariance([fill(10.0, 1, 1), zeros(ComplexF64, 1, 1)]))
     pumped = transientproblem(Circuit([(:p, 1, 0, Port(1)), (:b, 1, stated)]))
     psol = transientsolve(fill(pumped, 4), (0.0, 20e-9 - 2e-11); dt = 2e-11, method = GaussLegendre(), record = :checkpoints)
-    pplan = transientquantumplan(psol, psol.times, [0.4e9])
-    pargs = (; frequencies = [0.4e9, 0.6e9], weights = fill(1/20e-9, 2))
+    pplan = transientquantumplan(psol, psol.times, [2pi*0.4e9])
+    pargs = (; frequencies = 2pi .* [0.4e9, 0.6e9], weights = fill(2pi/20e-9, 2))
     need = JC.noisetiling(typemax(Int), length(transientnoisebaths(pumped)), 2, length(psol.times), 2, 1, true, c -> c, false).bytes
     JC.noisememorybudget[] = need
     pnoise = try

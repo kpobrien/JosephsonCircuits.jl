@@ -139,8 +139,8 @@ end
         pumpfreq = nonlinear.frequencies
         allpumpfreq = JosephsonCircuits.calcfreqsrdft(pumpfreq.Nharmonics)
         pumpindices = JosephsonCircuits.fourierindices(pumpfreq)
-        Amatrixmodes, Amatrixindices = JosephsonCircuits.hbmatind(
-            allpumpfreq, signalfreq)
+        Amatrixindices = JosephsonCircuits.hbmatindices(allpumpfreq,
+            JosephsonCircuits.ModeDifferences(signalfreq.modes))
 
         Nwtuple = (pumpfreq.Nw..., length(nonlinear.Ljb.nzval))
         phimatrix = zeros(Complex{Float64}, Nwtuple)
@@ -186,7 +186,7 @@ end
         lsys = JosephsonCircuits.HBLinearizedSystem(Amatrixindices,
             signalnm.Ljb, Rbnmmna, Nsignalmodes, psc.topology.Nbranches, phimatrix,
             invLnmcopy, Gnmcopy, Cnmcopy, invLnmp, Gnmsub, Cnmp,
-            false, Amna0, wpumpmodes, psc.Nnodes)
+            false, Amna0, wpumpmodes)
         Asparse = lsys.Asparse
 
         # identical sparsity structure, including stored zeros
@@ -235,17 +235,13 @@ end
                 JosephsonCircuits.sparseadd!(Aref, 1, Amna0,
                     JosephsonCircuits.sparseaddmap(Aref, Amna0))
 
-                # the shared assembly, both entry points. the reference
-                # above assembles with explicit diagonals, so this also
-                # checks the mode indexed assembly against it.
+                # the shared assembly. the reference above assembles with
+                # explicit diagonals, so this also checks the mode indexed
+                # assembly against it.
                 A2 = copy(Asparse)
                 JosephsonCircuits.assemblesystemmatrix!(A2, lsys, wmodes;
                     conjugatepump = conjugatepump)
                 @test isapprox(A2, Aref, atol = 1e-14)
-                A3 = copy(Asparse)
-                JosephsonCircuits.assemblesystemmatrix!(A3, lsys, ws;
-                    conjugatepump = conjugatepump)
-                @test A2 == A3
             end
         end
     end

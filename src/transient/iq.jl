@@ -7,9 +7,10 @@
     TransientIQPlan
 
 Reusable causal I/Q measurement plan. `times` are the right edges of complete
-windows; `centertimes` subtract the filter's `groupdelay`. Frequencies and
-`bandwidth3db` are in Hz, times in seconds. `noisebandwidth` is
-one-sided, `sum(abs2, taps)/(2dt)`, for the unity-DC-gain low-pass filter.
+windows; `centertimes` subtract the filter's `groupdelay`. The carrier
+`frequencies`, `bandwidth3db` and `noisebandwidth` are angular, in rad/s,
+and times in seconds. `noisebandwidth` is one-sided, `pi*sum(abs2, taps)/dt`,
+for the unity-DC-gain low-pass filter.
 `ports` are the port numbers of the carriers and `rows` the row of each
 port's trace, the ports in the order of their numbers.
 
@@ -50,8 +51,8 @@ function transientiqbandwidth(taps, dt)
     # Symmetric taps have a real centered frequency response. The first
     # half-power crossing is in this interval for both supported windows.
     center = (length(taps)-1)/2
-    magnitude(f) = abs(sum(taps[k]*cospi(2f*dt*(k-1-center)) for k in eachindex(taps)))
-    lo, hi = 0.0, min(0.5/dt, 2/(length(taps)*dt))
+    magnitude(w) = abs(sum(taps[k]*cos(w*dt*(k-1-center)) for k in eachindex(taps)))
+    lo, hi = 0.0, min(pi/dt, 4pi/(length(taps)*dt))
     for _ in 1:60
         mid = (lo+hi)/2
         if magnitude(mid) > inv(sqrt(2))
@@ -85,11 +86,12 @@ end
 
 Plan causal sliding I/Q measurements of uniformly sampled **real** port traces
 with shape `(port, time)` of `problem`, a [`TransientProblem`](@ref) or a
-solution of it. `ports` gives the port number each carrier in Hz reads,
-which the plan resolves to the row of the trace, `rows[c]`. For normalized
-window taps `h[k]`, the output is
+solution of it. `frequencies` are the angular carrier frequencies `w[c]`
+in rad/s and `ports` the port number each carrier reads, which the plan
+resolves to the row of the trace, `rows[c]`. For normalized window taps
+`h[k]`, the output is
 
-`z[c,n] = 2 sum(h[k] x[rows[c],n-k] exp(-2pi*im*f[c]*(t[n-k]-phasereference)))`.
+`z[c,n] = 2 sum(h[k] x[rows[c],n-k] exp(-im*w[c]*(t[n-k]-phasereference)))`.
 
 Thus a resolved cosine of peak amplitude `A` and phase `phi` gives approximately
 `A*exp(im*phi)` when the doubled-carrier image is rejected by the window. The
@@ -112,10 +114,10 @@ function transientiqplan(problem, times, frequencies; duration, window = :hann,
         phasereference = first(times), backend = CPU())
     p = transientproblemof(problem)
     ts, dt = uniformtimes(times)
-    fs = Float64.(collect(frequencies))
-    !isempty(fs) && all(f -> isfinite(f) && 0 < f < 0.5/dt, fs) ||
-        throw(ArgumentError("Carrier frequencies must lie strictly between zero and Nyquist."))
-    length(ports) == length(fs) || throw(ArgumentError("Provide one port number per carrier."))
+    ws = Float64.(collect(frequencies))
+    !isempty(ws) && all(w -> isfinite(w) && 0 < w < pi/dt, ws) ||
+        throw(ArgumentError("Carrier frequencies must lie strictly between zero and the Nyquist frequency pi/dt, in rad/s."))
+    length(ports) == length(ws) || throw(ArgumentError("Provide one port number per carrier."))
     rows = portrows(p, ports)
     stride isa Integer && stride >= 1 ||
         throw(ArgumentError("stride must be a positive integer."))
@@ -144,14 +146,14 @@ function transientiqplan(problem, times, frequencies; duration, window = :hann,
     outputtimes = ts[ntaps:stride:end]
     delay = (ntaps-1)*dt/2
     return TransientIQPlan(
-        backend, fs, Int.(collect(ports)), rows, outputtimes, outputtimes .- delay,
-        delay, transientiqbandwidth(taps, dt), sum(abs2, taps)/(2dt), dt, first(ts),
+        backend, ws, Int.(collect(ports)), rows, outputtimes, outputtimes .- delay,
+        delay, transientiqbandwidth(taps, dt), pi*sum(abs2, taps)/dt, dt, first(ts),
         Float64(phasereference), length(ts), ntaps, Int(stride), taps, work, spectrum, forward, backward)
 end
 
-@kernel function iqmixkernel!(work, @Const(traces), row, n, t0, dt, f)
+@kernel function iqmixkernel!(work, @Const(traces), row, n, t0, dt, w)
     i = @index(Global)
-    @inbounds work[i] = i <= n ? traces[row, i]*cispi(-2f*(t0+(i-1)*dt)) :
+    @inbounds work[i] = i <= n ? traces[row, i]*cis(-w*(t0+(i-1)*dt)) :
                         zero(eltype(work))
 end
 
@@ -167,9 +169,9 @@ end
                         weights[row, 1+k÷stride] : zero(eltype(work))
 end
 
-@kernel function iqpullbackkernel!(out, @Const(work), row, t0, dt, f, scale)
+@kernel function iqpullbackkernel!(out, @Const(work), row, t0, dt, w, scale)
     i = @index(Global)
-    @inbounds out[row, i] += scale*real(work[i]*cispi(2f*(t0+(i-1)*dt)))
+    @inbounds out[row, i] += scale*real(work[i]*cis(w*(t0+(i-1)*dt)))
 end
 
 function transientiqcheck(plan, rf, iq)

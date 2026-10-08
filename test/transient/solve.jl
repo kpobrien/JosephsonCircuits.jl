@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using JosephsonCircuits: TransientBatchSolution, TransientStepError
 using LinearAlgebra
 using SparseArrays
 using Random
@@ -58,9 +59,11 @@ const rc = [("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-
     # backward Euler has a closed form on the RC
     be = transientsolve(prob, (0.0, 200e-12); dt = 5e-12, method = BackwardEuler())
     @test be.voltage[1, end] ≈ 50e-6*(1 - (1 + 0.1)^(-40)) rtol=1e-10
-    # a named current source flows out of its first terminal, a port
-    # source into the port's positive terminal; a named drive replaces
-    # the constant value, an unnamed constant source stays
+    # a named current source draws its current from the node at its
+    # first terminal and delivers it to the node at its second, the
+    # opposite sense of a port source, which injects into the port's
+    # positive terminal; a named drive replaces the constant value, an
+    # unnamed constant source stays
     net = vcat(rc, [("I1", "1", "0", CurrentSource(2e-6))])
     named = transientsolve(transientproblem(Circuit(net); sources = [TransientSource(:I1, 1e-6)]),
         (0.0, 200e-12); dt = 5e-12)
@@ -82,7 +85,7 @@ const rc = [("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-
         (0.0, 40e-9); dt = 1e-12)
     @test maximum(abs, drive.incident[2, :]) <= 1e-12*maximum(abs, drive.incident[1, :])
     window = t -> t < 20e-9 ? 0.0 : sinpi((t - 20e-9)/20e-9)^2
-    wave = (q, k) -> transientdemodulate(drive, q, 1e9; quantity = k, window)
+    wave = (q, k) -> transientdemodulate(drive, q, 2pi*1e9; quantity = k, window)
     @test wave(1, :outgoing)/wave(1, :incident) ≈ S[1, 1, 1] rtol=1e-6
     @test wave(2, :outgoing)/wave(1, :incident) ≈ S[2, 1, 1] rtol=1e-6
 end
@@ -342,6 +345,19 @@ end
     d2 = transientsolve(divider, (0.0, 1e-9); dt = 1e-12,
         initialstate = transientstate(divider; voltage = [100e-6/3, 50e-6/3]))
     @test d2.voltage[1, :] ≈ fill(100e-6/3, size(d2.voltage, 2)) rtol=1e-8
+    # a drive starting with the record, `t <= 0 ? 0.0 : ...`, into a node
+    # without capacitance or resistance: the zero state is consistent,
+    # since the integration reads no drive before its start, and the
+    # record is the one started earlier from rest, under either rule
+    ramped = Circuit([(:p, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(1e-12)), (:l12, 1, 2, Inductor(1e-9)),
+        (:l2, 2, 0, Inductor(2e-9)), (:jj, 2, 0, JosephsonJunction(1e-9)), (:ib, 0, 2, CurrentSource(0.0))])
+    rise(t) = t <= 0 ? 0.0 : t >= 0.5e-9 ? 1.0 : sinpi(t/1e-9)^2
+    rp = transientproblem(ramped; sources = [TransientSource(:ib, t -> 0.1e-6*rise(t))])
+    @test rp.algebraic == [[2]]
+    for method in (GaussLegendre(), Trapezoidal())
+        early = transientsolve(rp, (-0.1e-9, 1e-9); dt = 2e-12, method)
+        @test transientsolve(rp, (0.0, 1e-9); dt = 2e-12, method).voltage ≈ early.voltage[:, 51:end] rtol=1e-8
+    end
     # a resistor inside a capacitive island carries no current along
     # the island's direction, so the direction is algebraic and its
     # rate is read by the differentiated equation: equal voltages on
@@ -378,6 +394,122 @@ end
     islanded = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "0", Capacitor(1e-12)),
         ("C2", "2", "3", Capacitor(1e-12)), ("L2", "2", "3", Inductor(1e-9))])
     @test all(isfinite, transientsolve(transientproblem(islanded), (0.0, 1e-10); dt = 1e-12).outgoing)
+    # but a net current of the sources into the subnetwork leaves it no
+    # path back, and is refused as harmonic balance refuses the
+    # subnetwork: a constant source's when the problem is built, a
+    # drive's when the drives are evaluated; a source within it drives no
+    # net current and stays
+    fed = [("P1", "3", "0", Port(1; Z0 = 50.0)), ("C3", "3", "0", Capacitor(1e-12)), ("I1", "3", "1", CurrentSource(0.0)),
+        ("C12", "1", "2", Capacitor(1e-12)), ("L12", "1", "2", Inductor(1e-9))]
+    quiet = transientproblem(Circuit(fed))
+    @test_throws ArgumentError transientsolve(transientproblem(quiet;
+        sources = [TransientSource(:I1, t -> 1e-6*sinpi(1e9*t))]), (0.0, 10e-12); dt = 1e-12)
+    @test_throws ArgumentError transientproblem(Circuit(vcat(fed[1:2], [("I1", "3", "1", CurrentSource(1e-6))], fed[4:5])))
+    # Sources whose net currents into the subnetwork cancel give it the
+    # forcing of one source across it, and solve as that source does: two
+    # drives of one waveform, into the floating branch and out of it,
+    # against a differential drive (review of 2026-10-05, finding 2).
+    # Unequal waveforms do not cancel, and are refused when evaluated
+    pair = Circuit([("R1", "1", "2", Resistor(50.0)), ("C1", "1", "2", Capacitor(1e-12)),
+        ("I1", "0", "1", CurrentSource(0.0)), ("I2", "2", "0", CurrentSource(0.0)),
+        ("I3", "2", "1", CurrentSource(0.0))])
+    wave(a) = t -> a*sinpi(2e9*t)
+    branch(sources) = (sol = transientsolve(transientproblem(pair; sources), (0.0, 1e-9); dt = 1e-12,
+        record = :states); sol.rate[1, :] .- sol.rate[2, :])
+    @test isapprox(branch([TransientSource(:I1, wave(1e-6)), TransientSource(:I2, wave(1e-6))]),
+        branch([TransientSource(:I3, wave(1e-6))]); rtol = 1e-12)
+    @test_throws ArgumentError branch([TransientSource(:I1, wave(1e-6)), TransientSource(:I2, wave(1.1e-6))])
+    # The balance holds each drive's net into the subnetworks it feeds,
+    # two at most, and judges a subnetwork by those alone (review of
+    # 2026-10-07, finding 2): along a chain of floating branches joined by
+    # sources from ground back to ground it grows with the chain, not with
+    # its square, and passes balanced drives and refuses one more current
+    # out of the last branch
+    joined(m) = transientproblem(Circuit(vcat([("C$(r)", "a$(r)", "b$(r)", Capacitor(1e-12)) for r in 1:m],
+            [("I$(r)", r == 0 ? "0" : "b$(r)", r == m ? "0" : "a$(r + 1)", CurrentSource(0.0)) for r in 0:m]));
+        sources = [TransientSource(Symbol("I$(r)"), t -> 1e-6) for r in 0:m])
+    long = joined(128)
+    @test Base.summarysize(long.balance) < 3*Base.summarysize(joined(64).balance)
+    @test isnothing(JC.checkbalance(long, ones(129), 0.0))
+    @test_throws ArgumentError JC.checkbalance(long, [ones(128); 2.0], 0.0)
+    # A tangent's currents into the floating branch are judged as the
+    # sources are, and an adjoint's targets by whether their currents can
+    # cancel there (follow-up review of 2026-10-05): along the pair
+    # together the tangent and the adjoint are those of one source across
+    # the branch, under either rule's responses; along I1 alone, whose
+    # solve is refused, the tangent is refused, and I1 is refused as an
+    # adjoint's target without I2, its derivative alone set by which node
+    # of the branch the gauge row sits on
+    across = Circuit([("C1", "1", "2", Capacitor(1e-12)), ("P1", "1", "2", Port(1; Z0 = 50.0)),
+        ("I1", "0", "1", CurrentSource(0.0)), ("I2", "2", "0", CurrentSource(0.0)),
+        ("I3", "2", "1", CurrentSource(0.0))])
+    driven = transientproblem(across; sources = [TransientSource(:I1, wave(1e-6)), TransientSource(:I2, wave(1e-6))])
+    for method in (GaussLegendre(), Trapezoidal())
+        sol = transientsolve(driven, (0.0, 0.2e-9); dt = 1e-12, method, record = :phases)
+        d = 1e-7 .* cospi.(3e9 .* sol.times)
+        @test isapprox(transienttangent(sol, permutedims([d d]); targets = ["I1", "I2"]).voltage,
+            transienttangent(sol, permutedims(d); targets = ["I3"]).voltage; rtol = 1e-12)
+        @test_throws ArgumentError transienttangent(sol, permutedims([d zero(d)]); targets = ["I1", "I2"])
+        # the staged form in two directions is judged where the rule reads
+        # it (review of bundle 8, finding 1): the trapezoidal rule reads
+        # the grid alone, and the stages at the last time begin no step,
+        # so a net current there perturbs nothing and passes; one at a
+        # stage Gauss-Legendre reads, or on the grid in the second
+        # direction, is refused
+        staged = [j*d[k] for _ in 1:2, s in 1:3, k in eachindex(d), j in 1:2]
+        unread = copy(staged)
+        method isa GaussLegendre ? (unread[1, 2:3, end, :] .= 0) : (unread[1, 2:3, :, :] .= 0)
+        @test isapprox(transienttangent(sol, unread; targets = ["I1", "I2"]).voltage,
+            transienttangent(sol, staged[1:1, :, :, :]; targets = ["I3"]).voltage; rtol = 1e-12)
+        for at in (method isa GaussLegendre ? ((2, 3, 2), (1, 3, 2)) : ((1, 3, 2),))
+            unbalanced = copy(staged)
+            unbalanced[1, at...] = 0
+            @test_throws ArgumentError transienttangent(sol, unbalanced; targets = ["I1", "I2"])
+        end
+        w = ones(1, length(sol.times))
+        pairsum = sum(transientadjoint(sol, w; quantity = :voltage, targets = ["I1", "I2"]).currents; dims = 1)
+        @test isapprox(pairsum, transientadjoint(sol, w; quantity = :voltage, targets = ["I3"]).currents; rtol = 1e-12)
+        @test_throws ArgumentError transientadjoint(sol, w; quantity = :voltage, targets = ["I1", 1])
+    end
+    # The adjoint's targets are the edges of a graph on the floating
+    # subnetworks and the grounded rest of the circuit, and a target is
+    # refused exactly when its edge is a bridge (review of bundle 9): two
+    # floating branches on a path of sources from ground to ground, one
+    # source between them. The three return one another's currents, and
+    # without the last the first's current has no way back; the source
+    # between the branches is refused alone, and taken twice the two are a
+    # loop of their own
+    path = transientproblem(Circuit([("C1", "1", "2", Capacitor(1e-12)), ("P1", "1", "2", Port(1; Z0 = 50.0)),
+        ("C2", "3", "4", Capacitor(1e-12)), ("P2", "3", "4", Port(2; Z0 = 50.0)),
+        ("I1", "0", "1", CurrentSource(0.0)), ("I2", "2", "3", CurrentSource(0.0)), ("I3", "4", "0", CurrentSource(0.0))]))
+    judge(p, targets) = JC.checkadjointtargets(p, first(JC.targetinjection(p, targets)), targets)
+    @test isnothing(judge(path, ["I1", "I2", "I3"]))
+    @test_throws ArgumentError judge(path, ["I1", "I2"])
+    @test_throws ArgumentError judge(path, ["I2"])
+    @test isnothing(judge(path, ["I2", "I2"]))
+    # its memory, and the tangent's check's, is a few words per node and
+    # target, whatever the number of subnetworks and of the targets that
+    # drive no net current: a ring of a hundred floating branches joined by
+    # sources through ground, and a thousand ports (review of bundle 8,
+    # finding 3)
+    ring = transientproblem(Circuit(vcat([("C$(r)", "a$(r)", "b$(r)", Capacitor(1e-12)) for r in 1:100],
+        [("P1", "a1", "b1", Port(1; Z0 = 50.0))],
+        [("I$(r)", r == 0 ? "0" : "b$(r)", r == 100 ? "0" : "a$(r + 1)", CurrentSource(0.0)) for r in 0:100])))
+    many = vcat(["I$(r)" for r in 0:100], fill(1, 1000))
+    injection, _ = JC.targetinjection(ring, many)
+    judged(p, injection, targets) = @allocated JC.checkadjointtargets(p, injection, targets)
+    judged(ring, injection, many)
+    @test judged(ring, injection, many) <= 64*(size(injection, 1) + length(many))
+    balanced(p, injection, currents) = @allocated JC.checktangentbalance(p, injection, currents, GaussLegendre())
+    ringcurrents = JC.tangentcurrents(ones(length(many), 2), length(many), 2, 1)
+    balanced(ring, injection, ringcurrents)
+    @test balanced(ring, injection, ringcurrents) <= 64*(size(injection, 1) + length(many))
+    # the search runs without recursion, along a path and around a cycle
+    # longer than a call stack holds
+    @test all(>(0), JC.multigraphbridges(permutedims([1:99_999 2:100_000]), 100_000))
+    @test all(iszero, JC.multigraphbridges(permutedims([1:100_000 [2:100_000; 1]]), 100_000))
+    within = transientproblem(Circuit(vcat(fed, [("I2", "1", "2", CurrentSource(0.0))])))
+    @test transientproblem(within; sources = [TransientSource(:I2, t -> 1e-6*sinpi(1e9*t))]) isa JC.TransientProblem
     @test_throws ArgumentError transientproblem(Circuit([("C1", "1", "0", Capacitor(1e-12 + 1e-15im))]))
     @test_throws ArgumentError transientproblem(Circuit([("R1", "1", "0", Resistor(FrequencyDependent(w -> 50.0)))]))
     @test_throws ArgumentError transientproblem(Circuit([("L1", "1", "0", Inductor(0.0))]))
@@ -436,8 +568,8 @@ end
     n = length(prob)
     x, d = randn(rng, n), randn(rng, n)
     phi = zeros(length(sys.lmolj)); jwork = similar(phi)
-    JC.junctionphases!(phi, sys, x)
-    JC.stepjacobian!(sys, phi, nothing)
+    mul!(phi, sys.RJ, x)
+    JC.stepjacobian!(sys, sys.factorization, phi, nothing)
     J = copy(sys.jacobian)
     r = (y -> (res = zeros(n); JC.stepresidual!(res, sys, zeros(n), y, zeros(n), phi, zeros(n), jwork, zeros(n), ones(n)); res))
     h = 1e-6
@@ -468,6 +600,36 @@ end
         cancellation = sum(abs, weights .* initial.voltage) + abs(adj.initialflux[1]*dx0[1]) + abs(adj.initialrate[1]*dv0[1])
         @test sum(weights .* initial.voltage) ≈ dot(adj.initialflux, dx0) + dot(adj.initialrate, dv0) rtol=1e-10 atol=1e-10*cancellation
     end
+    # the factorizations go through the package's machinery: QR, which has
+    # no in place refactorization nor an in place solve, agrees with KLU on
+    # a junction in series with another on a node without capacitance,
+    # whose stiffness refreshes the step's factorization, under either
+    # rule, in the solve, the tangent and the adjoint
+    series = Circuit([("p1", "1", "0", Port(1)), ("c1", "1", "2", Capacitor(100e-15)),
+        ("jj", "2", "3", JosephsonJunction(1e-9)), ("lj", "3", "0", JosephsonJunction(2e-9)),
+        ("c2", "2", "0", Capacitor(1e-12))])
+    qprob = transientproblem(series; sources = [TransientSource(1,
+        t -> 2e-6*sinpi(2*3e9*t)*(t <= 0 ? 0.0 : t >= 0.3e-9 ? 1.0 : sinpi(t/0.6e-9)^2))])
+    for method in (GaussLegendre(), Trapezoidal())
+        klu = transientsolve(qprob, (0.0, 0.5e-9); dt = 2e-12, method, record = :phases)
+        qr = transientsolve(qprob, (0.0, 0.5e-9); dt = 2e-12, method, record = :phases, factorization = QRfactorization())
+        @test qr.stats.factorizations > 100
+        @test qr.voltage ≈ klu.voltage rtol=1e-8
+        currents = reshape([1e-8*sinpi(2*1.1e9*t) for t in klu.times], 1, :)
+        weights = reshape([cospi(2*1.7e9*t) for t in klu.times], 1, :)
+        @test transienttangent(qr, currents; factorization = QRfactorization()).outgoing ≈
+            transienttangent(klu, currents).outgoing rtol=1e-8
+        @test transientadjoint(qr, weights; factorization = QRfactorization()).currents ≈
+            transientadjoint(klu, weights).currents rtol=1e-8
+    end
+    # a block factorization has no node blocks of modes to factorize in a
+    # time step, and is refused where the step's factorization is chosen
+    @test_throws ArgumentError transientsolve(qprob, (0.0, 0.5e-9); dt = 2e-12,
+        factorization = BlockFactorization())
+    klu = transientsolve(qprob, (0.0, 0.1e-9); dt = 2e-12, record = :phases)
+    @test_throws ArgumentError transienttangent(klu,
+        reshape([1e-8*sinpi(2*1.1e9*t) for t in klu.times], 1, :);
+        factorization = BlockFactorization())
 end
 
 @testset "the sensitivity to the component values" begin
@@ -578,6 +740,20 @@ end
     @test isnothing(adjcp.forcing)
     @test adjcp.entries.G.count <= 4*length(tnames) && adjcp.entries.C.count == 0
     @test size(JC.componentperturbation(tp, tnames, JC.CPU(); forcing = true).forcing.dG) == (2*length(tp), length(tp))
+    # a junction's entries are read from its column of the incidence, so
+    # an adjoint's perturbation of every junction of a chain allocates in
+    # proportion to the chain: linear growth allocates four times as much
+    # at four times the junctions, quadratic sixteen
+    function perturbationbytes(m)
+        chain = transientproblem(Circuit(vcat([("P1", "1", "0", Port(1; Z0 = 50.0))],
+            [("J$(i)", "$(i)", "$(i + 1)", JosephsonJunction(100e-12)) for i in 1:m],
+            [("C$(i)", "$(i)", "0", Capacitor(30e-15)) for i in 1:m])))
+        junctions = ["J$(i)" for i in 1:m]
+        run() = JC.componentperturbation(chain, junctions, JC.CPU(); forcing = false)
+        run()
+        return @allocated run()
+    end
+    @test perturbationbytes(512) < 6*perturbationbytes(128)
 
     # a junction on a node without capacitor or resistor to ground, whose
     # endpoint the Gauss-Legendre rule projects onto the constraint: the
@@ -625,7 +801,7 @@ end
     # other tones is below the rule's error
     hann = t -> 2e-9 <= t <= 12e-9 ? sinpi((t - 2e-9)/10e-9)^2 : 0.0
     for (f, a) in zip(frequencies, amplitudes)
-        measured = transientdemodulate(sol, 1, f; quantity = :voltage, window = hann)
+        measured = transientdemodulate(sol, 1, 2pi*f; quantity = :voltage, window = hann)
         @test measured ≈ 50a/(1 + 2pi*im*f*50e-12) rtol=1e-6
     end
     @test length(prob) == 1
@@ -673,10 +849,10 @@ end
     expected = 2im*2pi*fp*JC.phi0*hb.nodeflux[1]
     window(t) = 200e-9 <= t <= 300e-9 ? sinpi((t - 200e-9)/100e-9)^2 : 0.0
     gauss = transientsolve(pa, (0.0, 300e-9); dt = 10e-12, method = GaussLegendre())
-    @test transientdemodulate(gauss, 1, fp; quantity = :voltage, window) ≈ expected rtol=2e-2
+    @test transientdemodulate(gauss, 1, 2pi*fp; quantity = :voltage, window) ≈ expected rtol=2e-2
     @test gauss.stats.factorizations == 1
     trap = transientsolve(pa, (0.0, 300e-9); dt = 10e-12, method = Trapezoidal())
-    @test !isapprox(transientdemodulate(trap, 1, fp; quantity = :voltage, window), expected; rtol = 0.5)
+    @test !isapprox(transientdemodulate(trap, 1, 2pi*fp; quantity = :voltage, window), expected; rtol = 0.5)
     # the tangent against finite differences and the adjoint against the
     # tangent, on the full stage equations with their two stiffnesses
     loaded = Circuit([("p1", "1", "0", Port(1)), ("p2", "2", "1", Port(2; Z0 = 75.0)),
@@ -924,6 +1100,155 @@ end
     @test tb.outgoing[:, :, 1] == tg.outgoing
     @test tb.outgoing[:, :, 2] ≈ transienttangent(b[2], currents).outgoing rtol=1e-9
     @test transientadjoint(b, weights).currents[:, :, 1] == ad.currents
+end
+
+# Many subnetworks without capacitance to ground: the classification and
+# the projection hold them block by block of their couplings, the build
+# and a step growing with the circuit rather than with its square or cube.
+# A chain of floating capacitors, each driven through by the same current
+# from the sources joining it to its neighbours, has a projected direction
+# for every branch, and charges each capacitor to the integral of the
+# current, `I0 (1 - cos wt)/(w C)`. The build and a short solve of the
+# floating chain, of a junction chain with a lossy block at every node, a
+# port current at every node, and of a junction chain without capacitance,
+# a projected direction at every inner node, allocate in proportion to the
+# chain.
+@testset "many inertialess subnetworks" begin
+    I0, w, C = 1e-6, 2pi*5e9, 1e-12
+    function floatingchain(m)
+        c = vcat([("C$(r)", "$(2r - 1)", "$(2r)", Capacitor(C)) for r in 1:m],
+            [("I$(r)", r == 0 ? "0" : "$(2r)", r == m ? "0" : "$(2r + 1)", CurrentSource(0.0)) for r in 0:m])
+        return Circuit(c), [TransientSource(Symbol("I$(r)"), t -> I0*sin(w*t)) for r in 0:m]
+    end
+    c, s = floatingchain(16)
+    p = transientproblem(c; sources = s)
+    @test length(p.algebraic) == 16
+    sol = transientsolve(p, (0.0, 200e-12); dt = 1e-12, record = :states)
+    charge = I0 .* (1 .- cos.(w .* sol.times)) ./ (w*C)
+    # a node's state is its index among the circuit's node names less the ground's
+    node = name -> findfirst(==(name), p.circuit.nodenames) - 1
+    a, b = [node("$(2r - 1)") for r in 1:16], [node("$(2r)") for r in 1:16]
+    voltage = JC.phi0 .* (sol.rate[a, :] .- sol.rate[b, :])
+    @test maximum(abs.(voltage .- transpose(charge))) < 1e-6*maximum(charge)
+    function blockchain(m)
+        c = Any[("P1", "1", "0", Port(1; Z0 = 50.0))]
+        for i in 1:m
+            push!(c, ("J$(i)", "$(i)", "$(i + 1)", JosephsonJunction(100e-12)), ("C$(i)", "$(i)", "0", Capacitor(30e-15)),
+                ("B$(i)", "$(i)", ScatteringParameters(fill(0.5, 1, 1); zref = 50.0)))
+        end
+        push!(c, ("Cend", "$(m + 1)", "0", Capacitor(30e-15)))
+        return Circuit(c), [TransientSource(1, t -> 1e-7*sinpi(1e10*t))]
+    end
+    function bytes(make, m)
+        c, s = make(m)
+        run() = transientsolve(transientproblem(c; sources = s), (0.0, 2e-12); dt = 1e-12)
+        run()
+        return @allocated run()
+    end
+    for make in (floatingchain, blockchain)
+        @test bytes(make, 512) < 3*bytes(make, 256)
+    end
+    function junctionchain(m)
+        c = vcat([("P1", "1", "0", Port(1; Z0 = 50.0)), ("P2", "$(m + 1)", "0", Port(2; Z0 = 50.0))],
+            [("J$(i)", "$(i)", "$(i + 1)", JosephsonJunction(100e-12)) for i in 1:m])
+        return Circuit(c), [TransientSource(1, t -> 1e-7*sinpi(1e10*t))]
+    end
+    # growth beyond linear is small beside the linear part at these sizes,
+    # so a fourfold step tells them apart: linear growth allocates four
+    # times as much, quadratic sixteen
+    @test bytes(junctionchain, 2048) < 6*bytes(junctionchain, 512)
+    # The projection keeps each condition's factorization of its Jacobian
+    # across corrections and steps, a chord on it, refreshed where a
+    # correction contracts poorly: a lattice of junctions without
+    # capacitance, whose endpoint every step corrects, steps 40 times on
+    # one factorization of its projection, where one a correction is one a
+    # step. A replay from checkpoints sets the kept factorizations at each
+    # checkpoint as the solve did, so each window ends exactly on the
+    # checkpoint after it.
+    function junctionlattice(m)
+        site(i, j) = "n$(i)_$(j)"
+        elements = Any[("P1", site(1, 1), "0", Port(1; Z0 = 50.0)), ("P2", site(m, m), "0", Port(2; Z0 = 50.0))]
+        for i in 1:m, j in 1:m
+            i < m && push!(elements, ("Jv$(i)_$(j)", site(i, j), site(i + 1, j), JosephsonJunction(100e-12)))
+            j < m && push!(elements, ("Jh$(i)_$(j)", site(i, j), site(i, j + 1), JosephsonJunction(100e-12)))
+        end
+        return Circuit(elements)
+    end
+    lp = transientproblem(junctionlattice(4); sources = [TransientSource(1, t -> 2e-6*sinpi(1e10*t))])
+    lsys = JC.transientsystem(lp, 1e-12, GaussLegendre(), JC.CPU(), JC.KLUfactorization())
+    st = JC.gaussstepper(lsys, [lp], 1e-9, 1e-10, 15, JC.gaussbatchfactor(lsys, 1))
+    JC.setstate!(st, zeros(length(lp), 1), zeros(length(lp), 1), nothing)
+    for k in 1:40
+        JC.advance!(st, (k - 1)*1e-12, k*1e-12, k)
+    end
+    @test st.pw.factorizations[1] <= 4
+    cps = transientsolve([lp], (0.0, 120e-12); dt = 1e-12, record = :checkpoints, checkpointevery = 20)
+    rst = JC.replaystepper(lsys, cps)
+    windows = JC.responsewindows(cps, lsys, true; stepper = rst)
+    @test all(reverse(1:length(windows) - 1)) do k
+        windows[k].replay()
+        rst.x == view(cps.checkpoints.flux, :, k + 1, :)
+    end
+end
+
+# A cascade of blocks through nodes without capacitance is one block of
+# the rate system, too large to decompose densely, and is factorized
+# sparse. A cascade of lossy throughs transmits the product of their
+# transmissions, as one through of that transmission does; the build and
+# a short solve of the cascade allocate in proportion to it. On a chain
+# with a dependent row and a dependent column, the factorization's null
+# spaces and minimum norm solutions are those of the dense decomposition
+# of the same block, plain and transposed.
+@testset "a cascade of blocks" begin
+    through(t) = ScatteringParameters([0.0 t; t 0.0]; zref = 50.0)
+    function cascade(ts)
+        c = Any[("P1", "1", "0", Port(1; Z0 = 50.0))]
+        for (i, t) in enumerate(ts)
+            push!(c, ("T$(i)", "$(i)", "$(i + 1)", through(t)))
+        end
+        k = length(ts) + 1
+        push!(c, ("C", "$(k)", "0", Capacitor(1e-12)), ("P2", "$(k)", "0", Port(2; Z0 = 50.0)))
+        return transientproblem(Circuit(c); sources = [TransientSource(1, t -> 1e-7*sinpi(1e10*t))])
+    end
+    waves(p) = transientsolve(p, (0.0, 100e-12); dt = 1e-12).outgoing
+    @test isapprox(waves(cascade(fill(0.99, 40))), waves(cascade([0.99^40])); rtol = 1e-10)
+    function bytes(m)
+        run() = waves(cascade(fill(0.99, m)))
+        run()
+        return @allocated run()
+    end
+    @test bytes(512) < 3*bytes(256)
+    # the planted chain: the islands are its first 60 unknowns and the
+    # block rows the rest, so the rate system is the chain itself
+    n, k0 = 120, 60
+    rng = Random.Xoshiro(3)
+    K = spdiagm(0 => 1 .+ rand(rng, n), 1 => rand(rng, n - 1), -1 => rand(rng, n - 1))
+    K[:, 31] = K[:, 30]
+    K[90, :] = K[91, :]
+    dropzeros!(K)
+    G, L = hcat(K[:, 1:k0], spzeros(n, n - k0)), hcat(spzeros(n, k0), K[:, k0 + 1:n])
+    Z0 = sparse(1:k0, 1:k0, ones(k0), n, k0)
+    Ea = sparse(k0 + 1:n, 1:n - k0, ones(n - k0), n, n - k0)
+    dense = JC.ratesystem(G, L, Z0, Ea; maxdense = n)
+    factored = JC.ratesystem(G, L, Z0, Ea; maxdense = 16)
+    @test isempty(dense.pinv.factors) && length(factored.pinv.factors) == 1
+    # the null vectors of every block as columns over the whole system,
+    # compared by the projections onto their spans
+    function nullspan(rs, right)
+        vs = [(v = zeros(n); v[right ? b.cols : b.rows] = (right ? b.rightnull : b.leftnull)[:, j]; v)
+            for b in rs.blocks for j in axes(right ? b.rightnull : b.leftnull, 2)]
+        B = stack(vs; dims = 2)
+        return B*pinv(B)
+    end
+    for right in (true, false)
+        @test nullspan(dense, right) ≈ nullspan(factored, right) atol = 1e-8
+    end
+    g = randn(rng, n, 3)
+    for transposed in (false, true)
+        a = JC.ratesolve!(zeros(n, 3), dense.pinv, g, JC.ratework(dense.pinv, 3); transposed)
+        b = JC.ratesolve!(zeros(n, 3), factored.pinv, g, JC.ratework(factored.pinv, 3); transposed)
+        @test a ≈ b rtol = 1e-8
+    end
 end
 
 @testset "a batch of drive conditions" begin
@@ -1181,7 +1506,7 @@ end
         GC.gc(); GC.gc()
         @test isnothing(captured.value)
         @test all(w -> isnothing(w.ring.sink) && isnothing(w.ring.feedthrough!), split.adjoint)
-        @test all(w -> size(w.dIh, 2) == 0, split.tangent)
+        @test all(w -> size(w.currents.grid, 2) == 0, split.tangent)
         @test_throws ErrorException transientadjoint(batch, weights; sink = (k, c) -> error("the sink failed"), reuse = split)
         @test all(w -> isnothing(w.ring.sink), split.adjoint)
         # a call which fails in the reset itself releases as one which
@@ -1189,7 +1514,7 @@ end
         # handed to the workspace of three
         bad = JC.TangentInitial(zeros(length(p), 1, 2), zeros(length(p), 1, 2), zeros(0, 1, 1, 0), zeros(0, 1, 0), true)
         @test_throws BoundsError JC.gaussbatchtangent(batch, tc, injh, tp, bad, sys, sink, nothing, split; chunks = [1:3])
-        @test all(w -> size(w.dIh, 2) == 0, split.tangent)
+        @test all(w -> size(w.currents.grid, 2) == 0, split.tangent)
         # the entry refuses a line history or a block state given for
         # other than one or every condition before any workspace sees it
         x0, v0 = zeros(length(p), 1), zeros(length(p), 1)
@@ -1595,7 +1920,7 @@ end
     window(t) = 2e-9 <= t <= 12e-9 ? sinpi((t - 2e-9)/10e-9)^2 : 0.0
     for (k, m) in enumerate(hb.frequencies.modes)
         m[1] > 5 && continue
-        measured = transientdemodulate(sol, 1, m[1]*f; quantity = :voltage, window)
+        measured = transientdemodulate(sol, 1, 2pi*m[1]*f; quantity = :voltage, window)
         expected = 2im*2pi*f*m[1]*JC.phi0*hb.nodeflux[k]
         @test measured ≈ expected rtol=0.003 atol=1e-13
     end

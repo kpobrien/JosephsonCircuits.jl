@@ -18,9 +18,9 @@
 The two stage Gauss-Legendre collocation on the flux and its rate, the
 default of [`transientsolve`](@ref): fourth order, A-stable, symplectic,
 and free of numerical damping, so a lossless LC oscillation keeps its
-energy and a resonator's frequency is warped by `(2 pi f dt)^4/720`
-rather than the trapezoidal rule's `(2 pi f dt)^2/12`. Each step solves
-the two stage equations together, by Newton on one
+energy and a resonator's angular frequency `w` is warped by
+`(w dt)^4/720` rather than the trapezoidal rule's `(w dt)^2/12`. Each
+step solves the two stage equations together, by Newton on one
 complex factorization of the stage matrix at a frozen junction
 stiffness, refreshed as the trapezoidal rule's is. Not L-stable: an
 unresolved fast mode is not damped, as the trapezoidal rule does not damp
@@ -28,7 +28,8 @@ it.
 
 Along a direction of the state without capacitance the equations are
 algebraic. Where a resistor acts along it the rate is what the
-constraint determines and converges at second order. Where none does the
+constraint determines, read from it at the endpoint, and converges at
+fourth order as the rest of the state does. Where none does the
 constraint is on the flux alone: a junction on the direction or a source
 driving it makes it nonlinear or moving, and each step projects its
 endpoint onto it, while a linear constraint no source drives is an
@@ -183,10 +184,8 @@ struct RationalCoupling{M}
     # after the first at each stage on those rows from the stacked stage
     # unknowns, `W_ij = (C_j P_i)[modulated, :]` with `P_i` the stage's
     # rows of `P_d + P_x`, stage by stage and term by term, on the backend
-    # and on the host
     modulated::Vector{Int}
     W::Vector{M}
-    Whost::Vector{SparseMatrixCSC{Float64,Int}}
     # the output scatter entrywise in magnitude, which bounds its rounding
     # against the states themselves rather than against their largest:
     # the scatter and the states both run over the decades the poles of a
@@ -300,11 +299,11 @@ function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc
     SC = [blockscatter*C for C in Cblk]
     Phost = sparse(Pd + Px)
     modulated = sort!(unique!(reduce(vcat, [rowvals(C) for C in Cblk[2:end]]; init = Int[])))
-    Whost = [sparse((Cblk[j]*Phost[(i - 1)*nz + 1:i*nz, :])[modulated, :]) for i in 1:2 for j in 2:length(Cblk)]
+    W = [d((Cblk[j]*Phost[(i - 1)*nz + 1:i*nz, :])[modulated, :]) for i in 1:2 for j in 2:length(Cblk)]
     return RationalCoupling(nz, d(Pd), d(Px), d(Zz), d(Ezb), d(Ed), d(Ex),
         d(t(Px)), d(t(Zz)), d(t(Ezb)), d(t(Ed)), d(t(Ex)),
         [d(M) for M in SC], [d(t(M)) for M in SC], terms, Cblk,
-        sparse(blockscatter), Phost, modulated, [d(W) for W in Whost], Whost,
+        sparse(blockscatter), Phost, modulated, W,
         [d(abs.(M)) for M in SC], [opnorm(M, Inf) for M in SC])
 end
 
@@ -400,7 +399,8 @@ device in its transpose's order, which the device reads the matrix in for
 the tangent; the counts of the junctions and of the output terms; whether
 the matrix is constant, without junctions and converted outputs; and the
 host's fill reducing ordering of the pattern, each node's two stages
-together in the step operator's order.
+together in the step operator's order, rows and columns, which differ
+where the step operator's diagonal has gaps.
 """
 struct StagePlan{G}
     n::Int
@@ -506,13 +506,25 @@ end
 # the fill reducing ordering of the two stages' pattern from the step
 # operator's, `nothing` for KLU's own: each node's two stages one after the
 # other, the nodes in the step operator's order, which eliminates the
-# pattern's two by two blocks as that order eliminates its entries
+# pattern's two by two blocks as that order eliminates its entries. Where
+# the step operator's rows are matched to other columns, its diagonal
+# having gaps (see `fillordering`), each stage's rows are matched to that
+# stage's columns alike, and the fill is the pattern's so permuted.
 function stageordering(ordering, pattern::SparseMatrixCSC, n::Int)
     isnothing(ordering) && return nothing
     perm = orderingpermutation(ordering)
-    pairs = vec(transpose(hcat(perm, perm .+ n)))
-    fill, _ = symbolicfill(_symmetricpattern(pattern), pairs)
-    return FillOrdering(pairs, fill)
+    stages = p -> vec(transpose(hcat(p, p .+ n)))
+    if ordering.rows == perm
+        pairs = stages(perm)
+        fill, _ = symbolicfill(_symmetricpattern(pattern), pairs)
+        return FillOrdering(pairs, fill)
+    end
+    # the column matched to each row, in either stage
+    cols = similar(perm)
+    cols[ordering.rows] = perm
+    rows = stages(ordering.rows)
+    fill, _ = symbolicfill(_symmetricpattern(pattern[:, vcat(cols, cols .+ n)]), rows)
+    return FillOrdering(stages(perm), fill, rows)
 end
 
 # What a Gauss-Legendre system holds beyond the trapezoidal one: the

@@ -19,7 +19,7 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
 # terminals are one node no stamp.
 function coordinatenodal(cc, vvn, group, f, Nmodes)
     n = cc.Nnodes - 1
-    T = JosephsonCircuits.grouptype(vvn, group, true)
+    T = JosephsonCircuits.grouptype(vvn, group)
     I, J, V = Int[], Int[], T[]
     at(node, m) = (node - 1)*Nmodes + m
     for i in group
@@ -60,8 +60,8 @@ end
 # conductance of the resistors and of the ports' terminations, the inverse
 # inductance of the inductors on branches no coupling touches, the branch
 # inductance of each branch (the reciprocal of its inductors' summed
-# reciprocals) and of each junction, repeated per mode, the mutual
-# inductances, and the mean of the inductances.
+# reciprocals), that of each junction and its repetition per mode, the
+# mutual inductances, and the mean of the inductances.
 function coordinatematrices(cc, vvn, Nmodes)
     nodes(i) = (cc.nodeindices[1, i], cc.nodeindices[2, i])
     branch(i) = cc.topology.edge2indexdict[nodes(i)]
@@ -82,7 +82,7 @@ function coordinatematrices(cc, vvn, Nmodes)
     return (Cnm = coordinatenodal(cc, vvn, cc.capacitors, identity, Nmodes),
         Gnm = coordinatenodal(cc, vvn, cc.resistors, inv, Nmodes),
         invLnm = coordinatenodal(cc, vvn, uncoupled, inv, Nmodes),
-        Lb = Lb, Lbm = repeated(Lb), Ljb = Ljb, Ljbm = repeated(Ljb),
+        Lb = Lb, Ljb = Ljb, Ljbm = repeated(Ljb),
         Mb = coordinatemutual(cc, vvn),
         Lmean = isempty(inductances) ? 0.0 : sum(inductances)/length(inductances))
 end
@@ -215,7 +215,6 @@ end
                 nm.invLnm.rowval == ref.invLnm.rowval &&
                 nm.invLnm.nzval ≈ ref.invLnm.nzval && nm.Mb == ref.Mb &&
                 nm.Lb.nzind == ref.Lb.nzind && nm.Lb ≈ ref.Lb &&
-                nm.Lbm.nzind == ref.Lbm.nzind && nm.Lbm ≈ ref.Lbm &&
                 samev(nm.Ljb, ref.Ljb) && samev(nm.Ljbm, ref.Ljbm) &&
                 nm.Lmean ≈ ref.Lmean
         end
@@ -233,12 +232,12 @@ end
             new = JC.assemblematrices!(nm, plan, b2)
             return same(new.Cnm, ref.Cnm) && same(new.Gnm, ref.Gnm) &&
                 same(new.invLnm, ref.invLnm) && same(new.Mb, ref.Mb) &&
-                samev(new.Lb, ref.Lb) && samev(new.Lbm, ref.Lbm) &&
+                samev(new.Lb, ref.Lb) &&
                 samev(new.Ljb, ref.Ljb) && samev(new.Ljbm, ref.Ljbm) &&
                 new.Lmean == ref.Lmean &&
                 new.portimpedances == ref.portimpedances &&
                 new.Cnm === nm.Cnm && new.Gnm === nm.Gnm &&
-                new.invLnm === nm.invLnm && new.Lbm === nm.Lbm &&
+                new.invLnm === nm.invLnm && new.Lb === nm.Lb &&
                 new.Ljbm === nm.Ljbm && new.Rbnm === nm.Rbnm
         end
 
@@ -310,8 +309,8 @@ end
         Any[La, La + Lb, 3.0e-12, :Lc],
         Dict(La => 1e-12, Lb => 2e-12, :Lc => 4e-12, :note => "not a value"))
     @test vals == [1e-12, 3e-12, 3e-12, 4e-12]
-    d = JosephsonCircuits.normalizedefinitions(Dict("La" => 1, :Lb => 2.0im,
-        :note => "text"))
+    d = JosephsonCircuits.normalizedefinitions(JosephsonCircuits.definitionsbyname(
+        Dict("La" => 1, :Lb => 2.0im, :note => "text")))
     @test d == Dict(:La => 1.0 + 0im, :Lb => 2.0im)
 end
 
@@ -394,7 +393,7 @@ end
     # a plan is built from its compiled circuit alone: the ports in the
     # order of their numbers, whatever order the netlist gave them
     ports = Circuit([(:p2,2,0,Port(2)),(:p1,1,0,Port(1;termination=nothing))])
-    pc = compile(ports); pb = bound(pc); pg = calccircuitgraph(pc)
+    pc = compile(ports); pb = bound(pc)
     pp = JC.circuitmatrixplan(pc)
     @test [p.number for p in pp.ports] == [1,2]
     @test JC.assemblematrices(pp,pb).portenvironmentindices[1] == 0
@@ -408,8 +407,11 @@ end
         cc = compile(c)
         b = bound(cc); plan = JC.circuitmatrixplan(cc;Nmodes=modes)
         nm = JC.assemblematrices(plan,b)
-        # the sparse product `Rbn' diag(1/L) Rbn` as an independent reference
-        D = sparse(nm.Lbm.nzind, nm.Lbm.nzind, 1 ./ nm.Lbm.nzval, length(nm.Lbm), length(nm.Lbm))
+        # the sparse product `Rbn' diag(1/L) Rbn` as an independent reference,
+        # the branch inductances repeated per mode, a branch's modes adjacent
+        Lm = sparsevec([(k - 1)*modes + m for k in nm.Lb.nzind for m in 1:modes],
+            [x for x in nm.Lb.nzval for m in 1:modes], length(nm.Lb)*modes)
+        D = sparse(Lm.nzind, Lm.nzind, 1 ./ Lm.nzval, length(Lm), length(Lm))
         ref = transpose(nm.Rbnm)*D*nm.Rbnm
         @test nm.invLnm == ref
         @test nm.invLnm.colptr == ref.colptr

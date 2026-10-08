@@ -20,9 +20,12 @@ continuation walk can be examined afterwards.
 - `action`: `:advance` (drive step on the current grid), `:grow` (a solve
     on a newly grown grid after carrying a converged point up, and the
     drive retreats of a carried point which has not converged on its grid
-    yet), or `:final` (a full-drive solve on the finest grid).
+    yet), `:final` (a full-drive solve on the finest grid), or `:evaluate`
+    (the point a schedule which gave up returns, carried to the finest
+    grid and evaluated there at full drive without a Newton step).
 - `accepted`: whether the attempt's result was kept as the new operating
-    point (a stalled attempt is recorded but not accepted).
+    point (a stalled attempt, and an evaluation, are recorded but not
+    accepted).
 - `seconds`: wall time of the attempt, including the stage's system
     assembly.
 - `finalresidual`: the residual norm the attempt ended at.
@@ -79,10 +82,9 @@ function drivenmatrices(nm::CircuitMatrices, componenttypes::Vector{Symbol},
     any(==(:I), componenttypes) || return nm
     vvn = Any[t === :I && v isa Number ? s*v : v
         for (t, v) in zip(componenttypes, nm.vvn)]
-    return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Lbm, nm.Ljb, nm.Ljbm,
+    return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Ljb, nm.Ljbm,
         nm.Mb, nm.invLnm, nm.Rbnm, nm.portindices, nm.portnumbers,
-        nm.portimpedances, nm.portenvironmentindices,
-        nm.noiseportimpedanceindices, nm.Lmean, vvn)
+        nm.portimpedances, nm.portenvironmentindices, nm.Lmean, vvn)
 end
 
 # Embed a converged solution as the initial guess on a larger grid by
@@ -128,14 +130,14 @@ else.
 
 The schedule adapts in both directions, because each truncation has its
 own solvability boundary and the boundaries are not monotone in the grid:
-a stalled drive step is halved; a stall at the minimum step grows the grid
-at the current converged drive; and a point carried to a larger grid
-which fails to reconverge there retreats the drive on that grid until it
-converges, before the schedule grows past it. Interior points converge
-only to `interioratol` under a small iteration budget, since they exist to
-keep the iterate inside the basin, and the one expensive solve, the finest
-grid at full drive, starts inside the basin with the caller's `atol` and
-`iterations`.
+a stalled drive step is cut (halved by default); a stall at the minimum
+step grows the grid at the current converged drive; and a point carried
+to a larger grid which fails to reconverge there retreats the drive on
+that grid until it converges, before the schedule grows past it.
+Interior points converge only to `interioratol` under a small iteration
+budget, since they exist to keep the iterate inside the basin, and the one
+expensive solve, the finest grid at full drive, starts inside the basin
+with the caller's `atol` and `iterations`.
 
 Only a stall from a point converged on the finest grid itself is reported
 as bracketing a fold, the end of the solution branch (the self
@@ -157,7 +159,8 @@ operating point asked for, like the outcome of a direct method which
 does not converge: its last attempt when that was such a solve, and
 otherwise its last converged point, or its last attempt when nothing
 converged, carried to the finest grid and evaluated there by the inner
-method given no iterations.
+method given no iterations, an attempt recorded as `:evaluate`; with no
+attempt before it, the cold start is evaluated.
 
 # Keywords
 - `grids = defaultgridladder(Nharmonics)`: the coarse to fine ladder of
@@ -175,12 +178,25 @@ method given no iterations.
     tone count the full factorization may not fit in memory; a probe which
     fails without escalation is a stall, which the schedule answers with a
     smaller step. The final solve keeps the caller's escalation behavior.
-- `maxattempts = 60`: a bound on the total number of stage solves.
+- `maxattempts = 60`: a bound on the number of solves the schedule makes,
+    every one counted: the drive steps, the retreats and growths, the
+    branch-end jump, and the evaluation of the point a schedule which gives
+    up returns. A solve short of full drive on the finest grid is made
+    only when the budget leaves one more beside it, for that evaluation.
 - `verbose = false`: print one line per stage solve.
 - `warnnotconverged = true`: warn when the schedule ends without the
     requested point, and run the checks of the point it reaches which
     warn, once. The stage solves never warn: a stage which does not
     converge is how the schedule finds its step.
+
+The steps of the walk are keywords of this function rather than options
+of the method: `stepgrowth = 2.0`, the factor a converged drive step
+grows the next by, up to full drive; `stepcut = 0.5`, the factor a
+stalled one is cut by; `retreatfactors = (0.9, 0.8, 0.65, 0.5)`, the
+fractions of its drive a carried point which does not reconverge retreats
+to in turn, and a growth tries after the converged drive itself; and
+`resumestep = s0/2`, the drive step the walk climbs on with once a
+carried point has reconverged.
 """
 function stagedhbnlsolve(m::Staged, w::NTuple{N,Float64},
     Nharmonics::NTuple{N,Int}, sources::Vector{SourceTuple{N}},
@@ -210,10 +226,14 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     keyedarrays::Bool = true,
     sensitivitynames::AbstractVector = String[],
     returnoperatingpoint::Bool = false, backend = CPU(),
-    warnnotconverged::Bool = true) where {N}
+    warnnotconverged::Bool = true, stepgrowth = 2.0, stepcut = 0.5,
+    retreatfactors = (0.9, 0.8, 0.65, 0.5), resumestep = m.s0/2) where {N}
 
     (; s0, smin, interioratol, interioriterations, interiorescalation,
         maxattempts, verbose) = m
+    (stepgrowth >= 1 && 0 < stepcut < 1 && resumestep > 0 &&
+        !isempty(retreatfactors) && all(f -> 0 < f < 1, retreatfactors)) ||
+        throw(ArgumentError(lazy"the steps of the walk take `stepgrowth` = $(stepgrowth) >= 1, 0 < `stepcut` = $(stepcut) < 1, `resumestep` = $(resumestep) > 0 and `retreatfactors` = $(retreatfactors) in (0, 1)."))
     # the ladder of retained harmonic caps: the default for this problem's
     # `Nharmonics`, or the one the schedule states, which must end at it
     grids = isnothing(m.grids) ? defaultgridladder(Nharmonics) :
@@ -273,7 +293,13 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     ds = s0
     x = nothing         # its solution, in the raw nodeflux layout
     out = nothing
+    # Every solve counts against `maxattempts`. One which does not reach
+    # full drive on the finest grid keeps one in reserve, for the
+    # evaluation a schedule which gives up after it ends with, and for the
+    # branch-end jump, which follows such a solve and reaches full drive
     attempts = 0
+    affordable(n, final) = n + (final ? 1 : 2) <= maxattempts
+    spent(s, grid) = warnnotconverged && @warn lazy"the staged schedule did not converge in `maxattempts` = $(maxattempts) solves; last converged drive fraction $(s) on grid $(grid)."
     stagerecords = AbstractStageInfo[]
     pendinggrow = false
     last = nothing      # the most recent attempt, converged or not
@@ -289,14 +315,14 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         return nothing
     end
     while true
-        attempts += 1
-        if attempts > maxattempts
-            warnnotconverged && @warn lazy"the staged schedule did not converge in `maxattempts` = $(maxattempts) stage solves; last converged drive fraction $(s) on grid $(grids[gi])."
+        starget = min(1.0, s + ds)
+        final = gi == length(grids) && starget >= 1.0
+        if !affordable(attempts, final)
+            spent(s, grids[gi])
             gaveup = true
             break
         end
-        starget = min(1.0, s + ds)
-        final = gi == length(grids) && starget >= 1.0
+        attempts += 1
         t0 = time_ns()
         cand = solve(state, starget, x, final)
         last, lastfinal = cand, final
@@ -326,12 +352,12 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
                 pendinggrow = true
             else
                 x = vec(reshape(Array(out.nodeflux), out.Nmodes, :))
-                ds = min(2*ds, 1.0 - s)
+                ds = min(stepgrowth*ds, 1.0 - s)
             end
         elseif starget - s > smin
-            # halve the effective step rather than `ds`, so that a target
+            # cut the effective step rather than `ds`, so that a target
             # capped at full drive is not re-attempted identically
-            ds = (starget - s)/2
+            ds = stepcut*(starget - s)
         elseif isnothing(x)
             # nothing has converged: the first grid stalls at every drive
             # down to the minimum step, and there is no point to grow from
@@ -347,17 +373,25 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             # carried point). A stall of a point converged on this grid,
             # below the finest, is its own solvability boundary: the grid
             # grows at the converged drive, and the point retreats on the
-            # new grid if it does not reconverge there.
+            # new grid if it does not reconverge there. Each solve keeps one
+            # in reserve, and the budget may stop the loop short.
+            room = maxattempts - 1 - attempts
+            if room < 1
+                spent(s, grids[gi])
+                gaveup = true
+                break
+            end
             factors, what = if pendinggrow
-                (0.9, 0.8, 0.65, 0.5), "retreat on "
+                retreatfactors, "retreat on "
             else
                 state = gridstate(grids[gi+1])
                 x = stagedembed(out, state.freq.modes)
                 gi += 1
-                (1.0, 0.9, 0.8, 0.65, 0.5), "grow -> "
+                (1.0, retreatfactors...), "grow -> "
             end
             reconverged = false
-            for f in factors
+            for f in Iterators.take(factors, room)
+                attempts += 1
                 t0 = time_ns()
                 re = solve(state, f*s, x, false)
                 last, lastfinal = re, false
@@ -376,19 +410,25 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
                 end
             end
             if !reconverged
-                warnnotconverged && @warn lazy"the carried point did not reconverge on grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
+                if room < length(factors)
+                    spent(s, grids[gi])
+                else
+                    warnnotconverged && @warn lazy"the carried point did not reconverge on grid $(grids[gi]) even at $(retreatfactors[end]) of its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
+                end
                 gaveup = true
                 break
             end
             pendinggrow = false
-            ds = s0/2
+            ds = resumestep
         else
             # The continuation branch ends between s and starget. Before
             # declaring the operating point nonexistent, attempt the full
             # drive directly from the last converged point: coexisting
             # branches are common in this regime, and a plain damped solve
-            # may reach one. One bounded attempt, recorded either way.
+            # may reach one. One bounded attempt, recorded either way, which
+            # the stalled solve below full drive kept in reserve.
             if starget < 1.0 && !isnothing(x)
+                attempts += 1
                 t0 = time_ns()
                 jump = solve(state, 1.0, x, true)
                 last, lastfinal = jump, true
@@ -413,13 +453,21 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     # its last attempt when that was a solve at full drive on the finest
     # grid, and otherwise its last converged point, or its last attempt when
     # nothing converged, carried to the finest grid and evaluated there at
-    # full drive without a step. One which did not give up has its outcome
-    # checked, once
+    # full drive without a step, the solve its last one kept in reserve,
+    # recorded as an attempt; with no attempt before it, the cold start is
+    # evaluated. One which did not give up has its outcome checked, once
     if gaveup && !lastfinal
+        attempts += 1
         finest = gi == length(grids) ? state : gridstate(grids[end])
-        out = solve(finest, 1.0,
-            stagedembed(something(out, last), finest.freq.modes), true;
-            steps = 0)
+        start = something(out, last, Some(nothing))
+        t0 = time_ns()
+        out = solve(finest, 1.0, isnothing(start) ? nothing :
+            stagedembed(start, finest.freq.modes), true; steps = 0)
+        record(out, grids[end], s, 1.0, :evaluate, false,
+            (time_ns() - t0)/1e9)
+        verbose && println("staged: evaluate on ", grids[end],
+            " at s=1.0 |F|=",
+            round(out.solverinfo.finalresidual, sigdigits = 2))
     elseif gaveup
         out = last
     elseif warnnotconverged

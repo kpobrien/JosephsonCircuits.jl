@@ -102,6 +102,13 @@ function spicebranches(psc::CompiledCircuit, componentvalues::AbstractVector)
     return branches, position
 end
 
+# the limits of the WRSPICE jj model which the junctions of a netlist
+# share: the range of their critical currents relative to the model's,
+# their mean, and the largest ratio of its capacitance to its critical
+# current, in farads per ampere
+const JJMODELICRATIOS = (0.02, 50.0)
+const JJMODELMAXCJOIC = 0.99e-6
+
 """
     calcCjIcmean(Ic::AbstractVector, C::AbstractVector)
 
@@ -122,12 +129,12 @@ above 50 times the mean, which the model cannot span, are refused. Returns
 julia> Ic = JosephsonCircuits.LjtoIc.([1.0e-9, 1.1e-9]);
 
 julia> JosephsonCircuits.calcCjIcmean(Ic, [1.0e-12, 1.2e-12])
-(3.1100514732000003e-13, 3.1414661345454545e-7)
+(3.1100514965930345e-13, 3.141466158174782e-7)
 
 julia> Ic = JosephsonCircuits.LjtoIc.([2.0e-9, 1.1e-9]);
 
 julia> JosephsonCircuits.calcCjIcmean(Ic, [1.0e-12, 1.2e-12])
-(2.2955141825999997e-13, 2.3187011945454544e-7)
+(2.2955141998662873e-13, 2.3187012119861487e-7)
 ```
 """
 function calcCjIcmean(Ic::AbstractVector, C::AbstractVector)
@@ -153,15 +160,15 @@ function calcCjIcmean(Ic::AbstractVector, C::AbstractVector)
     end
 
     # the range of junction sizes the jj model allows
-    if Icmin/Icmean < 0.02
+    if Icmin/Icmean < first(JJMODELICRATIOS)
         error(lazy"Minimum junction too much smaller than average for WRSPICE.")
     end
-    if Icmax/Icmean > 50.0
+    if Icmax/Icmean > last(JJMODELICRATIOS)
         error(lazy"Maximum junction too much larger than average for WRSPICE.")
     end
 
     # the largest ratio of Cj / Ic WRSPICE allows
-    CjoIc = min(CjoIc, 0.99e-6)
+    CjoIc = min(CjoIc, JJMODELMAXCJOIC)
 
     return CjoIc*Icmean, Icmean
 end
@@ -192,12 +199,13 @@ function firstphasenode(nodenames::AbstractVector{<:AbstractString})
 end
 
 """
-    exportnetlist(circuit, circuitdefs::Dict; port::Int = 1, jj::Bool = true)
+    exportnetlist(circuit, circuitdefs::Dict; port::Int = 1, jj::Bool = true,
+        vm::Real = 9.9)
     exportnetlist(psc::CompiledCircuit, circuitdefs::Dict; port::Int = 1,
-        jj::Bool = true)
+        jj::Bool = true, vm::Real = 9.9)
     exportnetlist(psc::CompiledCircuit, componentvalues::AbstractVector;
-        port::Int = 1, jj::Bool = true)
-    exportnetlist(circuit; port::Int = 1, jj::Bool = true)
+        port::Int = 1, jj::Bool = true, vm::Real = 9.9)
+    exportnetlist(circuit; port::Int = 1, jj::Bool = true, vm::Real = 9.9)
 
 Export a circuit as a WRSPICE netlist. Returns a named tuple with the
 netlist as a string in `netlist`, the port number in `port`, the node
@@ -238,8 +246,13 @@ model needs a shunt capacitance on every junction and junctions of
 comparable size, and its relation is the sinusoidal one, so a
 [`NonlinearInductor`](@ref) with another relation is refused. The phase
 nodes of the instances are numbered past the circuit's nets, so none
-coincides with a net. With `jj = false` each junction is written as its
-linear inductance, which none of the model's conditions apply to.
+coincides with a net. `vm`, in volts, is the model's product of the
+critical current and the subgap resistance, which sets its subgap loss:
+WRSPICE's own default, 16.5 mV, is very lossy and its range 8 to 100 mV,
+which the model's `force = 1` lets `vm` exceed, so that the default 9.9 V
+makes the loss small, though not zero. With `jj = false` each junction
+is written as its linear inductance, which none of the model's
+conditions apply to.
 
 # Examples
 ```jldoctest
@@ -267,9 +280,9 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 * SPICE Simulation
 RP1_termination 1 0 50.0
 C1 1 2 100.0f
-B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 674.18508376f
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9)
+B1 2 0 3 jjk ics=0.32910597847545336u
+C2 2 0 674.1850813093012f
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597847545336u,cap=325.8149186906988f,force=1,vm=9.9)
 
 * SPICE Simulation
 RP1_termination 1 0 50.0
@@ -349,11 +362,11 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 * SPICE Simulation
 RP1_termination 1 0 50.0
 L1 1 0 1000.0000000000001p
-B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 1674.18508376f
+B1 2 0 3 jjk ics=0.32910597847545336u
+C2 2 0 1674.185081309301f
 L2 2 0 1000.0000000000001p
 K1 L1 L2 0.1
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9)
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597847545336u,cap=325.8149186906988f,force=1,vm=9.9)
 
 * SPICE Simulation
 RP1_termination 1 0 50.0
@@ -394,11 +407,11 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 * SPICE Simulation
 RP1_termination 1 0 50.0
 L1 1 0 1000.0000000000001p
-B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 1674.18508376f
+B1 2 0 3 jjk ics=0.32910597847545336u
+C2 2 0 1674.185081309301f
 L2 2 0 1000.0000000000001p
 K1 L2 L1 0.1
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9)
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597847545336u,cap=325.8149186906988f,force=1,vm=9.9)
 
 * SPICE Simulation
 RP1_termination 1 0 50.0
@@ -410,19 +423,20 @@ C2 2 0 2000.0f
 ```
 """
 function exportnetlist(circuit::CompilableCircuit, circuitdefs::Dict;
-        port::Int = 1, jj::Bool = true)
-    return exportnetlist(compile(circuit), circuitdefs; port = port, jj = jj)
+        port::Int = 1, jj::Bool = true, vm::Real = 9.9)
+    return exportnetlist(compile(circuit), circuitdefs; port = port, jj = jj,
+        vm = vm)
 end
 
 function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
-        port::Int = 1, jj::Bool = true)
+        port::Int = 1, jj::Bool = true, vm::Real = 9.9)
     return exportnetlist(psc,
         componentvaluestonumber(psc.componentvalues,circuitdefs);
-        port = port, jj = jj)
+        port = port, jj = jj, vm = vm)
 end
 
 function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
-        port::Int = 1, jj::Bool = true)
+        port::Int = 1, jj::Bool = true, vm::Real = 9.9)
 
     # an ideal lossless transmission line is the one scattering block
     # with a SPICE element; any other block has none, and exporting the
@@ -479,13 +493,10 @@ function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
     pico = 1e12
     micro = 1e6
 
-    # Set vm, (reference icrit)*rsub, which determines the junction resistance
-    # default is 16.5e-3 which is extremely lossy. The allowed range is 8e-3 to
-    # 100e-3. Once the force flag is enabled we can increase beyond this limit.
-    # To turn off the force flag remove force=1 from the jj model argument
-    # setting that force=0 does nothing.
+    # `vm`, (reference icrit)*rsub, exceeds WRSPICE's range of 8e-3 to
+    # 100e-3 only with `force=1` in the model's arguments; `force=0` does
+    # not turn the flag off, leaving it out does.
     # http://www.wrcad.com/ftp/pub/jj.va
-    vm = 99e-1
 
     # define an array of strings for the netlist
     netlist =  ["* SPICE Simulation"]

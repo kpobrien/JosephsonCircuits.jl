@@ -43,12 +43,6 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test
         @test JC.ModeLayout(falses(4), 8).rdim == 16
         @test JC.ModeLayout(trues(4), 8).rdim == 8
         @test_throws DimensionMismatch JC.ModeLayout([true,false], 7)
-        # the bit per index of a real mode agrees with the slot ranges
-        @test L.w isa BitVector
-        for mask in ([true,true,false], falses(4), trues(3), rand(Bool, 7))
-            M = JC.ModeLayout(mask, length(mask) * 9)
-            @test all(2 - M.w[i] == width(M, i) for i in 1:M.dim)
-        end
     end
 
     @testset "complex_to_real of a sparse matrix" begin
@@ -68,10 +62,6 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test
             xc = canon(rand(ComplexF64, n), cl)
             @test Ar * JC.complex_to_real(xc, cl.isreal) ≈
                 JC.complex_to_real(A * xc, rl.isreal)
-            # the index type
-            A32 = JC.complex_to_real(A, rl, cl, Int32)
-            @test A32 isa SparseMatrixCSC{Float64,Int32}
-            @test A32 == Ar
         end
         @test JC.complex_to_real(sprand(ComplexF32, 6, 6, 0.4),
             JC.ModeLayout([true,false], 6), JC.ModeLayout([true,false], 6)) isa
@@ -231,8 +221,8 @@ end
     end
 
     @testset "the assembled Jacobian survives a growing internal pattern" begin
-        # The canonical Jacobian's pattern is the internal pattern under a
-        # permutation plus the direct current block, and none of it moves.
+        # The canonical Jacobian's pattern is the internal pattern as it is
+        # plus the direct current block, and none of it moves.
         # A plan built from the values at one point would carry only the
         # entries nonzero there, since sparse addition prunes exact zeros,
         # and a junction driven hard enough to develop harmonics fills in
@@ -297,7 +287,8 @@ end
         nauxsc = JC.countscatteringports(psc)*Nmodes
         ssys = JC.scatteringstampsystem(psc.scatteringblocks, Nmodes;
             auxoffset = d.Nnodal + Naux - nauxsc,
-            Ntotal = d.Nnodal + Naux, scale = d.Lscale)
+            Ntotal = d.Nnodal + Naux, scale = d.Lscale,
+            modeoffsets = zeros(Nmodes))
         br = JC.dcblockrows(ssys.blocks, d.dcplan.componentof, Nmodes,
             d.dcplan.modeindex, Nnodes - 1, d.Lscale)
         work = JC.CanonicalWork(L, zeros(ml.rdim); transport = tr,

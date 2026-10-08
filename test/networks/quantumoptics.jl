@@ -397,6 +397,12 @@ using Test
         # a shear is neither unitary nor orthogonal
         @test !JosephsonCircuits.is_unitary([1.0 1.0; 0.0 1.0])
         @test !JosephsonCircuits.is_orthogonal([1.0 1.0; 0.0 1.0])
+        # nor is a matrix which is not square: a wide one, whose rows are
+        # orthonormal, an empty wide one, and a tall one
+        for M in ([1.0 0.0], zeros(0, 2), reshape([1.0, 0.0], 2, 1))
+            @test !JosephsonCircuits.is_unitary(M)
+            @test !JosephsonCircuits.is_orthogonal(M)
+        end
     end
 
     @testset "sizes the conversions refuse" begin
@@ -568,6 +574,27 @@ using Test
             Matrix(Diagonal([1.0, 0, 1, 1])))
         @test_throws ArgumentError JosephsonCircuits.williamson_pair(
             Matrix(Diagonal([1.0, 0, 1, 0])))
+
+        # a positive semi-definite matrix whose range is the first mode
+        # decomposes alike stored dense, diagonal and sparse, in either
+        # order; a range of the positions alone, and an indefinite
+        # matrix, are refused alike
+        for (williamson, is_symplectic, M, positions, indefinite) in (
+                (JosephsonCircuits.williamson_pair, JosephsonCircuits.is_symplectic_pair,
+                    Diagonal([2.0, 3.0, 0.0, 0.0]), Diagonal([1.0, 0.0, 1.0, 0.0]),
+                    Diagonal([1.0, -1.0, 1.0, 1.0])),
+                (JosephsonCircuits.williamson_block, JosephsonCircuits.is_symplectic_block,
+                    Diagonal([2.0, 0.0, 3.0, 0.0]), Diagonal([1.0, 1.0, 0.0, 0.0]),
+                    Diagonal([1.0, 1.0, -1.0, 1.0])))
+            for storage in (Matrix, identity, JosephsonCircuits.SparseArrays.sparse)
+                d, S = williamson(storage(M))
+                @test is_symplectic(S)
+                @test isapprox(S*Diagonal(d)*transpose(S), M)
+                @test isapprox(sort(d), [0, 0, sqrt(6), sqrt(6)]; atol = 1e-12)
+                @test_throws ArgumentError williamson(storage(positions))
+                @test_throws ErrorException williamson(storage(indefinite))
+            end
+        end
     end
 
 
@@ -691,8 +718,16 @@ using Test
         A = Q * Diagonal([1.0, -2.0, 3.0]) * Q'
         A[1, 2] = nextfloat(A[2, 1])
         values, vectors = JosephsonCircuits.autonne_takagi(A)
-        @test isapprox(values, [1.0, 2.0, 3.0])
+        @test isapprox(values, [3.0, 2.0, 1.0])
         @test isapprox(vectors * Diagonal(values) * transpose(vectors), A)
+
+        # the real and the complex method return the same named tuple,
+        # the values in the same decreasing order
+        A = (A + transpose(A))/2
+        r = JosephsonCircuits.autonne_takagi(A)
+        c = JosephsonCircuits.autonne_takagi(complex(A))
+        @test r isa NamedTuple{(:Λ, :W)} && c isa NamedTuple{(:Λ, :W)}
+        @test isapprox(r.Λ, c.Λ) && isapprox(c.Λ, [3.0, 2.0, 1.0])
 
         @test_throws(
             ErrorException,
@@ -957,6 +992,13 @@ using Test
             ArgumentError,
             JosephsonCircuits.halmos_dilation([2.0 0;0 0.5]),
         )
+        # a cascade of forty lossless sections of line, which rounding
+        # leaves a few machine epsilons above one, dilates too
+        section = JosephsonCircuits.AtoS(JosephsonCircuits.ABCD_tline(30.0, 0.3);
+            portimpedances = 50.0)
+        line = JosephsonCircuits.connectS([("U$k", section) for k in 1:40],
+            [[("U$k", 2), ("U$(k+1)", 1)] for k in 1:39]).S[1]
+        @test JosephsonCircuits.is_unitary(JosephsonCircuits.halmos_dilation(line))
 
         # a rectangular contraction dilates to a unitary matrix of the sum
         # of its dimensions, of the same closed form

@@ -1,6 +1,6 @@
 # Floquet JTWPA
 
-Taper the unit-cell parameters of a traveling-wave amplifier, then add dielectric loss. The second section reuses `floquetcircuit` from the first. Compare gain and normalized quantum efficiency, and check convergence of the harmonic truncations.
+Taper the unit-cell parameters of a traveling-wave amplifier, then add dielectric loss. The second section reuses `floquetcircuit` from the first. Compare gain and normalized quantum efficiency; refine the harmonic limits as the [harmonic balance guide](../harmonicbalance.md#Checking-convergence) describes before relying on either.
 
 The plotting code requires `Plots` in addition to `JosephsonCircuits`.
 
@@ -11,11 +11,25 @@ mode profiles. The constant complex dielectric-loss values used below are
 frequency-domain models: replace them with an appropriate causal model
 and recompute the HB orbit before applying `hbstability`.
 
-Figures and timings come from the original reference run using 16 threads
-on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
-and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
+Circuit parameters from K. Peng, M. Naghiloo, J. Wang, G. D. Cunningham,
+Y. Ye, and K. P. O'Brien,
+[“Floquet-mode traveling-wave parametric amplifiers”](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306),
+*PRX Quantum* 3, 020306 (2022). The harmonic limits, the loss tangents of
+the second section and the pump current raised with them are this
+simulation's.
+The cells of the [JTWPA](traveling-wave.md), `jjcell` and `pmrcell`, with
+their junction inductance, junction capacitance and capacitances to
+ground and to the resonators weighted along the line by a Gaussian taper:
 
-Circuit parameters from [the source publication](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306).
+```text
+ 1            2                       2000
+ o--[cell1]---o-- ... --[cell1999]-----o
+ |                                     |
+[p1]                            [cend || p2]
+ |                                     |
+ o-------------------------------------o
+ 0
+```
 
 ```@example floquet
 using JosephsonCircuits
@@ -82,7 +96,7 @@ sources = [(mode=(1,),port=1,current=Ip)]
 Npumpharmonics = (20,)
 Nmodulationharmonics = (10,)
 
-@time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
+floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
     Npumpharmonics, circuit)
 @assert floquet.nonlinear.solverinfo.converged
 
@@ -131,10 +145,6 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
-```
-  2.079267 seconds (456.63 k allocations: 1.997 GiB, 0.48% gc time)
-```
-
 ![Floquet JTWPA simulation](../assets/examples/floquet.png)
 
 ## Floquet JTWPA with dissipation
@@ -158,9 +168,9 @@ for tandelta in tandeltas
     sources = [(mode=(1,),port=1,current=Ip)]
     Npumpharmonics = (20,)
     Nmodulationharmonics = (10,)
-    @time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
         Npumpharmonics, lossycircuit)
-@assert floquet.nonlinear.solverinfo.converged
+    @assert floquet.nonlinear.solverinfo.converged
     push!(results,floquet)
 end
 
@@ -201,13 +211,6 @@ end
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
-```
-  3.815835 seconds (470.00 k allocations: 2.303 GiB, 0.22% gc time)
-  3.800166 seconds (470.59 k allocations: 2.310 GiB, 0.29% gc time)
-  3.824690 seconds (470.75 k allocations: 2.317 GiB, 0.19% gc time)
-  3.838721 seconds (470.75 k allocations: 2.317 GiB, 0.18% gc time)
-```
-
 ![Floquet JTWPA simulation with loss](../assets/examples/floquetlossy.png)
 
 ## A small executable check
@@ -215,19 +218,49 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 The documentation build exercises the same tapered circuit at 32 nodes,
 including the dielectric-loss variant. The shorter taper and weaker pump
 are checks of the recipe, not a substitute for convergence and stability
-analysis of the full device.
+analysis of the full device. With the pump off the line is linear, and its
+transmission is that of the product of its cells' chain matrices, as for
+the [JTWPA](traveling-wave.md), with the tapered values; the solver and
+the product agree to roundoff, lossless and lossy, here for the 32-node
+line and to about 2e-13 for the full one.
 
 ```@example floquet
-for tandelta in (0.0, 1e-3)
-    smallcircuit = floquetcircuit(Nj = 32, weightwidth = 12,
-        Cg = 76.6e-15/(1 + im*tandelta),
+series(Z) = [1 Z; 0 1]
+shunt(Y) = [1 0; Y 1]
+function floquetS21(w; Lj = IctoLj(1.75e-6), Cg = 76.6e-15, Cc = 40.0e-15,
+        Cr = 1.533e-12, Lr = 2.47e-10, Cj = 40e-15, Nj = 2000, pmrpitch = 8,
+        weightwidth = 745)
+    weight(n) = exp(-(n - Nj/2)^2/weightwidth^2)
+    T = series(0)
+    for i in 1:Nj-1
+        wj, wg = weight(i), weight(i - 0.5)
+        Y = if i == 1
+            im*w*Cg/2*wg
+        elseif mod(i, pmrpitch) == pmrpitch÷2
+            im*w*(Cg - Cc)*wg + 1/(1/(im*w*Cc*wg) + 1/(im*w*Cr + 1/(im*w*Lr)))
+        else
+            im*w*Cg*wg
+        end
+        T = T*shunt(Y)*series(1/(1/(im*w*Lj*wj) + im*w*Cj/wj))
+    end
+    T = T*shunt(im*w*Cg/2*weight(Nj - 0.5))
+    # the transmission between the two 50 ohm ports
+    return 2/(T[1, 1] + T[1, 2]/50 + T[2, 1]*50 + T[2, 2])
+end
+ws = 2pi .* [5e9, 6e9, 9e9]
+checks = map((0.0, 1e-3)) do tandelta
+    values = (Nj = 32, weightwidth = 12, Cg = 76.6e-15/(1 + im*tandelta),
         Cc = 40e-15/(1 + im*tandelta), Cr = 1.533e-12/(1 + im*tandelta))
-    small = hbsolve(2pi .* [5e9, 6e9, 9e9], (2pi*7.9e9,),
+    smallcircuit = floquetcircuit(; values...)
+    small = hbsolve(ws, (2pi*7.9e9,),
         [(mode = (1,), port = 1, current = 0.3e-6)], (4,), (8,), smallcircuit)
     @assert small.nonlinear.solverinfo.converged
     @assert all(isfinite, small.linearized.S)
     @assert all(isfinite, small.linearized.QE)
     @assert maximum(abs.(abs.(small.linearized.CM) .- 1)) < 1e-5
+    S21 = hblinsolve(ws, smallcircuit).S((0,), 2, (0,), 1, :)
+    chain = [floquetS21(w; values...) for w in ws]
+    @assert isapprox(S21, chain; atol = 1e-12)
+    (tandelta = tandelta, difference = maximum(abs.(S21 .- chain)))
 end
-nothing # hide
 ```

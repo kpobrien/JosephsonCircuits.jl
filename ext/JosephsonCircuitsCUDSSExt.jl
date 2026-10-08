@@ -2,12 +2,17 @@
     JosephsonCircuitsCUDSSExt
 
 Package extension loaded with `using CUDSS`. It supplies the cuDSS
-factorizations of the device path: `_cudss_factorize` and
-`_cudss_factorize!` for one sparse system, and `_cudss_sweep` and
-`_cudss_sweepsolve!` for the uniform batch of a frequency sweep. cuDSS 0.8
-has no transposed solve, which is why the sweep's adjoint direction is a
-second factorization there; a `BlockFactorization` on the device does not
-need this extension.
+factorizations: `_cudss_factorize` and `_cudss_factorize!` for one sparse
+system, real or complex, from the host or with its values on the device,
+with the solves of `myldiv!` and, for several right hand sides at once,
+`matrixsolve!`; `_cudss_systembytes`, cuDSS's estimate of the memory of
+one system, by which a sweep sizes its batch; `_cudss_sweep` and
+`_cudss_sweepsolve!` for the uniform batch of a frequency sweep; and
+`_cudss_sweeprefactorize!` and `_cudss_sweepapply!`, the refactorization
+and the solve of a uniform batch apart, for the transient batch, which
+solves many times per refactorization. cuDSS 0.8 has no transposed solve,
+which is why the sweep's adjoint direction is a second factorization
+there; a `BlockFactorization` on the device does not need this extension.
 """
 module JosephsonCircuitsCUDSSExt
 
@@ -20,7 +25,8 @@ using LinearAlgebra
 
 import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
     _cudss_sweep, _cudss_sweepsolve!, _cudss_sweeprefactorize!, _cudss_sweepapply!,
-    myldiv!, tobackend, cscvaluepermutation, rowpointer, columnindices
+    _cudss_release!,
+    _cudss_systembytes, myldiv!, cscvaluepermutation, rowpointer, columnindices
 
 # ---------------------------------------------------------------------------
 # binding the caller's vectors to a cuDSS descriptor
@@ -29,9 +35,8 @@ import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
 # cuDSS reads the right hand side and writes the solution through a descriptor
 # which carries a device pointer, and `cudss(phase, solver, x::CuVector,
 # b::CuVector)` builds a fresh pair of descriptors on every call. Building them
-# once and rebinding them to the caller's vectors removes both the construction
-# and the staging copies that existed only because the descriptor was tied to
-# an owned buffer.
+# once and rebinding them to the caller's vectors saves both the construction
+# and a copy through an owned buffer.
 #
 # Rebinding needs the vector to be a device vector of the right element type
 # and length. The right hand sides of the Krylov iteration are columns of the
@@ -107,13 +112,17 @@ mutable struct CUDSSSolve{TS,TM,TV,TD,Tv<:Union{AbstractFloat,Complex}}
     # cuDSS factorizes in single as well as in double precision, and the
     # working precision of the solve is what the caller handed in.
     vals::Vector{Tv}
+    # a host vector of the system's length, through which a right hand side
+    # or a solution on the host other than an `Array`, a column of a host
+    # matrix say, crosses to and from the device
+    host::Vector{Tv}
 end
 
-# one sparse system from the host: the matrix crosses to the device, with
-# the permutation which reorders its column major values into the row
-# major order stored there
+# one sparse system from the host, real or complex: the matrix crosses to
+# the device, with the permutation which reorders its column major values
+# into the row major order stored there
 function _cudss_factorize(A::SparseMatrixCSC{Tv,<:Integer};
-    kwargs...) where {Tv<:AbstractFloat}
+    kwargs...) where {Tv<:Union{AbstractFloat,Complex}}
     return _cudss_factorize(CuSparseMatrixCSR(A), cscvaluepermutation(A);
         kwargs...)
 end
@@ -127,8 +136,7 @@ end
 # exist to reorder column major host values into row major device ones. A
 # DeviceValuedSparseMatrix already carries its values in that order, on the
 # device, so both are empty here and a refactorization is one device to device
-# copy. The host `pattern` is read once, for its sparsity structure, and its
-# stored values are never read.
+# copy. Its structure is read once, at the analysis.
 function _cudss_factorize(A::JosephsonCircuits.DeviceValuedSparseMatrix{Tv};
     kwargs...) where {Tv<:Union{AbstractFloat,Complex}}
     # the structure is already a row pointer and a column index array, so the
@@ -161,7 +169,7 @@ function _cudss_factorize(Agpu::CuSparseMatrixCSR{Tv},
     cudss("analysis", solver, xdesc, bdesc)
     cudss("factorization", solver, xdesc, bdesc)
     return CUDSSSolve(solver, Agpu, x, b, xdesc, bdesc, perm,
-        Vector{Tv}(undef, length(perm)))
+        Vector{Tv}(undef, length(perm)), Vector{Tv}(undef, n))
 end
 
 function _cudss_factorize!(F::CUDSSSolve,
@@ -199,12 +207,22 @@ end
 function myldiv!(x::AbstractVector, F::CUDSSSolve, b::AbstractVector)
     T, n = eltype(F.x), length(F.x)
     direct = bindable(x, T, n) && bindable(b, T, n)
-    direct || copyto!(F.b, b)
+    direct || stage!(F.b, b, F.host)
     CUDSS.cudss_update(F.xdesc, direct ? x : F.x)
     CUDSS.cudss_update(F.bdesc, direct ? b : F.b)
     cudss("solve", F.solver, F.xdesc, F.bdesc)
-    direct || copyto!(x, F.x)
+    direct || stage!(x, F.x, F.host)
     return x
+end
+
+# copy `src` into `dest`, one of them an owned device buffer: directly
+# between device arrays and from or to a host `Array`, and through the
+# host buffer `host` for any other host vector, which a device array
+# cannot copy from or to
+function stage!(dest::AbstractVector, src::AbstractVector, host::Vector)
+    other = dest isa CuArray ? src : dest
+    (other isa Array || other isa CUDA.AnyCuArray) && return copyto!(dest, src)
+    return copyto!(dest, copyto!(host, src))
 end
 
 # every column of a right hand side matrix in one solve: the dense
@@ -240,11 +258,36 @@ mutable struct CUDSSSweep{T,INT,TS,TD}
     rowptr::CuVector{INT}
     colind::CuVector{INT}
     nzval::CuMatrix{T}
+    # the values as the vector cuDSS reads, made once: on a device a vector
+    # of a matrix is an array of its own, which holds the matrix's memory
+    # until it is freed
+    nzvec::CuVector{T}
     X::CuArray{T,3}
     B::CuArray{T,3}
     xdesc::TD
     bdesc::TD
-    nbatch::Int
+end
+
+# cuDSS's estimate of the device memory one system of the pattern takes,
+# after its analysis under the factorization's options: the peak of the
+# factorization, the second of the sixteen estimates cuDSS reports (the
+# device's permanent and peak memory, then the host's)
+function _cudss_systembytes(rowptr::CuVector{INT}, colind::CuVector{INT},
+    nzval::CuVector{T}, nrhs::Integer; kwargs...) where {T,INT}
+    n = length(rowptr) - 1
+    solver = configure!(CudssSolver(rowptr, colind, nzval, "G", 'F'); kwargs...)
+    X, B = CUDA.zeros(T, n, nrhs), CUDA.zeros(T, n, nrhs)
+    cudss("analysis", solver, X, B)
+    estimates = zeros(Int64, 16)
+    GC.@preserve estimates begin
+        cudss_set(solver, "memory_estimates", estimates)
+        cudss_get(solver, "memory_estimates")
+    end
+    # the analysis and its arrays freed at once, before the sweep sizes
+    # its batch against the free memory
+    finalize(solver.data)
+    CUDA.unsafe_free!(X); CUDA.unsafe_free!(B)
+    return Int(estimates[2])
 end
 
 function _cudss_sweep(rowptr::CuVector{INT}, colind::CuVector{INT},
@@ -255,7 +298,8 @@ function _cudss_sweep(rowptr::CuVector{INT}, colind::CuVector{INT},
     nrhs, nbatch = size(X, 2), size(X, 3)
     size(nzval, 2) == nbatch || throw(DimensionMismatch(
         "the value matrix and the solution array must agree on the batch size."))
-    solver = configure!(CudssSolver(rowptr, colind, vec(nzval), "G", 'F');
+    nzvec = vec(nzval)
+    solver = configure!(CudssSolver(rowptr, colind, nzvec, "G", 'F');
         kwargs...)
     nbatch > 1 && cudss_set(solver, "ubatch_size", nbatch)
     xdesc, bdesc = bindbatch!(CudssMatrix(T, n, nrhs; nbatch = nbatch),
@@ -263,7 +307,16 @@ function _cudss_sweep(rowptr::CuVector{INT}, colind::CuVector{INT},
     cudss("analysis", solver, xdesc, bdesc)
     cudss("factorization", solver, xdesc, bdesc)
     return CUDSSSweep{T,INT,typeof(solver),typeof(xdesc)}(
-        solver, rowptr, colind, nzval, X, B, xdesc, bdesc, nbatch)
+        solver, rowptr, colind, nzval, nzvec, X, B, xdesc, bdesc)
+end
+
+# the factorization data of a finished sweep, which cuDSS allocated outside
+# CUDA.jl's memory pool, destroyed at once, and its vector of the values let
+# go; `S` is not used again
+function _cudss_release!(S::CUDSSSweep)
+    finalize(S.solver.data)
+    CUDA.unsafe_free!(S.nzvec)
+    return nothing
 end
 
 # refactorize the whole batch against whatever values `S.nzval` now holds and
@@ -281,7 +334,7 @@ end
 # `X` and `B`, `(n, nrhs, nbatch)` device arrays of the batch's shape, bound
 # for the call, with no synchronization
 function _cudss_sweeprefactorize!(S::CUDSSSweep)
-    CUDSS.cudss_update(S.solver, S.rowptr, S.colind, vec(S.nzval))
+    CUDSS.cudss_update(S.solver, S.rowptr, S.colind, S.nzvec)
     bindbatch!(S.xdesc, S.bdesc, S.X, S.B)
     cudss("refactorization", S.solver, S.xdesc, S.bdesc)
     return S

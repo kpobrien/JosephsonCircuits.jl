@@ -123,23 +123,22 @@ end
 """
     CurrentSource(I)
 
-A two terminal current source with current `I` in Amperes flowing from
-terminal 1 to terminal 2 through the source. The value is typically a
-symbolic variable whose numerical value is supplied through `circuitdefs`
-or through the analysis sources.
+A two terminal source of the constant current `I` in Amperes, which it
+drives through itself from its first terminal to its second: it draws the
+current from the node at its first terminal and delivers it to the node at
+its second, the opposite sense of a port source, which injects its current
+into the port's first (positive) terminal. The value is a number, or a
+parameter or an expression in parameters whose number `circuitdefs`
+supplies.
+
+Harmonic balance drives the zero frequency mode with the constant current,
+so a solve of a circuit holding a nonzero one retains that mode,
+`dc = true`. A transient solve takes the constant as well, unless a
+[`TransientSource`](@ref) names the source, whose waveform then replaces
+it.
 """
 struct CurrentSource{T} <: AbstractComponent
     I::T
-end
-
-"""
-    VoltageSource(V)
-
-A two terminal voltage source with voltage `V` in Volts between terminal 1
-and terminal 2.
-"""
-struct VoltageSource{T} <: AbstractComponent
-    V::T
 end
 
 """
@@ -205,7 +204,8 @@ porttermination(x) = throw(ArgumentError(lazy"The port termination $(x) is not r
 
 # the resistor of the circuit a termination names as the port's own
 # environment, by its instance identifier, or `nothing` for a termination
-# which names none
+# which names none; only the deprecated tuple netlist's names one (see
+# circuit/legacy.jl)
 namedtermination(::AbstractPortTermination) = nothing
 
 # A numeric port reference impedance must be finite, real and positive.
@@ -329,14 +329,14 @@ MutualInductor(K) = MutualInductor(K, nothing, nothing)
 # === nonlinear inductive elements ===
 
 """
-    PolynomialCPR(coefficients)
+    PolynomialCPR(coefficients; atol = 1e-12)
 
 A current-phase relation (CPR) specified by the coefficients of its
 polynomial expansion `f(φ) = coefficients[1]*φ + coefficients[2]*φ^2 + ...`,
-where `φ` is the reduced branch phase. The linear coefficient must equal one
-so that the `L0` of the containing [`NonlinearInductor`](@ref) is the small
-signal inductance. The object is callable and its analytic derivative is
-available through [`cprderivative`](@ref).
+where `φ` is the reduced branch phase. The linear coefficient must equal one,
+to `atol`, so that the `L0` of the containing [`NonlinearInductor`](@ref) is
+the small signal inductance. The object is callable and its analytic
+derivative is available through [`cprderivative`](@ref).
 
 This supports specifying the effective nonlinearity of a SNAIL, SQUID,
 Quarton, or kinetic inductor directly through its expansion coefficients
@@ -371,12 +371,12 @@ struct PolynomialCPR{T}
     PolynomialCPR{T}(a::Vector{T}) where T = new{T}(a)
 end
 
-function PolynomialCPR(coefficients::AbstractVector{T}) where T
+function PolynomialCPR(coefficients::AbstractVector{T}; atol::Real = 1e-12) where T
     if isempty(coefficients)
         throw(ArgumentError("PolynomialCPR requires at least the linear coefficient."))
     end
     c1 = coefficients[1]
-    if c1 isa Real && !isapprox(c1, one(c1); atol = 1e-12)
+    if c1 isa Real && !isapprox(c1, one(c1); atol = atol)
         throw(ArgumentError(lazy"The linear coefficient of a PolynomialCPR must equal one so that L0 is the small signal inductance; got $(c1). Rescale the coefficients and absorb the scale into L0."))
     end
     a = Vector{T}(undef, length(coefficients)+1)
@@ -413,14 +413,13 @@ Base.hash(p::PolynomialCPRDerivative, h::UInt) = hash(p.a, hash(:PolynomialCPRDe
 """
     cprderivative(cpr)
 
-The derivative of a current-phase relation as a callable. `sin` gives
-`cos` and a [`PolynomialCPR`](@ref) gives its analytic derivative. Any
-other callable throws an `ArgumentError`, since those two are the
-relations the solvers evaluate.
+The analytic derivative of a [`PolynomialCPR`](@ref), or of one of its
+derivatives, as a callable [`PolynomialCPRDerivative`](@ref). The solvers
+differentiate the other relation they evaluate, the sinusoidal Josephson
+one, as `cos` and `-sin` themselves.
 """
 function cprderivative end
 
-cprderivative(::typeof(sin)) = cos
 function cprderivative(p::PolynomialCPR{T}) where T
     return PolynomialCPRDerivative{T}(differentiatecoefficients(p.a))
 end
@@ -444,7 +443,6 @@ function differentiatecoefficients(a::Vector{T}) where T
     end
     return da
 end
-cprderivative(f) = throw(ArgumentError(lazy"No derivative is known for the current-phase relation $(f): the solvers evaluate the sinusoidal Josephson relation, sin, and a PolynomialCPR."))
 
 """
     JunctionRelations(value, derivative, negsecond, third,
@@ -721,8 +719,8 @@ end
 A two terminal nonlinear inductive element defined by its current-phase
 relation: `I(φ) = (phi0/L0)*cpr(φ)` where `φ` is the reduced branch phase,
 `L0` is the small signal inductance in Henries, and `cpr` is a callable with
-unit slope at zero. The solvers take its derivatives analytically, through
-[`cprderivative`](@ref).
+unit slope at zero. The solvers take its derivatives analytically, those
+of a [`PolynomialCPR`](@ref) through [`cprderivative`](@ref).
 
 This supports specifying the effective nonlinearity of a SNAIL, SQUID, or
 Quarton directly, as an alternative to composing the underlying junctions.
@@ -761,8 +759,8 @@ current-phase relation `I(φ) = Ic*sin(φ)`. Equal to
 julia> JosephsonJunction(100e-12) == NonlinearInductor(100e-12, sin)
 true
 
-julia> JosephsonJunction(Ic = 3.29105976e-6).L0
-1.0e-10
+julia> JosephsonJunction(Ic = 1e-6).L0
+3.291059784754534e-10
 ```
 """
 JosephsonJunction(Lj) = NonlinearInductor(Lj, sin)
@@ -779,8 +777,10 @@ Base.hash(c::NonlinearInductor, h::UInt) =
     issinusoidal(c::NonlinearInductor)
 
 Whether the current-phase relation of `c` is the sinusoidal Josephson
-relation `sin`, in which case the component compiles to the `:Lj` type the
-solvers support.
+relation `sin`, which the solvers evaluate as `sin` and `cos` (see
+[`junctioncpr`](@ref)). Every `NonlinearInductor` compiles to the `:Lj`
+type, and one with another relation has it recorded beside the table (see
+[`CompiledCircuit`](@ref)).
 """
 issinusoidal(c::NonlinearInductor) = c.cpr === sin
 
@@ -809,8 +809,7 @@ junctioncpr(f, path) = throw(ComponentNotSupportedError(lazy"the NonlinearInduct
 
 The supertype of the sources of frequency dependent matrix data: the
 scattering parameters and noise covariance of a
-[`ScatteringParameters`](@ref) and the `X` and `Y` matrices of a
-[`GaussianChannel`](@ref). A provider implements
+[`ScatteringParameters`](@ref). A provider implements
 [`evaluateprovider!`](@ref) and [`providersize`](@ref). Its data lives in
 the shared component definition and is never copied per instance.
 """
@@ -831,11 +830,9 @@ end
 A matrix provider which evaluates the callable `f` at each requested angular
 frequency for an `n` by `n` matrix. `form` says how `f` is called:
 `:matrix` (`f(w)` returns a fresh `n` by `n` matrix, the natural way to
-write a block by hand and the default), `:inplace` (`f(dest, w)` writes
+write a block by hand and the default) or `:inplace` (`f(dest, w)` writes
 into one, which matters when the same provider is evaluated many thousands
-of times), or `:entry` (`f(p, q, w)` returns `S[p, q]`, the only form a
-kernel can call and so the one which lets a callable block be evaluated on
-a backend); see [`CALLABLE_FORMS`](@ref).
+of times); see [`CALLABLE_FORMS`](@ref).
 """
 struct CallableMatrixProvider{F} <: AbstractMatrixProvider
     f::F
@@ -844,9 +841,7 @@ struct CallableMatrixProvider{F} <: AbstractMatrixProvider
     # the natural way to write a block by hand and is the default. `:inplace`
     # writes into one, `f(dest, w)`, which matters when the same provider is
     # evaluated many thousands of times and the returned matrices dominate
-    # the allocation of a sweep. `:entry` returns one scalar,
-    # `f(p, q, w) -> S[p,q]`, which is the only form a kernel can call, so it
-    # is the one that lets a callable block be evaluated on a backend.
+    # the allocation of a sweep.
     form::Symbol
 end
 
@@ -858,7 +853,7 @@ CallableMatrixProvider(f, n::Int) = CallableMatrixProvider(f, n, :matrix)
 The ways a callable provider may be called. See
 [`CallableMatrixProvider`](@ref).
 """
-const CALLABLE_FORMS = (:matrix, :inplace, :entry)
+const CALLABLE_FORMS = (:matrix, :inplace)
 
 """
     TabulatedMatrixProvider(frequencies, values; interpolation = :cubic,
@@ -1024,14 +1019,6 @@ function evaluateprovider!(dest::AbstractArray{T,3},
             p.f(view(dest,:,:,i), ws[i])
         end
         return dest
-    elseif p.form === :entry
-        n = p.n
-        for i in eachindex(ws)
-            for q in 1:n, r in 1:n
-                dest[r,q,i] = p.f(r, q, ws[i])
-            end
-        end
-        return dest
     end
     for i in eachindex(ws)
         A = p.f(ws[i])
@@ -1049,7 +1036,8 @@ end
 # carried to the conjugate ladder and back, or padded by the pump and
 # back. The evaluation and the coverage test admit the same roundoff,
 # so what a solver takes a table to hold it can evaluate.
-edgetolerance(f::AbstractVector) = 8eps(Float64)*max(abs(f[1]), abs(f[end]))
+edgetolerance(f1::Real, fn::Real) = 8eps(Float64)*max(abs(f1), abs(fn))
+edgetolerance(f::AbstractVector) = edgetolerance(f[1], f[end])
 
 # whether a table holds the frequency `nu`, to the roundoff its
 # evaluation admits at the edges
@@ -1185,17 +1173,18 @@ end
 # Tabulated data in disjoint bands, one table per band, each with the
 # interpolation given and zero beyond it. The ascending knots `nus` are
 # samples taken `step` apart at most within a band, so consecutive knots
-# further apart than that, beyond the roundoff of shifting them, are in
-# different bands, and the data is interpolated between its samples and
-# never across a gap; a step of zero, the samples of one frequency, puts
-# each knot in a band of its own.
+# further apart than that, beyond the roundoff of shifting them, which
+# `shifttol` of their size and the step bounds, are in different bands,
+# and the data is interpolated between its samples and never across a
+# gap; a step of zero, the samples of one frequency, puts each knot in a
+# band of its own.
 function piecewisetable(nus::Vector{Float64}, values::Array{T,3}; interpolation::Symbol = :cubic,
-        step::Real) where T
+        step::Real, shifttol::Real = 1e-9) where T
     n = length(nus)
     tables = TabulatedMatrixProvider{T}[]
     start = 1
     for k in 1:n
-        if k == n || nus[k + 1] - nus[k] > step + 1e-9*(abs(nus[k + 1]) + step)
+        if k == n || nus[k + 1] - nus[k] > step + shifttol*(abs(nus[k + 1]) + step)
             push!(tables, TabulatedMatrixProvider(nus[start:k], values[:, :, start:k];
                 interpolation = interpolation, extrapolation = :zero))
             start = k + 1
@@ -1380,10 +1369,10 @@ end
 function matrixprovider(f, ::Type{T}; n = nothing, form::Symbol = :matrix,
         kwargs...) where T
     if !(form in CALLABLE_FORMS)
-        throw(ArgumentError(lazy"Unknown form $(repr(form)). Supported: :matrix (f(w) returns an n by n matrix), :inplace (f(dest, w) writes one), :entry (f(p, q, w) returns S[p,q])."))
+        throw(ArgumentError(lazy"Unknown form $(repr(form)). Supported: :matrix (f(w) returns an n by n matrix) and :inplace (f(dest, w) writes one)."))
     end
     if isnothing(n)
-        throw(ArgumentError("The matrix dimension cannot be inferred from a callable provider; pass the dimension explicitly (nports for a ScatteringParameters, nmodes for a GaussianChannel)."))
+        throw(ArgumentError("The matrix dimension cannot be inferred from a callable provider; pass the dimension explicitly (nports for a ScatteringParameters)."))
     end
     return CallableMatrixProvider(f, n, form)
 end
@@ -1543,15 +1532,17 @@ needs the same `NoiseCovariance` declaration an active block does.
 """
 struct ScatteringDC <: AbstractDCModel
     S0::Matrix{Float64}
-end
-function ScatteringDC(S0::AbstractMatrix)
-    size(S0, 1) == size(S0, 2) ||
-        throw(DimensionMismatch(lazy"a zero frequency scattering matrix must be square; got $(size(S0))."))
-    all(isfinite, S0) ||
-        throw(ArgumentError("a zero frequency scattering matrix must be finite."))
-    all(iszero∘imag, S0) ||
-        throw(ArgumentError("a zero frequency scattering matrix must be real: at zero frequency there is no phase to carry an imaginary part."))
-    return ScatteringDC(Matrix{Float64}(real.(S0)))
+    # the one constructor, so that a matrix of any element type, the
+    # `Matrix{Float64}` it is stored as included, is checked
+    function ScatteringDC(S0::AbstractMatrix)
+        size(S0, 1) == size(S0, 2) ||
+            throw(DimensionMismatch(lazy"a zero frequency scattering matrix must be square; got $(size(S0))."))
+        all(isfinite, S0) ||
+            throw(ArgumentError("a zero frequency scattering matrix must be finite."))
+        all(iszero∘imag, S0) ||
+            throw(ArgumentError("a zero frequency scattering matrix must be real: at zero frequency there is no phase to carry an imaginary part."))
+        return new(Matrix{Float64}(real.(S0)))
+    end
 end
 
 """
@@ -1663,11 +1654,12 @@ far is checked by raising it and comparing the covariance the solve
 keeps. Every mode a solve
 asks for is completed, including one beyond the sidebands the block's
 data holds, which it scatters nothing at and so carries the vacuum its
-commutator requires, as its stamp takes it. This is how a fit
-of a pumped block states its noise (see [`RationalScattering`](@ref)):
-a fit is neither lossless nor consistent with a stated covariance to
-better than its error, and the completion turns that error into noise
-the block emits, where a tolerance would only excuse it.
+commutator requires, as its stamp takes it. This is how a fit states
+its noise, of a pumped block and of an ordinary one which states a
+covariance (see [`RationalScattering`](@ref)): a fit is neither lossless
+nor consistent with a stated covariance to better than its error, and
+the completion turns that error into noise the block emits, where a
+tolerance would only excuse it.
 """
 struct NoiseCovariance{P}
     provider::P
@@ -1777,16 +1769,20 @@ respect to design parameters, for [`designsensitivities`](@ref): a named
 tuple keyed by parameter name whose values are accepted in the same forms
 as `S` (a matrix, a callable of angular frequency, or tabulated data),
 tabulated data interpolated and extrapolated as `S` is and a callable
-called in the `form` `S` is. A block depends on a design parameter
-through these entries alone. A
+called in the `form` `S` is. The block holds them as `name => provider`
+pairs in the order given, which are no part of its type, so blocks which
+differ in their derivatives alone are one type, for which the solvers are
+compiled once. A block depends on a design parameter through these
+entries alone. A
 derivative is not a scattering matrix and is never passivity checked. The
 block's scattering matrix and its derivatives describe one design point:
 the definitions move the parameters a component value is written in, not
 values a block's data or closure has captured, so a block whose data
 depends on a parameter must be restated at each point along with its
 derivatives.
-`derivatives` and `form` apply when `S` is given as data or a callable; a
-Touchstone path ignores them.
+A Touchstone path is tabulated data: its derivatives are read as a
+table's are, and `form`, which says how a callable is called, is refused
+with it as with any other data.
 
 # Examples
 ```jldoctest
@@ -1794,17 +1790,22 @@ julia> ScatteringParameters([0 1;1 0]).nports
 2
 ```
 """
-struct ScatteringParameters{P,N,NF,D,DM<:AbstractDCModel} <: AbstractComponent
+struct ScatteringParameters{P,N,NF,DM<:AbstractDCModel} <: AbstractComponent
     provider::P
     nports::Int
     zref::Vector{Float64}
     grounded::Bool
     noise::N
     negative_frequency::NF
-    # analytic dS/dtheta providers keyed by design parameter name, for
-    # [`designsensitivities`](@ref); empty for a block which depends on
-    # no design parameter
-    derivatives::D
+    # the providers of the analytic dS/dtheta by design parameter name, in
+    # the order given, for [`designsensitivities`](@ref); empty for a
+    # block which depends on no design parameter. The providers are held
+    # as `Any`, so that neither the names nor the providers' types are
+    # part of the block's type: blocks which differ in their derivatives
+    # alone share one, and what is compiled for a block is compiled once
+    # for them. A derivative is read into a block of its own (see
+    # [`designblockjacobian`](@ref)), whose type is concrete.
+    derivatives::Vector{Pair{Symbol,Any}}
     # the zero frequency behavior, when the block's own data does not give
     # it; see [`AbstractDCModel`](@ref)
     dcmodel::DM
@@ -1820,7 +1821,7 @@ end
 ScatteringParameters(provider, nports::Int, zref::Vector{Float64},
     grounded::Bool, noise, negative_frequency) =
     ScatteringParameters(provider, nports, zref, grounded, noise,
-        negative_frequency, NamedTuple(), ScatteringLimit(), 1e-8)
+        negative_frequency, Pair{Symbol,Any}[], ScatteringLimit(), 1e-8)
 
 function ScatteringParameters(S; nports = nothing, zref = nothing,
         grounded::Bool = true, noise = Passive(),
@@ -1830,43 +1831,58 @@ function ScatteringParameters(S; nports = nothing, zref = nothing,
         derivatives::NamedTuple = NamedTuple(),
         dcmodel::AbstractDCModel = ScatteringLimit(),
         atol::Real = 1e-8)
-    if S isa AbstractString
-        return touchstonescatteringblock(S; nports = nports, zref = zref,
-            grounded = grounded, noise = noise, dcmodel = dcmodel,
-            negative_frequency = negative_frequency,
-            interpolation = interpolation, extrapolation = extrapolation,
-            atol = atol)
+    # the derivatives' names are no part of the block's type, nor of what
+    # is compiled to build it
+    @nospecialize derivatives
+    # a Touchstone file states its reference impedances; omitted otherwise,
+    # the reference impedance is 50 Ohms at every port
+    provider, zrefs = if S isa AbstractString
+        touchstoneprovider(S, zref; interpolation, extrapolation, form)
+    else
+        (scatteringprovider(S; n = nports, interpolation, extrapolation, form),
+            something(zref, 50.0))
     end
-    provider = scatteringprovider(S; n = nports,
-        interpolation = interpolation, extrapolation = extrapolation,
-        form = form)
     n = providersize(provider)
     if !isnothing(nports) && n != nports
         throw(DimensionMismatch(lazy"nports = $(nports) does not match the scattering data dimension $(n)."))
     end
-    # omitted, the reference impedance is 50 Ohms at every port
-    zrefvec = zrefvector(something(zref, 50.0), n)
-    # a derivative given as data is interpolated and extrapolated as the
-    # block's data is, and one given as a callable is called as the
-    # block's callable is
-    dprov = NamedTuple(k => begin
-            dp = matrixprovider(v, Complex{Float64}; n = n,
-                interpolation = interpolation, extrapolation = extrapolation,
-                form = v isa Union{AbstractMatrix,Tuple,AbstractMatrixProvider} ? :matrix : form)
-            providersize(dp) == n || throw(DimensionMismatch(lazy"the derivative for parameter $(k) has dimension $(providersize(dp)) but the block has $(n) ports."))
-            dp
-        end for (k, v) in pairs(derivatives))
-    return checkedblock(provider, n, zrefvec, grounded, noise,
-        negative_frequency, dprov, dcmodel, atol)
+    return checkedblock(provider, n, zrefvector(zrefs, n), grounded, noise,
+        negative_frequency, derivativeproviders(derivatives, n; interpolation, extrapolation, form),
+        dcmodel, atol)
+end
+
+# The providers of a block's derivatives, of its dimension `n`, by
+# parameter name in the order given: one given as data is interpolated and
+# extrapolated as the block's data is, and one given as a callable is
+# called in the `form` the block's callable is. The named tuple is read by
+# its field names, so nothing here is compiled for the names.
+function derivativeproviders(derivatives::NamedTuple, n::Int;
+        interpolation::Symbol, extrapolation::Symbol, form::Symbol)
+    @nospecialize derivatives
+    out = Pair{Symbol,Any}[]
+    for k in fieldnames(typeof(derivatives))
+        v = getfield(derivatives, k)
+        dp = matrixprovider(v, Complex{Float64}; n = n,
+            interpolation = interpolation, extrapolation = extrapolation,
+            form = v isa Union{AbstractMatrix,Tuple,AbstractMatrixProvider} ? :matrix : form)
+        providersize(dp) == n || throw(DimensionMismatch(lazy"the derivative for parameter $(k) has dimension $(providersize(dp)) but the block has $(n) ports."))
+        push!(out, k => dp)
+    end
+    return out
 end
 
 # A block from its parts with its noise prepared and its data held to its
 # contract, whatever built it, from a matrix, a file, a line or a
 # realization: at every sample it stores, between and beyond them where
-# the data determines it, and in its zero frequency model.
+# the data determines it, and in its zero frequency model. The noise
+# model and the negative frequency rule are ones the solvers read.
 @noinline function checkedblock(provider, n::Int, zref::Vector{Float64}, grounded::Bool,
         noise, negative_frequency, derivatives, dcmodel, atol::Real; normtested::Bool = false)
     checkatol(atol)
+    noise isa Union{Passive,Lossless,ThermalEquilibrium,NoiseCovariance} || throw(ArgumentError(
+        lazy"the noise model of a scattering block is Passive(), Lossless(), ThermalEquilibrium(T) or NoiseCovariance(V), not $(repr(noise))."))
+    negative_frequency isa Union{ConjugateSymmetry,Native} || throw(ArgumentError(
+        lazy"the negative frequency rule of a scattering block is ConjugateSymmetry() or Native(), not $(repr(negative_frequency))."))
     block = ScatteringParameters(provider, n, zref, grounded, preparenoise(noise, n),
         negative_frequency, derivatives, dcmodel, Float64(atol))
     checkstoreddata(block)
@@ -1996,10 +2012,15 @@ end
 
 # The two frequency identities of a pumped block's modes: whether the
 # difference `d` of two frequencies is the harmonic `k` of the pump `wp`,
-# and whether two frequencies on its ladders are one, each to the one
-# tolerance every such comparison takes
-isharmonic(d, k, wp) = abs(d - k*wp) <= 1e-6*wp
-samefrequency(a, b, wp) = abs(a - b) <= 1e-9*(abs(a) + wp)
+# to `harmonictolerance` of the pump frequency, and whether two
+# frequencies on its ladders are one, to `ladderroundoff` of their size
+# and the pump frequency's. Every such comparison takes these tolerances,
+# the grouping of frequencies into the ladders of a pump (pumpladders)
+# among them.
+const harmonictolerance = 1e-6
+const ladderroundoff = 1e-9
+isharmonic(d, k, wp) = abs(d - k*wp) <= harmonictolerance*wp
+samefrequency(a, b, wp) = abs(a - b) <= ladderroundoff*(abs(a) + wp)
 
 """
     checkblockcontract(block::ScatteringParameters, S, V, w; name = nothing)
@@ -2030,7 +2051,8 @@ The construction of a block holds every sample its data stores to this
 contract, and a solver holds the data it evaluates to it, so the same
 data is given the same verdict wherever it is read.
 """
-function checkblockcontract(block::ScatteringParameters, S, V, w; name = nothing)
+Base.@nospecializeinfer function checkblockcontract(@nospecialize(block::ScatteringParameters), S, V, w;
+        name = nothing)
     subject = isnothing(name) ? "the scattering block" : "the scattering block at $(name)"
     at = isnothing(w) ? "" : " at $(w) rad/s"
     noise = block.noise
@@ -2736,14 +2758,17 @@ function pencilcrossings(An, Bn, Cn, D)
     return axiscrossings(complex.(alphar, alphai) ./ beta)
 end
 
-# the frequencies of the finite eigenvalues on the imaginary axis, a
-# crossing and its conjugate being one
-function axiscrossings(lambda)
-    finite = [l for l in lambda if isfinite(real(l)) && isfinite(imag(l)) && abs(l) <= 1e8]
-    crossings = sort!([abs(imag(l)) for l in finite if abs(real(l)) <= 1e-8*(abs(l) + 1)])
+# the frequencies of the finite eigenvalues on the imaginary axis, in the
+# unit of the balanced realization: an eigenvalue of magnitude up to
+# `largest` whose real part is within `axistol` of its magnitude plus one,
+# a crossing and its conjugate being one, as are two crossings within
+# `mergetol` of their frequency plus one
+function axiscrossings(lambda; largest::Real = 1e8, axistol::Real = 1e-8, mergetol::Real = 1e-9)
+    finite = [l for l in lambda if isfinite(real(l)) && isfinite(imag(l)) && abs(l) <= largest]
+    crossings = sort!([abs(imag(l)) for l in finite if abs(real(l)) <= axistol*(abs(l) + 1)])
     merged = Float64[]
     for w in crossings
-        (isempty(merged) || w - last(merged) > 1e-9*(w + 1)) && push!(merged, w)
+        (isempty(merged) || w - last(merged) > mergetol*(w + 1)) && push!(merged, w)
     end
     return merged
 end
@@ -2798,7 +2823,7 @@ function rationalblock(A, B, C, D; zref, grounded::Bool, noise, atol::Real,
     abscissa < 0 || throw(ArgumentError(
         lazy"the realization is unstable: the largest real part of an eigenvalue of A is $(abscissa) per second."))
     return checkedblock(provider, n, zrefvector(zref, n), grounded, noise,
-        ConjugateSymmetry(), NamedTuple(), ScatteringLimit(), atol; normtested)
+        ConjugateSymmetry(), Pair{Symbol,Any}[], ScatteringLimit(), atol; normtested)
 end
 
 """
@@ -2858,14 +2883,12 @@ end
 
 """
     provablylossless(block::ScatteringParameters)
-    provablylossless(provider::AbstractMatrixProvider; atol = 1e-8)
 
-Whether the scattering data can be shown to be unitary at every frequency
-to the block's `atol`, or to `atol`, from the data alone (see
-[`unitaritybound`](@ref)): a constant and a table can be, a lossless line
-is by construction, and a callable, whose values away from any sampled
-frequency are unknown, and a realization, whose norms are costly to
-bound, are not.
+Whether the scattering data can be shown to be unitary at every frequency to
+the block's `atol` from the data alone (see [`unitaritybound`](@ref)): a
+constant and a table can be, a lossless line is by construction, and a
+callable, whose values away from any sampled frequency are unknown, and a
+realization, whose norms are costly to bound, are not.
 
 A block which is not provably lossless carries noise channels
 ([`ScatteringNoisePlan`](@ref)), and those of a block which is in fact
@@ -2873,8 +2896,8 @@ lossless are identically zero, so a `false` costs work. A `true` leaves
 out channels whose commutator `I - S S'` is within the block's `atol` of
 zero, the tolerance a block declared [`Lossless`](@ref) is held to.
 """
-provablylossless(b::ScatteringParameters) = unitaritybound(b.provider) <= b.atol
-provablylossless(p::AbstractMatrixProvider; atol::Real = 1e-8) = unitaritybound(p) <= atol
+Base.@nospecializeinfer provablylossless(@nospecialize(block::ScatteringParameters)) =
+    unitaritybound(block.provider) <= block.atol
 
 # A rational block is lossless when every singular value of `S` is one at
 # every frequency: the largest at most one, which is its passivity, and
@@ -2992,13 +3015,14 @@ function evaluatecovariance!(dest::AbstractArray{Complex{Float64},3},
         block.negative_frequency, ws, absbuffer)
 end
 
-# A block loaded from a Touchstone file. The reference impedance is read
-# from the file's option line; an explicit `zref` which disagrees with it
-# is an error, since it is ambiguous between correcting a mislabeled file
-# and asking for renormalization.
-function touchstonescatteringblock(path::AbstractString; nports, zref,
-        grounded, noise, negative_frequency, interpolation, extrapolation,
-        atol, dcmodel::AbstractDCModel = ScatteringLimit())
+# The scattering data of a Touchstone file as a table, and the reference
+# impedances the file's option line states; an explicit `zref` which
+# disagrees with them is an error, since it is ambiguous between correcting
+# a mislabeled file and asking for renormalization.
+function touchstoneprovider(path::AbstractString, zref; interpolation::Symbol,
+        extrapolation::Symbol, form::Symbol)
+    # a file is tabulated data, which no form calls
+    checknoform(form, "a Touchstone file")
     ts = Touchstone.touchstone_load(path)
     filezref = collect(Float64, ts.reference)
     # any explicit `zref` is checked against the file, an explicit 50 Ohms
@@ -3012,15 +3036,9 @@ function touchstonescatteringblock(path::AbstractString; nports, zref,
         end
     end
     frequencies = 2 .* pi .* collect(Float64, ts.f)
-    values = touchstonescattering(ts, path)
-    provider = TabulatedMatrixProvider(frequencies, values;
+    provider = TabulatedMatrixProvider(frequencies, touchstonescattering(ts, path);
         interpolation = interpolation, extrapolation = extrapolation)
-    n = providersize(provider)
-    if !isnothing(nports) && n != nports
-        throw(DimensionMismatch(lazy"nports = $(nports) does not match the Touchstone data dimension $(n)."))
-    end
-    return checkedblock(provider, n, zrefvector(filezref, n), grounded, noise,
-        negative_frequency, NamedTuple(), dcmodel, atol)
+    return provider, filezref
 end
 
 # The network data of a Touchstone file as scattering parameters at the
@@ -3096,162 +3114,7 @@ function TransmissionLine(Z0, len; vp = speed_of_light,
     end
     provider = TransmissionLineProvider(Float64(Z0), Float64(len)/Float64(vp))
     return checkedblock(provider, 2, fill(Float64(Z0), 2), grounded, noise,
-        Native(), NamedTuple(), ScatteringLimit(), 1e-8)
-end
-
-# === Gaussian channels ===
-
-"""
-    symplecticform(n::Integer)
-
-Return the 2n by 2n symplectic form Ω = [0 I; -I 0] in the real quadrature
-ordering (x_1,…,x_n,p_1,…,p_n).
-"""
-function symplecticform(n::Integer)
-    Ω = zeros(Float64, 2n, 2n)
-    for i in 1:n
-        Ω[i, n+i] = 1.0
-        Ω[n+i, i] = -1.0
-    end
-    return Ω
-end
-
-"""
-    completepositivitymargin(X::AbstractMatrix, Y::AbstractMatrix)
-
-Return the minimum eigenvalue of Y + (i/2)(Ω - X Ω X'), which is nonnegative
-for a completely positive Gaussian channel in the real quadrature
-representation with vacuum covariance I/2.
-"""
-function completepositivitymargin(X::AbstractMatrix, Y::AbstractMatrix)
-    n2 = size(X,1)
-    if iszero(n2 % 2) == false
-        throw(DimensionMismatch("Gaussian channel matrices must have even dimension 2n."))
-    end
-    Ω = symplecticform(n2 ÷ 2)
-    M = Complex{Float64}.(Y) .+ (im/2).*(Ω .- X*Ω*transpose(X))
-    return minimum(real.(eigvals(Hermitian(M))))
-end
-
-"""
-    quadraturetransform(A::AbstractMatrix, B::AbstractMatrix)
-
-Convert the complex Bogoliubov transformation b = A a + B conj(a) to the
-real quadrature transformation X in the ordering (x_1,…,x_n,p_1,…,p_n), so
-that d_out = X d_in. Returns the 2n by 2n real matrix
-X = [Re(A+B) -Im(A-B); Im(A+B) Re(A-B)].
-
-# Examples
-```jldoctest
-julia> quadraturetransform([0 1;1 0], zeros(2,2)) == [0 1 0 0;1 0 0 0;0 0 0 1;0 0 1 0]
-true
-```
-"""
-function quadraturetransform(A::AbstractMatrix, B::AbstractMatrix)
-    if size(A) != size(B) || size(A,1) != size(A,2)
-        throw(DimensionMismatch(lazy"A and B must be square with equal size; got $(size(A)) and $(size(B))."))
-    end
-    return [real.(A .+ B) -imag.(A .- B); imag.(A .+ B) real.(A .- B)]
-end
-
-"""
-    GaussianChannel(X, Y; nmodes = nothing,
-        grounded = true, interpolation = :cubic, extrapolation = :error,
-        atol = 1e-8)
-
-An arbitrary Gaussian bosonic channel in the canonical real quadrature
-representation: with quadratures ordered (x_1,…,x_n,p_1,…,p_n) and vacuum
-covariance I/2, the channel acts as d_out = X d_in + d_0 and
-V_out = X V_in X' + Y. `X` and `Y` are 2n by 2n real matrices and may each
-be a constant matrix, a callable of angular frequency (requires `nmodes`),
-or a tuple `(frequencies, values)` of tabulated data.
-
-Complete positivity, Y + (i/2)(Ω - X Ω X') ⪰ 0, and the symmetry of Y are
-validated pointwise at construction for constant and tabulated data, the
-first with absolute tolerance `atol` and the second to `atol` of the
-largest entry of `Y`, or of one for a covariance of entries below one; the
-worst margin is recorded in the `cp_margin` field (NaN when validation is
-deferred for callable providers).
-
-Each mode is a two terminal port addressed like a port of a
-[`ScatteringParameters`](@ref), with the same `grounded` behavior.
-A `GaussianChannel` is accepted by the circuit representation, but the
-harmonic balance solvers do not support it yet and [`compile`](@ref)
-throws a [`ComponentNotSupportedError`](@ref) for it.
-
-The complex Bogoliubov form b = A a + B conj(a) may be converted to the
-deterministic part with [`quadraturetransform`](@ref).
-
-# Examples
-```jldoctest
-julia> η = 0.5; abs(GaussianChannel(sqrt(η)*[1 0;0 1], (1-η)/2*[1 0;0 1]; nmodes=1).cp_margin) < 1e-10
-true
-```
-"""
-struct GaussianChannel{PX,PY} <: AbstractComponent
-    X::PX
-    Y::PY
-    nmodes::Int
-    grounded::Bool
-    cp_margin::Float64
-end
-
-function GaussianChannel(X, Y; nmodes = nothing,
-        grounded::Bool = true, interpolation::Symbol = :cubic,
-        extrapolation::Symbol = :error, atol::Real = 1e-8)
-    n2 = isnothing(nmodes) ? nothing : 2*nmodes
-    Xp = matrixprovider(X, Float64; n = n2, interpolation = interpolation,
-        extrapolation = extrapolation)
-    Yp = matrixprovider(Y, Float64; n = isnothing(n2) ? providersize(Xp) : n2,
-        interpolation = interpolation, extrapolation = extrapolation)
-    if providersize(Xp) != providersize(Yp)
-        throw(DimensionMismatch(lazy"X has dimension $(providersize(Xp)) but Y has dimension $(providersize(Yp))."))
-    end
-    if isodd(providersize(Xp))
-        throw(DimensionMismatch(lazy"Gaussian channel matrices must have even dimension 2n in the real quadrature representation; got $(providersize(Xp))."))
-    end
-    n = providersize(Xp) ÷ 2
-    if !isnothing(nmodes) && n != nmodes
-        throw(DimensionMismatch(lazy"nmodes = $(nmodes) does not match the matrix dimension 2n = $(providersize(Xp))."))
-    end
-    margin = gaussianchannelmargin(Xp, Yp, atol)
-    return GaussianChannel(Xp, Yp, n, grounded, margin)
-end
-
-# the worst complete positivity margin over the samples X and Y store,
-# where both are stored and cover the frequency (see storedsamples),
-# validating each point; NaN when either is a callable, or they share no
-# frequency, and nothing can be checked
-function gaussianchannelmargin(Xp, Yp, atol)
-    (isstored(Xp) && isstored(Yp)) || return NaN
-    fs, isdata = samplefrequencies(Xp, Yp)
-    X, inX = storedsamples(Xp, fs)
-    Y, inY = storedsamples(Yp, fs)
-    worst = Inf
-    kX = kY = 0
-    for k in eachindex(fs)
-        inX[k] && (kX += 1)
-        inY[k] && (kY += 1)
-        (inX[k] && inY[k]) || continue
-        worst = min(worst, checkchannelpoint(real.(view(X, :, :, kX)),
-            real.(view(Y, :, :, kY)), atol, isdata ? fs[k] : nothing))
-    end
-    return isfinite(worst) ? worst : NaN
-end
-
-# check the symmetry of Y, to `atol` of its largest entry or of one for a
-# covariance of entries below one, and complete positivity, at one angular
-# frequency `w`, `nothing` for data which is the same at every frequency
-function checkchannelpoint(X, Y, atol, w)
-    where_ = isnothing(w) ? "" : " at $(w) rad/s"
-    skew = maximum(abs, Y .- transpose(Y); init = 0.0)
-    tol = atol*max(1.0, maximum(abs, Y; init = 0.0))
-    skew <= tol || throw(ArgumentError(lazy"The added covariance Y must be symmetric$(where_): the largest entry of Y - Y' is $(skew), against $(tol), atol of its largest entry."))
-    margin = completepositivitymargin(X, Y)
-    if margin < -atol
-        throw(ArgumentError(lazy"The Gaussian channel is not completely positive$(where_): the minimum eigenvalue of Y + (i/2)(Ω - X Ω X') is $(margin)."))
-    end
-    return margin
+        Native(), Pair{Symbol,Any}[], ScatteringLimit(), 1e-8)
 end
 
 # === a pumped scattering block ===
@@ -3263,7 +3126,7 @@ end
         envelope = nothing)
     LinearizedScattering(H, wp; harmonics, nports, zref = 50.0,
         grounded = true, noise = Lossless(), phase = 0.0,
-        dcmodel = ScatteringLimit(), envelope = nothing)
+        dcmodel = ScatteringLimit(), envelope = nothing, atol = 1e-6)
 
 The linearized scattering of a pumped device, a linear time-periodic
 multiport: a parametric amplifier, converter or isolator in its
@@ -3685,30 +3548,6 @@ function harmonictables(samples, ks, n::Int, wp, step, interpolation::Symbol, to
         push!(providers, piecewisetable(nus, values; interpolation = interpolation, step = step))
     end
     return providers
-end
-
-"""
-    evaluateharmonics!(dest::AbstractArray{Complex{Float64},4},
-        block::LinearizedScattering, ws::AbstractVector)
-
-Evaluate the harmonic transfer functions of `block` at the signed
-angular frequencies `ws`: `dest[:, :, j, i]` is `H_k(ws[i])` for the
-harmonic `k = block.harmonics[j]`, rotated by the block's pump phase.
-The negative harmonics follow from `H_{-k}(nu) = conj(H_k(-nu))`, which a
-caller evaluates at the negated frequencies.
-"""
-function evaluateharmonics!(dest::AbstractArray{Complex{Float64},4},
-        block::LinearizedScattering, ws::AbstractVector)
-    n = block.nports
-    nk = length(block.harmonics)
-    size(dest) == (n, n, nk, length(ws)) || throw(DimensionMismatch(lazy"the destination has size $(size(dest)) but ($(n), $(n), $(nk), $(length(ws))) is required."))
-    for (j, k) in enumerate(block.harmonics)
-        Hk = view(dest, :, :, j, :)
-        evaluateprovider!(Hk, block.providers[j], ws)
-        rot = cis(k*block.phase)
-        isone(rot) || (Hk .*= rot)
-    end
-    return dest
 end
 
 # the scattering matrix a pumped block has without conversion, `H_0`,

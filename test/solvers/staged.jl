@@ -102,6 +102,19 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         fresh = hbnlsolve(pump, (8,), drive, c, d; method = Newton(),
             keyedarrays = false, atol = 1e-12)
         @test r.nodeflux ≈ fresh.nodeflux rtol = 1e-8
+        # every solve counts against `maxattempts`, the retreat and the
+        # evaluation of the point returned included: four are the coarse
+        # solve, the failed growth, one retreat and that evaluation, and the
+        # walk stops before climbing back
+        budget = recovery_solver(failat = [2])
+        rb = @test_logs (:warn,) match_mode = :any hbnlsolve(pump, (8,),
+            drive, c, d; keyedarrays = false, method = Staged(
+                inner = budget.method, grids = [(2,), (4,), (8,)], s0 = 1.0,
+                smin = 0.1, maxattempts = 4))
+        @test length(budget.starts) == 4
+        @test length(rb.solverinfo.stages) == 4
+        @test !rb.solverinfo.converged
+        @test rb.solverinfo.stages[end].action === :evaluate
         # a first grid which converges at no drive is reported as that, and
         # not as a fold at zero drive
         stuck = recovery_solver(failat = collect(1:20))
@@ -116,7 +129,8 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         # a junction biased near its critical current by a current source
         # of the netlist, and pumped weakly: the continuation scales the
         # bias with the pump, as `setdrive!` scales a problem's drive, so a
-        # stage at half the drive is the direct solve at half of both; and
+        # stage at a fraction of the drive is the direct solve at that
+        # fraction of both; and
         # the warning of a junction near its critical current comes once,
         # from the outcome, and not from every stage
         Lj = 1000e-12
@@ -132,13 +146,15 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         r = @test_logs (:warn,) hbnlsolve(wb, (8,), pump(1e-9),
             biased(0.995*Ic); method = Staged(s0 = 0.25), kw...)
         @test r.solverinfo.converged
-        # one stage at half the drive, which the schedule then gives up at
-        half = @test_logs (:warn,) hbnlsolve(wb, (8,), pump(1e-9),
-            biased(0.995*Ic); method = Staged(grids = [(8,)], s0 = 0.5,
-                interioratol = 1e-12, maxattempts = 1), kw...)
-        ref = hbnlsolve(wb, (8,), pump(0.5e-9), biased(0.5*0.995*Ic);
+        # one stage at a quarter of the drive, after which two solves leave
+        # none short of full drive beside the evaluation of its point, which
+        # the schedule returns
+        quarter = @test_logs (:warn,) hbnlsolve(wb, (8,), pump(1e-9),
+            biased(0.995*Ic); method = Staged(grids = [(8,)], s0 = 0.25,
+                interioratol = 1e-12, maxattempts = 2), kw...)
+        ref = hbnlsolve(wb, (8,), pump(0.25e-9), biased(0.25*0.995*Ic);
             method = Newton(), atol = 1e-12, kw...)
-        @test half.nodeflux ≈ ref.nodeflux rtol = 1e-8
+        @test quarter.nodeflux ≈ ref.nodeflux rtol = 1e-8
     end
 
     @testset "guards" begin
@@ -148,33 +164,49 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
             defs; dc = true, odd = true, even = true, method = Staged(inner = Staged()))
         @test_throws ArgumentError hbnlsolve((w1,w2), (8,4), src, circuit,
             defs; dc = true, odd = true, even = true, method = Staged(s0 = 0.0))
+        # the continuation warm starts its own stages and solves a system of
+        # its own at each, so a start, and the system of one solve handed
+        # back, are refused
+        for kw in ((; x0 = zeros(ComplexF64, 4)), (; returnsystem = true),
+                (; debugJacobian = true))
+            @test_throws ArgumentError hbnlsolve((w1,w2), (8,4), src,
+                circuit, defs; dc = true, odd = true, even = true,
+                method = Staged(), kw...)
+        end
     end
 
     @testset "a spent schedule returns not converged" begin
+        # two solves are one stage on the coarsest grid and the evaluation
+        # of its point, which the stage keeps in reserve
         r = @test_logs (:warn,) match_mode=:any hbnlsolve(
             (w1,w2), (8,4), src, circuit, defs; dc = true, odd = true,
-            even = true, method = Staged(maxattempts = 1))
+            even = true, method = Staged(maxattempts = 2))
         @test !r.solverinfo.converged
-        @test length(r.solverinfo.stages) == 1
+        st = r.solverinfo.stages
+        @test length(st) == 2
         @test isnan(r.solverinfo.sourcefold)
         # what it returns is at the modes asked for, not at the coarse grid
-        # of its last attempt, with the operating point which a sensitivity
+        # of its last stage, with the operating point which a sensitivity
         # through it reads
         full = JosephsonCircuits.pumpmodeset((w1,w2), (8,4), (16,8);
             dc = true, odd = true, even = true)[1].modes
         @test r.modes == full
-        @test r.solverinfo.stages[end].grid != (8,4)
+        @test st[1].grid != (8,4)
+        @test st[end].action === :evaluate && st[end].grid == (8,4)
         o = hbnlsolve((w1,w2), (8,4), src, circuit, defs; dc = true,
-            odd = true, even = true, method = Staged(maxattempts = 1),
+            odd = true, even = true, method = Staged(maxattempts = 2),
             returnoperatingpoint = true, warnnotconverged = false)
         @test !o.solverinfo.converged
         @test o.modes == full
         @test o.operatingpoint.Nmodes == length(full)
-        # the flag which silences a solve silences the schedule too
+        # the flag which silences a solve silences the schedule too; with
+        # one solve no stage fits beside the evaluation, which takes the
+        # cold start
         q = @test_logs min_level=Base.CoreLogging.Warn hbnlsolve(
             (w1,w2), (8,4), src, circuit, defs; dc = true, odd = true,
             even = true, method = Staged(maxattempts = 1), warnnotconverged = false)
         @test !q.solverinfo.converged
+        @test only(q.solverinfo.stages).action === :evaluate
     end
 
 end

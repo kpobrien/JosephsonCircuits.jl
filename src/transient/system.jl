@@ -17,19 +17,20 @@ const TransientWaveform = FunctionWrapper{Float64, Tuple{Float64}}
 
 transientwaveform(w::Number) = TransientWaveform(Returns(Float64(w)))
 transientwaveform(w) = TransientWaveform(w)
-transientwaveform(w::TransientWaveform) = w
 
 """
     TransientSource(target, current)
 
 A real instantaneous current in Amperes, a number or a callable
 `current(t)` of the time in seconds. An integer `target` is a port
-number: positive current is injected into the port's positive terminal by
-a Norton source, and the port's termination is part of the compiled
+number: a Norton source injects the current into the port's first
+(positive) terminal, and the port's termination is part of the compiled
 circuit already. A string or symbol names a `CurrentSource` component,
-whose constant value the waveform replaces; positive current then flows
-out of the component's first terminal and into its second. Several
-sources on one target add. Unlike a harmonic balance source the callable
+whose constant value the waveform replaces, and which drives its current
+through itself from its first terminal to its second: it draws the
+current from the node at its first terminal and delivers it to the node
+at its second, the opposite sense of a port source. Several sources on
+one target add. Unlike a harmonic balance source the callable
 returns the physical waveform, not a Fourier coefficient, and it must be
 deterministic, since the tangent and the adjoint evaluate it again on the
 recorded grid.
@@ -150,6 +151,29 @@ struct TransientLine
 end
 
 """
+    FloatingBalance
+
+The floating subnetworks of a [`TransientProblem`](@ref) which its drives
+feed, judged whenever the drives are evaluated (`checkbalance`): a net
+current into a subnetwork no element connects to ground has no path back.
+`islands` indexes the problem's `floatingcomponents` and `nodes` names
+their nodes; `net[k, r]` is the net injection of a unit current of drive
+`k` into island `r`, a column for each island holding the drives which
+feed it, two islands at most for a drive's two terminals, `constant[r]`
+the net constant current into it and `magnitude[r]` the sum of the
+magnitudes that net gathers, and the total may differ from zero by
+`terms` roundings of the magnitudes it sums.
+"""
+struct FloatingBalance
+    islands::Vector{Int}
+    nodes::Vector{String}
+    net::SparseMatrixCSC{Float64,Int}
+    constant::Vector{Float64}
+    magnitude::Vector{Float64}
+    terms::Int
+end
+
+"""
     TransientProblem
 
 A compiled circuit with its matrices at one mode, its modified nodal
@@ -180,12 +204,19 @@ integrated in time by [`transientsolve`](@ref). Built by
     ground, each a union of inertialess ones; along them the equations
     constrain the flux alone, and the rate is what the constraint
     differentiated says.
+- `directions`, `constraints`: the algebraic directions as the columns
+    of a sparse matrix over the state, in the order of `algebraic`, and
+    the constraints along them as the rows of one over the equations, the
+    combinations of the equations which no rate enters.
 - `injection`: the unscaled injection of a unit current of each drive
     into the node equations, one sparse column per drive, in the
     orientation of the drive.
 - `drives`: the bound drives, in the order of `injection`'s columns.
 - `constantcurrent`: the unscaled constant node current of the netlist's
     current sources not replaced by a drive.
+- `balance`: the floating subnetworks the drives feed, whose net current
+    is judged whenever the drives are evaluated, see
+    [`FloatingBalance`](@ref).
 - `ports`: the compiled ports in the order of their numbers, the order
     of every port axis of the transient, as of harmonic balance's.
 - `portpositive`, `portnegative`, `portimpedances`, `portconductances`:
@@ -197,6 +228,9 @@ integrated in time by [`transientsolve`](@ref). Built by
     unknowns after the coupled inductor currents.
 - `lines`: the ideal transmission lines, see [`TransientLine`](@ref),
     whose wave histories the solve keeps.
+- `relations`: the current-phase relation of every junction, in the
+    order of the junction rows of `RJ`, or `nothing` where every junction
+    is sinusoidal.
 - `C`, `G`, `L`, `lineE`: the scaled capacitance, conductance and
     augmented inverse inductance the transient steps, with the stamps of
     the blocks and the lines, and the lines' incidence, on the host.
@@ -219,6 +253,7 @@ struct TransientProblem
     injection::SparseMatrixCSC{Float64,Int}
     drives::Vector{TransientDrive}
     constantcurrent::Vector{Float64}
+    balance::FloatingBalance
     ports::Vector{CompiledPort}
     portpositive::Vector{Int}
     portnegative::Vector{Int}
@@ -246,10 +281,10 @@ Base.length(p::TransientProblem) = p.Nnodal + p.Naux
 # The problem `p` with its drives or its blocks replaced and every other
 # field shared, the one place which lists the fields for such a copy.
 function TransientProblem(p::TransientProblem; injection = p.injection, drives = p.drives,
-        constantcurrent = p.constantcurrent, blocks = p.blocks)
+        constantcurrent = p.constantcurrent, balance = p.balance, blocks = p.blocks)
     return TransientProblem(p.circuit, p.matrices, p.Nnodal, p.Naux, p.Lscale, p.coupledbranches,
         p.floatingcomponents, p.gaugeindices, p.inertialess, p.algebraic, p.directions, p.constraints,
-        injection, drives, constantcurrent, p.ports, p.portpositive, p.portnegative, p.portimpedances,
+        injection, drives, constantcurrent, balance, p.ports, p.portpositive, p.portnegative, p.portimpedances,
         p.portconductances, blocks, p.lines, p.relations, p.C, p.G, p.L, p.lineE, p.RJ, p.lmolj)
 end
 
@@ -351,10 +386,11 @@ Base.@nospecializeinfer function transientproblem(circuit::CompilableCircuit,
     all(>(0), portimpedances) || throw(ArgumentError("port reference impedances must be positive."))
     portconductances = [p.environment == 0 ? 0.0 : 1/vvn[p.environment] for p in ports]
 
-    drives, injection, constantcurrent = bindsources(psc, vvn, ports, portpositive, portnegative, Nnodal + Naux, sources)
+    drives, injection, constantcurrent, balance = bindsources(psc, vvn, ports, portpositive, portnegative, Nnodal + Naux,
+        floatingcomponents, sources)
     return TransientProblem(psc, nm, Nnodal, Naux, Lscale, coupledbranches,
         floatingcomponents, gaugeindices, inertialess, algebraic, directions, constraints,
-        injection, drives, constantcurrent, ports, portpositive, portnegative, portimpedances, portconductances, blocks, lines,
+        injection, drives, constantcurrent, balance, ports, portpositive, portnegative, portimpedances, portconductances, blocks, lines,
         calcjunctionrelations(psc.componenttypes, psc.nodeindices,
             psc.junctioncprs, psc.topology.edge2indexdict, nm.Ljb), C, G, L, lineE, RJ, lmolj)
 end
@@ -371,13 +407,23 @@ end
 # The drives of `sources` bound to a compiled circuit with `n` unknowns
 # and the ports `ports` with their terminals: a unit current of each
 # source as a node injection, one column per source, a port's into its
-# positive terminal and a named current source's out of its first
-# terminal and into its second, and the constant current of the
-# netlist's current sources no source replaced, from the values `vvn`.
-# Compiled once for every collection of sources, whose waveforms the
-# drives wrap.
+# positive terminal and a named current source's through itself from its
+# first terminal to its second, the constant current of the netlist's
+# current sources no source replaced, from the values `vvn`, and the
+# balance of the floating subnetworks. A subnetwork of `floating`, the
+# node sets no element connects to ground, has no path back for a net
+# current driven into it, which would flow through its gauge row, an
+# inductor of the problem's scale to ground, and set its flux by that
+# scale, and harmonic balance refuses the subnetwork itself. What counts
+# is the sources' total: sources whose net currents into a subnetwork
+# cancel, two drives of one waveform into it and out of it say, give it
+# the forcing of one source across it. A subnetwork no drive feeds has its
+# constant currents judged here, beyond the rounding of their sum; one a
+# drive feeds is judged with its drives whenever they are evaluated
+# (`checkbalance`). Compiled once for every collection of sources, whose
+# waveforms the drives wrap.
 Base.@nospecializeinfer function bindsources(psc::CompiledCircuit, vvn::Vector, ports::Vector{CompiledPort}, portpositive,
-        portnegative, n::Int, @nospecialize(sources))
+        portnegative, n::Int, floating::Vector{Vector{Int}}, @nospecialize(sources))
     drives = TransientDrive[]
     rows, cols, vals = Int[], Int[], Float64[]
     replaced = Set{Int}()
@@ -399,14 +445,62 @@ Base.@nospecializeinfer function bindsources(psc::CompiledCircuit, vvn::Vector, 
         n2 > 0 && (push!(rows, n2); push!(cols, k); push!(vals, -1.0))
     end
     injection = sparse(rows, cols, vals, n, length(drives))
-    constantcurrent = zeros(n)
+    # the constant current into each node and the magnitudes it sums
+    constantcurrent, magnitude = zeros(n), zeros(n)
     for c in psc.currentsources
         c in replaced && continue
         n1, n2 = psc.nodeindices[2, c] - 1, psc.nodeindices[1, c] - 1
-        n1 > 0 && (constantcurrent[n1] += vvn[c])
-        n2 > 0 && (constantcurrent[n2] -= vvn[c])
+        n1 > 0 && (constantcurrent[n1] += vvn[c]; magnitude[n1] += abs(vvn[c]))
+        n2 > 0 && (constantcurrent[n2] -= vvn[c]; magnitude[n2] += abs(vvn[c]))
     end
-    return drives, injection, constantcurrent
+    # the net injection of each drive into each subnetwork, gathered from
+    # the drives' terminals, a column for each subnetwork; a drive with
+    # both terminals in one subnetwork feeds it nothing
+    islandof = zeros(Int, n)
+    for (r, island) in enumerate(floating), i in island
+        islandof[i - 1] = r
+    end
+    ks, rs, vs = Int[], Int[], Float64[]
+    for k in axes(injection, 2), q in nzrange(injection, k)
+        r = islandof[rowvals(injection)[q]]
+        r > 0 && (push!(ks, k); push!(rs, r); push!(vs, nonzeros(injection)[q]))
+    end
+    nets = dropzeros!(sparse(ks, rs, vs, length(drives), length(floating)))
+    fed = Int[]; constants = Float64[]; magnitudes = Float64[]
+    for (r, island) in enumerate(floating)
+        net = sum(constantcurrent[i - 1] for i in island)
+        scale = sum(i -> magnitude[i - 1], island)
+        if !isempty(nzrange(nets, r))
+            push!(fed, r); push!(constants, net); push!(magnitudes, scale)
+        else
+            nodes = join(psc.nodenames[island], ", ")
+            abs(net) <= 2length(psc.currentsources)*eps(Float64)*scale || throw(ArgumentError(
+                lazy"the constant current sources drive a net current into the nodes ($(nodes)), which no element connects to ground, so the current has no path back; connect them to ground (a resistor or a capacitor will do)."))
+        end
+    end
+    balance = FloatingBalance(fed, [join(psc.nodenames[floating[r]], ", ") for r in fed],
+        nets[:, fed], constants, magnitudes, 2*(length(psc.currentsources) + length(drives)))
+    return drives, injection, constantcurrent, balance
+end
+
+# the net current of the drives, at the `values` they take at `t`, and of
+# the constant sources into each floating subnetwork a drive feeds,
+# refused beyond the rounding of its sum; each subnetwork reads the drives
+# which feed it
+function checkbalance(p::TransientProblem, values::AbstractVector, t)
+    b = p.balance
+    drives, nets = rowvals(b.net), nonzeros(b.net)
+    for r in eachindex(b.islands)
+        net, scale = b.constant[r], b.magnitude[r]
+        for q in nzrange(b.net, r)
+            x = nets[q]*values[drives[q]]
+            net += x
+            scale += abs(x)
+        end
+        abs(net) <= b.terms*eps(Float64)*scale || throw(ArgumentError(
+            lazy"the sources drive a net current of $(net) A into the nodes ($(b.nodes[r])) at t = $(t) s, which no element connects to ground, so the current has no path back; balance the sources, or connect the nodes to ground (a resistor or a capacitor will do)."))
+    end
+    return nothing
 end
 
 # the index of the port numbered `number` among `ports`, the row of its
@@ -596,7 +690,7 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
         push!(inertialess, [b.auxbase + q])
     end
     k0 = length(islands)
-    Z0 = sparse(reduce(vcat, islands; init = Int[]), reduce(vcat, [fill(c, length(z)) for (c, z) in enumerate(islands)]; init = Int[]),
+    Z0 = sparse(foldl(append!, islands; init = Int[]), [c for (c, z) in enumerate(islands) for _ in z],
         ones(sum(length, islands; init = 0)), n, k0)
     auxrows = [b.auxbase + q for b in blocks for q in eachindex(b.signal)]
     Ea = sparse(auxrows, 1:length(auxrows), ones(length(auxrows)), n, length(auxrows))
@@ -607,26 +701,73 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
     # capacitance, is a current the differential equations determine, of
     # no concern to the projection; a null vector with both a flux and a
     # current part would be a flux direction tied to an undetermined
-    # current, which the circuit does not support.
+    # current, which the circuit does not support. A block of the rate
+    # system has null vectors of its own (see ratesystem), so its
+    # directions are formed within it.
     # the null vectors are orthonormal, so a part below 1e-8 is roundoff
-    Nalpha, Nu = rs.rightnull[1:k0, :], rs.rightnull[k0 + 1:k0 + na, :]
-    cu = na == 0 ? Matrix(1.0I, size(Nalpha, 2), size(Nalpha, 2)) : nullspace(Nu; atol = 1e-8)
-    Valpha = orthonormalcolumns(Nalpha*cu)
-    d = size(Valpha, 2)
-    rank(Nalpha; atol = 1e-8) == d || throw(ArgumentError(
-        "a flux direction without capacitance is tied to a scattering block's port current that no equation determines; the circuit is singular in time."))
-    directions = sparse(Z0*Valpha)
+    vr, vc, vv = Int[], Int[], Float64[]
+    d = 0
+    for b in rs.blocks
+        size(b.rightnull, 2) == 0 && continue
+        flux, current = findall(<=(k0), b.cols), findall(>(k0), b.cols)
+        Nalpha = b.rightnull[flux, :]
+        cu = isempty(current) ? Matrix(1.0I, size(Nalpha, 2), size(Nalpha, 2)) :
+            nullspace(b.rightnull[current, :]; atol = 1e-8)
+        V = orthonormalcolumns(Nalpha*cu)
+        rank(Nalpha; atol = 1e-8) == size(V, 2) || throw(ArgumentError(
+            "a flux direction without capacitance is tied to a scattering block's port current that no equation determines; the circuit is singular in time."))
+        for j in axes(V, 2), (i, c) in enumerate(b.cols[flux])
+            push!(vr, c); push!(vc, d + j); push!(vv, V[i, j])
+        end
+        d += size(V, 2)
+    end
+    Valpha = sparse(vr, vc, vv, k0, d)
+    directions = Z0*Valpha
     # the constraints are the combinations of the equations without any
     # rate: the block currents cancel in every left null vector and the
     # rates along the islands too, and the combinations without the rate
-    # of any other node are kept, as many as the directions
-    rows = Matrix(transpose(Z0*rs.leftnull[1:k0, :] .+ Ea*rs.leftnull[k0 + 1:k0 + na, :]))
-    leak = rows*G
-    cl = size(rows, 1) == 0 ? zeros(0, 0) : nullspace(Matrix(transpose(leak)); atol = 1e-8*max(norm(G, Inf), floatmin(Float64)))
-    constraints = size(rows, 1) == 0 ? spzeros(0, n) : sparse(transpose(cl)*rows)
+    # of any other node are kept, as many as the directions. The left
+    # null vectors over every equation, one row each, a node row taking
+    # its island's coefficient; those whose leaks reach no node in common
+    # are combined apart
+    lr, lc, lv = Int[], Int[], Float64[]
+    e = 0
+    for b in rs.blocks, j in axes(b.leftnull, 2)
+        e += 1
+        for (i, r) in enumerate(b.rows)
+            x = b.leftnull[i, j]
+            for node in (r <= k0 ? islands[r] : (auxrows[r - k0],))
+                push!(lr, e); push!(lc, node); push!(lv, x)
+            end
+        end
+    end
+    rowst = sparse(lc, lr, lv, n, e)
+    leak = sparse(transpose(rowst))*G
+    leakt = sparse(transpose(leak))
+    atol = 1e-8*max(norm(G, Inf), floatmin(Float64))
+    cr, cc, cv = Int[], Int[], Float64[]
+    f = 0
+    at = zeros(Int, n)
+    for (R, C) in blockcomponents(leak)
+        isempty(R) && continue
+        cl = isempty(C) ? Matrix(1.0I, length(R), length(R)) : nullspace(densesub!(at, leakt, C, R); atol)
+        # the group's constraints on the nodes its combinations span
+        span = sort!(unique!([rowvals(rowst)[q] for r in R for q in nzrange(rowst, r)]))
+        D = densesub!(at, rowst, span, R)*cl
+        for j in axes(D, 2), i in axes(D, 1)
+            iszero(D[i, j]) && continue
+            push!(cr, span[i]); push!(cc, f + j); push!(cv, D[i, j])
+        end
+        f += size(cl, 2)
+    end
+    constraints = sparse(cc, cr, cv, f, n)
     size(constraints, 1) == d || throw(ArgumentError(
         "a scattering block ties the rate of a node with capacitance to a constraint on a node without one; that coupling is not supported in time."))
-    algebraic = [sort!([node for (c, z) in enumerate(islands) if abs(Valpha[c, j]) > 1e-8 for node in z]) for j in 1:d]
+    algebraic = [Int[] for _ in 1:d]
+    for j in 1:d, q in nzrange(Valpha, j)
+        abs(nonzeros(Valpha)[q]) > 1e-8 && append!(algebraic[j], islands[rowvals(Valpha)[q]])
+    end
+    foreach(sort!, algebraic)
     # the coupled inductor currents, each its own direction
     coupled = sparse(Nnodal .+ (1:Naux), 1:Naux, ones(Naux), n, Naux)
     directions = hcat(directions, coupled)
@@ -634,6 +775,45 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
     append!(algebraic, [[Nnodal + k] for k in 1:Naux])
     order = sortperm(algebraic; by = z -> (first(z), length(z)))
     return inertialess, algebraic[order], directions[:, order], constraints[order, :]
+end
+
+# A block of the rate system, its rows and its columns, which no other
+# block shares, and its right and left null vectors as orthonormal columns
+struct RateBlock
+    rows::Vector{Int}
+    cols::Vector{Int}
+    rightnull::Matrix{Float64}
+    leftnull::Matrix{Float64}
+end
+
+# A block of the rate system too large to decompose densely, factorized by
+# the sparse QR factorization of its balanced matrix, which sets last the
+# columns whose remaining norm falls below the rank tolerance and so
+# reveals the block's rank as the singular values reveal a small block's:
+# its rows and columns, the factorization's `Q`, its rank and the leading
+# triangle of its `R`, its row and column permutations, `Q R` being the
+# balanced block permuted, the balancing of the block's rows and columns,
+# and the null vectors of the balanced block as orthonormal columns, which
+# the minimum norm solution leaves out
+struct RateFactor
+    rows::Vector{Int}
+    cols::Vector{Int}
+    Q::SparseArrays.SPQR.QRSparseQ{Float64,Int}
+    rank::Int
+    R11::SparseMatrixCSC{Float64,Int}
+    prow::Vector{Int}
+    pcol::Vector{Int}
+    dr::Vector{Float64}
+    dc::Vector{Float64}
+    null::Matrix{Float64}
+end
+
+# The pseudoinverse of a rate system on its range, from its rows to its
+# columns: the small blocks' as one sparse matrix, and the factorized
+# blocks' applied through their factorizations (see ratesolve!)
+struct RatePseudoinverse
+    dense::SparseMatrixCSC{Float64,Int}
+    factors::Vector{RateFactor}
 end
 
 # The rate system along the capacitor free islands `Z0` and the block
@@ -644,23 +824,197 @@ end
 # an endpoint and leaves the null directions alone. The balancing keeps
 # a conductance small in the equations' scale from being taken for zero
 # next to a block's rows, while an exact dependence, a through's two
-# rows, stays one.
-function ratesystem(G::SparseMatrixCSC, L::SparseMatrixCSC, Z0::SparseMatrixCSC, Ea::SparseMatrixCSC; rtol = 1e-8)
+# rows, stays one. The islands and the block rows couple only through
+# the nodes they share, so the system falls into blocks which share no
+# row or column, the connected components of its pattern; each is
+# decomposed alone, its singular values held against the largest of them
+# all, which is the decomposition of the whole system, and its
+# pseudoinverse and null vectors are its own. A block of more than
+# `maxdense` rows or columns, a cascade of blocks through nodes without
+# capacitance say, is factorized by sparse QR instead (see RateFactor),
+# whose cost grows with its pattern rather than as the cube of its size,
+# at the same tolerance, the largest singular value bounded there by the
+# norms of its balanced matrix. Returns the blocks, the pseudoinverse and
+# the size of the system.
+function ratesystem(G::SparseMatrixCSC, L::SparseMatrixCSC, Z0::SparseMatrixCSC, Ea::SparseMatrixCSC;
+        rtol = 1e-8, maxdense::Integer = 64)
     Q = sparse(transpose(hcat(Z0, Ea)))
-    K = Matrix(hcat(Q*G*Z0, Q*L*Ea))
+    K = dropzeros!(hcat(Q*G*Z0, Q*L*Ea))
     m = size(K, 1)
-    m == 0 && return (; K, Minv = zeros(0, 0), rightnull = zeros(0, 0), leftnull = zeros(0, 0))
-    dc = [(x = maximum(abs, view(K, :, j)); x > 0 ? 1/x : 1.0) for j in 1:m]
-    Kb = K .* transpose(dc)
-    dr = [(x = maximum(abs, view(Kb, i, :)); x > 0 ? 1/x : 1.0) for i in 1:m]
-    Kb = dr .* Kb
-    F = svd(Kb; full = true)
-    smax = F.S[1]
-    r = count(s -> s > rtol*smax, F.S)
-    Minv = (dc .* F.V[:, 1:r])*Diagonal(1 ./ F.S[1:r])*transpose(F.U[:, 1:r] .* dr)
-    rightnull = orthonormalcolumns(dc .* F.V[:, r + 1:m])
-    leftnull = orthonormalcolumns(dr .* F.U[:, r + 1:m])
-    return (; K, Minv, rightnull, leftnull)
+    dc = ones(m)
+    for j in 1:m
+        x = maximum(abs, view(nonzeros(K), nzrange(K, j)); init = 0.0)
+        x > 0 && (dc[j] = 1/x)
+    end
+    Kb = K*Diagonal(dc)
+    rmax = zeros(m)
+    for (i, x) in zip(rowvals(Kb), nonzeros(Kb))
+        rmax[i] = max(rmax[i], abs(x))
+    end
+    dr = [x > 0 ? 1/x : 1.0 for x in rmax]
+    Kb = Diagonal(dr)*Kb
+    parts = blockcomponents(Kb)
+    large = ((R, C),) -> max(length(R), length(C)) > maxdense
+    at = zeros(Int, m)
+    F = [isempty(R) || isempty(C) || large((R, C)) ? nothing : svd(densesub!(at, Kb, R, C); full = true) for (R, C) in parts]
+    smax = maximum((first(f.S) for f in F if !isnothing(f)); init = 0.0)
+    for (R, C) in Iterators.filter(large, parts)
+        B = Kb[R, C]
+        smax = max(smax, sqrt(opnorm(B, 1)*opnorm(B, Inf)))
+    end
+    blocks, factors = RateBlock[], RateFactor[]
+    pr, pc, pv = Int[], Int[], Float64[]
+    for ((R, C), f) in zip(parts, F)
+        if large((R, C))
+            q = qr(Kb[R, C]; tol = rtol*smax)
+            r = rank(q)
+            R11 = q.R[1:r, 1:r]
+            prow, pcol = q.prow, q.pcol
+            # the null vectors: each dependent column a unit step, the
+            # independent ones solved for through the triangle
+            X = Matrix(q.R[1:r, r + 1:end])
+            ldiv!(UpperTriangular(R11), X)
+            N = zeros(length(C), length(C) - r)
+            N[pcol, :] = vcat(-X, Matrix(1.0I, length(C) - r, length(C) - r))
+            Lb = zeros(length(R), length(R) - r)
+            Lb[prow, :] = q.Q*vcat(zeros(r, length(R) - r), Matrix(1.0I, length(R) - r, length(R) - r))
+            push!(blocks, RateBlock(R, C, orthonormalcolumns(dc[C] .* N), orthonormalcolumns(dr[R] .* Lb)))
+            push!(factors, RateFactor(R, C, q.Q, r, R11, prow, pcol, dr[R], dc[C], orthonormalcolumns(N)))
+        elseif isnothing(f)
+            # a row or a column without an entry, its own null vector
+            push!(blocks, RateBlock(R, C, Matrix(1.0I, length(C), length(C)), Matrix(1.0I, length(R), length(R))))
+        else
+            r = count(s -> s > rtol*smax, f.S)
+            pinv = (dc[C] .* f.V[:, 1:r])*Diagonal(1 ./ f.S[1:r])*transpose(f.U[:, 1:r] .* dr[R])
+            for (jj, row) in enumerate(R), (ii, col) in enumerate(C)
+                push!(pr, col); push!(pc, row); push!(pv, pinv[ii, jj])
+            end
+            push!(blocks, RateBlock(R, C, orthonormalcolumns(dc[C] .* f.V[:, r + 1:end]),
+                orthonormalcolumns(dr[R] .* f.U[:, r + 1:end])))
+        end
+    end
+    return (; blocks, pinv = RatePseudoinverse(sparse(pr, pc, pv, m, m), factors), m)
+end
+
+# `theta = P g`, or with `transposed` `theta = P' g`, for the
+# pseudoinverse `P` of a rate system, over the columns of `g`: the small
+# blocks through their sparse matrix and each factorized block through its
+# factorization, with `work` the buffers of `ratework`
+function ratesolve!(theta, P::RatePseudoinverse, g, work; transposed::Bool = false)
+    transposed ? mul!(theta, transpose(P.dense), g) : mul!(theta, P.dense, g)
+    for (f, w) in zip(P.factors, work)
+        transposed ? factorsolvetranspose!(theta, f, g, w) : factorsolve!(theta, f, g, w)
+    end
+    return theta
+end
+
+# the buffers of the factorized blocks' solves over `m` columns: for each
+# block a column over its rows, a column over its columns, and the
+# coefficients along its null vectors
+ratework(P::RatePseudoinverse, m::Integer) =
+    [(zeros(length(f.rows), m), zeros(length(f.cols), m), zeros(size(f.null, 2), m)) for f in P.factors]
+
+# The minimum norm solution through a factorized block,
+# `theta[cols] = dc .* (B^+ (dr .* g[rows]))` for its balanced matrix `B`:
+# the right hand side along `Q'`, the triangle solved for the independent
+# columns, the dependent ones zero, and the null vectors taken out
+function factorsolve!(theta, f::RateFactor, g, (b, x, c))
+    r = f.rank
+    for (k, i) in enumerate(f.prow), j in axes(g, 2)
+        b[k, j] = f.dr[i]*g[f.rows[i], j]
+    end
+    lmul!(adjoint(f.Q), b)
+    ldiv!(UpperTriangular(f.R11), view(b, 1:r, :))
+    fill!(x, 0)
+    for q in 1:r, j in axes(g, 2)
+        x[f.pcol[q], j] = b[q, j]
+    end
+    mul!(c, transpose(f.null), x)
+    mul!(x, f.null, c, -1.0, 1.0)
+    for (k, col) in enumerate(f.cols), j in axes(g, 2)
+        theta[col, j] = f.dc[k]*x[k, j]
+    end
+    return theta
+end
+
+# Its transpose, `theta[rows] = dr .* (B^+' (dc .* g[cols]))`: the right
+# hand side with the null vectors taken out, the transposed triangle solved
+# along the independent columns, and the solution along `Q`
+function factorsolvetranspose!(theta, f::RateFactor, g, (b, x, c))
+    r = f.rank
+    for (k, col) in enumerate(f.cols), j in axes(g, 2)
+        x[k, j] = f.dc[k]*g[col, j]
+    end
+    mul!(c, transpose(f.null), x)
+    mul!(x, f.null, c, -1.0, 1.0)
+    fill!(b, 0)
+    for q in 1:r, j in axes(g, 2)
+        b[q, j] = x[f.pcol[q], j]
+    end
+    ldiv!(transpose(UpperTriangular(f.R11)), view(b, 1:r, :))
+    lmul!(f.Q, b)
+    for (k, i) in enumerate(f.prow), j in axes(g, 2)
+        theta[f.rows[i], j] = f.dr[i]*b[k, j]
+    end
+    return theta
+end
+
+# The dense submatrix of `A` on the rows `R` and the columns `C`, read from
+# the entries of its columns through `at`, a vector over its rows which
+# holds zeros and is left so: work in proportion to the entries read,
+# whatever the size of `A`.
+function densesub!(at::Vector{Int}, A::SparseMatrixCSC, R, C)
+    for (i, r) in enumerate(R)
+        at[r] = i
+    end
+    B = zeros(length(R), length(C))
+    for (j, c) in enumerate(C), q in nzrange(A, c)
+        i = at[rowvals(A)[q]]
+        i > 0 && (B[i, j] = nonzeros(A)[q])
+    end
+    for r in R
+        at[r] = 0
+    end
+    return B
+end
+
+# The connected components of the pattern of `A`, its rows and its
+# columns joined by its entries: blocks which share no row or column,
+# each as its sorted rows and columns, in the order of their first
+# column, and a row without an entry a block of its own after them.
+function blockcomponents(A::SparseMatrixCSC)
+    m, n = size(A)
+    At = sparse(transpose(A))
+    rowblock, colblock = falses(m), falses(n)
+    blocks = Tuple{Vector{Int},Vector{Int}}[]
+    queue = Int[]
+    for j0 in 1:n
+        colblock[j0] && continue
+        rows, cols = Int[], Int[]
+        colblock[j0] = true
+        push!(queue, j0)
+        while !isempty(queue)
+            j = pop!(queue)
+            push!(cols, j)
+            for q in nzrange(A, j)
+                i = rowvals(A)[q]
+                rowblock[i] && continue
+                rowblock[i] = true
+                push!(rows, i)
+                for p in nzrange(At, i)
+                    k = rowvals(At)[p]
+                    colblock[k] && continue
+                    colblock[k] = true
+                    push!(queue, k)
+                end
+            end
+        end
+        push!(blocks, (sort!(rows), sort!(cols)))
+    end
+    for i in 1:m
+        rowblock[i] || push!(blocks, ([i], Int[]))
+    end
+    return blocks
 end
 
 # an orthonormal basis of the span of the columns of `M`
@@ -690,12 +1044,10 @@ function transientedges(psc::CompiledCircuit, vvn::Vector, types;
 end
 
 # the subnetworks of the nodes that no element of the given types with a
-# finite nonzero value, nor any of the extra edges, connects to ground, as
-# sorted lists of state indices in the order of their first node
-function transientsubnetworks(psc::CompiledCircuit, vvn::Vector, types,
-        edges = Tuple{Int,Int}[])
-    nodes = nodecomponents(psc.Nnodes,
-        append!(transientedges(psc, vvn, types), edges))
+# finite nonzero value connects to ground, as sorted lists of state indices
+# in the order of their first node
+function transientsubnetworks(psc::CompiledCircuit, vvn::Vector, types)
+    nodes = nodecomponents(psc.Nnodes, transientedges(psc, vvn, types))
     return [n .- 1 for n in nodes]
 end
 
@@ -730,9 +1082,13 @@ it is in. A state does not depend on the step: a history recorded at one
 step is read at another through the same interpolation the lines read
 their history with.
 """
-struct TransientState{V}
-    flux::V
-    rate::V
+struct TransientState
+    # host vectors of `Float64`, to which the constructor converts the
+    # vectors it is given, a device's among them: the one form the step
+    # drivers take, so that they compile once whatever form a state is
+    # given in
+    flux::Vector{Float64}
+    rate::Vector{Float64}
     waves::Matrix{Float64}
     wavesdt::Float64
     blockstates::Vector{Float64}
@@ -851,19 +1207,19 @@ function alwayson(p::TransientProblem)
     return TransientProblem(p; blocks)
 end
 
-# The state of a transient on a harmonic balance orbit at the time `t`:
-# the node fluxes and voltages of the orbit's Fourier series, with the
-# direct voltage the solution holds apart, the port currents of the
-# blocks as the solution determined them with the whole circuit, the
-# states of each block's filters in the steady state of every mode,
-# under the incident waves the port voltages and currents make, and the
-# history of the wave leaving each line port, `(v + Z i)/(2 sqrt(Z))`
-# from the port's voltage and the current into the line the solution
-# determined, over the prehistory a solve at the step `dt` reads, at
-# that step. A pumped block's filters are driven by its incident waves
-# alone, its modulations acting on their outputs, so the states of every
-# mode are formed as an unpumped block's are.
-function orbitstate(p::TransientProblem, nonlinear::NonlinearHB; t::Real = 0.0, dt::Union{Nothing,Real} = nothing)
+# The state of a transient on a harmonic balance orbit at time zero, the
+# origin of its phases: the node fluxes and voltages of the orbit's
+# Fourier series, with the direct voltage the solution holds apart, the
+# port currents of the blocks as the solution determined them with the
+# whole circuit, the states of each block's filters in the steady state
+# of every mode, under the incident waves the port voltages and currents
+# make, and the history of the wave leaving each line port,
+# `(v + Z i)/(2 sqrt(Z))` from the port's voltage and the current into the
+# line the solution determined, over the prehistory a solve at the step
+# `dt` reads, at that step. A pumped block's filters are driven by its
+# incident waves alone, its modulations acting on their outputs, so the
+# states of every mode are formed as an unpumped block's are.
+function orbitstate(p::TransientProblem, nonlinear::NonlinearHB; dt::Union{Nothing,Real} = nothing)
     isempty(p.lines) || !isnothing(dt) || throw(ArgumentError(
         "a transient on a harmonic balance orbit through a transmission line starts from the line's history, sampled at the step: give dt."))
     modes = nonlinear.modes
@@ -874,7 +1230,7 @@ function orbitstate(p::TransientProblem, nonlinear::NonlinearHB; t::Real = 0.0, 
     f = [sum(mode .* w) for mode in modes]
     # the real signal: the zero mode once, every other mode twice its
     # real part
-    c = [all(iszero, mode) ? 1.0 : 2.0 for mode in modes] .* cis.(f .* t)
+    c = [all(iszero, mode) ? 1.0 : 2.0 for mode in modes]
     dc = isnothing(nonlinear.dcnodevoltage) ? zeros(p.Nnodal) : real.(initialguess(nonlinear.dcnodevoltage))
     flux = phi0 .* vec(sum(real.(c .* F); dims = 1))
     voltage = dc .+ phi0 .* vec(sum(real.(c .* (im .* f) .* F); dims = 1))
@@ -901,9 +1257,9 @@ function orbitstate(p::TransientProblem, nonlinear::NonlinearHB; t::Real = 0.0, 
         zs[b.zbase + 1:b.zbase + nz] .= states
     end
     isempty(p.lines) && return TransientState(x, v, state.waves, state.wavesdt, zs)
-    # the columns end at `t`, as a solve's history ends at its start
+    # the columns end at zero, as a solve's history ends at its start
     npre = lineprehistory(p, dt)
-    times = t .- (npre - 1:-1:0) .* dt
+    times = -(npre - 1:-1:0) .* dt
     waves = zeros(2length(p.lines), npre)
     for k in eachindex(modes)
         V = modevoltage(k)
@@ -987,4 +1343,15 @@ function initialarrivals(state::TransientState, p::TransientProblem, t = 0.0)
         end
     end
     return q
+end
+
+# The currents the lines force at the start of a solve from a state's own
+# history, `2 q / sqrt(Z)` of the arriving waves, and their rate by the
+# central difference of `delta` a stepper's reading takes of its history
+# (see `readstepper!`), so that a state taken from the end of a solve
+# meets the check of the next start as it met the reading there
+function stateforcing(state::TransientState, p::TransientProblem, delta)
+    forced = lineforcing(p, initialarrivals(state, p))
+    rate = (lineforcing(p, initialarrivals(state, p, delta)) .- lineforcing(p, initialarrivals(state, p, -delta))) ./ (2delta)
+    return forced, rate
 end

@@ -4,90 +4,61 @@ using XicTools_jll
 
 @testset verbose=true "spicewrapper" begin
 
-    @testset "spice_hb_load" begin
-
-        filepath = joinpath(dirname(Base.source_path()),"spicewrapper","invert_hb_lapack.cir.HB.FD.prn")
-
-        out1 = JosephsonCircuits.spice_hb_load(filepath)
-
-        out2 = (f = [-3.0e6, -2.9e6, -2.8e6, -2.7e6, -2.6e6, -2.5e6, -2.4e6, -2.3e6, -2.2e6, -2.1e6, -2.0e6, -1.9e6, -1.8e6, -1.7e6, -1.6e6, -1.5e6, -1.4e6, -1.3e6, -1.2e6, -1.1e6, -1.0e6, -900000.0, -800000.0, -700000.0, -600000.0, -500000.0, -400000.0, -300000.0, -200000.0, -100000.0, 0.0, 100000.0, 200000.0, 300000.0, 400000.0, 500000.0, 600000.0, 700000.0, 800000.0, 900000.0, 1.0e6, 1.1e6, 1.2e6, 1.3e6, 1.4e6, 1.5e6, 1.6e6, 1.7e6, 1.8e6, 1.9e6, 2.0e6, 2.1e6, 2.2e6, 2.3e6, 2.4e6, 2.5e6, 2.6e6, 2.7e6, 2.8e6, 2.9e6, 3.0e6], index = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0, 41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0, 49.0, 50.0, 51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0], header = SubString{String}["Index", "FREQ", "{V(VOUT)+1.0}", "{V(IN)+4.0}", "{V(1)+4.0}", "Re(IG(MP1))", "Im(IG(MP1))", "Re(IG(MN1))", "Im(IG(MN1))", "Re(IS(MP1))", "Im(IS(MP1))", "Re(ID(MN1))", "Im(ID(MN1))", "Re(ID(MP1))", "Im(ID(MP1))"]);
-
-        @test all(out1.f .== out2.f)
-        @test all(out1.header .== out2.header)
-        @test all(out1.index .== out2.index)
-        # a variable's real and imaginary columns are paired by their names,
-        # and an expression column is a real variable of its own; the values
-        # are those of the first line of the file
-        @test out1.variables == ["{V(VOUT)+1.0}", "{V(IN)+4.0}", "{V(1)+4.0}",
-            "IG(MP1)", "IG(MN1)", "IS(MP1)", "ID(MN1)", "ID(MP1)"]
-        @test size(out1.data) == (8, 61)
-        @test out1.data[1, 1] == 9.93780083e-01
-        @test out1.data[4, 1] == 1.09159490e-08 + 2.09869965e-09im
-        @test out1.data[8, 1] == 1.06017364e-06 - 2.20750432e-06im
-
-        # two complex variables, the columns of each side by side
-        mktempdir() do dir
-            path = joinpath(dir, "two.HB.FD.prn")
-            write(path, """
-                Index   FREQ   Re(V(1))   Im(V(1))   Re(V(2))   Im(V(2))
-                0   1.0e9   1.0   2.0   3.0   4.0
-                1   2.0e9   5.0   6.0   7.0   8.0
-                End of Xyce(TM) Simulation
-                """)
-            out = JosephsonCircuits.spice_hb_load(path)
-            @test out.variables == ["V(1)", "V(2)"]
-            @test out.data == [1+2im 5+6im; 3+4im 7+8im]
-            @test out.f == [1.0e9, 2.0e9]
-        end
-
-    end
-
     @testset "wrspice_input_transient" begin
         @testset "wrspice_input_transient errors" begin
 
             @test_throws(
                 ArgumentError("Source nodes not strings or integers."),
-                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1.1,0),1e-9,100e-9,10e-9))
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,2pi*5e9,3.14,(1.1,0),1e-9,100e-9,10e-9))
 
             @test_throws(
                 ArgumentError("Input vector lengths not equal."),
-                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1,0,0),1e-9,100e-9,10e-9))
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,2pi*5e9,3.14,(1,0,0),1e-9,100e-9,10e-9))
 
             @test_throws(
                 ArgumentError("Input vector lengths not equal."),
-                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0)],1e-9,100e-9,10e-9))
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],2pi*[5e9,6e9],[3.14,6.28],[(1,0)],1e-9,100e-9,10e-9))
 
             @test_throws(
                 ArgumentError("Two nodes are required per source."),
-                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1,0,2)],1e-9,100e-9,10e-9))
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],2pi*[5e9,6e9],[3.14,6.28],[(1,0),(1,0,2)],1e-9,100e-9,10e-9))
 
             @test_throws(
                 ArgumentError("Nodes are not an integer or string."),
-                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1.1,0)],1e-9,100e-9,10e-9))
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],2pi*[5e9,6e9],[3.14,6.28],[(1,0),(1.1,0)],1e-9,100e-9,10e-9))
 
             # test various combinations of vctor and scalar inputs
-            @test(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1,0),1e-9,100e-9,10e-9) == JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6],[5e9],[3.14],(1,0),1e-9,100e-9,10e-9))
-            @test(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1,0),1e-9,100e-9,10e-9) == JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6],[5e9],[3.14],[(1,0)],1e-9,100e-9,10e-9))
+            @test(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,2pi*5e9,3.14,(1,0),1e-9,100e-9,10e-9) == JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6],[2pi*5e9],[3.14],(1,0),1e-9,100e-9,10e-9))
+            @test(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,2pi*5e9,3.14,(1,0),1e-9,100e-9,10e-9) == JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6],[2pi*5e9],[3.14],[(1,0)],1e-9,100e-9,10e-9))
 
+        end
+
+        @testset "the angular frequency" begin
+            # a source is written as SPICE's cos(w*t), with the angular
+            # frequency it is given, in units of 1e9 radians per second
+            w = 2pi*5e9
+            input = JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",
+                1e-6, w, 0.0, (0, 1), 1e-12, 1e-9, 1e-10)
+            @test occursin("cos($(w*1e-9)g*x", input)
         end
 
 
     end
 
     @testset "wrspice_input_ac array" begin
-        out1 = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",collect((4:0.01:5)*1e9),[1,2],1e-6)
+        out1 = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",collect(2pi*(4:0.01:5)*1e9),[1,2],1e-6)
         out2 = "* SPICE Simulation\n* AC current source into the port\nisrc 0 1 ac 1.0e-6 0.0\n\n* Set up the AC small signal simulation\n.ac lin 99 4.0g 5.0g\n\n* The control block\n.control\n\n* Maximum size of data to export in kilobytes from 1e3 to 2e9 with\n* default 2.56e5. This has to come before the run command\nset maxdata=2.0e9\n\n* Run the simulation\nrun\n\n* Binary files are faster to save and load.\nset filetype=binary\n\n* Leave filename empty so we can add that as a command line argument.\n* Don't specify any variables so it saves everything.\nwrite\n\n.endc\n\n"
         @test out1 == out2
     end
 
     @testset "wrspice_input_ac float" begin
-        out1 = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",4.0*1e9,[1,2],1e-6)
+        out1 = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",2pi*4.0e9,[1,2],1e-6)
         out2 = "* SPICE Simulation\n* AC current source into the port\nisrc 0 1 ac 1.0e-6 0.0\n\n* Set up the AC small signal simulation\n.ac lin 1 4.0g 4.0g\n\n* The control block\n.control\n\n* Maximum size of data to export in kilobytes from 1e3 to 2e9 with\n* default 2.56e5. This has to come before the run command\nset maxdata=2.0e9\n\n* Run the simulation\nrun\n\n* Binary files are faster to save and load.\nset filetype=binary\n\n* Leave filename empty so we can add that as a command line argument.\n* Don't specify any variables so it saves everything.\nwrite\n\n.endc\n\n"
         @test out1 == out2
     end
 
     @testset "wrspice_input_ac float array" begin
-        out1 = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",[4.0]*1e9,[1,2],1e-6)
+        out1 = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",2pi*[4.0e9],[1,2],1e-6)
         out2 = "* SPICE Simulation\n* AC current source into the port\nisrc 0 1 ac 1.0e-6 0.0\n\n* Set up the AC small signal simulation\n.ac lin 1 4.0g 4.0g\n\n* The control block\n.control\n\n* Maximum size of data to export in kilobytes from 1e3 to 2e9 with\n* default 2.56e5. This has to come before the run command\nset maxdata=2.0e9\n\n* Run the simulation\nrun\n\n* Binary files are faster to save and load.\nset filetype=binary\n\n* Leave filename empty so we can add that as a command line argument.\n* Don't specify any variables so it saves everything.\nwrite\n\n.endc\n\n"
         @test out1 == out2
     end
@@ -96,11 +67,15 @@ using XicTools_jll
         # one frequency from a range is written as from a vector, and two
         # are refused, since WRSPICE answers a sweep of no intermediate
         # steps with three points
-        ac(freqs) = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation", freqs, [1, 2], 1e-6)
-        @test ac((4:1:4)*1e9) == ac([4.0e9]) == ac(4.0e9)
-        @test_throws ArgumentError ac([4.0e9, 5.0e9])
-        @test_throws ArgumentError ac((4:1:5)*1e9)
+        ac(ws) = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation", ws, [1, 2], 1e-6)
+        @test ac(2pi*(4:1:4)*1e9) == ac(2pi*[4.0e9]) == ac(2pi*4.0e9)
+        @test_throws ArgumentError ac(2pi*[4.0e9, 5.0e9])
+        @test_throws ArgumentError ac(2pi*(4:1:5)*1e9)
         @test_throws ArgumentError ac(Float64[])
+        # WRSPICE answers a linear sweep at equal steps from the first
+        # frequency to the last, so frequencies which are not uniformly
+        # spaced are refused
+        @test_throws ArgumentError ac(2pi*[4.0e9, 4.1e9, 5.0e9])
     end
 
     @testset "wrspice_cmd" begin
@@ -151,16 +126,17 @@ using XicTools_jll
             rc = "* RC\nR1 1 0 50\nC1 1 0 1p"
             for I in (1e-6, 1e-6*cis(pi/2), -1e-6)
                 ac = JosephsonCircuits.spice_run(
-                    JosephsonCircuits.wrspice_input_ac(rc, 5.0e9, [1, 2], I),
+                    JosephsonCircuits.wrspice_input_ac(rc, 2pi*5.0e9, [1, 2], I),
                     JosephsonCircuits.wrspice_cmd())
                 @test ac.values["V"][1, 1] ≈ I/(1/50 + im*2pi*5e9*1e-12) rtol = 1e-6
             end
-            # a sweep is answered at the frequencies asked for
-            for freqs in ([4e9, 4.5e9, 5e9], (4:0.1:5)*1e9)
+            # a sweep is answered at the frequencies asked for, which
+            # the rawfile gives in Hz
+            for ws in (2pi*[4e9, 4.5e9, 5e9], 2pi*(4:0.1:5)*1e9)
                 ac = JosephsonCircuits.spice_run(
-                    JosephsonCircuits.wrspice_input_ac(rc, freqs, [1, 2], 1e-6),
+                    JosephsonCircuits.wrspice_input_ac(rc, ws, [1, 2], 1e-6),
                     JosephsonCircuits.wrspice_cmd())
-                @test vec(real.(ac.values["Hz"])) ≈ freqs rtol = 1e-12
+                @test vec(real.(ac.values["Hz"])) ≈ ws/(2pi) rtol = 1e-12
             end
 
             # an element of a model the input does not define: WRSPICE
