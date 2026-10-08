@@ -455,9 +455,10 @@ using Test
         @test errorfrom(VectorFitting(start = reverse(a), iterations = 1)) < 1e-13
         @test errorfrom(VectorFitting(start = :log, iterations = 1)) < 1e-9 < errorfrom(VectorFitting(iterations = 1))
         # half the pairs spread each way, as VFdriver starts, relocate
-        # to the resonances as well, and the order search starts every
-        # order so
-        @test errorfrom(VectorFitting(start = :linlog)) < 1e-13
+        # to the resonances as well, to a fit the relocation counts exact
+        # and stops at, within fitroundoff of the largest response; and
+        # the order search starts every order so
+        @test errorfrom(VectorFitting(start = :linlog)) <= JC.fitroundoff*JC.largestopnorm(Sw)
         @test size(RationalScattering(data; tol = 1e-6, fitting = VectorFitting(start = :linlog)).provider.A) == (3, 3)
         @test_throws ArgumentError JC.vectorfit(Sw, ws, 4, VectorFitting(start = a))
         @test_throws ArgumentError RationalScattering(data; tol = 1e-6, fitting = VectorFitting(start = expected))

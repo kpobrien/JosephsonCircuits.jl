@@ -3,7 +3,6 @@
 using Documenter, JosephsonCircuits
 # Load the plotting backend before Documenter evaluates isolated examples.
 using Plots
-include("readme.jl")
 include("pages.jl")
 include("api.jl")
 

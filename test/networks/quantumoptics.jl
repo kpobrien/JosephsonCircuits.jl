@@ -937,6 +937,12 @@ using Test
         Aa1 = O * [0 1.3 0 0; -1.3 0 0 0; 0 0 0 0; 0 0 0 0] * transpose(O)
         Q1 = JosephsonCircuits.symplectic_normal_form_pair(Aa1)
         @test isapprox(Aa1, Q1 * Omega * Q1')
+        # a Schur form whose 2x2 block falls between its 1x1 zero blocks, an
+        # order LAPACK gives some of those matrices: each block's columns
+        # are paired
+        T = [0 0 0 0; 0 0 1.3 0; 0 -1.3 0 0; 0 0 0 0]
+        Q2 = JosephsonCircuits.schurnormalform(T, Matrix(1.0I, 4, 4))
+        @test isapprox(T, Q2 * Omega * Q2')
 
         # errors
         @test_throws(

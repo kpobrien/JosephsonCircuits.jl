@@ -2691,13 +2691,31 @@ function symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
 
     # the symplectic normal form from the real Schur decomposition
     F = schur(A)
-    T = Matrix(F.T)
-    Z = Matrix(F.Z)
+    return schurnormalform(Matrix(F.T), Matrix(F.Z))
+end
 
-    _, d = schurblockscaling(T, n ÷ 2; inverse = false)
-
-    Q = Z * Diagonal(d)
-    return Q
+# The factor `Q` of `Z T Z^T = Q Ω Q^T`, where `T` and `Z` are the real Schur
+# form of a skew-symmetric matrix and `Ω` is the pair symplectic form. The
+# 2x2 blocks of `T` hold the eigenvalue pairs ±ia; a singular matrix's also
+# has 1x1 zero blocks, which can fall between them. `Q` takes the columns
+# of `Z` with each 2x2 block's two together, then the 1x1 blocks' in pairs,
+# each pair scaled as `schurblockscaling` scales its block.
+function schurnormalform(T, Z)
+    n = size(T, 1)
+    order, singles = Int[], Int[]
+    i = 1
+    while i <= n
+        if i < n && !iszero(T[i+1, i])
+            push!(order, i, i + 1)
+            i += 2
+        else
+            push!(singles, i)
+            i += 1
+        end
+    end
+    append!(order, singles)
+    _, d = schurblockscaling(T[order, order], n ÷ 2; inverse = false)
+    return Z[:, order] * Diagonal(d)
 end
 
 """

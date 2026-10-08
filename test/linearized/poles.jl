@@ -301,9 +301,14 @@ end
         # alone, against geevx, which forms every vector and condition, on
         # maps turned into every coordinate by a reflection: a complex pair
         # at the top whose partner nev = 1 leaves out, an isolated
-        # multiplier beside a defective block, and a nilpotent map, whose
-        # multipliers none resolves. The multipliers are geevx's, and so are
-        # the chosen ones' vectors and conditions; with nev = :all each
+        # multiplier beside a defective block, and a defective block alone,
+        # whose multipliers none resolves. That one is exact in its Schur
+        # form: roundoff spreads the multipliers of a turned defective block
+        # to the order of their own bounds, and the platform's rounding
+        # decides whether they resolve. The multipliers are geevx's, and so
+        # are the chosen ones' vectors, and their conditions, cosines
+        # between computed vectors, to the rounding both computations
+        # carry, 4n eps whatever the condition; with nev = :all each
         # multiplier is tested against its own bound and the count left
         # unresolved is geevx's, with nev = 1 the largest alone are.
         function geevx(M)
@@ -319,7 +324,7 @@ end
         # the map, the multipliers nev = 1 chooses, and tests, and those
         # nev = :all leaves unresolved
         for (M, chosen, tested, unresolved) in ((turned(pair), 1, 1, 0), (jordan(24), 1, 1, 23),
-                (turned(jordan(8)), 1, 1, 0), (turned(diagm(1 => ones(5))), 0, 6, 6))
+                (turned(jordan(8)), 1, 1, 0), (diagm(0 => fill(0.5, 6), 1 => ones(5)), 0, 6, 6))
             λ, VL, VR, abnrm, rconde = geevx(M)
             one, every = JC.mapeigen!(copy(M), 1, JC.CPU()), JC.mapeigen!(copy(M), typemax(Int), JC.CPU())
             @test isapprox(one.values, λ; rtol = 1e-13) && isapprox(every.values, λ; rtol = 1e-13)
@@ -331,7 +336,7 @@ end
                 parallel(a, b) = abs(dot(a, b)) ≈ norm(a)*norm(b)
                 @test parallel(JC.eigenvector(one.right, k, one.column, wi), JC.eigenvector(VR, k, columns, wi))
                 @test parallel(JC.eigenvector(one.left, k, one.column, wi), JC.eigenvector(VL, k, columns, wi))
-                @test one.conditions[j] ≈ rconde[k] rtol = 1e-12
+                @test one.conditions[j] ≈ rconde[k] atol = 4*length(λ)*eps()
             end
         end
         # where a backend gives no vectors, the host's Schur path takes

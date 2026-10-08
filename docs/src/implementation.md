@@ -173,10 +173,7 @@ executable checks; their full-size runs remain optional. These checks
 cover solver convergence and finite responses, with commutator checks for
 the amplifier models, and compare the pump-off circuit with a closed form
 where the recipe has no other independent reference. They do not
-reproduce the published full-device gain curves. Both build
-entry points also execute the marked README example directly from its
-source, so it cannot silently drift from a copied test fixture. Run that
-check alone with `julia --project=. docs/readme.jl`.
+reproduce the published full-device gain curves.
 The package's doctest-only test job does not replace the full docs build.
 
 For a Documenter HTML check without the VitePress/Node rendering step, run

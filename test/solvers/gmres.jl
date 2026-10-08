@@ -212,11 +212,12 @@ JosephsonCircuits.applypreconditioner!(z::AbstractVector, p::JacobiP,
         short = allocations(x1, ws1, 1e-12, 1)
         ws2 = JosephsonCircuits.GMRESWorkspace(n, 40)
         x2 = zeros(n)
+        # with no tolerance to meet, the long solve's one cycle takes all
+        # its forty steps, against the short one's three
         out = JosephsonCircuits.gmres!(x2, Aop, b, ws2; Mop! = M,
-            rtol = 1e-12, maxrestarts = 4)
-        long = allocations(x2, ws2, 1e-12, 4)
-        # the long solve takes ten times the steps of the short one
-        @test out.iterations >= 30
+            rtol = 0.0, maxrestarts = 1)
+        long = allocations(x2, ws2, 0.0, 1)
+        @test out.iterations == 40
         @test long <= short
         @test norm(A*x2 - b) <= 1e-10*norm(b)
     end
