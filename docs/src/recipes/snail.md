@@ -11,7 +11,7 @@ and numerical settings; see [benchmarking](../performance.md#Measuring-performan
 
 The circuit parameters are from [Frattini et al. (2018)](https://doi.org/10.1103/PhysRevApplied.10.054020).
 
-```julia
+```@example snail
 using JosephsonCircuits
 using Plots
 
@@ -54,6 +54,12 @@ sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
 sourcespumpoff = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=0.0)]
 Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
+nothing # hide
+```
+
+The full sweep and plotting commands continue this setup:
+
+```julia
 @time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
     Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 @assert jpapumpon.nonlinear.solverinfo.converged
@@ -129,6 +135,22 @@ plot(p1,p2,layout=(2,1))
 ```
 
 ![SNAIL parametric amplifier simulation with JosephsonCircuits.jl](../assets/examples/snail.png)
+
+## A small executable check
+
+The documentation build uses the same circuit and bias/pump sources at
+three signal frequencies. The smaller harmonic limits check the workflow;
+refine them for a quantitative gain prediction.
+
+```@example snail
+small = hbsolve(2pi .* [7.9e9, 8.0e9, 8.1e9], wp, sourcespumpon,
+    (4,), (8,), circuit; dc = true, threewavemixing = true,
+    fourwavemixing = true, atol = 1e-8)
+@assert small.nonlinear.solverinfo.converged
+@assert all(isfinite, small.linearized.S)
+@assert maximum(abs.(abs.(small.linearized.CM) .- 1)) < 1e-5
+nothing # hide
+```
 
 ## Compare with WRspice
 

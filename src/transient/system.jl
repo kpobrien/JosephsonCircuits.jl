@@ -243,6 +243,16 @@ end
 
 Base.length(p::TransientProblem) = p.Nnodal + p.Naux
 
+# The problem `p` with its drives or its blocks replaced and every other
+# field shared, the one place which lists the fields for such a copy.
+function TransientProblem(p::TransientProblem; injection = p.injection, drives = p.drives,
+        constantcurrent = p.constantcurrent, blocks = p.blocks)
+    return TransientProblem(p.circuit, p.matrices, p.Nnodal, p.Naux, p.Lscale, p.coupledbranches,
+        p.floatingcomponents, p.gaugeindices, p.inertialess, p.algebraic, p.directions, p.constraints,
+        injection, drives, constantcurrent, p.ports, p.portpositive, p.portnegative, p.portimpedances,
+        p.portconductances, blocks, p.lines, p.relations, p.C, p.G, p.L, p.lineE, p.RJ, p.lmolj)
+end
+
 # a real value of a component, or an argument error naming it. The values
 # of the table are already numbers, from `numericvalues`; a port impedance
 # is checked here too and may not be
@@ -457,7 +467,8 @@ function transientblocks(psc::CompiledCircuit, offset::Int)
         if def isa LinearizedScattering
             # a pumped block fitted for time: the states of every filter
             # in one realization, the unconverted output on the constant
-            # rows, and the converted outputs modulated
+            # rows, and the converted outputs modulated, its pump phase
+            # folded into them
             realizedintime(def) || throw(ArgumentError(
                 lazy"the pumped scattering block at $(cb.path) has no realization in time; fit it with RationalScattering(block, npoles)."))
             n = def.nports
@@ -493,6 +504,17 @@ function transientblocks(psc::CompiledCircuit, offset::Int)
                 Cm[:, z + 1:z + m] .= Cpart
                 push!(modulations, BlockModulation(k, q, Cm))
                 z += m
+            end
+            # the pump phase turns each harmonic's two outputs into each
+            # other, `exp(i k phase) (G_c + i G_s)`, as harmonic balance
+            # turns the harmonic (see readharmonics!)
+            if !iszero(def.phase)
+                for j in 1:2:length(modulations)
+                    mc, ms = modulations[j], modulations[j + 1]
+                    c, s = cos(mc.harmonic*def.phase), sin(mc.harmonic*def.phase)
+                    modulations[j] = BlockModulation(mc.harmonic, 1, c .* mc.C .- s .* ms.C)
+                    modulations[j + 1] = BlockModulation(ms.harmonic, 2, s .* mc.C .+ c .* ms.C)
+                end
             end
             push!(blocks, TransientBlock(def, snapscattering(p0.D), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
                 offset, cb.path, A, B, C, zbase, modulations, def.wp, def.envelope))
@@ -797,6 +819,102 @@ function transientstate(p::TransientProblem; flux = zeros(p.Nnodal), voltage = z
         waves[2l] = (vp[2]/sqrt(line.Z) - sqrt(line.Z)*linecurrents[l])/2
     end
     return TransientState(xr, real.(vc), reshape(waves, :, 1), 0.0, zs)
+end
+
+# The drive of a harmonic balance solution in time, one source for each
+# of its sources: at a nonzero mode of the frequency `f` the current
+# `2 real(current*cis(f t))`, and at the zero mode the current itself.
+# Harmonic balance drives a port along its branch, into the branch's
+# destination whichever order the port's terminals are written in, and
+# the transient into the port's positive terminal, so the current is
+# turned where the two differ.
+function orbitsources(psc::CompiledCircuit, nonlinear::NonlinearHB)
+    w = collect(Float64, nonlinear.w)
+    _, destination = branchendpoints(psc.topology.Rbn, psc.topology.Nbranches)
+    return map(nonlinear.sources) do s
+        port = psc.ports[findfirst(q -> q.number == s.port, psc.ports)]
+        b = psc.topology.edge2indexdict[(port.positivenode, port.negativenode)]
+        current = destination[b] == port.positivenode ? s.current : -s.current
+        all(iszero, s.mode) && return TransientSource(s.port, real(current))
+        f = sum(s.mode .* w)
+        return TransientSource(s.port, t -> 2real(current*cis(f*t)))
+    end
+end
+
+# The problem with the conversion of every pumped block always on: the
+# periodic device harmonic balance and the pole analysis describe, which
+# the envelope of a block gates only for a record that starts it.
+function alwayson(p::TransientProblem)
+    all(b -> isnothing(b.envelope), p.blocks) && return p
+    blocks = [TransientBlock(b.definition, b.S, b.R, b.signal, b.ref, b.auxbase, b.path, b.A, b.B, b.C, b.zbase,
+        b.modulations, b.wp, nothing) for b in p.blocks]
+    return TransientProblem(p; blocks)
+end
+
+# The state of a transient on a harmonic balance orbit at the time `t`:
+# the node fluxes and voltages of the orbit's Fourier series, with the
+# direct voltage the solution holds apart, the port currents of the
+# blocks as the solution determined them with the whole circuit, the
+# states of each block's filters in the steady state of every mode,
+# under the incident waves the port voltages and currents make, and the
+# history of the wave leaving each line port, `(v + Z i)/(2 sqrt(Z))`
+# from the port's voltage and the current into the line the solution
+# determined, over the prehistory a solve at the step `dt` reads, at
+# that step. A pumped block's filters are driven by its incident waves
+# alone, its modulations acting on their outputs, so the states of every
+# mode are formed as an unpumped block's are.
+function orbitstate(p::TransientProblem, nonlinear::NonlinearHB; t::Real = 0.0, dt::Union{Nothing,Real} = nothing)
+    isempty(p.lines) || !isnothing(dt) || throw(ArgumentError(
+        "a transient on a harmonic balance orbit through a transmission line starts from the line's history, sampled at the step: give dt."))
+    modes = nonlinear.modes
+    F = reshape(initialguess(nonlinear.nodeflux), length(modes), :)
+    size(F, 2) == p.Nnodal || throw(DimensionMismatch(
+        "the harmonic balance solution is of a circuit with another number of nodes."))
+    w = collect(Float64, nonlinear.w)
+    f = [sum(mode .* w) for mode in modes]
+    # the real signal: the zero mode once, every other mode twice its
+    # real part
+    c = [all(iszero, mode) ? 1.0 : 2.0 for mode in modes] .* cis.(f .* t)
+    dc = isnothing(nonlinear.dcnodevoltage) ? zeros(p.Nnodal) : real.(initialguess(nonlinear.dcnodevoltage))
+    flux = phi0 .* vec(sum(real.(c .* F); dims = 1))
+    voltage = dc .+ phi0 .* vec(sum(real.(c .* (im .* f) .* F); dims = 1))
+    state = transientstate(p; flux, voltage)
+    x, v, zs = copy(state.flux), copy(state.rate), copy(state.blockstates)
+    modevoltage(k) = all(iszero, modes[k]) ? complex(dc) : phi0 .* (im*f[k]) .* F[k, :]
+    block = Dict(cb.path => j for (j, cb) in enumerate(p.circuit.scatteringblocks))
+    for b in p.blocks
+        n, nz = length(b.signal), size(b.A, 1)
+        currents = nonlinear.blockcurrents[block[b.path]]
+        current, rate, states = zeros(n), zeros(n), zeros(nz)
+        for k in eachindex(modes)
+            V = modevoltage(k)
+            vk = [(b.signal[q] > 0 ? V[b.signal[q]] : zero(eltype(V))) - (b.ref[q] > 0 ? V[b.ref[q]] : zero(eltype(V))) for q in 1:n]
+            ik = currents[k, :]
+            all(iszero, vk) && all(iszero, ik) && continue
+            current .+= real.(c[k] .* ik)
+            rate .+= real.(c[k] .* (im*f[k]) .* ik)
+            ak = (vk ./ sqrt.(b.R) .+ sqrt.(b.R) .* ik) ./ 2
+            nz > 0 && (states .+= real.(c[k] .* ((im*f[k]*I - b.A) \ (b.B*ak))))
+        end
+        x[b.auxbase + 1:b.auxbase + n] .= p.Lscale .* current ./ phi0
+        v[b.auxbase + 1:b.auxbase + n] .= p.Lscale .* rate ./ phi0
+        zs[b.zbase + 1:b.zbase + nz] .= states
+    end
+    isempty(p.lines) && return TransientState(x, v, state.waves, state.wavesdt, zs)
+    # the columns end at `t`, as a solve's history ends at its start
+    npre = lineprehistory(p, dt)
+    times = t .- (npre - 1:-1:0) .* dt
+    waves = zeros(2length(p.lines), npre)
+    for k in eachindex(modes)
+        V = modevoltage(k)
+        weight = all(iszero, modes[k]) ? 1.0 : 2.0
+        for (l, line) in enumerate(p.lines), e in 1:2
+            vk = (line.signal[e] > 0 ? V[line.signal[e]] : zero(eltype(V))) - (line.ref[e] > 0 ? V[line.ref[e]] : zero(eltype(V)))
+            ak = (vk + line.Z*nonlinear.blockcurrents[block[line.path]][k, e])/(2sqrt(line.Z))
+            iszero(ak) || (view(waves, 2(l - 1) + e, :) .+= weight .* real.(cis.(f[k] .* times) .* ak))
+        end
+    end
+    return TransientState(x, v, waves, Float64(dt), zs)
 end
 
 # the initial states of the rational blocks of a state, zero when the

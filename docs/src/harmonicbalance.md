@@ -31,6 +31,7 @@ A DC coefficient is not doubled. See [conventions](conventions.md).
 |---|---|
 | `hbnlsolve(wp, Npumpharmonics, sources, circuit)` | Strong-drive operating point |
 | `hblinsolve(ws, circuit; nonlinear, Nmodulationharmonics)` | Small-signal sweep about an operating point |
+| `hbstability(circuit; nonlinear, method)` | Local stability, the temporal poles; see [stability](stability.md) |
 | `hblinsolve(ws, circuit)` | Linear response, with junctions linearized at zero phase |
 | `hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, circuit)` | Operating point and linearized sweep |
 
@@ -53,8 +54,9 @@ mode indices.
 | `modes` | Retained pump-mode tuples |
 | `solverinfo` | Convergence flag, residual history, and stage diagnostics |
 | `S` | Output-wave/incident-drive ratios of this strong-drive solution |
+| `sources` | The drive, as `(mode, port, current)`; at a nonzero mode of frequency `f` the current in time is `2 real(current*cis(f*t))` |
 
-The last field is not the differential scattering response. With several
+`NonlinearHB.S` is not the differential scattering response. With several
 driven port modes, each column includes the response to all sources.
 Use `sol.linearized.S` for small-signal scattering.
 
@@ -116,7 +118,8 @@ nonlinearity is evaluated on a separate, usually larger grid.
 The default evaluation padding avoids aliasing of the leading cubic
 products into retained modes. It is not an exact representation of a sine
 at arbitrary phase excursion. The [theory page](harmonicbalancetheory.md#The-mode-set-and-the-transforms)
-explains the grids and aliasing.
+explains the grids and aliasing. The [multi-tone tutorial](recipes/multitone.md)
+visualizes the retained lattice and works through a three-tone solve.
 
 ## Checking convergence
 
@@ -169,6 +172,57 @@ error. Method options belong to the method object, for example
 `NewtonKrylov(linesearch=Backtracking(interpolate=false))`.
 See [performance](performance.md) for preconditioners and reuse, and
 [interoperability](interop.md) for external solvers.
+
+## Recovering from a failed solve
+
+This controlled example gives exact Newton only one iteration, so it
+returns an unconverged iterate. It then solves the same requested drive
+with source continuation. The warning in the first call is expected.
+
+```@example hbguide
+failed = hbnlsolve(wp, (8,), sources, circuit;
+    method = Newton(), iterations = 1, atol = 1e-10)
+@assert !failed.solverinfo.converged
+stage = only(failed.solverinfo.stages)
+@assert stage.reason == :iterations
+(stage.reason, stage.normresidual, stage.alpha, stage.backtracks)
+```
+
+Here the residual decreased and the full step was accepted: the small
+iteration budget is the immediate problem. Increasing that budget would
+also be reasonable. `Staged()` demonstrates recovery by solving a sequence
+of easier drive/grid problems instead:
+
+```@example hbguide
+recovered = hbnlsolve(wp, (8,), sources, circuit;
+    method = Staged(), atol = 1e-10)
+@assert recovered.solverinfo.converged
+(recovered.solverinfo.finalresidual, length(recovered.solverinfo.stages))
+```
+
+The final convergence flag applies to the requested drive and grid, not
+merely to an intermediate continuation stage. A finite `sourcefold` means
+the continuation reported a branch ending at that fraction of the target
+drive. It is not proof that no other branch reaches the target.
+
+For an ordinary Newton or Newton–Krylov solve, each stage is an
+[`IterationInfo`](@ref JosephsonCircuits.IterationInfo). A `Staged()` record
+contains its inner solver records; inspect those when diagnosing a stage.
+
+| Evidence | What to try next |
+|---|---|
+| `reason == :iterations`, residual still falling, reasonable `alpha` | Increase the iteration budget; compare the residual decrease, not just the count |
+| `reason == :work`, repeated GMRES stagnation, or large `residualratio` relative to `forcing` in `stage.krylov` | Inspect preconditioner refresh/escalation and operator-product counts; on a small circuit compare with `Newton()` |
+| `reason == :linesearch`, repeated backtracks or tiny `alpha` | Check units and the initial state; reduce the parameter/drive step or try `Staged()`; a larger GMRES budget alone need not help |
+| `reason == :progress` | Inspect the residual history and continuation stages; the solver has already attempted recovery before declaring a stall |
+| `converged == true`, but gain changes on harmonic refinement | Refine pump, modulation, and evaluation grids separately; nonlinear iteration tolerance does not control truncation error |
+| A sweep jumps despite convergence | Compare state/response continuity and forward/backward sweeps; inspect cache retry records and check [stability](stability.md) |
+
+These observations guide diagnosis; none uniquely identifies a physical
+bifurcation. Strong nonlinearity can make a continuation step fail without
+a branch ending. Compare cold and warm starts near a suspected jump. The
+[cache workflow](performance.md#Reuse-across-a-sweep-of-values) explains
+its automatic cold retry and how that can change the branch being followed.
 
 ## The linearized sweep
 

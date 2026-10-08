@@ -1,7 +1,11 @@
 # Execute the tutorial examples and check Documenter references without Node.
 # Package docstring doctests run separately in the package test suite.
 using Documenter, JosephsonCircuits
+# Load the plotting backend before Documenter evaluates isolated examples.
+using Plots
+include("readme.jl")
 include("pages.jl")
+include("api.jl")
 
 makedocs(
     root = @__DIR__,
@@ -11,10 +15,10 @@ makedocs(
     sitename = "JosephsonCircuits.jl",
     doctest = false,
     remotes = nothing,
-    # Keep the legacy reference anchors on one page; other pages retain the
-    # normal HTML size limit. VitePress is the production renderer.
+    # The developer appendix and the index of legacy anchors are longer.
+    # Public API pages retain the normal size limit.
     format = Documenter.HTML(disable_git = true, edit_link = nothing,
         repolink = "https://github.com/kpobrien/JosephsonCircuits.jl",
-        size_threshold_ignore = ["reference.md"]),
+        size_threshold_ignore = ["reference.md", "api/internals.md"]),
     pages = docpages,
 )

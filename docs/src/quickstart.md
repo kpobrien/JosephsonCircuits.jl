@@ -92,6 +92,7 @@ or a tangent response. Continue with the [transient guide](transient.md).
 |---|---|
 | What is the steady pump response? | `hbnlsolve` |
 | What weak signals and idlers does it amplify? | `hblinsolve` about that operating point, or `hbsolve` for both steps |
+| Do perturbations about this state grow? | [`hbstability`](stability.md), after checking the operating point |
 | How does a pulse propagate or deplete the pump? | `transientsolve` |
 | What is the incremental response about a recorded trajectory? | `transienttangent`, `transientadjoint`, or `transientgain` |
 | What noise is measured in a time window? | `transientnoise` with a temporal-mode plan |

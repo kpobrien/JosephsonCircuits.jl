@@ -4,7 +4,7 @@ layout: home
 hero:
   name: JosephsonCircuits.jl
   text: Simulate superconducting circuits
-  tagline: Harmonic balance and transient simulation of Josephson circuits. Calculate gain, frequency conversion, noise, and sensitivities.
+  tagline: Harmonic balance and transient simulation of Josephson circuits. Calculate gain, frequency conversion, stability, noise, and sensitivities.
   image:
     light: /logo.svg
     dark: /logo-dark.svg
@@ -91,6 +91,7 @@ the same pump in time, including the Fourier-amplitude convention.
 | Define components and connections | [Circuits](circuits.md) |
 | Include measured data or a fitted amplifier | [Scattering blocks](scattering.md) |
 | Find a driven operating point and gain | [Harmonic balance](harmonicbalance.md) |
+| Test temporal stability of a driven state | [Harmonic-balance stability](stability.md) |
 | Warm ports, a readout chain's efficiency, the noise reaching a qubit | [Noise at the ports](portnoise.md) |
 | Simulate pulses | [Transient simulation](transient.md) |
 | Calculate fluctuations in temporal modes | [Quantum noise in time](transientnoise.md) |
@@ -103,6 +104,8 @@ the same pump in time, including the Fourier-amplitude convention.
 - Nonlinear steady states with one or more strong drive tones.
 - Small-signal scattering, frequency conversion, quantum efficiency, and
   sensitivities about a driven state.
+- Temporal stability poles about a driven state, with method-specific limits
+  and convergence checks in the [stability guide](stability.md).
 - Linear circuit responses and symbolic circuit matrices.
 - Transient trajectories, their tangent and adjoint responses, and noise
   in selected temporal modes.

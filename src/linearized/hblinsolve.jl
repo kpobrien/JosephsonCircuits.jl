@@ -481,36 +481,11 @@ function checkcoupledloss(psc::CompiledCircuit, vvn)
     return nothing
 end
 
-"""
-    linearizedsetup(w, psc, vvn, signalfreq, nonlinear,
-        factorization, backend, temperature, sensitivitynames,
-        sensitivitypairs, sensitivityblockpairs; nbatches,
-        nsensitivityparameters, wantsnoise)
-
-The first stage of [`hblinsolve`](@ref): the circuit matrices at the
-signal mode count, the pump's cosine transform from the nonlinear solution
-(or unity without one), the mode frequencies and the checks on them, the
-modified nodal analysis padding, the sensitivity component indices and
-their grouping, the port sources, the noise channels with their
-temperatures, the [`HBLinearizedSystem`](@ref) with its system matrix
-assembled, and the factorization the sweep uses. Returned as a named
-tuple whose fields the later stages read by name.
-"""
-function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
-    vvn::Vector{Any}, signalfreq::Frequencies,
-    nonlinear, factorization, backend, temperature,
-    sensitivitynames::Vector{String},
-    sensitivitypairs::Vector{Tuple{String,Int,ComplexF64}},
-    sensitivityblockpairs::Vector{Tuple{String,Int,Any}};
-    nbatches::Integer, nsensitivityparameters::Integer, wantsnoise::Bool)
-    checksweepinputs(w, nbatches)
-    checkisolatedsubnetworks(psc)
-    Nsignalmodes = length(signalfreq.modes)
-    # the numeric matrices at the signal mode count, which differs from the
-    # pump's
-    topology = psc.topology
-    signalnm = numericmatrices(psc, vvn; Nmodes = Nsignalmodes)
-
+# The junction derivative on the pump grid and its unaliased coupling to
+# the signal modes. Shared by scattering and pole analysis; no port-wave
+# normalization or nonzero-signal-frequency assumption belongs here.
+function linearizedmodulation(psc::CompiledCircuit, signalnm::CircuitMatrices,
+        signalfreq::Frequencies, nonlinear)
     if isnothing(nonlinear)
 
         allpumpfreq = calcfreqsrdft((0,))
@@ -562,7 +537,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         # relation at the pump, `cos(phi(t))` for the Josephson relation,
         # which is what modulates the linearized system.
         relations = calcjunctionrelations(psc.componenttypes, psc.nodeindices,
-            psc.junctioncprs, topology.edge2indexdict, nonlinear.Ljb)
+            psc.junctioncprs, psc.topology.edge2indexdict, nonlinear.Ljb)
         if isnothing(relations)
             applynl!(
                 phimatrix,
@@ -584,6 +559,42 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     else
         calcmodefreqs(nonlinear.w,signalfreq.modes)
     end
+
+    return (; Amatrixindices, phimatrix, wpumpmodes)
+end
+
+"""
+    linearizedsetup(w, psc, vvn, signalfreq, nonlinear,
+        factorization, backend, temperature, sensitivitynames,
+        sensitivitypairs, sensitivityblockpairs; nbatches,
+        nsensitivityparameters, wantsnoise)
+
+The first stage of [`hblinsolve`](@ref): the circuit matrices at the
+signal mode count, the pump's cosine transform from the nonlinear solution
+(or unity without one), the mode frequencies and the checks on them, the
+modified nodal analysis padding, the sensitivity component indices and
+their grouping, the port sources, the noise channels with their
+temperatures, the [`HBLinearizedSystem`](@ref) with its system matrix
+assembled, and the factorization the sweep uses. Returned as a named
+tuple whose fields the later stages read by name.
+"""
+function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
+    vvn::Vector{Any}, signalfreq::Frequencies,
+    nonlinear, factorization, backend, temperature,
+    sensitivitynames::Vector{String},
+    sensitivitypairs::Vector{Tuple{String,Int,ComplexF64}},
+    sensitivityblockpairs::Vector{Tuple{String,Int,Any}};
+    nbatches::Integer, nsensitivityparameters::Integer, wantsnoise::Bool)
+    checksweepinputs(w, nbatches)
+    checkisolatedsubnetworks(psc)
+    Nsignalmodes = length(signalfreq.modes)
+    # the numeric matrices at the signal mode count, which differs from the
+    # pump's
+    topology = psc.topology
+    signalnm = numericmatrices(psc, vvn; Nmodes = Nsignalmodes)
+
+    (; Amatrixindices, phimatrix, wpumpmodes) =
+        linearizedmodulation(psc, signalnm, signalfreq, nonlinear)
 
     # the fields of the nonlinear solution are untyped, so make the pump
     # frequencies a concrete tuple: everything below is per (frequency,

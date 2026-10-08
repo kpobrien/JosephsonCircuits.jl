@@ -221,6 +221,47 @@ Batched responses put the condition dimension last. Each condition retains
 its own stiffness, factorization, convergence check, and initial state.
 See [performance](performance.md) for CPU/GPU tradeoffs and workspace reuse.
 
+## Diagnose a failed solve
+
+The [biased-junction example](recipes/dc.md#Initialize-a-biased-junction-in-time)
+constructs a consistent state and demonstrates the error from an
+inconsistent zero initialization. An initial-state `ArgumentError` occurs
+before time integration; it is different from a failed timestep.
+
+Under `GaussLegendre()`, [`TransientStepError`](@ref) identifies the failed
+step, its time in seconds, the original batch condition indices, and the
+cause:
+
+| Cause | Meaning | What to check |
+|---|---|---|
+| `:newton` | The implicit stage solve did not converge | Reduce `dt`, smooth sharp drives, inspect the operating regime, and increase `iterations` if residuals are making progress |
+| `:projection` | The endpoint could not satisfy the algebraic constraints | Check topology and constrained sources; reduce `dt` and inspect the state near failure; the same iteration budget also limits projection corrections |
+
+Do not relax tolerances merely to suppress a failure: inspect the result
+under timestep and tolerance refinement. A successful projection does not
+make an inconsistent *initial* state acceptable.
+
+This diagnostic pattern keeps the failing conditions visible while
+propagating the error to the caller:
+
+```julia
+try
+    transientsolve(problems, (0.0, 2e-9); dt = 5e-12)
+catch err
+    if err isa TransientStepError
+        @error "Transient integration failed" step = err.step time = err.time conditions = err.conditions cause = err.cause
+        # Rerun a reported member independently with a smaller timestep:
+        # transientsolve(problems[first(err.conditions)], (0.0, 2e-9); dt = 2.5e-12)
+    end
+    rethrow()
+end
+```
+
+A thrown batch solve does not return a partial solution. `conditions`
+reports failures at that step; it does not certify that the other members
+would complete the whole record. Preserve each member's initial state and
+source waveform when reproducing its failure independently.
+
 ## Scattering blocks, transmission lines and fitted data
 
 See [scattering blocks](scattering.md) for complete fitting examples,

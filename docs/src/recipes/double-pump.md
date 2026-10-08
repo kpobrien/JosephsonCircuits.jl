@@ -9,7 +9,7 @@ Figures and timings come from the original reference run using 16 threads
 on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
 and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
 
-```julia
+```@example doublepump
 using JosephsonCircuits
 using Plots
 
@@ -34,6 +34,12 @@ sources = [(mode=(1,0),port=1,current=Ip),(mode=(0,1),port=1,current=Ip)]
 Npumpharmonics = (8,8)
 Nmodulationharmonics = (8,8)
 
+nothing # hide
+```
+
+The full frequency sweep and plot use this setup:
+
+```julia
 @time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
     Npumpharmonics, circuit);
 @assert jpa.nonlinear.solverinfo.converged
@@ -57,6 +63,20 @@ plot(
 
 ```
   0.182720 seconds (12.70 k allocations: 713.087 MiB)
+```
+
+## A small executable check
+
+The documentation build runs three signal frequencies and a smaller grid
+using the same circuit and sources. This catches interface drift; it does
+not validate convergence of the full gain curve above.
+
+```@example doublepump
+small = hbsolve(2pi .* [4.6e9, 4.7e9, 4.8e9], wp, sources,
+    (2,2), (4,4), circuit)
+@assert small.nonlinear.solverinfo.converged
+@assert all(isfinite, small.linearized.S)
+nothing # hide
 ```
 
 ## Compare with WRspice

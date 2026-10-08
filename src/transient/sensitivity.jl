@@ -513,7 +513,6 @@ function matrixsolve!(X, factor, B)
     return X
 end
 matrixsolve!(X, factor::KLU.KLUFactorization, B) = myldiv!(X, factor, B)
-matrixsolve!(X, factor::Transpose{<:Any,<:KLU.KLUFactorization}, B) = myldiv!(X, factor, B)
 
 # The readings of a trapezoidal or backward Euler record the tangent
 # and the adjoint share: the window of its states, which the
@@ -545,7 +544,7 @@ end
 """
     transienttangent(solution, currents; targets = the ports,
         initialstate = nothing, factorization = nothing, reuse = nothing,
-        outputsink = nothing)
+        outputsink = nothing, statesink = nothing)
 
 The tangent of a recorded transient along a perturbation: `currents[q, k]`
 is an additional Norton current in Amperes at target `q` (a port number,
@@ -569,28 +568,39 @@ reads the grid values of either form. The rate of a current on the
 grid, which the reading of the rate along an algebraic direction
 carries, is that of the cubic through four grid values, of the
 quadratic through three or of the line through two. Returns `(voltage,
-incident, outgoing, finalflux, finalrate)` in the units of the solve,
-on its backend, with
-the directions as the trailing dimension; with an `outputsink`, a
+incident, outgoing, finalflux, finalrate, finalwaves, finalstates)` in
+the units of the solve, on its backend, with the directions as the
+trailing dimension, under [`GaussLegendre`](@ref) `finalwaves` the waves
+leaving each line port over the delay window before the end, `(line
+port, column, direction)` as the third member of `initialstate` takes
+them, so that a tangent of the next record continues this one, and
+`finalstates` the rational blocks' states at the end, each `nothing`
+without lines or blocks or under another rule; with an `outputsink`, a
 function `outputsink(k, voltage, incident, outgoing)` receiving the
 three port by direction matrices of recorded time `k` on the backend,
 valid until the next call, the histories are not stored and those three
 are `nothing`, so a measurement of a long record needs no memory per
-time. The linearization is about the full recorded state, so the loaded
+time. A `statesink(k, flux, rate, states, waves)` receives the
+tangent's state at each recorded time `k` in the same way, its scaled
+fluxes and rates, its blocks' states as `finalstates` holds them and
+under [`GaussLegendre`](@ref) the waves leaving its line ports at the
+time as `finalwaves` holds them, state or port by direction, each
+`nothing` without blocks or lines.
+The linearization is about the full recorded state, so the loaded
 junction phases enter every response; both the trajectory and its grid
 are held fixed.
 """
 Base.@nospecializeinfer function transienttangent(sol::TransientSolution,
         @nospecialize(currents::Union{Nothing,AbstractArray{<:Real}});
         targets = porttargets(sol.problem), initialstate = nothing,
-        factorization = nothing, reuse = nothing, outputsink = nothing, perturbation = nothing)
+        factorization = nothing, reuse = nothing, outputsink = nothing, statesink = nothing, perturbation = nothing)
     # compiled once whatever the arguments are: they are brought to the
     # forms the steps take here, and the steps are invoked dynamically
-    @nospecialize targets initialstate factorization reuse outputsink perturbation
+    @nospecialize targets initialstate factorization reuse outputsink statesink perturbation
     # the Gauss-Legendre responses run on a batch, of which a solution is
     # one condition
     sol.method isa GaussLegendre && return map(dropcondition, transienttangent(batchof(sol), currents;
-        targets, initialstate, factorization, reuse, outputsink, perturbation))
+        targets, initialstate, factorization, reuse, outputsink, statesink, perturbation))
     recordedsolution(sol)
     p = sol.problem
     backend = KernelAbstractions.get_backend(sol.finalflux)
@@ -602,13 +612,14 @@ Base.@nospecializeinfer function transienttangent(sol::TransientSolution,
     initial = tangentinitial(initialstate, length(p), ndir, 1, 0, 0, 0)
     # invoked dynamically on the untyped kept system (see transientsolve)
     return Base.invokelatest(steptangent, sol, tangentcurrents(currents, nq, nt, ndir), injection, ports, initial, sys,
-        outputsink, perturbation, reuse)
+        outputsink, statesink, perturbation, reuse)
 end
 
 # the tangent of a trapezoidal or backward Euler solve, on the forms the
 # entry made of its arguments
 function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::SparseMatrixCSC{Float64, Int},
-        tp::Vector{Int}, initial::TangentInitial, sys::TransientSystem, @nospecialize(outputsink), perturbation, reuse)
+        tp::Vector{Int}, initial::TangentInitial, sys::TransientSystem, @nospecialize(outputsink),
+        @nospecialize(statesink), perturbation, reuse)
     p = sol.problem
     backend = sys.backend
     n, np, nt = length(p), length(p.portimpedances), length(sol.times)
@@ -642,13 +653,15 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
         ones(count(>(0), tp)), np, nq), backend)
     directwork = allocate(np, ndir)
     outwork = [allocate(np, ndir) for _ in 1:3]
-    # where a port reads a rate along an algebraic direction, the port
-    # waves come from the tangent rate read as the solve's is, the reading
-    # linearized at the recorded phases and read rates of the projected
-    # junctions, with the tangent currents' rate and the components'
-    # perturbation of the constraints; the work is there whether or not a
-    # port reads, so that the closure of the outputs is one type
+    # where a port or the state sink reads a rate along an algebraic
+    # direction, the port waves and the sink's rate come from the tangent
+    # rate read as the solve's is, the reading linearized at the recorded
+    # phases and read rates of the projected junctions, with the tangent
+    # currents' rate and the components' perturbation of the constraints;
+    # the work is there whether or not anything reads, so that the
+    # closure of the outputs is one type
     reading = outputreading(sys, backend, n, 1, ndir)
+    reads = sys.portsread || !isnothing(statesink)
     withstates = !isnothing(perturbation) && perturbation.states
     dIh = currents.grid
     delta = ratedelta(sys)
@@ -663,12 +676,12 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
     fdev, fh = projecting ? (allocate(n, ndir), allocate(n, ndir)) : (nothing, nothing)
     statewindow, readingat! = recordreadings(sol, sys, withstates, xk, delta)
     function outputs!(k)
-        if sys.portsread
+        if reads
             readingat!(reading, k)
             readoutputs!(reading, sys, k, dv, dx, dIh, injh, withstates ? Array(xk) : zeros(0, 0),
                 withstates ? Array(reading.wk) : zeros(0, 0), perturbation, backend)
         end
-        stepmul!(portwork, sys.ports, sys.portsread ? reading.dvread : dv)
+        stepmul!(portwork, sys.ports, reads ? reading.dvread : dv)
         portwork .*= phi0
         stepmul!(directwork, portmap, view(dI, :, kcol(k), :))
         outs = isnothing(outputsink) ? (view(voltage, :, k, :), view(incident, :, k, :), view(outgoing, :, k, :)) : outwork
@@ -678,6 +691,7 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
         end
         isnothing(dterm) || adddirectterm!(outs, dterm, sol, [p], k)
         isnothing(outputsink) || outputsink(k, outwork[1], outwork[2], outwork[3])
+        isnothing(statesink) || statesink(k, dx, reading.dvread, nothing, nothing)
         nothing
     end
     outputs!(1)
@@ -738,7 +752,8 @@ function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::Sp
     squeeze = a -> isnothing(a) ? nothing : currents.single ? reshape(a, size(a)[1:end-1]...) : a
     stored = isnothing(outputsink)
     return (; voltage = stored ? squeeze(voltage) : nothing, incident = stored ? squeeze(incident) : nothing,
-        outgoing = stored ? squeeze(outgoing) : nothing, finalflux = squeeze(copy(dx)), finalrate = squeeze(finalrate))
+        outgoing = stored ? squeeze(outgoing) : nothing, finalflux = squeeze(copy(dx)), finalrate = squeeze(finalrate),
+        finalwaves = nothing, finalstates = nothing)
 end
 
 # the directions of a tangent: those of its currents, or, along the
@@ -987,7 +1002,7 @@ condition of a [`TransientBatchSolution`](@ref) on one pass, with respect
 to a relative perturbation `r` of the value of each component `names`
 names (`p -> r*p` at `r = 1`), as `Ssensitivity` of [`hblinsolve`](@ref)
 is of the scattering parameters. Returns `(voltage, incident, outgoing,
-finalflux, finalrate)` as [`transienttangent`](@ref) does, with the
+finalflux, finalrate, finalwaves, finalstates)` as [`transienttangent`](@ref) does, with the
 components as the trailing dimension, before the conditions of a batch.
 The components supported are those of the linearized solve, `C`, `L`, `R`
 and `Lj` with numeric values and no mutual coupling. The equations of a

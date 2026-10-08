@@ -178,11 +178,13 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test sum(st.iterations for st in s1.solverinfo.stages) == 1
     end
 
-    @testset "failure, rejection, reset, and retained results" begin
+    @testset "failure, retry, rejection, reset, and retained results" begin
         defs = Dict(:Lj => 1e-9, :Cc => 100e-15)
-        controlled = recovery_solver(failat = [2])
+        # the second point fails from its warm start and from the cold
+        # retry, and the third from its warm start
+        controlled = recovery_solver(failat = [2, 3, 4])
         cache = hbcache(wp, (4,), src, circuit, defs;
-            method = controlled.method, warnnotconverged = false)
+            method = controlled.method)
         first = hbsolve!(cache, (;))
         # the junction vectors too: the cache refills its matrices at every
         # point, failed or refused, and the result keeps its own
@@ -190,34 +192,73 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         saved = kept(first)
         matrixwork, capacitance = cache.matrixworkspace, cache.nm.Cnm
         @test cache.converged
-        failed = hbsolve!(cache, (Lj = 1.02e-9,))
+        # a warm start which fails is retried once from a cold start; a
+        # point which fails both ways warns once, of its outcome, records
+        # both attempts and leaves the stored point as it was
+        failed = @test_logs (:warn,) hbsolve!(cache, (Lj = 1.02e-9,))
         @test !cache.converged && !failed.solverinfo.converged
         @test controlled.starts[2] ≈ controlled.solutions[1]
-        recovered = hbsolve!(cache, (Lj = 0.98e-9,))
+        @test iszero(controlled.starts[3])
+        @test length(failed.solverinfo.stages) == 2
+        # the point after a failure starts from the last converged point,
+        # not from the failed state, and a retry which converges does so
+        # silently, to the fresh solve's point
+        recovered = @test_logs hbsolve!(cache, (Lj = 0.98e-9,))
         freshsolver = recovery_solver()
         freshcache = hbcache(wp, (4,), src, circuit, defs;
             method = freshsolver.method)
         fresh = hbsolve!(freshcache, (Lj = 0.98e-9,))
         @test cache.converged && cache.nsolves == 3
-        # the point after a failure starts from the last converged point,
-        # not from the failed state nor cold
-        @test controlled.starts[3] ≈ controlled.solutions[1]
-        @test controlled.starts[3] != freshsolver.starts[1]
+        @test controlled.starts[4] ≈ controlled.solutions[1]
+        @test controlled.starts[5] == freshsolver.starts[1]
         @test recovered.nodeflux ≈ fresh.nodeflux rtol = 1e-10
         @test cache.matrixworkspace === matrixwork &&
             cache.nm.Cnm === capacitance
         @test kept(first) == saved
         # a point the solve refuses leaves the cache as it was, so the next
-        # point still solves
+        # point still solves, from the retried point it stored
         retained = copy(cache.x)
         @test_throws ArgumentError hbsolve!(cache, (Lj = Inf,))
         @test cache.x == retained && cache.nsolves == 3
         @test hbsolve!(cache, (Lj = 0.98e-9,)).nodeflux ≈ fresh.nodeflux
+        @test controlled.starts[6] ≈ controlled.solutions[5]
         JosephsonCircuits.reset!(cache)
         @test isnothing(cache.x) && !cache.converged
         hbsolve!(cache, (Lj = 0.98e-9,))
         @test controlled.starts[end] == freshsolver.starts[1]
         @test kept(first) == saved
+    end
+
+    @testset "a warm start outside Newton's basin is retried cold" begin
+        # the solution at 1010 pH is outside Newton's basin at 990 pH, even
+        # at one harmonic, though a cold start converges there: the jumped
+        # point converges, silently, to the fresh solve's point
+        defs = Dict(:Lj => 1010e-12, :Cc => 100e-15)
+        cache = hbcache(wp, (1,), src, circuit, defs; atol = 1e-12)
+        hbsolve!(cache, (;))
+        jumped = @test_logs hbsolve!(cache, (Lj = 990e-12,))
+        fresh = hbnlsolve(wp, (1,), src, circuit,
+            Dict(:Lj => 990e-12, :Cc => 100e-15); atol = 1e-12,
+            keyedarrays = false)
+        @test cache.converged
+        @test isapprox(jumped.nodeflux, fresh.nodeflux; rtol = 1e-8)
+    end
+
+    @testset "a converged warm point is checked as a cold one is" begin
+        # the messages of a warm attempt are held until it is known to be
+        # the outcome: a junction carrying nearly its critical current at
+        # direct current is reported at a converged warm point as at a
+        # cold one
+        biased = Circuit([:p1 => Port(1; Z0 = 50.0),
+            :jj => JosephsonJunction(:Lj), :cj => Capacitor(1000e-15)],
+            [[(:p1, 1), (:jj, 1), (:cj, 1)],
+             [(:p1, 2), (:jj, 2), (:cj, 2), Ground]])
+        cache = hbcache(wp, (2,),
+            [(mode = (0,), port = 1, current = 0.995*LjtoIc(1000e-12))],
+            biased, Dict(:Lj => 1000e-12); dc = true, even = true)
+        @test_logs (:warn,) hbsolve!(cache, (;))
+        warm = @test_logs (:warn,) hbsolve!(cache, (Lj = 1001e-12,))
+        @test cache.converged && length(warm.solverinfo.stages) == 1
     end
 
     @testset "values which change a group's element type or behavior" begin

@@ -13,7 +13,9 @@
 # The cache also carries the one piece of state worth keeping between
 # solves: the previously converged operating point, which warm starts the
 # next one. A cold solve of a driven line can take many Newton iterations
-# where a warm start from a nearby solution takes a few.
+# where a warm start from a nearby solution takes a few; a start the
+# parameters jumped away from can lie outside Newton's basin, so a warm
+# start which fails is retried once, cold.
 # =====================================================================
 
 """
@@ -24,14 +26,16 @@ the compiled circuit and a copy of its definitions, the mode grid and its
 Fourier index maps, the solver options, and the last converged operating
 point, which [`hbsolve!`](@ref) uses to warm start the next solve.
 
-Built by [`hbcache`](@ref). `converged` reports whether the last solve
-succeeded, and a solve which does not converge also warns with the reason
-it stopped and leaves the stored operating point as it was. Check it: a
-solve which does not converge returns a state that looks like a solution
-and is not one, and comparing timings or gradients against it is
-meaningless. A cache is mutable and every solve through it rewrites what
-it holds, so it belongs to one solve at a time: do not share a cache
-between concurrent solves; build one per task.
+Built by [`hbcache`](@ref). `converged` reports whether the last point
+converged, from its warm start or from the cold start a failed warm start
+is retried from (see [`hbsolve!`](@ref)), and a point which does not
+converge also warns with the reason it stopped and leaves the stored
+operating point as it was. Check it: a solve which does not converge
+returns a state that looks like a solution and is not one, and comparing
+timings or gradients against it is meaningless. A cache is mutable and
+every solve through it rewrites what it holds, so it belongs to one solve
+at a time: do not share a cache between concurrent solves; build one per
+task.
 """
 mutable struct HBCache{N,K,P}
     compiled::CompiledCircuit
@@ -247,9 +251,12 @@ Discard the stored operating point, so the next [`hbsolve!`](@ref) starts
 cold, and with it what the previous solves taught the preconditioner: a
 coupling set grown by escalation or by measurement, and the deflation
 candidates of a [`Floquet`](@ref) preconditioner, so the next solve builds
-the preconditioner its method asks for. Use this when the parameters move
-far enough that the previous solution is a worse starting point than zero,
-or when crossing to a different solution branch.
+the preconditioner its method asks for. A warm start which fails is
+retried cold without discarding any of this (see [`hbsolve!`](@ref)); use
+it when the parameters jump far enough that the previous solution is a
+worse starting point than zero, which saves that failed attempt, when
+crossing to a different solution branch, or to drop what the
+preconditioner grew.
 """
 function reset!(cache::HBCache)
     cache.x = nothing
@@ -277,11 +284,23 @@ and symbolic analysis are kept. Only the numeric matrices and the solve
 itself are recomputed. The matrices are refilled on the
 patterns of the compiled circuit, which do not depend on the values, and
 assembled anew when a value changes the element type of its group (a
-resistance or a capacitance turned complex). A solve which does not
-converge leaves the stored point as it was, so the next one starts from
-the last solution rather than from a non-solution or from nothing;
-`warmstart = false` starts cold without discarding the stored point,
-unlike [`JosephsonCircuits.reset!`](@ref).
+resistance or a capacitance turned complex).
+
+A start the parameters jumped away from can lie outside Newton's basin,
+so a warm started solve which does not converge is retried once from a
+cold start, the solve `warmstart = false` makes, keeping what the cache
+reuses. The warm attempt's messages reach the caller only when it is the
+outcome, so a retried point warns as its cold solve does, and a point
+costs at most the two solves, each within the solver's own budget. A
+retried point returns the cold solve, with the warm attempt's record
+ahead of its own in `solverinfo.stages`; where the circuit has several
+operating points, it is the one a cold start reaches, which need not be
+on the branch the sweep followed. A retry which converges becomes the
+stored point, and a point which fails both ways leaves the stored point
+as it was, so the next one starts from the last solution rather than from
+a non-solution or from nothing. `warmstart = false` starts cold, is not
+retried, and keeps the stored point, unlike
+[`JosephsonCircuits.reset!`](@ref).
 """
 function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     vvn = componentvalues(cache, p)
@@ -298,15 +317,66 @@ function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
         assemblematrices!(cache.nm, cache.plan, bound, cache.matrixworkspace)
     end
     cache.nm = nm
-    x0 = (warmstart && !isnothing(cache.x)) ? initialguess(cache.x) :
-        ComplexF64[]
-    # keyed arrays are a presentation convenience and pure overhead in a
-    # loop; the stored state has to be a plain vector for the warm start
-    nl = hbnlsolve(cache.w, cache.sources, cache.frequencies,
-        cache.indices, cache.compiled, nm;
-        x0 = x0, keyedarrays = false, reuse = cache.reuse, cache.kwargs...)
+    nl = if warmstart && !isnothing(cache.x)
+        # a jump of the parameters can leave the warm start outside
+        # Newton's basin, so a warm attempt which fails is retried once,
+        # cold, with what the cache reuses. Its messages are held until it
+        # is known to be the outcome, so that only the outcome's reach the
+        # caller.
+        held = HeldMessages(Base.CoreLogging.current_logger())
+        warm = Base.CoreLogging.with_logger(held) do
+            cachesolve(cache, nm, initialguess(cache.x))
+        end
+        if warm.solverinfo.converged
+            release!(held)
+            warm
+        else
+            # the record holds both attempts, the warm one first
+            cold = cachesolve(cache, nm, ComplexF64[])
+            prepend!(cold.solverinfo.stages, warm.solverinfo.stages)
+            cold
+        end
+    else
+        cachesolve(cache, nm, ComplexF64[])
+    end
     cache.converged = nl.solverinfo.converged
     cache.converged && (cache.x = vec(collect(nl.nodeflux)))
     cache.nsolves += 1
     return nl
+end
+
+# A solve of the cache's problem with the matrices `nm` from the start
+# `x0`, cold when it is empty. Keyed arrays are a presentation convenience
+# and pure overhead in a loop, and the stored state has to be a plain
+# vector for the warm start.
+cachesolve(cache::HBCache, nm::CircuitMatrices, x0::Vector{ComplexF64}) =
+    hbnlsolve(cache.w, cache.sources, cache.frequencies, cache.indices,
+        cache.compiled, nm; x0 = x0, keyedarrays = false,
+        reuse = cache.reuse, cache.kwargs...)
+
+# The log messages of an attempt held until it is known to be the outcome
+# of its point: released to the logger they were meant for if it is, and
+# dropped if a retry replaces it. It logs what that logger would, and is
+# read only when a message is logged, so the logger is held untyped.
+struct HeldMessages <: Base.CoreLogging.AbstractLogger
+    logger::Base.CoreLogging.AbstractLogger
+    messages::Vector{Any}
+end
+HeldMessages(logger::Base.CoreLogging.AbstractLogger) =
+    HeldMessages(logger, Any[])
+Base.CoreLogging.min_enabled_level(h::HeldMessages) =
+    Base.CoreLogging.min_enabled_level(h.logger)
+Base.CoreLogging.shouldlog(h::HeldMessages, args...) =
+    Base.CoreLogging.shouldlog(h.logger, args...)
+Base.CoreLogging.catch_exceptions(h::HeldMessages) =
+    Base.CoreLogging.catch_exceptions(h.logger)
+function Base.CoreLogging.handle_message(h::HeldMessages, args...; kwargs...)
+    push!(h.messages, (args, kwargs))
+    return nothing
+end
+function release!(h::HeldMessages)
+    for (args, kwargs) in h.messages
+        Base.CoreLogging.handle_message(h.logger, args...; kwargs...)
+    end
+    return nothing
 end

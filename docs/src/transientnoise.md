@@ -85,6 +85,10 @@ resistors and the blocks, without the port terminations'. Both solvers
 count the vacuum as one half, so the quadrature form needs no further
 factor.
 
+For a nonlinear amplifier with a smooth pump ramp, distinct finite input
+and output windows, and independent timestep/bath refinements, continue
+with the [pumped-noise example](recipes/pumped-noise.md).
+
 ## Temporal modes
 
 [`transientquantumplan`](@ref) defines photon-normalized measurements of

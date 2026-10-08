@@ -4,13 +4,20 @@ Taper the unit-cell parameters of a traveling-wave amplifier, then add dielectri
 
 The plotting code requires `Plots` in addition to `JosephsonCircuits`.
 
+Gain and HB convergence do not establish temporal stability. Use the
+[pole-analysis workflow](../stability.md#stability-jpa)
+to search about a converged periodic solution, refine harmonics, and inspect
+mode profiles. The constant complex dielectric-loss values used below are
+frequency-domain models: replace them with an appropriate causal model
+and recompute the HB orbit before applying `hbstability`.
+
 Figures and timings come from the original reference run using 16 threads
 on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
 and numerical settings; see [benchmarking](../performance.md#Measuring-performance).
 
 Circuit parameters from [the source publication](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306).
 
-```julia
+```@example floquet
 using JosephsonCircuits
 using Plots
 
@@ -60,6 +67,12 @@ function floquetcircuit(; Rleft = 50.0, Rright = 50.0, Lj = IctoLj(1.75e-6),
     return Circuit(netlist)
 end
 
+nothing # hide
+```
+
+The full-size calculation uses that builder:
+
+```julia
 circuit = floquetcircuit()
 
 ws=2*pi*(1.0:0.1:14)*1e9
@@ -196,3 +209,25 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
 ![Floquet JTWPA simulation with loss](../assets/examples/floquetlossy.png)
+
+## A small executable check
+
+The documentation build exercises the same tapered circuit at 32 nodes,
+including the dielectric-loss variant. The shorter taper and weaker pump
+are checks of the recipe, not a substitute for convergence and stability
+analysis of the full device.
+
+```@example floquet
+for tandelta in (0.0, 1e-3)
+    smallcircuit = floquetcircuit(Nj = 32, weightwidth = 12,
+        Cg = 76.6e-15/(1 + im*tandelta),
+        Cc = 40e-15/(1 + im*tandelta), Cr = 1.533e-12/(1 + im*tandelta))
+    small = hbsolve(2pi .* [5e9, 6e9, 9e9], (2pi*7.9e9,),
+        [(mode = (1,), port = 1, current = 0.3e-6)], (4,), (8,), smallcircuit)
+    @assert small.nonlinear.solverinfo.converged
+    @assert all(isfinite, small.linearized.S)
+    @assert all(isfinite, small.linearized.QE)
+    @assert maximum(abs.(abs.(small.linearized.CM) .- 1)) < 1e-5
+end
+nothing # hide
+```

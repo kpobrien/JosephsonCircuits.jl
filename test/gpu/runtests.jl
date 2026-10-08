@@ -942,6 +942,64 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         end
     end
 
+    # the period map recorded and carried on the device: the poles, their
+    # profiles and their rate errors against the host's
+    @testset "the period map on the device" begin
+        junction = Circuit([(:p, 1, 0, Port(1; Z0 = 20.0)), (:j, 1, 0, JosephsonJunction(1.0)),
+            (:c, 1, 0, Capacitor(1.0))])
+        pump = hbnlsolve((0.8,), (12,), [(mode = (1,), port = 1, current = 0.04*JosephsonCircuits.phi0)], junction;
+            method = Newton(), atol = 1e-12, keyedarrays = false)
+        mapped(backend) = hbstability(junction; nonlinear = pump, Nmodulationharmonics = (2,),
+            method = Monodromy(; nev = :all, backend))
+        host, device = mapped(JosephsonCircuits.CPU()), mapped(CUDABackend())
+        # a mode's profile is its vector's, whose phase each eigensolver
+        # sets its own way: compared up to it, mode by mode
+        alike(a, b; rtol) = all(axes(a, 3)) do j
+            x, y = vec(a[:, :, j]), vec(b[:, :, j])
+            phase = dot(y, x)
+            agree(x, y .* (phase/abs(phase)); rtol)
+        end
+        @test length(device.poles) == length(host.poles) == 2
+        @test agree(host.poles, device.poles; rtol = 1e-12)
+        @test alike(host.nodevoltage, device.nodevoltage; rtol = 1e-10)
+        @test agree(host.rateerrors, device.rateerrors; rtol = 1e-3)
+        # the JPA's two modes, real multipliers whose content is the same at
+        # the pump frequency and at its mirror: each placed alike
+        jpa = Circuit([(:p, 1, 0, Port(1; Z0 = 50.0)), (:cc, 1, 2, Capacitor(100e-15)),
+            (:jj, 2, 0, JosephsonJunction(1e-9)), (:cj, 2, 0, Capacitor(1e-12))])
+        jpump = hbnlsolve((2pi*4.75001e9,), (16,), [(mode = (1,), port = 1, current = 0.00565e-6)], jpa)
+        jmapped(backend) = hbstability(jpa; nonlinear = jpump, Nmodulationharmonics = (2,),
+            method = Monodromy(; nev = :all, backend))
+        jhost, jdevice = jmapped(JosephsonCircuits.CPU()), jmapped(CUDABackend())
+        @test all(s -> imag(s) >= 0, jhost.poles)
+        @test agree(jhost.poles, jdevice.poles; rtol = 1e-12)
+        @test alike(jhost.nodevoltage, jdevice.nodevoltage; rtol = 1e-10)
+        # an isolated multiplier beside a defective block, whose right
+        # vectors are singular together, and the same turned into every
+        # coordinate by a reflection, whose inverse holds no left vector to
+        # working accuracy: the device's eigensolve gives the host's
+        jordan(m) = (J = diagm(vcat(1.01, fill(0.2, m - 1))); foreach(k -> J[k, k + 1] = 1.0, 2:m - 1); J)
+        w = collect(1.0:8.0)
+        reflect = I - 2*w*w'/(w'*w)
+        for M in (jordan(24), reflect*jordan(8)*reflect)
+            h = JosephsonCircuits.mapeigen!(copy(M), 1, JosephsonCircuits.CPU())
+            d = JosephsonCircuits.mapeigen!(copy(M), 1, CUDABackend())
+            @test h.values[h.selected] ≈ d.values[d.selected] ≈ [1.01] && d.conditions ≈ h.conditions
+            hv, dv = vec(h.left), vec(d.left)
+            @test abs(dot(hv, dv)) ≈ norm(hv)*norm(dv) rtol = 1e-12
+        end
+        # the device's residual check at its ends: a left vector's residual
+        # decides between the device's vectors and the host's, every vector
+        # passing a tolerance of infinity, and none of this map's, whose
+        # residuals are nonzero, a tolerance of zero
+        B = [1/(i + j) + (i == j)*i for i in 1:8, j in 1:8]
+        ilo, ihi, _ = LAPACK.gebal!('S', B)
+        for (tolerance, kept) in ((Inf, true), (0.0, false))
+            multipliers, vectors = JosephsonCircuits.mapspectrum!(copy(B), ilo, ihi, CUDABackend(); tolerance)
+            @test isnothing(vectors([argmax(abs.(multipliers))])) == !kept
+        end
+    end
+
     # the I/Q and quantum measurements on the device
     testtransientiq(CUDABackend())
     testtransientquantum(CUDABackend())

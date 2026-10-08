@@ -704,18 +704,10 @@ end
     dx0, dv0 = [0.3, -0.2], [1e9, 2e9]
     tg0 = transienttangent(rec, zeros(2, length(rec.times)); initialstate = (dx0, dv0))
     @test sum(weights .* tg0.outgoing) ≈ dot(ad.initialflux, dx0) + dot(ad.initialrate, dv0) rtol=1e-9
-    # the responses solve the stage equations as the rule the solution
-    # was solved under says: a looser tolerance gives the tangent to it,
-    # and a bound of two corrections cannot solve the loaded junction's
-    loose = transientsolve(lp, (0.0, T); dt, record = :phases, rtol = 1e-12, method = GaussLegendre(stagertol = 1e-6))
-    @test transienttangent(loose, currents).outgoing ≈ tg.outgoing rtol=1e-5
-    capped = transientsolve(lp, (0.0, T); dt, record = :phases, rtol = 1e-12, method = GaussLegendre(stageiterations = 2))
-    @test_throws ErrorException transienttangent(capped, currents)
-    @test_throws ArgumentError GaussLegendre(stageiterations = 1)
-    # the tangent refreshes a stage operator which goes stale within a
-    # step, as the solve does: a junction on a node without
-    # capacitance, pulsed hard at a coarse step, refreshes at nearly
-    # every step, and its tangent matches the solve's differences
+    # the tangent takes each stage at its own stiffness: a junction on a
+    # node without capacitance, pulsed hard at a coarse step, whose solve
+    # refreshes at nearly every step, and its tangent matches the solve's
+    # differences
     pulsed = Circuit([(:p, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(1e-12)), (:l, 1, 2, Inductor(0.5e-9)),
         (:lj, 2, 0, JosephsonJunction(1e-9))])
     hard(e) = [TransientSource(1, t -> 4e-6*sinpi(8e9*t)*(t <= 0 || t >= 1e-9 ? 0.0 : sinpi(t/1e-9)^2) + e*1e-9*sinpi(t/2e-9)^2)]

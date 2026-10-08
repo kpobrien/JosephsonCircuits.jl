@@ -7,7 +7,7 @@ solve keeps only the port waveforms and the final state, and the outgoing
 signals, the pump's third harmonic and an intermodulation product are read
 by demodulating the port 2 wave through a smooth window.
 
-```julia
+```@example transientline
 using JosephsonCircuits
 
 function transientline(cells)
@@ -35,7 +35,15 @@ function drive(t)
     return pump + Is*pulse(t)*signals
 end
 
-problem = transientproblem(transientline(cells); sources = [TransientSource(1, drive)])
+lineproblem(cells) = transientproblem(transientline(cells);
+    sources = [TransientSource(1, drive)])
+nothing # hide
+```
+
+The full 64-cell, 140 ns run and its demodulation are:
+
+```julia
+problem = lineproblem(cells)
 solution = transientsolve(problem, (0.0, 140e-9); dt = 2e-12)
 
 window(t) = 40e-9 <= t <= 100e-9 ? sinpi((t - 40e-9)/60e-9)^2 : 0.0
@@ -50,3 +58,21 @@ third = transientdemodulate(solution, 2, 3fp; window)
 Repeat with half the step and compare the amplitudes: the step controls
 the temporal error, and nothing in the solver estimates it (see
 [choosing a step](../transient.md#Choosing-the-rule,-the-step-and-the-record)).
+
+## A small executable check
+
+The documentation build uses four cells and runs through the start of the
+signal pulse. It checks the same circuit builder, all ten source tones,
+the transient solve, and demodulation without the full device's cost.
+The short record and smaller circuit are a syntax/numerics check, not a
+prediction of the full line's gain or spectral resolution.
+
+```@example transientline
+small = transientsolve(lineproblem(4), (0.0, 24e-9); dt = 4e-12)
+@assert all(isfinite, small.outgoing)
+@assert pulse(23e-9) > 0
+small_window(t) = 21e-9 <= t <= 24e-9 ? sinpi((t - 21e-9)/3e-9)^2 : 0.0
+measured = transientdemodulate(small, 2, first(frequencies); window = small_window)
+@assert isfinite(measured) && abs(measured) > 0
+nothing # hide
+```

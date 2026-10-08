@@ -69,3 +69,79 @@ otherwise the model stated with its `dcmodel` keyword, `OpenDC()`,
 a short or a through constrains the direct voltages of its ports instead
 of conducting between them, which the solver handles by an explicit
 direct current block rather than by the elimination above.
+
+## Initialize a biased junction in time
+
+A constant drive present at the first transient sample requires a
+consistent initial state. This example biases a junction through a series
+resistor. The port termination also carries DC, so the injected current
+is larger than the junction current. KCL and the zero-voltage junction
+relation determine the initial voltage and flux analytically.
+
+```@example biasedstate
+using JosephsonCircuits
+Lj, R, Z0 = 1e-9, 100.0, 50.0
+phi0 = JosephsonCircuits.phi0
+Ic = phi0/Lj
+Ij = 0.3Ic
+Idc = Ij*(R + Z0)/Z0
+circuit = Circuit([
+    (:p1, "drive", 0, Port(1; Z0)),
+    (:r, "drive", "junction", Resistor(R)),
+    (:jj, "junction", 0, JosephsonJunction(Lj)),
+    (:cj, "junction", 0, Capacitor(1e-12)),
+])
+compiled = compile(circuit)
+problem = transientproblem(compiled; sources = [TransientSource(1, t -> Idc)])
+
+# Ground is omitted. Use the compiled node order, not netlist position.
+names = compiled.nodenames[2:end]
+flux = [name == "junction" ? phi0*asin(Ij/Ic) : 0.0 for name in names]
+voltage = [name == "drive" ? R*Ij : 0.0 for name in names]
+initial = transientstate(problem; flux, voltage)
+solution = transientsolve(problem, (0.0, 1e-9); dt = 5e-12,
+    initialstate = initial, record = :states)
+@assert maximum(abs.(solution.voltage .- R*Ij)) < 1e-12
+solution.voltage[:, end]
+```
+
+Transient flux is in webers; HB `nodeflux` is divided by `phi0`. The
+junction begins at phase `asin(Ij/Ic)` and zero voltage. The drive node
+has voltage `R*Ij`; its flux then grows linearly. This is compatible with
+HB's separate average-voltage coordinate:
+
+```@example biasedstate
+hb = hbnlsolve((2pi*1e9,), (1,), [(mode = (0,), port = 1, current = Idc)],
+    compiled; dc = true, atol = 1e-12)
+@assert hb.solverinfo.converged
+@assert isapprox(hb.dcnodevoltage, voltage; rtol = 1e-9)
+hb.dcnodevoltage
+```
+
+This is an analytic initialization for this circuit, not a general HB to
+transient adapter. For a driven periodic orbit, reconstructing a state also
+requires the correct time origin, rates, auxiliary currents, and any line
+or rational-block history. Continuing from `transientstate(solution)`
+preserves that transient history.
+
+The default zero state fails here because the uncapacitated drive node
+must satisfy algebraic KCL immediately. Check that the solver reports the
+inconsistent initial condition:
+
+```@example biasedstate
+failure = try
+    transientsolve(problem, (0.0, 1e-9); dt = 5e-12)
+    nothing
+catch err
+    err
+end
+@assert failure isa ArgumentError
+@assert occursin("initial state", sprint(showerror, failure))
+sprint(showerror, failure)
+```
+
+Increasing the iteration limit cannot repair this initial condition.
+Supply the consistent state above, or start at equilibrium and smoothly
+ramp the source to let the circuit approach the intended branch. A ramp
+can select another branch in a multistable circuit, so inspect the settled
+state before using it.

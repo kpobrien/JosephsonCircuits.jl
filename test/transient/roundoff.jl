@@ -116,8 +116,8 @@ end
 
     @testset "a quiet node does not set another's floor" begin
         # a node of 100 nF, apart from the circuit, beside a junction on
-        # 100 fF: the step and the stage solves of the circuit stop where
-        # they do alone, and the tangent and the adjoint stay transposes
+        # 100 fF: the step of the circuit stops where it does alone, and the
+        # tangent and the adjoint stay transposes
         drive(t) = 0.5e-6*sinpi(2*5e9*t)*(t <= 0 ? 0.0 : t >= 0.5e-9 ? 1.0 : sinpi(t/1e-9)^2)
         core = [(:p, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(100e-15)), (:jj, 1, 0, JosephsonJunction(1e-9)),
             (:l2, 1, 2, Inductor(1e-9)), (:c2, 2, 0, Capacitor(200e-15))]
@@ -133,7 +133,7 @@ end
         @test sum(transientadjoint(beside, w).currents .* cur) ≈ forward rtol=1e-9
     end
 
-    @testset "tangent directions retain their own floor" begin
+    @testset "a tangent direction is solved apart from the others" begin
         a = 50e9
         u = [1.0, -1.0]
         block = RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2),

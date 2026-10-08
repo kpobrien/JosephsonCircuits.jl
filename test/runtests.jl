@@ -102,7 +102,7 @@ function testjobs()
             "circuit/values.jl", "spice/transient.jl",
             "harmonics/frequencies.jl", "transient/iq.jl",
             "spice/export.jl", "circuit/legacy.jl", "linearized/outputs.jl",
-            "linearized/hblinsolve.jl",
+            "linearized/hblinsolve.jl", "linearized/poles.jl", "linearized/polecomponents.jl", "linearized/polestamps.jl",
             "circuit/bind.jl", "circuit/oracles.jl", "circuit/graph.jl",
             "harmonics/sparse.jl",
             "solvers/factorizations.jl", "JosephsonCircuits.jl",

@@ -1,15 +1,17 @@
 """
     JosephsonCircuitsCUDAExt
 
-Package extension loaded with `using CUDA`. It supplies three things: the
+Package extension loaded with `using CUDA`. It supplies four things: the
 real transform plans, through CUFFT, which the residual and the matrix-free
 Jacobian-vector and Hessian-vector products of
 [`JosephsonCircuits.HBSystem`](@ref) need on a CUDA device; the device's
 free memory, which the automatic choices of preconditioner and linearized
-factorization are sized against; and the batched dense primitives
+factorization are sized against; the batched dense primitives
 `batchedinverse!` and `batchedmul!`, cuBLAS `getrf`/`getri` strided
 batched and `gemm_strided_batched!`, which every dense operation of a
-`SparseBlockFactorization` is one call to.
+`SparseBlockFactorization` is one call to; and the period map's dense
+eigensolve, cuSOLVER's `geev` with the left vectors it needs checked
+(see `mapspectrum!`).
 
 Everything else on that path is device generic: the linear maps around the
 pointwise time domain nonlinearity are KernelAbstractions kernels of
@@ -30,7 +32,8 @@ using KernelAbstractions
 import LinearAlgebra
 using LinearAlgebra: lu!, ldiv!
 import JosephsonCircuits: fftplans, freememory, batchedinverse!, batchedmul!,
-    blockidentity!, transientiqfftplans
+    blockidentity!, transientiqfftplans, mapspectrum!
+using JosephsonCircuits: eigenvector
 
 # Real transform plans on the device with the same dimensions, direction
 # and normalization convention as the FFTW plans of the CPU backend: the
@@ -86,5 +89,57 @@ end
 
 # the complex in place plans of the transient's windowed I/Q measurement
 transientiqfftplans(work, ::CUDABackend) = (CUFFT.plan_fft!(work), CUFFT.plan_bfft!(work))
+
+# The multipliers of the balanced period map `M` on the device (see
+# `JosephsonCircuits.mapspectrum!`), which it leaves as it is: cuSOLVER's
+# geev of every right vector, and the left vectors of the chosen ones from
+# the inverse of the right ones, by one factorization: the row of a real
+# multiplier's column is its left vector, and the rows of a complex pair's
+# two columns hold the first's left vector as LAPACK holds it, twice over.
+# The inverse holds a left vector to working accuracy only where the right
+# vectors are well conditioned together, which a defective multiplier
+# anywhere in the map undoes, so each is taken where its backward error,
+# its residual in the map's transpose over the map's 1-norm and its own
+# norm, is within `tolerance`, `n` eps, the bound of a backward stable
+# vector; where the right vectors are singular or a left vector's error
+# exceeds it, `vectors` gives nothing, and the host's take their place.
+function mapspectrum!(M::Matrix{Float64}, ilo::Int, ihi::Int, ::CUDABackend;
+        tolerance::Float64 = size(M, 1)*eps())
+    n = size(M, 1)
+    B = CuArray(M)
+    W, _, V = CUDA.CUSOLVER.Xgeev!('N', 'V', copy(B))
+    values = Array(W)
+    wi = imag.(values)
+    norm1 = LinearAlgebra.opnorm(M, 1)
+    factors = Ref{Any}(nothing)
+    function vectors(ks)
+        firsts = sort!(unique!([wi[k] < 0 ? k - 1 : k for k in ks]))
+        at, columns, column, c = Pair{Int,Int}[], Int[], zeros(Int, n), 1
+        for k in firsts
+            push!(at, k => c); push!(columns, k); column[k] = c
+            wi[k] == 0 || (push!(at, k + 1 => c + 1); push!(columns, k + 1); column[k + 1] = c + 1)
+            c += wi[k] == 0 ? 1 : 2
+        end
+        if isnothing(factors[])
+            F, ipiv, info = CUDA.CUSOLVER.getrf!(copy(V))
+            info == 0 || return nothing
+            factors[] = (F, ipiv)
+        end
+        F, ipiv = factors[]
+        E = zeros(n, length(columns))
+        for (j, k) in enumerate(columns)
+            E[k, j] = 1.0
+        end
+        L = CUDA.CUSOLVER.getrs!('T', F, ipiv, CuArray(E))
+        left, image = Array(L), Array(transpose(B)*L)
+        for k in firsts
+            u = eigenvector(left, k, column, wi)
+            LinearAlgebra.norm(eigenvector(image, k, column, wi) .- conj(values[k]) .* u) <=
+                tolerance*norm1*LinearAlgebra.norm(u) || return nothing
+        end
+        return Array(V[:, columns]), left, at
+    end
+    return values, vectors
+end
 
 end # module

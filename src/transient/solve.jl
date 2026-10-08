@@ -126,26 +126,22 @@ struct TransientSystem{B, M, MJ, V, VC, J, P, F, G, RM, RB}
     A::M
     B::M
     # the transposes of the conductance and the stiffness, which the
-    # scattering blocks make unsymmetric, and whether they are
+    # scattering blocks make unsymmetric
     Gt::M
     Lt::M
-    symmetric::Bool
     # the largest absolute row or column sums of `C`, `G`, `L`, of the
     # junction stamp `|RJ'| lmolj |RJ|` and of `RJ'`, which bound the
-    # rounding of a product with each or with its transpose by the size
-    # of what it multiplies: a product cancels along an algebraic
-    # direction, and its result then understates the rounding in it, so a
-    # convergence test that stops at roundoff reads these; and the
-    # entrywise magnitudes of those matrices, of their transposes and of
-    # the junction incidence, which bound it row by row where the sums,
-    # pairing the largest row of one with the largest entry of the other
-    # whatever rows they are in, do not suffice
+    # rounding of a product with each by the size of what it multiplies: a
+    # product cancels along an algebraic direction, and its result then
+    # understates the rounding in it, so a convergence test that stops at
+    # roundoff reads these; and the entrywise magnitudes of those matrices
+    # and of the junction incidence, which bound it row by row where the
+    # sums, pairing the largest row of one with the largest entry of the
+    # other whatever rows they are in, do not suffice
     rowsums::NTuple{5, Float64}
     Cabs::M
     Gabs::M
     Labs::M
-    Gtabs::M
-    Ltabs::M
     RJabs::MJ
     RJtabs::MJ
     # the junction incidence, its transpose and the coefficients Lscale/Lj
@@ -285,7 +281,6 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     # the same at every step
     Lscale = p.Lscale
     C, G, L, lineE = p.C, p.G, p.L, p.lineE
-    symmetric = isempty(p.blocks)
     for l in p.lines
         l.delay >= h || throw(ArgumentError(
             lazy"the transmission line at $(l.path) has a delay of $(l.delay) s, shorter than the step $(h) s; a step reads accepted history only, so reduce dt below the delay."))
@@ -361,7 +356,8 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
         stages = rationalstages(p, gc, h)
         coupling = isempty(stages) ? nothing : rationalcoupling(p, stages, gc, h, Lscale, blockgather, blockscatter, backend)
         pumped = any(b -> !isempty(b.modulations), p.blocks)
-        gaussstage(gc, v(imvals), cjacobian, v(rationalvals), coupling, backend, pumped, factorization, method)
+        twostages = stageplan(C, G, L, K, RJ, gc, h, coupling, backend)
+        gaussstage(gc, v(imvals), cjacobian, v(rationalvals), coupling, backend, pumped, factorization, twostages)
     else
         nothing
     end
@@ -375,8 +371,8 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
     RM, RB = relationparameters(relations)
     return TransientSystem{typeof(backend), typeof(Cd), typeof(RJd), typeof(lmoljd), typeof(cosphi), typeof(jacobian),
             typeof(plan), typeof(factorization), typeof(gauss), RM, RB}(p, backend, method, Float64(h), Lscale, alpha, beta,
-        Cd, d(G), d(L), d(K), d(A), d(B), d(sparse(transpose(G))), d(sparse(transpose(L))), symmetric, rowsums,
-        d(abs.(C)), d(abs.(G)), d(abs.(L)), d(sparse(transpose(abs.(G)))), d(sparse(transpose(abs.(L)))), d(abs.(RJ)), d(abs.(RJt)),
+        Cd, d(G), d(L), d(K), d(A), d(B), d(sparse(transpose(G))), d(sparse(transpose(L))), rowsums,
+        d(abs.(C)), d(abs.(G)), d(abs.(L)), d(abs.(RJ)), d(abs.(RJt)),
         RJd, d(RJt), lmoljd, d(injection), v(constant), d(blockscatter),
         d(lineinjection), d(linegather), d(lineE),
         d(ports), d(portst), d(portdrives), v(p.portimpedances), v(p.portconductances), plan, jacobian,

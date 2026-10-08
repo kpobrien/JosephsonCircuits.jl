@@ -5,14 +5,15 @@
 # `mu = 3 ± i sqrt(3)`, so with one frozen junction stiffness the two
 # stages decouple into the complex system `(mu/h)^2 C + (mu/h) G + L + J*`
 # and its conjugate, of which one is solved; that is a simplified Newton,
-# converging linearly on the true residual, and the same operator
-# preconditions the exact solves of the tangent and the adjoint of the
-# stage equations. The complex matrix is the harmonic balance real
-# Jacobian plan's assembly of the real part on its pattern, plus a constant
-# imaginary part on the same pattern.
+# converging linearly on the true residual. The complex matrix is the
+# harmonic balance real Jacobian plan's assembly of the real part on its
+# pattern, plus a constant imaginary part on the same pattern. The tangent
+# and the adjoint, which are linear, solve the linearized stage equations
+# exactly instead: the real matrix of both stages, each at its own junction
+# stiffness, factorized at each step (see `StagePlan`).
 
 """
-    GaussLegendre(; stagertol = 1e-12, stageiterations = 100)
+    GaussLegendre()
 
 The two stage Gauss-Legendre collocation on the flux and its rate, the
 default of [`transientsolve`](@ref): fourth order, A-stable, symplectic,
@@ -42,22 +43,12 @@ derivative of the cubic through the state, the two stages and the
 projected endpoint, third order. The tangent and the adjoint of a
 Gauss-Legendre solve differentiate the full stage equations, the
 projection and the readings included, and are exact for the recorded
-steps: each step's linearized stage equations are solved by a fixed
-point iteration on the frozen complex operator, refreshed within the
-step when it drifts, until every direction's residual is within
-`stagertol` of its right hand side or at the roundoff of its terms, in
-at most `stageiterations` corrections. The responses of a solution read
-these from the rule it was solved under.
+steps: each step's linearized stage equations, the real matrix of both
+stages at the step's recorded phases with the blocks' coupling at the
+stages' weights, are factorized at the step and solved once for every
+direction, the adjoint's by the transpose of the same matrix.
 """
-struct GaussLegendre <: AbstractTransientIntegrator
-    stagertol::Float64
-    stageiterations::Int
-end
-function GaussLegendre(; stagertol::Real = 1e-12, stageiterations::Integer = 100)
-    (isfinite(stagertol) && stagertol >= 0 && stageiterations >= 2) || throw(ArgumentError(
-        "stagertol must be finite and nonnegative and stageiterations at least 2."))
-    return GaussLegendre(Float64(stagertol), Int(stageiterations))
-end
+struct GaussLegendre <: AbstractTransientIntegrator end
 
 # The tableau, and what a step reads of it: the abscissae `c`, the
 # tableau `A`, which the rational blocks' stages read, its inverse
@@ -154,8 +145,8 @@ end
 # matrix of every block's unconverted response with the weight one and
 # the rest the modulated outputs of the pumped blocks with the weights
 # of the stage's time (see [`BlockModulation`](@ref)), scattered by `S`;
-# `E_d = E_u W_d G`, `E_x = E_u W_x G`; their transposes; and on the
-# host the output matrices `C_j` for the resting waves. A circuit
+# `E_d = E_u W_d G`, `E_x = E_u W_x G`; the transposes the adjoint reads;
+# and on the host the output matrices `C_j` for the resting waves. A circuit
 # without a pumped block has the one term `S C_0`, which is the coupling
 # of a block which does not convert.
 struct RationalCoupling{M}
@@ -166,7 +157,6 @@ struct RationalCoupling{M}
     Ez::M
     Ed::M
     Ex::M
-    Pdt::M
     Pxt::M
     Pzt::M
     Ezt::M
@@ -184,7 +174,8 @@ struct RationalCoupling{M}
     Cblk::Vector{SparseMatrixCSC{Float64,Int}}
     # on the host, the scatter onto the blocks' rows and the stacked
     # states from the stage unknowns, `P_d + P_x`, for the exact stage
-    # solve of a pumped block (see [`StageCorrection`](@ref))
+    # solve of a pumped block (see [`StageCorrection`](@ref)) and the two
+    # stages' matrix (see `StagePlan`)
     Shost::SparseMatrixCSC{Float64,Int}
     Phost::SparseMatrixCSC{Float64,Int}
     # the port rows with a modulated output term, the only rows the
@@ -311,7 +302,7 @@ function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc
     modulated = sort!(unique!(reduce(vcat, [rowvals(C) for C in Cblk[2:end]]; init = Int[])))
     Whost = [sparse((Cblk[j]*Phost[(i - 1)*nz + 1:i*nz, :])[modulated, :]) for i in 1:2 for j in 2:length(Cblk)]
     return RationalCoupling(nz, d(Pd), d(Px), d(Zz), d(Ezb), d(Ed), d(Ex),
-        d(t(Pd)), d(t(Px)), d(t(Zz)), d(t(Ezb)), d(t(Ed)), d(t(Ex)),
+        d(t(Px)), d(t(Zz)), d(t(Ezb)), d(t(Ed)), d(t(Ex)),
         [d(M) for M in SC], [d(t(M)) for M in SC], terms, Cblk,
         sparse(blockscatter), Phost, modulated, [d(W) for W in Whost], Whost,
         [d(abs.(M)) for M in SC], [opnorm(M, Inf) for M in SC])
@@ -367,11 +358,169 @@ function rationalmatrix(p::TransientProblem, s, Lscale, n)
     return sparse(rows, cols, vals, n, n)
 end
 
+# The values of one orientation of the two stages' matrix (see
+# `StagePlan`), the matrix or its transpose, in the compressed column order
+# of that orientation, with its pattern `colptr` and `rowval`: the constant
+# part `base`, and gathered per stored entry in a fixed order, so that a
+# matrix is the same whatever assembles it, the junction terms, `jcoef`
+# times the stiffness of the junction and stage `jrow` (the junctions at the
+# first stage, then at the second), and the converted outputs, `bval` times
+# the weight `brow` of the term and stage (the terms at the first stage,
+# then at the second).
+struct StageGather{VF, VI}
+    colptr::VI
+    rowval::VI
+    base::VF
+    jptr::VI
+    jrow::VI
+    jcoef::VF
+    bptr::VI
+    brow::VI
+    bval::VF
+end
+
+"""
+    StagePlan
+
+The real matrix of a Gauss-Legendre step's two stages, which the tangent
+and the adjoint solve. On the stage stacked unknowns `[stage 1; stage 2]`
+its block `(i, l)` is
+
+    A2_il C/h^2 + A1_il G/h + delta_il (L + J_i) - B_il,
+
+with `A1` and `A2` the entries of the inverse tableau and of its square,
+`J_i` the junction stamp at stage `i`'s phases, so that each stage has its
+own stiffness, and `B_il` the rational blocks' coupling of the stages at
+stage `i`'s weights, the converted outputs of a pumped block among them.
+Its pattern is the step operator's with the junction pairs and the blocks'
+coupling, in every block. The plan holds the pattern on the host, the
+values' gather in the matrix's own order (see `StageGather`), which a
+host factorization and the adjoint's device factorization read, and on a
+device in its transpose's order, which the device reads the matrix in for
+the tangent; the counts of the junctions and of the output terms; whether
+the matrix is constant, without junctions and converted outputs; and the
+host's fill reducing ordering of the pattern, each node's two stages
+together in the step operator's order.
+"""
+struct StagePlan{G}
+    n::Int
+    nj::Int
+    nterms::Int
+    constant::Bool
+    pattern::SparseMatrixCSC{Float64,Int}
+    natural::G
+    transposed::Union{Nothing, G}
+    ordering::FactorizationCache
+    # the only constructor, and it takes the parameter, which a host's
+    # plan leaves to its plain field alone
+    StagePlan{G}(n, nj, nterms, constant, pattern, natural, transposed, ordering) where {G} =
+        new{G}(n, nj, nterms, constant, pattern, natural, transposed, ordering)
+end
+
+# the plan of a system's two stages' matrix from its scaled matrices `C`,
+# `G`, `L`, the step operator `K`, all on the host, the junction incidence
+# `RJ` and the blocks' coupling or nothing, on `backend`
+function stageplan(C, G, L, K, RJ, gc::GaussCoefficients, h, coupling, backend)
+    n, nj = size(K, 1), size(RJ, 1)
+    # the blocks' coupling of stage `l` into stage `i` through each output
+    # term: the unconverted response at the weight one, then the converted
+    # outputs at the stage's weights
+    nz = isnothing(coupling) ? 0 : coupling.nstates
+    nterms = isnothing(coupling) ? 0 : length(coupling.Cblk)
+    blocks = [sparse(coupling.Shost*coupling.Cblk[j]*coupling.Phost[(i - 1)*nz + 1:i*nz, (l - 1)*n + 1:l*n])
+        for j in 1:nterms, i in 1:2, l in 1:2]
+    # every entry as row, column and value in the matrix's coordinates:
+    # the constant part, the junction terms with their stiffness's row, and
+    # the converted outputs with their weight's
+    rb, cb, vb = Int[], Int[], Float64[]
+    rj, cj, jrow, jcoef = Int[], Int[], Int[], Float64[]
+    rt, ct, brow, bval = Int[], Int[], Int[], Float64[]
+    place! = (M, i, l, s) -> begin
+        I, J, V = SparseArrays.findnz(M)
+        append!(rb, I .+ (i - 1)*n); append!(cb, J .+ (l - 1)*n); append!(vb, s .* V)
+        nothing
+    end
+    for i in 1:2, l in 1:2
+        place!(C, i, l, entry(gc.ainv2, i, l)/h^2)
+        place!(G, i, l, entry(gc.ainv, i, l)/h)
+        i == l && place!(L, i, l, 1.0)
+        nterms > 0 && place!(blocks[1, i, l], i, l, -1.0)
+    end
+    RJt = sparse(transpose(RJ))
+    for i in 1:2, k in 1:nj, pa in nzrange(RJt, k), pb in nzrange(RJt, k)
+        push!(rj, rowvals(RJt)[pa] + (i - 1)*n); push!(cj, rowvals(RJt)[pb] + (i - 1)*n)
+        push!(jrow, k + (i - 1)*nj); push!(jcoef, nonzeros(RJt)[pa]*nonzeros(RJt)[pb])
+    end
+    for j in 2:nterms, i in 1:2, l in 1:2
+        I, J, V = SparseArrays.findnz(blocks[j, i, l])
+        append!(rt, I .+ (i - 1)*n); append!(ct, J .+ (l - 1)*n)
+        append!(brow, fill(j + (i - 1)*nterms, length(I))); append!(bval, .-V)
+    end
+    # the pattern: the step operator's, the junction pairs' and the
+    # blocks' coupling's, in every block
+    units = (I, J) -> sparse(mod1.(I, n), mod1.(J, n), zeros(length(I)), n, n)
+    P = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(SparseMatrixCSC(n, n, copy(SparseArrays.getcolptr(K)), copy(rowvals(K)),
+        zeros(nnz(K))), units(rb, cb)), units(rj, cj)), units(rt, ct))
+    pattern = sparse([P P; P P])
+    gather = transposed -> stagegather(pattern, transposed, (rb, cb, vb), (rj, cj, jrow, jcoef), (rt, ct, brow, bval), backend)
+    natural = gather(false)
+    return StagePlan{typeof(natural)}(n, nj, nterms, nj == 0 && isempty(bval), pattern, natural,
+        backend isa CPU ? nothing : gather(true), FactorizationCache())
+end
+
+# the gather of the values of the matrix of pattern `pattern`, or of its
+# transpose, from the entries of its constant part, its junction terms and
+# its converted outputs (see `StageGather`)
+function stagegather(pattern::SparseMatrixCSC, transposed::Bool, constantpart, junctions, converted, backend)
+    S = transposed ? sparse(transpose(pattern)) : pattern
+    colptr, rowval = SparseArrays.getcolptr(S), rowvals(S)
+    position = (r, c) -> transposed ? storedposition(colptr, rowval, c, r) : storedposition(colptr, rowval, r, c)
+    rb, cb, vb = constantpart
+    base = zeros(nnz(S))
+    for k in eachindex(rb)
+        base[position(rb[k], cb[k])] += vb[k]
+    end
+    # each list grouped by its entries, in the order it was formed
+    grouped = (rows, cols) -> begin
+        at = [position(rows[k], cols[k]) for k in eachindex(rows)]
+        order = sortperm(at; alg = MergeSort)
+        ptr = zeros(Int, nnz(S) + 1)
+        ptr[1] = 1
+        for q in at
+            ptr[q + 1] += 1
+        end
+        cumsum!(ptr, ptr)
+        ptr, order
+    end
+    rj, cj, jrow, jcoef = junctions
+    jptr, jorder = grouped(rj, cj)
+    rt, ct, brow, bval = converted
+    bptr, border = grouped(rt, ct)
+    host = backend isa CPU
+    index = x -> host ? Vector{Int}(x) : tobackend(backend, Vector{Int32}(x))
+    value = x -> tobackend(backend, Vector{Float64}(x))
+    return StageGather(index(colptr), index(rowval), value(base), index(jptr), index(jrow[jorder]), value(jcoef[jorder]),
+        index(bptr), index(brow[border]), value(bval[border]))
+end
+
+# the fill reducing ordering of the two stages' pattern from the step
+# operator's, `nothing` for KLU's own: each node's two stages one after the
+# other, the nodes in the step operator's order, which eliminates the
+# pattern's two by two blocks as that order eliminates its entries
+function stageordering(ordering, pattern::SparseMatrixCSC, n::Int)
+    isnothing(ordering) && return nothing
+    perm = orderingpermutation(ordering)
+    pairs = vec(transpose(hcat(perm, perm .+ n)))
+    fill, _ = symbolicfill(_symmetricpattern(pattern), pairs)
+    return FillOrdering(pairs, fill)
+end
+
 # What a Gauss-Legendre system holds beyond the trapezoidal one: the
 # coefficients, the imaginary part of the stage matrix on the Jacobian's
-# pattern, the complex matrix the factorization reads, and the stage
-# algebra of the rational blocks.
-struct GaussStage{V, M, R, SM}
+# pattern, the complex matrix the factorization reads, the stage algebra
+# of the rational blocks, and the plan of the two stages' matrix the
+# tangent and the adjoint solve.
+struct GaussStage{V, M, R, SM, P}
     coefficients::GaussCoefficients
     imvals::V
     cjacobian::M
@@ -383,39 +532,41 @@ struct GaussStage{V, M, R, SM}
     # response's, is the backend's alone, a circuit with a block runs on
     # the code compiled for one without, and a presence check is a branch
     # rather than a specialization; and whether any block is pumped, which
-    # is when the stage solves carry a correction
+    # is when the step's solves carry a correction
     rationalvals::R
     coupling::Union{Nothing, RationalCoupling{SM}}
     pumped::Bool
     # The fill reducing ordering of the stage matrix's pattern for a host
     # factorization, chosen once for the system: every fresh factorization
-    # of a condition, a chunk, a checkpoint window, a tangent or an adjoint
-    # on the system takes it, and only reads it, so the chunks of a batch
-    # share it across threads. Empty on a device, which orders its batch
-    # itself.
+    # of a condition, a chunk or a checkpoint window on the system takes
+    # it, and only reads it, so the chunks of a batch share it across
+    # threads. Empty on a device, which orders its batch itself.
     ordering::FactorizationCache
-    # the tolerance and the bound of the responses' stage solves, the
-    # rule's
-    stagertol::Float64
-    stageiterations::Int
+    # the plan of the two stages' matrix, whose host ordering derives from
+    # the stage matrix's
+    stages::P
     # The only constructor, and it takes the parameters: `SM` appears in
     # the union field alone, so a circuit without a coupling passes
     # `nothing` and leaves it with nothing to infer from. `gaussstage`
     # reads it off the backend.
-    GaussStage{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped, ordering, stagertol,
-        stageiterations) where {V, M, R, SM} =
-        new{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped, ordering, stagertol, stageiterations)
+    GaussStage{V, M, R, SM, P}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped, ordering,
+        stages) where {V, M, R, SM, P} =
+        new{V, M, R, SM, P}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped, ordering, stages)
 end
 
-# the stage with its union field's type taken from the backend, on the
-# host the ordering `factorization` chooses for its pattern, and the
-# stage solve settings of the rule `method`
-function gaussstage(gc, imvals, cjacobian, rationalvals, coupling, backend, pumped, factorization, method::GaussLegendre)
+# the stage with its union field's type taken from the backend, and on
+# the host the ordering `factorization` chooses for its pattern, with the
+# two stages' ordering from it
+function gaussstage(gc, imvals, cjacobian, rationalvals, coupling, backend, pumped, factorization, stages::StagePlan)
     SM = typeof(devicesparse(sparse(zeros(1, 1)), backend))
     ordering = FactorizationCache()
-    backend isa CPU && seedordering!(ordering, cjacobian, fillordering(factorization, cjacobian))
-    return GaussStage{typeof(imvals), typeof(cjacobian), typeof(rationalvals), SM}(gc, imvals, cjacobian,
-        rationalvals, coupling, pumped, ordering, method.stagertol, method.stageiterations)
+    if backend isa CPU
+        chosen = fillordering(factorization, cjacobian)
+        seedordering!(ordering, cjacobian, chosen)
+        seedordering!(stages.ordering, stages.pattern, stageordering(chosen, stages.pattern, stages.n))
+    end
+    return GaussStage{typeof(imvals), typeof(cjacobian), typeof(rationalvals), SM, typeof(stages)}(gc, imvals, cjacobian,
+        rationalvals, coupling, pumped, ordering, stages)
 end
 
 # The entries of a sparse matrix `A` placed on the pattern of the real

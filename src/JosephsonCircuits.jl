@@ -31,6 +31,7 @@ implement them, are listed next to the `include` statements below.
 module JosephsonCircuits
 
 import Graphs
+import ArnoldiMethod
 import FFTW
 import KLU
 # the orderings of `kluordered` come from the CHOLMOD library that ships
@@ -49,6 +50,7 @@ import FastInterpolations
 import FunctionWrappers: FunctionWrapper
 
 using LinearAlgebra
+using LinearAlgebra: BlasInt
 using SparseArrays
 using Touchstone
 
@@ -122,6 +124,7 @@ const boltzmann_constant = 1.380649e-23
 # How a component value is written (a number, a symbol, a parameterized
 # expression, or a callable of frequency) and how it becomes a number.
 include("circuit/values.jl")
+include("circuit/laplace.jl")
 # The component models: lumped elements, ports, nonlinear inductors, and
 # multiport scattering and Gaussian channel blocks with the matrix
 # providers their frequency dependent data comes from.
@@ -185,6 +188,10 @@ include("linearized/outputs.jl") # scattering parameters, noise and quantum effi
 include("linearized/hbsolve.jl")
 include("solvers/hbnlsolve.jl")
 include("linearized/hblinsolve.jl")
+include("linearized/polecomponents.jl")
+include("linearized/poles.jl")
+include("linearized/polecontour.jl")
+include("linearized/polematching.jl")
 # The device sweep dispatches on the linearized solve's own array types, so
 # it follows hblinsolve.jl; its scattering block evaluation and noise
 # reductions come first because the sweep drives them.
@@ -215,6 +222,9 @@ include("transient/sensitivity.jl")
 include("transient/iq.jl")       # windowed I/Q of a port trace and its transpose
 include("transient/quantum.jl")  # photon normalized temporal modes of a port trace
 include("transient/noise.jl")    # the physical baths, and the noise
+# the period map of hbstability, a pump period of the transient carried by
+# its tangent
+include("linearized/polemonodromy.jl")
 
 # --- networks/: the network library -------------------------------------
 include("networks/parameters.jl") # S, Z, Y, ABCD, ... conversions
@@ -454,7 +464,8 @@ function warmupconnect()
     return true
 end
 
-export hbsolve, hbnlsolve, hblinsolve, compile,
+export hbsolve, hbnlsolve, hblinsolve, hbstability, HBStabilityResult, ShiftInvert,
+    DenseSpectrum, ContourIntegral, Monodromy, compile,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     connectS, solveS
 export thermaloccupation, effectivetemperature, noisetemperature,
@@ -472,7 +483,7 @@ import .CircuitValues: @params
 # `reset!(cache)` is not exported: packages as common as DataStructures
 # export a `reset!` of their own, and a script using both would have to
 # qualify it; the docstrings name it `JosephsonCircuits.reset!`.
-export FrequencyDependent, designsensitivities, designjacobian,
+export FrequencyDependent, LaplaceResponse, designsensitivities, designjacobian,
     hbcache, hbsolve!, HBCache, HBReuse,
     hbnonlinearproblem, JacobianOperator, preconditioner, hbresidual!,
     hbjvp!, hbvjp!, hbjacobian!, hbd2F!, hbd3F!, hbdFdp!, jacobianprototype,
@@ -590,6 +601,17 @@ function warmuptransient()
     return nothing
 end
 
+# The poles of the same amplifier: its period map about its pump, every
+# mode with its profile and the error of its rate, and its poles without
+# a pump, which a first call of hbstability pays for otherwise.
+function warmuppoles()
+    circuit = warmupcircuit(50.0, 100.0e-15, 1000.0e-12, 1000.0e-15)
+    pump = hbnlsolve((2pi*4.75e9,), (4,), [(mode = (1,), port = 1, current = 0.00565e-6)], circuit)
+    hbstability(circuit; nonlinear = pump, Nmodulationharmonics = (2,), method = Monodromy(steps = 16))
+    hbstability(circuit)
+    return nothing
+end
+
 # The fit of sampled scattering data to a rational block, through
 # `RationalScattering`: a lossy two port with one real pole, sampled over
 # the band, searched for its order; and the same scaled so that its fit
@@ -613,6 +635,7 @@ PrecompileTools.@compile_workload begin
     warmupdocumented()
     warmuptwotone()
     warmuptransient()
+    warmuppoles()
     warmupfit()
     # The network parameter conversions are deliberately not part of the
     # workload: compiling every conversion for every input shape is a large

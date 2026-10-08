@@ -240,9 +240,25 @@ end
     @test partsweep.verdict === :passive && partsweep.evaluated > 100
     sweep = [partsweep.evaluated, JC.residuenorm(part; rtol = 1e-8)[[1, 3]]...]
 
+    # the period map divides its directions and its modes between the
+    # threads, each chunk carried by a tangent of its own along the one
+    # recorded period: every mode of the pumped circuit, with its profile
+    modes = hbstability(c, defs; nonlinear = nl, method = Monodromy(nev = :all))
+    @test modes.converged && length(modes.poles) >= 2
+    # and of a junction behind a line, the line's history among the
+    # directions the chunks carry
+    behind = Circuit([(:p, 1, 0, Port(1; Z0 = 20.0)), (:line, 1, 2, TransmissionLine(10.0, 1.0; vp = 1.0)),
+        (:j, 2, 0, JosephsonJunction(1.0)), (:c, 2, 0, Capacitor(1.0))])
+    linepump = hbnlsolve((0.8,), (12,), [(mode = (1,), port = 1, current = 0.04*JC.phi0)], behind;
+        method = Newton(), atol = 1e-12, keyedarrays = false)
+    linemodes = hbstability(behind; nonlinear = linepump, Nmodulationharmonics = (2,), method = Monodromy(nev = :all))
+    @test linemodes.converged && linemodes.searches[1].history > 16
+
     serialize(ARGS[1], (; S = batched.S, Ssensitivity = batched.Ssensitivity,
         Snoise = batched.Snoise, fluxes, finalflux = sol.finalflux,
         tangent = tangent.outgoing, adjoint = adjoint.currents,
         covariance = noise.covariance, gain, longflux = long.nodeflux,
-        pumpedcovariance = pnoise.covariance, relocated, sweep))
+        pumpedcovariance = pnoise.covariance, relocated, sweep,
+        periodmap = modes.poles, periodprofiles = modes.nodevoltage,
+        lineperiodmap = linemodes.poles, lineprofiles = linemodes.nodevoltage))
 end

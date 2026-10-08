@@ -1785,12 +1785,23 @@ function nonlinearoutputs(; psc,
         keyedarrays ? nodevariabletokeyed(v, nodenames) : v
     end
 
+    # the port currents of the scattering blocks, the last auxiliary
+    # unknowns, port by port with the mode index fastest, in amperes
+    blockcurrents = Matrix{Complex{Float64}}[]
+    offset = length(x) - countscatteringports(psc)*Nmodes
+    for cb in psc.scatteringblocks
+        n = cb.definition.nports
+        push!(blockcurrents, reshape(x[offset + 1:offset + n*Nmodes] .* (phi0/Lscale), Nmodes, n))
+        offset += n*Nmodes
+    end
+
     # the branch vectors are those of the circuit matrices handed in, which
     # a cache refills in place at its next point, so the solution holds
     # copies; the incidence matrix is topology and never written
     return NonlinearHB(w, frequencies, nodefluxout, Rbnmout, copy(Ljb),
         copy(Lb), copy(Ljbm), Nmodes, Nbranches, nodenames, portnumbers,
-        modes, Sout, solverinfo, operatingpoint, dcout)
+        modes, Sout, solverinfo, operatingpoint, dcout, copy(sources),
+        blockcurrents)
 
 end
 

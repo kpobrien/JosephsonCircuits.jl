@@ -5,6 +5,10 @@ Calculate reflection gain near the resonance of a current-pumped JPA, then compa
 Requires `JosephsonCircuits` and `Plots`. The optional comparison uses
 WRspice through `XicTools_jll`, or a local WRspice installation.
 
+For temporal stability of this pumped circuit, continue with the
+[worked pole-analysis example](../stability.md#stability-jpa),
+including harmonic refinement.
+
 Figures and timings come from the original reference run using 16 threads
 on an AMD Ryzen 9 9950X under Linux. Rerun the code for your package version
 and numerical settings; see [benchmarking](../performance.md#Measuring-performance).

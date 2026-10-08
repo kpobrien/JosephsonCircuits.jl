@@ -26,6 +26,75 @@ finite_difference = (response(C + step) - response(C - step))/(2step)
 abs((analytic - finite_difference)/finite_difference)
 ```
 
+## Total and frozen-pump derivatives
+
+In a pumped circuit, a component change also moves the nonlinear operating
+point. `designsensitivities` includes that motion. A finite-difference
+check must therefore solve the pump again at both perturbed values.
+Here a single design parameter is also a single junction's inductance, so
+we can compare with the component sensitivity at fixed pump state.
+
+```@example pumpderivative
+using JosephsonCircuits, LinearAlgebra
+c = Circuit([
+    (:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(100e-15)),
+    (:jj, 2, 0, JosephsonJunction(:Lj)), (:cj, 2, 0, Capacitor(1e-12)),
+])
+L = 1e-9
+wp = (2pi*4.75001e9,)
+ws = 2pi .* [4.69e9, 4.71e9]
+sources = [(mode = (1,), port = 1, current = 0.005e-6)]
+result = designsensitivities(c, Dict(:Lj => L), ws, wp, sources,
+    (4,), (8,); atol = 1e-12)
+total = collect(result.dSdp((0,), 1, (0,), 1, :Lj, :))
+response(value) = hbsolve(ws, wp, sources, (4,), (8,), c,
+    Dict(:Lj => value); atol = 1e-12)
+step = 1e-5*L
+plus, minus = response(L + step), response(L - step)
+@assert all(r -> r.nonlinear.solverinfo.converged, (result.out, plus, minus))
+finite_difference = (plus.linearized.S((0,), 1, (0,), 1, :) .-
+    minus.linearized.S((0,), 1, (0,), 1, :))/(2step)
+total_error = norm(total - finite_difference)/norm(finite_difference)
+@assert total_error < 1e-4
+total_error
+```
+
+To isolate the direct change at **fixed periodic flux**, request
+`sensitivityoperatingpoint = false` from `hbsolve`. This switch belongs to
+`hbsolve`, not `hblinsolve`. Component sensitivities are relative to the
+component value, so divide the junction's result by `L` to compare with
+the absolute design derivative `dS/dLj` (units H⁻¹).
+
+```@example pumpderivative
+fixed = hbsolve(ws, wp, sources, (4,), (8,), c, Dict(:Lj => L);
+    atol = 1e-12, sensitivitynames = ["jj"], returnSsensitivity = true,
+    sensitivityoperatingpoint = false)
+frozen = collect(fixed.linearized.Ssensitivity((0,), 1, (0,), 1, "jj", :))/L
+# Reuse the exact same nonlinear state on both sides of this difference.
+fixedresponse(value) = hblinsolve(ws, c, Dict(:Lj => value);
+    nonlinear = result.out.nonlinear, Nmodulationharmonics = (4,))
+fixed_difference = (fixedresponse(L + step).S((0,), 1, (0,), 1, :) .-
+    fixedresponse(L - step).S((0,), 1, (0,), 1, :))/(2step)
+frozen_error = norm(frozen - fixed_difference)/norm(fixed_difference)
+@assert frozen_error < 1e-4
+relative_difference = norm(total - frozen)/norm(total)
+@assert relative_difference > 0.1
+(total_error, frozen_error, relative_difference)
+```
+
+The total and frozen derivatives differ by about 57% in norm at this
+operating point; they answer different questions. A component tolerance
+or design change with a fixed external pump drive generally needs the
+total derivative. The frozen derivative holds the already solved junction
+flux waveform fixed even though the perturbed circuit would not produce
+that waveform under the same drive.
+
+When checking another design, vary the finite-difference step and tighten
+the nonlinear tolerance until the comparison stabilizes. Both perturbed
+solves must follow the same operating-point branch. Close to a bifurcation,
+branch switching or an ill-conditioned pump Jacobian can invalidate a
+naive finite-difference comparison.
+
 ## Gain derivatives of a pumped JPA
 
 This independent plotting recipe requires `Plots`. The displayed

@@ -49,6 +49,15 @@ evaluated outside the measured band. Its extrapolation is a model
 assumption. Passivity and a small in-band fit error do not establish that
 out-of-band behavior matches the physical device.
 
+For temporal poles of the **loaded circuit**, use [`hbstability`](@ref).
+Constant real and rational blocks enter its polynomial operator; exact
+delays and explicit [`LaplaceResponse`](@ref) callbacks use a bounded
+contour search. Tables alone do not define a Laplace continuation.
+See [what enters the polynomial](stability.md#What-enters-the-polynomial) and the
+[delay example](stability.md#Delays-and-Laplace-models).
+An isolated block's stable realization does not establish stability of
+the interconnected, possibly pumped circuit.
+
 ## Fit a rational model
 
 This complete example fits synthetic data from a passive low-pass two-port.
@@ -151,6 +160,116 @@ covariances are shifted to the same reference planes. Delay removal does
 not infer which part of an arbitrary measured reflection is a physical
 cable; the specified reference-plane shifts are part of the model.
 
+## A measured-data workflow
+
+The following synthetic dataset mimics a nearly lossless two-port measured
+through cables. Its known analytic response lets us validate between the
+sample frequencies. The small, deterministic perturbation stands in for
+measurement error; these are not experimental data.
+
+```@example fitworkflow
+using JosephsonCircuits, LinearAlgebra
+fc, attenuation = 5e9, 0.999
+delays = [70e-12, 110e-12]  # one reference-plane delay per port, seconds
+function truth(w)
+    h = attenuation*(2pi*fc - im*w)/(2pi*fc + im*w)
+    return [0 h; h 0] .* exp.(-im*w .* (delays .+ delays'))
+end
+sample_f = collect(range(0.0, 20e9; length = 81))
+samples = cat((truth(2pi*f) .* (1 + 1e-6*sin(2pi*f/3e9)^2)
+    for f in sample_f)...; dims = 3)
+data = ScatteringParameters((2pi .* sample_f, samples); nports = 2, zref = 50.0)
+
+# Omitting the positional pole count requests automatic order selection.
+core = RationalScattering(data; minpoles = 1, maxpoles = 6,
+    noisefloor = 1e-6, tol = 1e-5, delays)
+p = core.provider
+assessment = JosephsonCircuits.passivityassessment(p.A, p.B, p.C, p.D)
+@assert maximum(real, eigvals(p.A)) < 0
+@assert assessment.verdict == :passive
+(size(p.A, 1), assessment)
+```
+
+Automatic selection tries pole counts within the supplied budget until an
+acceptable fit is found. `noisefloor` controls the numerical-rank estimate
+used by the automatic fit; choose it in relation to data quality. It does
+not estimate instrument noise or justify fitting structure below that
+noise. `tol` is an accepted scattering-fit error, after passivity enforcement,
+relative to the largest sampled response (with entry scaling when weights
+are supplied). It is not a relative bound on every small loss or isolation
+entry. If no acceptable model fits the budget, inspect sampling, delays,
+weights, and data consistency before increasing `maxpoles`.
+
+Pole count and realization state count differ: a multiport pole residue
+can need more than one state. The example therefore reports `size(p.A,1)`.
+
+| `assessment.verdict` | Meaning and action |
+|---|---|
+| `:passive` | The frequency-axis test establishes the singular-value limit at the requested tolerance; also check stability of `A` |
+| `:active` | A response exceeds that limit; inspect the data/noise contract or fit enforcement |
+| `:indeterminate` | Numerical resolution did not settle the crossing test; do not relabel it passive merely because a sampled grid looks acceptable |
+
+`lower` is the largest singular value found; `frequency` is its location in
+rad/s, possibly `Inf` for the feedthrough. `upper` is an established level,
+not necessarily a tight bound on the peak. The constructor already checks
+the declared contract; the separate assessment makes that evidence visible.
+It does not test the stability of a larger circuit containing the block.
+
+### Restore the reference planes
+
+The returned core omits the supplied delays. Put one matched line back at
+each port; a line's length is its delay times its phase velocity:
+
+```@example fitworkflow
+vp = 2e8
+circuit = Circuit([
+    (:p1, 1, 0, Port(1)),
+    (:cable1, 1, 2, TransmissionLine(50.0, vp*delays[1]; vp)),
+    (:core, 2, 3, core),
+    (:cable2, 3, 4, TransmissionLine(50.0, vp*delays[2]; vp)),
+    (:p2, 4, 0, Port(2)),
+])
+check_f = collect(range(0.125e9, 19.875e9; length = 80))
+response = hblinsolve(2pi .* check_f, circuit;
+    keyedarrays = false, returnCnoise = true)
+Serror = maximum(opnorm(response.S[:, :, k] - truth(2pi*f))
+    for (k, f) in enumerate(check_f))
+@assert Serror < 1e-5
+Serror
+```
+
+The check includes the restored phases and uses points absent from the
+training grid. For real measurements, hold out independent samples or
+compare with a separate simulation; the analytic `truth` here would not
+be available. Reserve coverage for every pump harmonic and idler used by
+the intended analysis. A passive fit outside the measured band remains an
+extrapolation.
+
+### Validate small loss and noise separately
+
+This matched all-pass core has constant dissipation
+`K = (1-attenuation^2)I`, about 0.002, much smaller than its transmission.
+At zero temperature its added output covariance is `K/2`. The matched
+lossless cables rotate phases but leave this diagonal covariance unchanged.
+
+```@example fitworkflow
+K = (1 - attenuation^2)*Matrix{Float64}(I, 2, 2)
+losserror = maximum(opnorm(I - response.S[:, :, k]*response.S[:, :, k]' - K)/opnorm(K)
+    for k in eachindex(check_f))
+noiseerror = maximum(opnorm(response.Cnoise[:, :, k] - K/2)/opnorm(K/2)
+    for k in eachindex(check_f))
+@assert losserror < 2e-3
+@assert noiseerror < 2e-3
+(; Serror, relative_loss_error = losserror, relative_noise_error = noiseerror)
+```
+
+These tolerances are checks of this synthetic example, not guarantees
+for measured data. For a real low-loss component, compare dissipated power
+and the intended thermal covariance over the full band; choose the fitting
+error and passivity margin well below the loss you need to resolve.
+The [noise conventions](conventions.md#Noise-normalization-and-temperature)
+distinguish internally emitted `Cnoise` from total output noise `Vout`.
+
 ## Zero-frequency behavior
 
 The default `ScatteringLimit()` evaluates the block at zero frequency.
@@ -188,6 +307,11 @@ These checks enforce the model's noise contract. They do not establish
 its accuracy against a measured device. See [noise conventions](conventions.md#Noise-normalization-and-temperature).
 
 ## Pumped devices
+
+For a complete executable workflow, see
+[From a pumped JPA to a transient scattering model](recipes/fitted-amplifier.md).
+It exports both conversion and internal noise, fits the model, and checks
+its frequency-domain and transient predictions against the original JPA.
 
 [`LinearizedScattering`](@ref) represents a device about a periodic pumped
 state. Its harmonic transfer function `H_k(nu)` maps a wave at `nu` to

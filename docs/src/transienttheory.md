@@ -320,8 +320,9 @@ independent circuit model.
 
 The tangent differentiates the stage equations about the recorded
 junction phases, including block states, line interpolation, endpoint
-projection, and output feedthrough. Iteration on the step's frozen
-factorization solves the differentiated equations to the response tolerance.
+projection, and output feedthrough. Each step's differentiated stage
+equations, the real matrix of both stages, each at its own recorded
+junction stiffness, are factorized at the step and solved directly.
 
 The adjoint applies the transposes of the same operations in reverse time.
 Its initial-state derivatives include flux, rate, block states, and line

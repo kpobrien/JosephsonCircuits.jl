@@ -11,7 +11,7 @@ and numerical settings; see [benchmarking](../performance.md#Measuring-performan
 
 Circuit and parameters from [Yamamoto et al. (2008)](https://doi.org/10.1063/1.2964182).
 
-```julia
+```@example fluxpump
 using JosephsonCircuits
 using Plots
 
@@ -46,6 +46,12 @@ Idc = 140.3e-6
 sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
 Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
+nothing # hide
+```
+
+The full sweep and plotting commands continue this setup:
+
+```julia
 @time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
     Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 @assert jpapumpon.nonlinear.solverinfo.converged
@@ -69,6 +75,22 @@ plot(
 
 ```
   0.015623 seconds (22.07 k allocations: 80.082 MiB)
+```
+
+## A small executable check
+
+The documentation build uses the same circuit and bias/pump sources at
+three signal frequencies. The smaller harmonic limits check the workflow;
+refine them for a quantitative gain prediction.
+
+```@example fluxpump
+small = hbsolve(2pi .* [9.72e9, 9.75e9, 9.78e9], wp, sourcespumpon,
+    (4,), (8,), circuit; dc = true, threewavemixing = true,
+    fourwavemixing = true, atol = 1e-8)
+@assert small.nonlinear.solverinfo.converged
+@assert all(isfinite, small.linearized.S)
+@assert maximum(abs.(abs.(small.linearized.CM) .- 1)) < 1e-5
+nothing # hide
 ```
 
 ## Compare with WRspice

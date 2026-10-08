@@ -6,7 +6,7 @@
 """
     NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
         Nbranches, nodes, ports, modes, S, solverinfo, operatingpoint,
-        dcnodevoltage)
+        dcnodevoltage, sources, blockcurrents)
 
 The solution of the nonlinear harmonic balance problem returned by
 [`hbnlsolve`](@ref).
@@ -58,6 +58,16 @@ The solution of the nonlinear harmonic balance problem returned by
     shorted to ground sits at zero volts, and so does every node of a
     circuit into which no direct current is injected) and differs from
     `nothing`.
+- `sources`: the drive of the solution, the sources as named tuples
+    `(mode, port, current)` with a complex current: at a nonzero mode the
+    current in time is `2 real(current*cis(f*t))`, `f` the mode's
+    frequency, and at the zero mode the current itself.
+- `blockcurrents`: the port currents of the scattering blocks in
+    amperes, entering each block at its signal terminals, as the solve
+    determined them with the whole circuit: one matrix per block of the
+    compiled circuit, in its order (a [`TransmissionLine`](@ref) is
+    one), indexed `[mode, port]` with the modes of `modes`; in time they
+    are the series `nodeflux` is.
 """
 struct NonlinearHB
     w
@@ -76,6 +86,8 @@ struct NonlinearHB
     solverinfo
     operatingpoint
     dcnodevoltage
+    sources
+    blockcurrents
 end
 
 """

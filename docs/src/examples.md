@@ -19,6 +19,8 @@ continue to identify the corresponding example.
 
 [Double-pumped Josephson parametric amplifier (JPA)](recipes/double-pump.md). Drive the JPA with two independent strong tones and inspect the response between them. Each pump adds a Fourier-grid dimension, so refine the harmonic limits while watching memory use.
 
+See also the [Fourier-grid tutorial and three-tone example](recipes/multitone.md).
+
 ## Flux-pumped Josephson parametric amplifier (JPA)
 
 [Flux-pumped Josephson parametric amplifier (JPA)](recipes/flux-pump.md). Bias a SQUID through a mutual inductor and apply a pump near twice its resonance. The DC and three-wave-mixing options retain the modes needed by the flux bias and pump. The final sweep maps the pump-off resonance against bias.
@@ -45,7 +47,7 @@ continue to identify the corresponding example.
 
 ## Design parameter sensitivities
 
-[Design parameter sensitivities](recipes/sensitivities.md). Differentiate the JPA response with respect to its design parameters. The small executable example first checks a derivative against finite differences; the plotting recipe then expresses gain derivatives in dB per fractional parameter change.
+[Design parameter sensitivities](recipes/sensitivities.md). Check both total and frozen-pump derivatives against finite differences, then express gain derivatives in dB per fractional parameter change.
 
 ## Sensitivity to frequency dependent scattering parameters
 
@@ -53,7 +55,13 @@ continue to identify the corresponding example.
 
 ## Direct current
 
-[Direct current](recipes/dc.md). Distinguish static flux from average voltage using a resistor carrying DC. The executable example checks Ohm's law without adding an artificial inductive path to ground.
+[Direct current](recipes/dc.md). Distinguish static flux from average voltage, initialize a biased junction consistently in time, and diagnose an initial KCL violation.
+
+## Stability examples
+
+The [stability guide](stability.md) includes a JPA, mode tracking across a sweep,
+a TWPA spatial mode profile, and a delay circuit. It distinguishes an operating
+point that converged from one that is dynamically stable.
 
 ## Transient and noise examples
 
@@ -62,3 +70,5 @@ continue to identify the corresponding example.
 - [A JPA compared with WRspice in time](recipes/transient-wrspice.md)
 - [Vacuum and thermal noise of a passive two-port](transientnoise.md)
 - [Fit scattering data and simulate the result](scattering.md)
+- [Pumped finite-window gain and quantum noise](recipes/pumped-noise.md)
+- [Export, fit, and simulate a pumped JPA](recipes/fitted-amplifier.md)

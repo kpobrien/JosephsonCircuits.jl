@@ -197,6 +197,9 @@ Physical stability requires an analysis of perturbation dynamics, such as
 Floquet multipliers for a periodic orbit. A singular small-signal operator
 can indicate a resonant or threshold condition, but a finite real-frequency
 sweep of `hblinsolve` is not a complete stability certificate.
+Use [`hbstability`](@ref) to analyze temporal perturbations about a periodic
+HB solution. The [stability guide](stability.md) gives an executable
+workflow for pole searches and their convergence in the harmonics.
 
 ## Sensitivities
 

@@ -1,8 +1,26 @@
-# Migrating circuit definitions
+# Migration guide
 
 This page describes the typed-circuit interface on the development branch.
 Use the version selector when comparing with a registered release; the
 changes below are not a promise about a particular future release number.
+
+## Interface changes at a glance
+
+| Earlier interface | Current interface | What to change |
+|---|---|---|
+| `hbpoles`, `HBPoleResult` in the unreleased stability patch series | `hbstability`, `HBStabilityResult` | Update calls, type annotations, and imports; no compatibility aliases are provided |
+| Prefix-based tuple netlists | `Circuit` with typed components | State component types explicitly; remove a legacy resistor adopted as a port termination |
+| Symbolic frequency expressions and `symfreqvar` | `FrequencyDependent` | Supply a callable of angular frequency in rad/s |
+| A circuit-building callback for a parameter sweep | Parameterized `Circuit` plus definitions | Use `hbcache`/`hbsolve!` for repeated value changes |
+| Solver-level node ordering for typed circuits | `compile(circuit; sorting=...)` | Choose ordering when compiling |
+| A separate graph supplied to a solver | Compiled circuit topology | Pass the compiled circuit; inspect topology separately if needed |
+| Covariances with vacuum equal to one | Symmetrized quanta with vacuum equal to one half | Halve old covariance data and explicitly supplied `noisetol`; see below |
+
+The stability rename changes naming, not pole units, result fields, or
+method semantics. The function analyzes temporal stability about an HB
+operating point; the [stability guide](stability.md) explains the methods
+and their accuracy limits. This rename applies to the unreleased patch
+series, not to an API that appeared in an earlier registered release.
 
 ## Tuple netlists and port terminations
 

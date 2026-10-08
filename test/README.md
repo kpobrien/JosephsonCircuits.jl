@@ -59,3 +59,20 @@ result of the same solve.
 measures nothing; it is the check that the scripts still run against the
 package's current interfaces. `benchmark/README.md` describes the
 measurements themselves.
+
+## Documentation examples
+
+The separate `.github/workflows/documentation.yml` job builds the manual,
+executes its `@example` blocks (including the small double-pump and
+multi-signal transient checks), and runs the actual README quickstart.
+For a local check without the VitePress/Node rendering step:
+
+```sh
+julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+julia --project=docs docs/check.jl
+```
+
+Run just the README with `julia --project=. docs/readme.jl`. Full-size,
+optional-dependency, and GPU recipes in plain Julia fences are not covered
+by the documentation build. See the manual's implementation notes for the
+production build and live-preview workflow.

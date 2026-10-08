@@ -746,9 +746,10 @@ using Test
         state = transientstate(pm; linecurrents = [1e-6])
         @test state.waves ≈ [sqrt(50)*1e-6/2, -sqrt(50)*1e-6/2]
         # the tangent and the adjoint through the histories: a mismatched
-        # line before a pumped junction, the tangent against finite
-        # differences, the adjoint against the tangent, the cotangent of
-        # the prehistory against a tangent of it, checkpoints and a batch
+        # line before a pumped junction, the tangent's port waves and the
+        # history it ends with against finite differences, the adjoint
+        # against the tangent, the cotangent of the prehistory against a
+        # tangent of it, checkpoints and a batch
         cable = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:line, 1, 2, TransmissionLine(60.0, 0.09)),
             (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.4e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         cdrive(t) = t <= 0 ? 0.0 : 0.2e-6*sinpi(t/1e-9)^2*sinpi(2*3e9*t)
@@ -763,6 +764,7 @@ using Test
         csp = transientsolve(cshift(1), (0.0, cT); dt = cdt, method = GaussLegendre(), rtol = 1e-12)
         csm = transientsolve(cshift(-1), (0.0, cT); dt = cdt, method = GaussLegendre(), rtol = 1e-12)
         @test ctg.outgoing ≈ (csp.outgoing .- csm.outgoing) ./ (2ceps) rtol=1e-5
+        @test ctg.finalwaves ≈ (csp.finalwaves .- csm.finalwaves) ./ (2ceps) rtol=1e-5
         cweights = [cospi(2*1.7e9*t + k) for k in 1:2, t in crec.times]
         cad = transientadjoint(crec, cweights)
         @test sum(cweights .* ctg.outgoing) ≈ sum(cad.currents .* ccurrents) rtol=1e-9
@@ -906,14 +908,26 @@ end
     wp = 2pi*1e9
     zero1 = zeros(ComplexF64, 1, 1)
     # a stable one state block converting by one harmonic, without a fit
-    function model(; amp = 0.1, direct = 0.0, noise = Lossless(), envelope = nothing)
+    function model(; amp = 0.1, direct = 0.0, noise = Lossless(), envelope = nothing, phase = 0.0)
         p0 = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), fill(direct, 1, 1))
         pc = JC.RationalScatteringProvider(fill(-wp, 1, 1), fill(wp, 1, 1), fill(amp, 1, 1), zeros(1, 1))
         pz = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), zeros(1, 1))
-        return LinearizedScattering([p0, JC.ModulatedRationalProvider(pc, pz)], wp; harmonics = [0, 1], nports = 1, zref = Z0, noise, envelope)
+        return LinearizedScattering([p0, JC.ModulatedRationalProvider(pc, pz)], wp; harmonics = [0, 1], nports = 1, zref = Z0, noise, envelope, phase)
     end
     one(b, rest...) = Circuit([(:p, 1, 0, Port(1; Z0 = Z0)), (:b, 1, b), rest...])
     dt = 2e-11
+    # the pump phase turns the converted output: the idler in time turns
+    # between the phases 0 and 0.63 as harmonic balance turns the
+    # conversion, conjugated, the idler at +0.6 GHz being the conjugate of
+    # the solve's mode at -0.6 GHz
+    phased(phase) = model(amp = 0.5, noise = NoiseCovariance([fill(10.0, 1, 1), zero1]), phase = phase)
+    function idler(b)
+        s = transientsolve(transientproblem(one(b); sources = [TransientSource(1, t -> 1e-9*sinpi(2*0.4e9*t))]),
+            (0.0, 30e-9); dt, method = GaussLegendre())
+        return transientiq(transientiqplan(s, s.times, [0.6e9]; duration = 10e-9, ports = [1], stride = 100), s.outgoing)[1, end]
+    end
+    conversion(b) = hbsolve([2pi*0.4e9], (wp,), [], (2,), (4,), one(b); threewavemixing = true).linearized.S((-1,), 1, (0,), 1, 1)
+    @test idler(phased(0.63))/idler(phased(0.0)) ≈ conj(conversion(phased(0.63))/conversion(phased(0.0))) rtol = 1e-8
     # the noise model of a pumped block is checked over the modes its
     # pair terms are read from: a covariance below the commutation
     # relations, and a declared losslessness the block does not have
@@ -1099,7 +1113,7 @@ end
     r = randn(size(st.delta))
     a, b = zero(r), zero(r)
     st.solve!(a, r)
-    JC.stagefactors!(st.rw, sysj, st.bf, sysj.gauss.coefficients, st.rc, st.zc, false)
+    JC.stagefactors!(st.rw, sysj, st.bf, sysj.gauss.coefficients, st.rc, st.zc)
     st.solve!(b, r)
     @test a == b
     # and that circuit in time, a weak signal through the block beside
@@ -1114,4 +1128,149 @@ end
     iq = transientiq(iqplan, tsol.outgoing)
     @test isapprox(abs(iq[1, end])/a0, abs(hb.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-3)
     @test isapprox(abs(iq[2, end])/a0, abs(hb.linearized.S((-1,), 1, (0,), 1, 1))*sqrt(fi/fs); rtol = 1e-2)
+end
+
+@testset "the tangent's state along its record and its blocks' states at the end" begin
+    # the JPA fed through a rational series inductor, driven from rest:
+    # the tangent along a kick of the junction's flux, its fluxes at every
+    # recorded time and the block's state at the end, against central
+    # differences of two solves started kicked
+    R0, L = 50.0, 2e-9
+    a = 2R0/L
+    u = [1.0, -1.0]
+    series = RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2), reshape(-a .* u, 2, 1), Matrix(1.0I, 2, 2); zref = R0)
+    jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = R0)), (:l, 1, 2, series), (:cc, 2, 3, Capacitor(100e-15)),
+        (:jj, 3, 0, JosephsonJunction(1000e-12)), (:cj, 3, 0, Capacitor(1000e-15))])
+    wp = 2pi*4.75001e9
+    T = 2pi/wp
+    # the drive rises from zero, so that rest is consistent with it at the
+    # port node, which no capacitor touches
+    p = transientproblem(jpa; sources = [TransientSource(1, t -> 2*0.00565e-6*sin(wp*t/6)^2*cos(wp*t))])
+    rest = transientstate(p)
+    n = length(rest.flux)
+    kick = zeros(n); kick[3] = 1.0
+    eps = 1e-4
+    kicked(s) = TransientState(rest.flux .+ s*eps .* kick, rest.rate, rest.waves, rest.wavesdt, rest.blockstates)
+    solve(state) = transientsolve(p, (0.0, 3T); dt = T/64, initialstate = state, record = :states, rtol = 1e-12)
+    sol, plus, minus = solve(rest), solve(kicked(1)), solve(kicked(-1))
+    fluxes = Matrix{Float64}[]
+    tg = transienttangent(sol, zeros(1, length(sol.times), 1);
+        initialstate = (reshape(kick, n, 1), zeros(n, 1), nothing, zeros(1, 1)),
+        statesink = (k, flux, rate, states, waves) -> push!(fluxes, copy(flux)))
+    @test reduce(hcat, fluxes) ≈ (Array(plus.flux) .- Array(minus.flux)) ./ (2eps) rtol=1e-6
+    @test vec(tg.finalstates) ≈ (plus.finalstates .- minus.finalstates) ./ (2eps) rtol=1e-6
+end
+
+@testset "the state sink's rate along a direction without capacitance" begin
+    JC = JosephsonCircuits
+    # an inductor of 1 H driven by the tangent current phi0 t^3: its flux
+    # is t^3 and its rate 3 t^2, which the constraint gives at every
+    # recorded time, at an unterminated port, whose voltage reads the
+    # rate, and behind a current source, which no port reads; the last
+    # rate the sink receives is the final rate
+    ported = Circuit([(:p, 1, 0, Port(1; Z0 = 1.0, termination = nothing)), (:l, 1, 0, Inductor(1.0))])
+    sourced = Circuit([(:is, 0, 1, CurrentSource(0.0)), (:l, 1, 0, Inductor(1.0)),
+        (:p, 2, 0, Port(1; Z0 = 1.0)), (:c, 2, 0, Capacitor(1.0))])
+    for (c, target) in ((ported, 1), (sourced, "is")), method in (GaussLegendre(), Trapezoidal())
+        sol = transientsolve(transientproblem(c), (0.0, 3.0); dt = 1.0, method, record = :phases)
+        rates = Float64[]
+        tg = transienttangent(sol, reshape(JC.phi0 .* sol.times .^ 3, 1, :); targets = [target],
+            statesink = (k, flux, rate, states, waves) -> push!(rates, rate[1, 1]))
+        @test rates ≈ 3 .* sol.times .^ 2 atol = 1e-9
+        @test last(rates) ≈ tg.finalrate[1] atol = 1e-9
+        target == 1 && @test vec(tg.voltage) ./ JC.phi0 ≈ 3 .* sol.times .^ 2 atol = 1e-9
+    end
+end
+
+@testset "a transient started on a harmonic balance orbit stays on it" begin
+    JC = JosephsonCircuits
+    # the JPA fed through a rational series inductor, whose state the pump
+    # drives, through a two-port shunt capacitor, whose own equations
+    # leave the current through it to the circuit, and through the series
+    # inductor with its port written ground first, which harmonic balance
+    # drives along the port's branch as it does the other way round: from
+    # the state of the orbit at time zero the block's equations hold, and
+    # under the drive the solution keeps the transient follows the orbit,
+    # departing from it by the step's own error alone, which falls as the
+    # fourth power of the step
+    R0, L, Csh = 50.0, 2e-9, 1e-12
+    a, ash = 2R0/L, 2/(R0*Csh)
+    u = [1.0, -1.0]
+    series = RationalScattering(fill(-a, 1, 1), reshape(u, 1, 2), reshape(-a .* u, 2, 1), Matrix(1.0I, 2, 2); zref = R0)
+    shunt = RationalScattering(fill(-ash, 1, 1), ones(1, 2), fill(ash, 2, 1), -Matrix(1.0I, 2, 2); zref = R0)
+    wp = 2pi*4.75001e9
+    T = 2pi/wp
+    for (block, terminals) in ((series, (1, 0)), (shunt, (1, 0)), (series, (0, 1)))
+        jpa = Circuit([(:p1, terminals..., Port(1; Z0 = R0)), (:b, 1, 2, block), (:cc, 2, 3, Capacitor(100e-15)),
+            (:jj, 3, 0, JosephsonJunction(1000e-12)), (:cj, 3, 0, Capacitor(1000e-15))])
+        hb = hbnlsolve((wp,), (16,), [(mode = (1,), port = 1, current = 0.00565e-6)], jpa; keyedarrays = false)
+        p = transientproblem(jpa; sources = JC.orbitsources(compile(jpa), hb))
+        state = JC.orbitstate(p, hb)
+        b = only(p.blocks)
+        voltage(node) = node > 0 ? JC.phi0*state.rate[node] : 0.0
+        v = [voltage(b.signal[q]) - voltage(b.ref[q]) for q in 1:2]
+        i = JC.phi0 .* state.flux[b.auxbase .+ (1:2)] ./ p.Lscale
+        incident, reflected = (v ./ sqrt.(b.R) .+ sqrt.(b.R) .* i) ./ 2, (v ./ sqrt.(b.R) .- sqrt.(b.R) .* i) ./ 2
+        @test norm(reflected .- b.S*incident .- b.C*state.blockstates) < 1e-10*norm(incident)
+        F = reshape(hb.nodeflux, length(hb.modes), :)
+        phase(t) = sum(2real(F[k, 3]*cis(only(mode)*wp*t)) for (k, mode) in enumerate(hb.modes))
+        function departure(steps)
+            sol = transientsolve(p, (0.0, 20T); dt = T/steps, initialstate = state, record = :states)
+            return maximum(abs(Array(sol.flux)[3, k] - phase(t)) for (k, t) in enumerate(sol.times))
+        end
+        coarse, fine = departure(64), departure(128)
+        @test coarse < 1e-5
+        @test fine < coarse/12
+    end
+    # the junction beside a block pumped at twice its pump, whose
+    # conversion, H_1(s) = g (s + i w)/((s + a1)(s + a2)), takes the
+    # pump's odd harmonics into each other and none into a conjugate's, so
+    # that harmonic balance's orbit through the block is the block's in
+    # time, and the junction behind a mismatched line from its port, the
+    # line's history over its delay formed from the orbit's waves at the
+    # step: at the start the block's relation, its modulated outputs
+    # included, holds to the conversion harmonic balance drops out of its
+    # last harmonic, the line's, v = sqrt(Z) (a + q) with the arriving
+    # wave read from the history as the solve reads it, to that read's
+    # interpolation, and the transient follows the orbit as above
+    omega = 0.8
+    period = 2pi/omega
+    p0 = JC.RationalScatteringProvider(fill(-3.0, 1, 1), ones(1, 1), fill(0.3, 1, 1), fill(0.1, 1, 1))
+    a1, a2, g = 2.0, 4.0, 0.2
+    pc = JC.RationalScatteringProvider([-a1 0.0; 0.0 -a2], ones(2, 1), g .* [a1/(a1 - a2) a2/(a2 - a1)], zeros(1, 1))
+    ps = JC.RationalScatteringProvider([-a1 0.0; 0.0 -a2], ones(2, 1), (g*omega/(a2 - a1)) .* [1.0 -1.0], zeros(1, 1))
+    pumped = LinearizedScattering([p0, JC.ModulatedRationalProvider(pc, ps)], 2omega; harmonics = [0, 1], nports = 1, zref = 1.0)
+    beside = Circuit([(:p, 1, 0, Port(1; Z0 = 20.0)), (:j, 1, 0, JosephsonJunction(1.0)), (:c, 1, 0, Capacitor(1.0)),
+        (:b, 1, pumped)])
+    behind = Circuit([(:p, 1, 0, Port(1; Z0 = 20.0)), (:line, 1, 2, TransmissionLine(10.0, 1.0; vp = 1.0)),
+        (:j, 2, 0, JosephsonJunction(1.0)), (:c, 2, 0, Capacitor(1.0))])
+    for (c, node) in ((beside, 1), (behind, 2))
+        hb = hbnlsolve((omega,), (12,), [(mode = (1,), port = 1, current = 0.04*JC.phi0)], c;
+            method = Newton(), atol = 1e-12, keyedarrays = false)
+        p = transientproblem(c; sources = JC.orbitsources(compile(c), hb))
+        F = reshape(hb.nodeflux, length(hb.modes), :)
+        phase(t) = sum(2real(F[k, node]*cis(only(mode)*omega*t)) for (k, mode) in enumerate(hb.modes))
+        function departure(steps)
+            state = JC.orbitstate(p, hb; dt = period/steps)
+            voltage(k) = k > 0 ? JC.phi0*state.rate[k] : 0.0
+            for bl in p.blocks
+                v = voltage(bl.signal[1]) - voltage(bl.ref[1])
+                i = JC.phi0*state.flux[bl.auxbase + 1]/p.Lscale
+                incident, reflected = (v/sqrt(bl.R[1]) + sqrt(bl.R[1])*i)/2, (v/sqrt(bl.R[1]) - sqrt(bl.R[1])*i)/2
+                out = bl.S[1, 1]*incident + only(bl.C*state.blockstates) +
+                    sum(JC.modulationweight(bl, m, 0.0)*only(m.C*state.blockstates) for m in bl.modulations)
+                @test abs(reflected - out) < 1e-8*abs(incident)
+            end
+            q = JC.initialarrivals(state, p)
+            for (l, line) in enumerate(p.lines)
+                v = [voltage(line.signal[e]) - voltage(line.ref[e]) for e in 1:2]
+                @test norm(v ./ sqrt(line.Z) .- state.waves[2l - 1:2l, end] .- q[2l - 1:2l]) < 1e-7*norm(v)/sqrt(line.Z)
+            end
+            sol = transientsolve(p, (0.0, 20period); dt = period/steps, initialstate = state, record = :states)
+            return maximum(abs(Array(sol.flux)[node, k] - phase(t)) for (k, t) in enumerate(sol.times))
+        end
+        coarse, fine = departure(64), departure(128)
+        @test coarse < 1e-5
+        @test fine < coarse/12
+    end
 end
