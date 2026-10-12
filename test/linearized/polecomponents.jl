@@ -116,7 +116,7 @@ using Test, JosephsonCircuits, LinearAlgebra, SparseArrays
         f = LaplaceResponse(s -> 2+s)
         @test f(3.0) == 2+3im
         @test f(-3.0) == 2-3im
-        @test JC.laplacevalue(2*FrequencyDependent(f)+1, 3+im) == 11+2im
+        @test JC.laplacevalue(FrequencyDependent(f), 3+im) == 5+im
         # Analytic scattering callback and an explicit rational realization
         # have the same closed-loop pole (but only the latter retains states).
         block = ScatteringParameters(LaplaceResponse(s -> fill(0.4/(s+2),1,1)); nports = 1, zref = 1.0)
@@ -133,7 +133,7 @@ using Test, JosephsonCircuits, LinearAlgebra, SparseArrays
         # Independent source perturbations vanish, even with a complex drive.
         driven = Circuit([(:r,1,0,Resistor(2.0)),(:c,1,0,Capacitor(0.5)),(:i,1,0,CurrentSource(2im))])
         @test hbstability(driven).poles ≈ [-1.0]
-        for bad in (FrequencyDependent(w -> 2+im*w), real(FrequencyDependent(f)))
+        for bad in (FrequencyDependent(w -> 2+im*w), FrequencyDependent(w -> real(f(w))))
             c = Circuit([(:r,1,0,Resistor(bad)),(:c,1,0,Capacitor(0.5))])
             @test_throws ArgumentError hbstability(c; method = ContourIntegral(-1.0, 2.0))
         end
@@ -351,6 +351,104 @@ using Test, JosephsonCircuits, LinearAlgebra, SparseArrays
         b = hbstability(through; nonlinear = bias, method = Monodromy(nev = :all))
         s = -1/40 + im*sqrt(sqrt(0.96) - 1/1600)
         @test length(b.poles) == 2 && maximum(abs, sort(b.poles; by = imag) .- [conj(s), s]) < 1e-6
+    end
+
+    @testset "the period map with an ideal block between nodes with capacitance" begin
+        # a through and an ideal transformer, whose I + S is singular, tie
+        # the voltages of two nodes with capacitance, V2 = r V1, so the
+        # circuit is the resonator of C2 + C1/r^2 and L2 damped by the two
+        # ports: two poles, and no third of a multiplier of one, and modes
+        # whose voltages meet the constraint. With an inductor at the first
+        # node as well, the loop of the two inductors and the block holds a
+        # flux, a neutral mode of the circuit, which the map keeps: the
+        # dense spectrum's three poles.
+        periodmap(c) = hbstability(c; pumpfrequency = 0.9, Nmodulationharmonics = (2,),
+            method = Monodromy(steps = 64, nev = :all))
+        for (S, r) in (([0.0 1.0; 1.0 0.0], sqrt(3/2)), ([0.6 0.8; 0.8 -0.6], sqrt(3/2)/2))
+            ideal(more...) = Circuit([(:c1, 1, 0, Capacitor(1.0)), (:c2, 2, 0, Capacitor(0.8)),
+                (:l2, 2, 0, Inductor(1.2)), (:p1, 1, 0, Port(1; Z0 = 2.0)),
+                (:p2, 2, 0, Port(2; Z0 = 3.0)),
+                (:b, 1, 2, ScatteringParameters(S; zref = [2.0, 3.0])), more...])
+            ceff, geff = 0.8 + 1/r^2, 1/3 + (1/2)/r^2
+            m = periodmap(ideal())
+            @test same(m.poles, eigvals([0.0 1.0; -1/(1.2*ceff) -geff/ceff]); tol = 1e-6)
+            V = m.nodevoltage
+            @test maximum(abs, V[:, 2, :] .- r .* V[:, 1, :]) < 1e-12*maximum(abs, V)
+            loop = ideal((:l1, 1, 0, Inductor(0.7)))
+            @test same(periodmap(loop).poles, hbstability(loop; method = DenseSpectrum(),
+                Nmodulationharmonics = (0,)).poles; tol = 1e-6)
+        end
+    end
+
+    @testset "the period map with a rational or a pumped block whose direct term is a through" begin
+        # A series capacitor between ports of reference R, as a rational
+        # block whose direct term is the ideal through and whose one state
+        # is the capacitor's, ties the voltages of two nodes with capacitance
+        # to its state: the map's poles are those of the capacitor lumped,
+        # and no fourth of a multiplier of one. A parallel LC tank in series
+        # is the through at zero frequency as well, so with an inductor at
+        # each node the loop holds a flux, the dense spectrum's neutral pole,
+        # which the map keeps beside the constraint's: one zero and no
+        # second. With a conversion at the block's first harmonic through
+        # filters of the same wave difference, the constraint turns with the
+        # pump: the map's poles are the dense spectrum's modulo the pump
+        # frequency, seven and no eighth, and each rate's estimated error is
+        # its actual one, the strongly damped filters' among them.
+        R, Cs = 2.0, 0.5
+        a = 1/(2R*Cs)
+        series = JC.RationalScatteringProvider(fill(-a, 1, 1), [1.0 -1.0], reshape(a .* [1.0, -1.0], 2, 1),
+            [0.0 1.0; 1.0 0.0])
+        common = [(:c1, 1, 0, Capacitor(1.0)), (:c2, 2, 0, Capacitor(0.8)), (:l2, 2, 0, Inductor(1.2)),
+            (:p1, 1, 0, Port(1; Z0 = 2.0)), (:p2, 2, 0, Port(2; Z0 = 3.0))]
+        block = Circuit([common; (:b, 1, 2, ScatteringParameters(series; nports = 2, zref = [R, R]))])
+        lumped = Circuit([common; (:cs, 1, 2, Capacitor(Cs))])
+        periodmap(c, steps) = hbstability(c; pumpfrequency = 1.0, Nmodulationharmonics = (2,),
+            method = Monodromy(; steps, nev = :all))
+        @test same(periodmap(block, 64).poles, hbstability(lumped; method = DenseSpectrum(),
+            Nmodulationharmonics = (0,)).poles; tol = 1e-6)
+        Lt, Ct = 0.8, 0.6
+        b, w0 = 1/(2R*Ct), 1/sqrt(Lt*Ct)
+        tank = JC.RationalScatteringProvider([0.0 1.0; -w0^2 -b], [0.0 0.0; 1.0 -1.0], [0.0 b; 0.0 -b],
+            [0.0 1.0; 1.0 0.0])
+        loop = [common; (:l1, 1, 0, Inductor(0.7))]
+        tanked = Circuit([loop; (:b, 1, 2, ScatteringParameters(tank; nports = 2, zref = [R, R]))])
+        @test same(periodmap(tanked, 64).poles, hbstability(tanked; method = DenseSpectrum(),
+            Nmodulationharmonics = (0,)).poles; tol = 1e-6)
+        omega = 1.0
+        conversion(c, g) = JC.RationalScatteringProvider(fill(-c, 1, 1), [1.0 -1.0], reshape(g .* [1.0, -1.0], 2, 1),
+            zeros(2, 2))
+        pumped = Circuit([loop; (:b, 1, 2, LinearizedScattering([tank,
+            JC.ModulatedRationalProvider(conversion(1.5, 0.08), conversion(2.5, 0.05))], 2omega; harmonics = [0, 1],
+            nports = 2, zref = [R, R]))])
+        mp = hbstability(pumped; pumpfrequency = omega, Nmodulationharmonics = (4,),
+            method = Monodromy(steps = 128, nev = :all))
+        dense = hbstability(pumped; pumpfrequency = omega, Nmodulationharmonics = (8,), method = DenseSpectrum())
+        strip(z) = complex(real(z), mod(imag(z) + omega/2, omega) - omega/2)
+        nearest(s) = strip.(dense.poles)[argmin(abs.(strip.(dense.poles) .- strip(s)))]
+        @test length(mp.poles) == 7 && maximum(s -> abs(strip(s) - nearest(s)), mp.poles) < 1e-4
+        actual = [abs(real(s) - real(nearest(s))) for s in mp.poles]
+        @test all(@. actual/3 < mp.rateerrors < 3actual)
+        # Two such blocks, weakly coupled, one with its filters' states
+        # scaled by 1e10 in its realization, which leaves its scattering as
+        # it is: both constraints turn, and the map's poles are the dense
+        # spectrum's.
+        rescaled(c, g, q) = JC.RationalScatteringProvider(fill(-c, 1, 1), q .* [1.0 -1.0],
+            reshape((g/q) .* [1.0, -1.0], 2, 1), zeros(2, 2))
+        twice = Circuit([[(Symbol(name, i), node + 2(i - 1), 0, x) for i in 1:2
+            for (name, node, x) in ((:c1, 1, Capacitor(1.0)), (:c2, 2, Capacitor(0.8)), (:l1, 1, Inductor(0.7)),
+                (:l2, 2, Inductor(1.2)))];
+            [(Symbol(:p, k), k, 0, Port(k; Z0 = isodd(k) ? 2.0 : 3.0)) for k in 1:4];
+            [(Symbol(:b, i), 2i - 1, 2i, LinearizedScattering([tank, JC.ModulatedRationalProvider(rescaled(1.5, 0.08, q),
+                rescaled(2.5, 0.05, q))], 2omega; harmonics = [0, 1], nports = 2, zref = [R, R]))
+                for (i, q) in ((1, 1e10), (2, 1.0))];
+            (:cc, 2, 3, Capacitor(0.05))])
+        @test JC.rateconstraints(JC.transientproblem(twice)).turning == 2
+        twicemap = hbstability(twice; pumpfrequency = omega, Nmodulationharmonics = (4,),
+            method = Monodromy(steps = 128, nev = :all))
+        twicedense = strip.(hbstability(twice; pumpfrequency = omega, Nmodulationharmonics = (4,),
+            method = DenseSpectrum()).poles)
+        @test length(twicemap.poles) == 14 &&
+            maximum(s -> minimum(abs.(twicedense .- strip(s))), twicemap.poles) < 1e-4
     end
 
     @testset "the period map through a pumped block" begin

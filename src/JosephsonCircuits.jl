@@ -13,8 +13,8 @@ operating point and swept over weak signal frequencies with
 the linearized solution the package computes scattering parameters, noise
 scattering parameters, quantum efficiency, commutation relations, and
 adjoint-method sensitivities with respect to component values or, through
-[`designsensitivities`](@ref), to the design parameters a circuit's
-values are written in terms of.
+[`designsensitivities`](@ref), to the design parameters of a Julia
+function which gives the circuit's values.
 
 The same compiled circuit, on the same node flux unknowns, can also be
 integrated directly in physical time with [`transientsolve`](@ref), for
@@ -126,9 +126,14 @@ const boltzmann_constant = 1.380649e-23
 # the dependencies allow it; where a file is placed for a reason other
 # than flow order, the reason is noted next to it.
 
+# The threads of the session, which the sweeps, batches, connections and
+# fits of every chapter run their chunks of work on, ahead of them all.
+include("tasks.jl")
+
 # --- circuit/: writing a circuit and turning it into matrices -----------
-# How a component value is written (a number, a symbol, a parameterized
-# expression, or a callable of frequency) and how it becomes a number.
+# How a component value is written (a number, a name, a frequency
+# dependent closure, or with Symbolics a symbolic value) and how it
+# becomes a number.
 include("circuit/values.jl")
 include("circuit/laplace.jl")
 # The component models: lumped elements, ports, nonlinear inductors, and
@@ -311,8 +316,8 @@ function warmupcircuit(Rleft, Cc, Lj, Cj)
          Net("0", [("P1",2), ("Lj1",2), ("C2",2), Ground])])
 end
 
-# The component values the warmups solve at, keyed by whatever parameter
-# objects `warmupcircuit` was given (symbols or `@params` parameters).
+# The component values the warmups solve at, keyed by the names
+# `warmupcircuit` was given.
 warmupdefs(Rleft, Cc, Lj, Cj) = Dict(
     Lj => 1000.0e-12,
     Cc => 100.0e-15,
@@ -341,24 +346,6 @@ function warmup()
         Npumpharmonics, circuit, circuitdefs;atol=1e-12)
 end
 
-
-# The same solve with the `CircuitValue` parameters of `@params`, which
-# resolve through the expression path rather than a name lookup.
-function warmupsyms()
-
-    @params R Cc Lj Cj
-    circuit = warmupcircuit(R, Cc, Lj, Cj)
-    circuitdefs = warmupdefs(R, Cc, Lj, Cj)
-
-    ws = 2*pi*(4.5:0.5:5.0)*1e9
-    wp = (2*pi*4.75001*1e9,)
-    sources = [(mode=(1,),port=1,current=0.00565e-6)]
-    Nmodulationharmonics = (2,)
-    Npumpharmonics = (4,)
-
-    return hbsolve(ws, wp, sources, Nmodulationharmonics,
-        Npumpharmonics, circuit, circuitdefs;atol=1e-12)
-end
 
 # The forms the documentation writes, which are what a session starts
 # with: the netlist of tuples with symbol names and integer nodes of its
@@ -477,15 +464,6 @@ export hbsolve, hbnlsolve, hblinsolve, hbstability, ShiftInvert,
 export thermaloccupation, effectivetemperature, noisetemperature,
     noisequanta
 
-# The `CircuitValues` expression type is internal: it is what the
-# parameters of `@params` build, and what the deprecated netlist file
-# reader parses an expression to. It is deliberately not exported as a
-# user facing symbolic type, because its closed operator set (see
-# circuit/values.jl) would make a confusing public boundary; users
-# parameterize circuits with symbols, numbers, and ordinary Julia
-# functions. `@params`, which declares parameters as `CircuitValues`
-# symbols, is available as `JosephsonCircuits.@params`.
-import .CircuitValues: @params
 # `reset!(cache)` is not exported: packages as common as DataStructures
 # export a `reset!` of their own, and a script using both would have to
 # qualify it; the docstrings name it `JosephsonCircuits.reset!`.
@@ -517,15 +495,15 @@ export TransientSource, TransientState, transientproblem, transientstate, transi
     transientquantumefficiency
 
 # The public names which are not exported, written qualified with the
-# module's name: `@params`, `reset!`, the circuit and result types, the
-# errors and the pole matching and passivity checks the manual documents
-# with the analyses, `KrylovJL`, the physical constants, and the network
-# library: its parameters, closed form networks and connections. `public`
-# is a keyword from Julia 1.11.
+# module's name: `reset!`, the circuit and result types, the errors and
+# the pole matching and passivity checks the manual documents with the
+# analyses, `KrylovJL`, the physical constants, and the network library:
+# its parameters, closed form networks and connections. `public` is a
+# keyword from Julia 1.11.
 if VERSION >= v"1.11"
     eval(Expr(:public,
         # the circuit and the analyses
-        Symbol("@params"), :CompiledCircuit, :NonlinearHB, :LinearizedHB, :HB,
+        :CompiledCircuit, :NonlinearHB, :LinearizedHB, :HB,
         :HBNonlinearProblem, :matchpoles, :passivityassessment, :reset!,
         # the results and errors a script receives rather than writes, and
         # the Krylov.jl linear solver, whose name LinearSolve.jl exports too
@@ -688,7 +666,6 @@ end
 
 PrecompileTools.@compile_workload begin
     warmup()
-    warmupsyms()
     warmupdocumented()
     warmuptwotone()
     warmuptransient()

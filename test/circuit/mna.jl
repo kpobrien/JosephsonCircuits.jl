@@ -247,17 +247,16 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
 
     @testset "hbnlsolve mna mixed numeric and symbolic resistors" begin
 
-        # the numeric port resistor is promoted while the symbolic
-        # frequency dependent interior resistor is left in the conductance
-        # matrix. this exercises the partial promotion path where the
-        # promoted subset is subtracted from Gnm.
-        w = FrequencyDependent(identity)
+        # the numeric port resistor is promoted while the frequency
+        # dependent interior resistor is left in the conductance matrix.
+        # this exercises the partial promotion path where the promoted
+        # subset is subtracted from Gnm.
         circuit = Any[]
         push!(circuit,("P1", "1", "0", Port(1; Z0 = :Rleft)))
         push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
         push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
         push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
-        push!(circuit,("R2", "2", "0", Resistor(1.0e6 + 1e-3*w)))
+        push!(circuit,("R2", "2", "0", Resistor(FrequencyDependent(w -> 1.0e6 + 1e-3*w))))
         circuit = Circuit(circuit)
         circuitdefs = Dict(
             :Lj =>1000.0e-12,
@@ -384,12 +383,12 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
 
     @testset "hbnlsolve mna gauge only path" begin
 
-        # a floating node whose only resistor is symbolic exercises the
-        # gauge fixing equations with no promoted resistors (Naux == 0),
-        # so gauge correctness is not entangled with resistor promotion.
-        w = FrequencyDependent(identity)
+        # a floating node whose only resistor depends on the frequency
+        # exercises the gauge fixing equations with no promoted resistors
+        # (Naux == 0), so gauge correctness is not entangled with resistor
+        # promotion.
         circuit = Any[]
-        push!(circuit,("P1", "1", "0", Port(1; Z0 = 50.0 + 1e-12*w)))
+        push!(circuit,("P1", "1", "0", Port(1; Z0 = FrequencyDependent(w -> 50.0 + 1e-12*w))))
         push!(circuit,("C1", "1", "2", Capacitor(:Cc)))
         push!(circuit,("Lj1", "2", "0", JosephsonJunction(:Lj)))
         push!(circuit,("C2", "2", "0", Capacitor(:Cj)))
@@ -438,17 +437,16 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         @test isapprox(Vector(many.nodeflux[:]), Vector(one_.nodeflux[:]),
             atol = 1e-9)
 
-        # a symbolic resistor in parallel with a numeric resistor on an
-        # internal node pair converges, with both in the conductance matrix
-        # and only the port resistor promoted
-        w = FrequencyDependent(identity)
+        # a frequency dependent resistor in parallel with a numeric
+        # resistor on an internal node pair converges, with both in the
+        # conductance matrix and only the port resistor promoted
         cmix = Any[]
         push!(cmix,("P1", "1", "0", Port(1; Z0 = complex(50.0))))
         push!(cmix,("C1", "1", "2", Capacitor(:Cc)))
         push!(cmix,("Lj1", "2", "0", JosephsonJunction(:Lj)))
         push!(cmix,("C2", "2", "0", Capacitor(:Cj)))
         push!(cmix,("R2", "2", "3", Resistor(complex(1.0e6))))
-        push!(cmix,("R3", "2", "3", Resistor(2.0e6 + 1e-3*w)))
+        push!(cmix,("R3", "2", "3", Resistor(FrequencyDependent(w -> 2.0e6 + 1e-3*w))))
         push!(cmix,("C3", "3", "0", Capacitor(:Cj)))
         cmix = Circuit(cmix)
         mix = hbnlsolve(wp, (8,), sources, cmix, circuitdefs;
@@ -566,10 +564,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # circuit is represented by omitting the branch
         @test_throws ArgumentError JosephsonCircuits.checkstaticstiffnessvalues(
             [:P,:R,:L], Any[1, 50.0, Inf])
-        # finite and symbolic values are accepted
-        JosephsonCircuits.@params Lsym
+        # finite values are accepted
         @test isnothing(JosephsonCircuits.checkstaticstiffnessvalues(
-            [:P,:R,:L,:L], Any[1, 50.0, 1e-9, Lsym]))
+            [:P,:R,:L], Any[1, 50.0, 1e-9]))
 
         # end-to-end: a zero inductance in a solve is rejected
         circuit = Any[]
@@ -808,10 +805,6 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # provides no static stiffness, so the node remains floating
         @test JosephsonCircuits.calcstaticfluxcomponents(
             [:P,:R,:L],[2 2 2;1 1 1],Any[1,50.0,Inf],2) == [[2]]
-        # symbolic values are conservatively assumed to provide stiffness
-        JosephsonCircuits.@params Lsym
-        @test JosephsonCircuits.calcstaticfluxcomponents(
-            [:P,:R,:L],[2 2 2;1 1 1],Any[1,50.0,Lsym],2) == Vector{Int64}[]
         # one gauge per floating component and zero-frequency mode
         @test JosephsonCircuits.calcdcgaugeindices(
             comps,[0.0,2pi*4e9],2) == [1,3]
@@ -1011,12 +1004,11 @@ end
         end
 
         # a frequency dependent resistor across the resonator
-        w = FrequencyDependent(identity)
         circuit2 = Any[]
         push!(circuit2,("P1", "1", "0", Port(1; Z0 = complex(50.0))))
         push!(circuit2,("C1", "1", "2", Capacitor(:Cc))); push!(circuit2,("L2", "2", "0", Inductor(:L2)))
         push!(circuit2,("C2", "2", "0", Capacitor(:C2)))
-        push!(circuit2,("R3", "2", "0", Resistor(1.0e4 + 1e-6*w)))
+        push!(circuit2,("R3", "2", "0", Resistor(FrequencyDependent(w -> 1.0e4 + 1e-6*w))))
         push!(circuit2,("C3", "2", "3", Capacitor(:Cc)))
         push!(circuit2,("P2", "3", "0", Port(2; Z0 = complex(50.0))))
         circuit2 = Circuit(circuit2)

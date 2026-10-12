@@ -128,23 +128,33 @@ scales.
 
 ## Component values and design parameters
 
-A component value can be a number or a parameter such as `:Lj`. Supply a
-dictionary of parameter values when solving. For expressions involving
-several parameters, use `JosephsonCircuits.@params`; see
-[design sensitivities](recipes/sensitivities.md).
-[`symbolicmatrices`](@ref) gives the circuit's matrices with the
-parameters left as expressions:
+A component value can be a number or a name such as `:Lj`. Supply a
+dictionary of the names' values when solving. A value derived from others
+is computed in Julia, by a function of the design parameters which returns
+the values, and the [design sensitivities](recipes/sensitivities.md)
+differentiate that function. With Symbolics loaded,
+[`symbolicmatrices`](@ref) gives the circuit's matrices with the names
+left as variables:
 
-```@example parameters
-using JosephsonCircuits
-jpa = Circuit([
-    (:p1, 1, 0, Port(1; Z0 = :R)),
-    (:cc, 1, 2, Capacitor(:Cc)),
-    (:jj, 2, 0, JosephsonJunction(:Lj)),
-    (:cj, 2, 0, Capacitor(:Cj)),
-])
-matrices = symbolicmatrices(jpa)
-(capacitance = matrices.Cnm, conductance = matrices.Gnm)
+```julia
+julia> using JosephsonCircuits, Symbolics
+
+julia> jpa = Circuit([
+           (:p1, 1, 0, Port(1; Z0 = :R)),
+           (:cc, 1, 2, Capacitor(:Cc)),
+           (:jj, 2, 0, JosephsonJunction(:Lj)),
+           (:cj, 2, 0, Capacitor(:Cj)),
+       ]);
+
+julia> m = symbolicmatrices(jpa);
+
+julia> Matrix(m.Cnm)
+2×2 Matrix{Num}:
+  Cc      -Cc
+ -Cc  Cc + Cj
+
+julia> m.Gnm[1, 1], m.Ljb[2]
+(1 / R, Lj)
 ```
 
 Frequency-domain analyses also accept complex values and

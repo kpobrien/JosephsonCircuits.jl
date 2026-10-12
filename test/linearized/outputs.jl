@@ -250,4 +250,17 @@ using Test
         end
     end
 
+    @testset "a reference impedance written as a BigFloat" begin
+        # the waves are computed in the solve's precision whatever number
+        # the impedance is written as: the reflection of a resistor beside
+        # an inductor, and the commutation relation of their noise
+        R, L, w = 30.0, 1e-9, 2*pi*5e9
+        Z = 1/(1/R + 1/(im*w*L))
+        c = Circuit([(:P1, 1, 0, Port(1; Z0 = big"50.0")),
+            (:R1, 1, 0, Resistor(R)), (:L1, 1, 0, Inductor(L))])
+        sol = hblinsolve([w], c; keyedarrays = false)
+        @test isapprox(sol.S[1, 1, 1], (Z - 50)/(Z + 50); atol = 1e-12)
+        @test isapprox(sol.CM[1, 1], 1; atol = 1e-12)
+    end
+
 end

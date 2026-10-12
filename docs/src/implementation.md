@@ -14,7 +14,7 @@ circuit or choosing an analysis, start with the [user guides](index.md#How-the-d
 | `src/transient/` | Time stepping, constraints, responses, temporal measurements, and baths |
 | `src/networks/` | Network parameters and their conversions, closed-form networks, the connection of scattering networks with their noise, and quantum optics |
 | `src/spice/` | SPICE netlist export, the WRspice runs of the comparisons and of the `WRspice` transient method, and SPICE output readers |
-| `ext/` | Extensions loaded with CUDA.jl, CUDSS.jl, Krylov.jl, SciMLBase.jl, Symbolics.jl and XicTools_jll |
+| `ext/` | Extensions loaded with CUDA.jl, CUDSS.jl, ForwardDiff.jl, Krylov.jl, SciMLBase.jl, Symbolics.jl and XicTools_jll |
 
 The corresponding tests generally mirror these directories. Cross-domain
 and external-reference comparisons live in the top-level test files.

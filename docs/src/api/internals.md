@@ -6,6 +6,6 @@ public interface. See [Implementation notes](../implementation.md) for a
 source map, or return to the [public API](../reference.md).
 
 ```@autodocs
-Modules = [JosephsonCircuits, JosephsonCircuits.CircuitValues]
+Modules = [JosephsonCircuits]
 Filter = Main.DocumentationAPI.is_internal
 ```

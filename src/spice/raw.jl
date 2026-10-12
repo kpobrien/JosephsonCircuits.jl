@@ -49,103 +49,7 @@ flags say. The variables of each type are sorted by
 [`calcspicesortperms`](@ref). A rawfile in the ASCII format is refused.
 """
 function spice_raw_load(filename)
-    header, variables, indices, sf = open(filename) do io
-
-        # the contents of the header
-        title = ""
-        date = ""
-        plotname = ""
-        flags = ""
-        nvariables = 0
-        npoints = 0
-        command = ""
-        option = ""
-
-        #loop over the contents of the header
-        while !eof(io)
-
-            line = readline(io)
-            linesplit = split(line,":",limit=2)
-
-            if length(linesplit) == 2
-                linename = linesplit[1]
-                linevalue = strip(linesplit[2])
-            else
-                throw(ArgumentError(lazy"Line doesn't have the correct format."))
-            end
-
-            if linename == "Title"
-                title = linevalue
-            elseif linename == "Date"
-                date = linevalue
-            elseif linename == "Plotname"
-                plotname = linevalue
-            elseif linename == "Flags"
-                flags = linevalue
-            elseif linename == "No. Variables"
-                nvariables =  parse(Int,linevalue)
-            elseif linename == "No. Points"
-                npoints = parse(Int,linevalue)
-            elseif linename == "Command"
-                command = linevalue
-            elseif linename == "Option"
-                option = linevalue
-            elseif linename == "Variables"
-                break
-            end
-        end
-
-        header = SpiceRawHeader(title, date, plotname, flags, nvariables,
-            npoints, command, option)
-
-        # the variable names and the rows they occupy, grouped by type
-        variables =  Dict{String,Vector{String}}()
-        indices = Dict{String,Vector{Int}}()
-
-        #loop over the variable names
-        filetype = ""
-        i = 0
-        while !eof(io)
-
-            i+=1
-            # read the line, remove leading and trailing whitespace
-            line = strip(readline(io))
-
-            # break if we reach the end of the variables section
-            if line == "Binary:" || line == "Values:"
-                filetype = line
-                break
-            end
-
-            # the index, the name and the type of the variable; the
-            # constants an aborted WRSPICE run writes have no type
-            splitline = split(line,r"\s+")
-
-            if length(splitline) > 3
-                @warn lazy"Variable line has additional parameters which we are ignoring."
-            end
-            type = length(splitline) >= 3 ? String(splitline[3]) : ""
-
-            # store the variable and the index at which it occurs
-            push!(get!(variables, type, String[]), splitline[2])
-            push!(get!(indices, type, Int[]), i)
-        end
-
-        # read the data
-        if filetype == "Binary:"
-            if flags == "real"
-                sf = Array{Float64}(undef,nvariables,npoints)
-            elseif flags =="complex"
-                sf = Array{Complex{Float64}}(undef,nvariables,npoints)
-            else
-                throw(ArgumentError(lazy"Unknown flag."))
-            end
-            read!(io,sf)
-        else
-            throw(ArgumentError(lazy"This function only handles Binary files not ASCII."))
-        end
-        return header, variables, indices, sf
-    end
+    header, variables, indices, sf = open(readraw, filename)
 
     # sort the labels. voltages such as  "V(1)","V(10)","V(100)"."V(101)"
     sortperms = calcspicesortperms(variables)
@@ -158,6 +62,106 @@ function spice_raw_load(filename)
     end
 
     return SpiceRaw(header, variables, values)
+end
+
+# The header of the rawfile open on `io`, the names of its variables and
+# their rows grouped by type, and its values, one row per variable and
+# one column per point.
+function readraw(io::IO)
+    # the contents of the header
+    title = ""
+    date = ""
+    plotname = ""
+    flags = ""
+    nvariables = 0
+    npoints = 0
+    command = ""
+    option = ""
+
+    #loop over the contents of the header
+    while !eof(io)
+
+        line = readline(io)
+        linesplit = split(line,":",limit=2)
+
+        if length(linesplit) == 2
+            linename = linesplit[1]
+            linevalue = strip(linesplit[2])
+        else
+            throw(ArgumentError(lazy"Line doesn't have the correct format."))
+        end
+
+        if linename == "Title"
+            title = linevalue
+        elseif linename == "Date"
+            date = linevalue
+        elseif linename == "Plotname"
+            plotname = linevalue
+        elseif linename == "Flags"
+            flags = linevalue
+        elseif linename == "No. Variables"
+            nvariables =  parse(Int,linevalue)
+        elseif linename == "No. Points"
+            npoints = parse(Int,linevalue)
+        elseif linename == "Command"
+            command = linevalue
+        elseif linename == "Option"
+            option = linevalue
+        elseif linename == "Variables"
+            break
+        end
+    end
+
+    header = SpiceRawHeader(title, date, plotname, flags, nvariables,
+        npoints, command, option)
+
+    # the variable names and the rows they occupy, grouped by type
+    variables =  Dict{String,Vector{String}}()
+    indices = Dict{String,Vector{Int}}()
+
+    #loop over the variable names
+    filetype = ""
+    i = 0
+    while !eof(io)
+
+        i+=1
+        # read the line, remove leading and trailing whitespace
+        line = strip(readline(io))
+
+        # break if we reach the end of the variables section
+        if line == "Binary:" || line == "Values:"
+            filetype = line
+            break
+        end
+
+        # the index, the name and the type of the variable; the
+        # constants an aborted WRSPICE run writes have no type
+        splitline = split(line,r"\s+")
+
+        if length(splitline) > 3
+            @warn lazy"Variable line has additional parameters which we are ignoring."
+        end
+        type = length(splitline) >= 3 ? String(splitline[3]) : ""
+
+        # store the variable and the index at which it occurs
+        push!(get!(variables, type, String[]), splitline[2])
+        push!(get!(indices, type, Int[]), i)
+    end
+
+    # read the data
+    if filetype == "Binary:"
+        if flags == "real"
+            sf = Array{Float64}(undef,nvariables,npoints)
+        elseif flags =="complex"
+            sf = Array{Complex{Float64}}(undef,nvariables,npoints)
+        else
+            throw(ArgumentError(lazy"Unknown flag."))
+        end
+        read!(io,sf)
+    else
+        throw(ArgumentError(lazy"This function only handles Binary files not ASCII."))
+    end
+    return header, variables, indices, sf
 end
 
 """

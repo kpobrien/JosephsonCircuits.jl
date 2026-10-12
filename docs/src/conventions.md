@@ -232,8 +232,9 @@ which differs from the output's for an idler.
 
 Component sensitivities use a relative perturbation `p -> r*p` at `r=1`:
 `dS/dr = p*dS/dp`. `designsensitivities` returns derivatives with respect
-to the named design parameters themselves, including dependencies of
-multiple component values on the same parameter.
+to the design parameters themselves, the arguments of the function which
+gives the circuit's values, including dependencies of multiple component
+values on the same parameter.
 
 An exact tangent or adjoint differentiates the discrete equations used by
 the solver, to its numerical tolerances. It does not remove truncation,

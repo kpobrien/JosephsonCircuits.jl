@@ -139,46 +139,18 @@ The systems of a uniform cuDSS batch: as many as `budget` bytes hold at
 cudssbatchlimit(persystem::Integer, nrhs::Integer, budget::Integer) =
     clamp(budget ÷ max(persystem, 1), 1, uniformbatchlimit(nrhs))
 
-"""
-    cudsssystembytes(A::SparseMatrixCSC, T, nrhs::Integer, backend;
-        kwargs...)
-
-The device memory cuDSS takes for one system of the pattern of `A`, with
-`nrhs` right hand sides of element type `T`, by its own estimate after an
-analysis of the pattern: the peak of its factorization, which a uniform
-batch takes once for each system. `kwargs` are the options of the
-factorization ([`solverkwargs`](@ref)), on which the estimate depends.
-"""
-function cudsssystembytes(A::SparseMatrixCSC, ::Type{T}, nrhs::Integer,
-        backend; kwargs...) where {T}
-    # the compressed rows of `A`, as the sweep hands it to cuDSS, returned
-    # to the pool with the estimate
-    At = sparse(transpose(A))
-    pattern = (tobackend(backend, SparseArrays.getcolptr(At)),
-        tobackend(backend, rowvals(At)), tobackend(backend, ones(T, nnz(At))))
-    bytes = _cudss_systembytes(pattern..., nrhs; kwargs...)
-    foreach(releasearray!, pattern)
-    return bytes
-end
-
-# Overridden by the CUDSS extension: cuDSS's estimate, after its analysis,
-# of the device memory one system of a pattern takes.
-function _cudss_systembytes(rowptr, colind, nzval, nrhs; kwargs...)
-    throw(ArgumentError(
-        "estimating cuDSS's memory requires CUDSS.jl and CUDA.jl to be loaded. Run `using CUDA, CUDSS` before calling the solver, or leave `backend` at its default."))
-end
-
 # Overridden by the CUDSS extension: a uniform batch of systems sharing one
-# sparsity pattern, analyzed once and then refactorized and solved as a batch.
+# sparsity pattern, analyzed once, then factorized and solved as a batch.
 function _cudss_sweep(rowptr, colind, nzval, X, B; kwargs...)
     throw(ArgumentError(
         "solving a frequency sweep on a device requires CUDSS.jl and CUDA.jl to be loaded. Run `using CUDA, CUDSS` before calling the solver, or leave `backend` at its default."))
 end
 
 # Defined by the CUDSS extension, for a batch `_cudss_sweep` made, which
-# only the extension makes: the refactorization and solve of the batch,
-# and the two apart for a time stepper which solves many times per
-# refactorization.
+# only the extension makes: cuDSS's estimate of the batch's device memory,
+# the factorization and solve of the batch, and the two apart for a time
+# stepper which solves many times per factorization.
+function _cudss_sweepbytes end
 function _cudss_sweepsolve! end
 function _cudss_sweeprefactorize! end
 function _cudss_sweepapply! end

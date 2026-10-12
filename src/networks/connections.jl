@@ -1,41 +1,8 @@
 
-"""
-    foreachbatch(f, indices, batchsize)
-
-Call `f` on the consecutive batches of at most `batchsize` of the
-frequency indices `indices`, each batch a view of them: on the calling
-task when they form a single batch, and otherwise each batch on a task of
-its own. A failure is thrown once every batch has finished: the exception
-of the first failed batch in their order, unwrapped from its
-`TaskFailedException`, so that a caller sees the exception a single batch
-throws, whatever the number of batches. Nothing is called when `indices`
-is empty.
-"""
-function foreachbatch(f::F, indices, batchsize::Integer) where {F}
-    n = length(indices)
-    if n == 0
-        return nothing
-    elseif batchsize >= n
-        f(indices)
-    else
-        tasks = [Threads.@spawn(f(view(indices, batch)))
-            for batch in Base.Iterators.partition(1:n, batchsize)]
-        foreach(waitbatch, tasks)
-        k = findfirst(istaskfailed, tasks)
-        isnothing(k) || throw(tasks[k].exception)
-    end
-    return nothing
-end
-
-# wait for the task of a batch, leaving its failure to `foreachbatch`
-function waitbatch(task::Task)
-    try
-        wait(task)
-    catch e
-        e isa TaskFailedException || rethrow()
-    end
-    return nothing
-end
+# the indices in consecutive batches of at most `size`, each a view of
+# them, the chunks a connection runs on (see `runchunks`)
+batchviews(indices, size::Integer) =
+    [view(indices, b) for b in Base.Iterators.partition(1:length(indices), max(size, 1))]
 
 # the batch size of a connection of `n` frequencies on `nbatches` tasks: a
 # connection is cheap per frequency, so the frequencies are split between
@@ -241,7 +208,7 @@ function intraconnectS!(Sout, Sa, k::Int, l::Int;
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+    runchunks(batchviews(indices, connectbatchsize(length(indices), nbatches))) do _, batch
         intraconnectS_inner!(Sout, Sa, k, l, batch)
     end
 
@@ -386,7 +353,7 @@ function intraconnectS!(Sout, Cout, Sa, Ca, k::Int, l::Int;
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+    runchunks(batchviews(indices, connectbatchsize(length(indices), nbatches))) do _, batch
         intraconnectS_inner!(Sout, Cout, Sa, Ca, k, l, batch)
     end
 
@@ -576,7 +543,7 @@ function interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int;
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+    runchunks(batchviews(indices, connectbatchsize(length(indices), nbatches))) do _, batch
         interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k, l, batch)
     end
 
@@ -825,7 +792,7 @@ function interconnectS!(Sout, Sa, Sb, k::Int, l::Int;
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    foreachbatch(indices, connectbatchsize(length(indices), nbatches)) do batch
+    runchunks(batchviews(indices, connectbatchsize(length(indices), nbatches))) do _, batch
         interconnectS_inner!(Sout, Sa, Sb, k, l, batch)
     end
 
@@ -937,11 +904,11 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
 end
 
 """
-    intraconnectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
+    intraconnectSports(portsa::AbstractVector, k::Int, l::Int)
 
-Return a vector of tuples of (networkname, portindex) from `portsa` after
-ports `k` and `l` have been connected. See [`connectS`](@ref) for more
-information.
+Return the ports `portsa` of a network, such as tuples of (networkname,
+portindex), after its ports `k` and `l` have been connected. See
+[`connectS`](@ref) for more information.
 
 # Examples
 ```jldoctest
@@ -952,9 +919,7 @@ julia> JosephsonCircuits.intraconnectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S
  (:S1, 5)
 ```
 """
-function intraconnectSports(portsa::AbstractVector{Tuple{T,Int}}, k::Int,
-    l::Int) where T
-
+function intraconnectSports(portsa::AbstractVector, k::Int, l::Int)
 
     if k > length(portsa)
         throw(ArgumentError(lazy"Port `k` is larger than number of ports."))
@@ -999,14 +964,15 @@ function intraconnectSports(portsa::AbstractVector{Tuple{T,Int}}, k::Int,
 end
 
 """
-    interconnectSports(portsa::AbstractVector{Tuple{T,Int}},
-        portsb::AbstractVector{Tuple{T,Int}}, k::Int, l::Int) where T
+    interconnectSports(portsa::AbstractVector, portsb::AbstractVector, k::Int,
+        l::Int)
 
-Return a vector of tuples of (networkname, portindex) with `portsa` from the
-first network and `portsb` from the second network after ports `k` and `l`
-from the first and second networks have been connected. If the first network
-has `n` ports and the second network has `m` ports, then the combined network
-has `(m+n-2)` ports. See [`connectS`](@ref) for more information.
+Return the ports, such as tuples of (networkname, portindex), with `portsa`
+from the first network and `portsb` from the second network after ports `k`
+and `l` from the first and second networks have been connected. If the
+first network has `n` ports and the second network has `m` ports, then the
+combined network has `(m+n-2)` ports. See [`connectS`](@ref) for more
+information.
 
 # Examples
 ```jldoctest
@@ -1022,9 +988,8 @@ julia> JosephsonCircuits.interconnectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S
  (:S2, 5)
 ```
 """
-function interconnectSports(portsa::AbstractVector{Tuple{T,Int}},
-        portsb::AbstractVector{Tuple{T,Int}}, k::Int, l::Int) where T
-
+function interconnectSports(portsa::AbstractVector, portsb::AbstractVector,
+        k::Int, l::Int)
 
     if k > length(portsa)
         throw(ArgumentError(lazy"Port `k` is larger than number of ports in `portsa`."))
@@ -1163,192 +1128,6 @@ function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
 
     return nothing
 end
-
-"""
-    remove_edge!(g,src_node,edge_index)
-
-Remove an edge from graph `g` specified by the source node `src_node`
-and the edge index `edge_index` in the forward adjacency list.
-
-# Examples
-```jldoctest
-julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.remove_edge!(g,1,1)
-1
-```
-"""
-function remove_edge!(g, src_node, edge_index)
-
-    # remove the source
-    dst_node = popat!(g.fadjlist[src_node], edge_index)
-    # and the destination
-    for k in eachindex(g.badjlist[dst_node])
-        if g.badjlist[dst_node][k] == src_node
-            deleteat!(g.badjlist[dst_node],k)
-            break
-        end
-    end
-    return dst_node
-end
-
-"""
-    move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
-
-Move an edge from graph `g` at source node `src_node` to the new source node
-`src_node_new` with the edge index `edge_index` in the forward adjacency list.
-Also perform the same operations on the forward adjacency lists
-`fadjlist1` and `fadjlist2`.
-
-# Examples
-```jldoctest
-julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_fedge!(g,1,2,1,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.fadjlist
-3-element Vector{Vector{Int64}}:
- []
- [1, 3, 1]
- []
-```
-"""
-function move_fedge!(g, src_node, src_node_new, edge_index, fadjlist1,
-    fadjlist2)
-
-    # remove the source
-    dst_node = popat!(g.fadjlist[src_node], edge_index)
-    # add the new source
-    push!(g.fadjlist[src_node_new], dst_node)
-
-    if !isempty(fadjlist1)
-        push!(fadjlist1[src_node_new], popat!(fadjlist1[src_node], edge_index))
-    end
-
-    if !isempty(fadjlist2)
-        push!(fadjlist2[src_node_new], popat!(fadjlist2[src_node], edge_index))
-    end
-
-    # and update the destination
-    for k in eachindex(g.badjlist[dst_node])
-        if g.badjlist[dst_node][k] == src_node
-            deleteat!(g.badjlist[dst_node],k)
-            push!(g.badjlist[dst_node],src_node_new)
-            break
-        end
-    end
-    return dst_node
-end
-
-"""
-    move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
-
-Move an edge from graph `g` at destination node `dst_node` to the new
-destination node `dst_node_new` with the edge index `edge_index` in the
-backwards adjacency list. Also perform the same operations on the forward
-adjacency lists `fadjlist1` and `fadjlist2`.
-
-# Examples
-```jldoctest
-julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_bedge!(g,1,2,1,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.badjlist
-3-element Vector{Vector{Int64}}:
- [2]
- [1]
- [2]
-```
-"""
-function move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
-
-    # remove the destination
-    src_node = popat!(g.badjlist[dst_node], edge_index)
-    # add the new destination
-    push!(g.badjlist[dst_node_new],src_node)
-
-    # and update the source
-    for k in eachindex(g.fadjlist[src_node])
-        if g.fadjlist[src_node][k] == dst_node
-            deleteat!(g.fadjlist[src_node],k)
-            push!(g.fadjlist[src_node], dst_node_new)
-
-            if !isempty(fadjlist1)
-                push!(fadjlist1[src_node], popat!(fadjlist1[src_node], k))
-            end
-
-            if !isempty(fadjlist2)
-                push!(fadjlist2[src_node], popat!(fadjlist2[src_node], k))
-            end
-
-            break
-        end
-    end
-    return src_node
-end
-
-"""
-    move_fedges!(g,src_node,src_node_new,fadjlist1,fadjlist2)
-
-Move the edges from graph `g` at source node `src_node` to the new source node
-`src_node_new` in the forward adjacency list. Also perform the same operations
-on the forward adjacency lists `fadjlist1` and `fadjlist2`.
-
-# Examples
-```jldoctest
-julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_fedges!(g,1,2,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.fadjlist
-3-element Vector{Vector{Int64}}:
- []
- [1, 3, 1]
- []
-```
-"""
-function move_fedges!(g,src_node,src_node_new,fadjlist1,fadjlist2)
-
-    for edge_index in reverse(1:length(g.fadjlist[src_node]))
-        move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
-    end
-    return g
-end
-
-"""
-    move_bedges!(g,dst_node,dst_node_new,fadjlist1,fadjlist2)
-
-Move the edges from graph `g` at destination node `dst_node` to the new
-destination node `dst_node_new` in the backwards adjacency list. Also perform
-the same operations on the forward adjacency lists `fadjlist1` and `fadjlist2`.
-
-# Examples
-```jldoctest
-julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_bedges!(g,1,2,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.badjlist
-3-element Vector{Vector{Int64}}:
- []
- [2, 1]
- [2]
-```
-"""
-function move_bedges!(g,dst_node,dst_node_new,fadjlist1,fadjlist2)
-
-    for edge_index in reverse(1:length(g.badjlist[dst_node]))
-        move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
-    end
-    return g
-end
-
-"""
-    move_edges!(g,node,node_new,fadjlist1,fadjlist2)
-
-Move the edges from graph `g` at node `node` to the new node `node_new`. Also
-perform the same operations on the forward adjacency lists `fadjlist1` and
-`fadjlist2`.
-
-# Examples
-```jldoctest
-julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_edges!(g,1,2,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.fadjlist
-3-element Vector{Vector{Int64}}:
- []
- [3, 2, 2]
- []
-```
-"""
-function move_edges!(g,node,node_new,fadjlist1,fadjlist2)
-    move_fedges!(g,node,node_new,fadjlist1,fadjlist2)
-    move_bedges!(g,node,node_new,fadjlist1,fadjlist2)
-    return g
-end
-
-
 
 """
     PassiveNetwork(network_name, scattering_parameters; noise = false)
@@ -1495,10 +1274,16 @@ function checknetworknames(networks::AbstractVector{<:PassiveNetwork})
 end
 
 # the network and the index within it of every port of `networks`, keyed
-# by the name of the port; a port named twice is refused
+# by the name of the port; a network with other than one name per port, or
+# a port named twice, is refused
 function portindices(networks::AbstractVector{PassiveNetwork{T,N}}) where {T,N}
     portdict = Dict{Tuple{T,Int},Tuple{Int,Int}}()
     for i in eachindex(networks)
+        nnames = length(networks[i].port_names)
+        nports = size(networks[i].scattering_parameters, 1)
+        if nnames != nports
+            throw(ArgumentError(lazy"The number of port names $(nnames) of $(networks[i].network_name) must be its number of ports $(nports)."))
+        end
         for (j,port) in enumerate(networks[i].port_names)
             if haskey(portdict,port)
                 throw(ArgumentError(lazy"Duplicate port $(port) in network $(networks[i].network_name)."))
@@ -1920,176 +1705,120 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
 end
 
 """
-    make_connection!(g, fconnectionlist, fweightlist, ports,
-        scattering_parameters, noise_covariances, src_node,
-        connection_index, nbatches, userinput, scattering_parameter_storage,
-        noise_covariance_storage, noise)
+    ConnectionPlan{T}
 
-Apply the connection specified by the source node `src_node` and the index
-of the connection in the forward adjacency list `connection_index`,
-updating the graph, the adjacency lists, the ports, and the scattering
-parameter and noise covariance matrices in place. `userinput` records
-which matrices are the user's and must not be overwritten;
-`scattering_parameter_storage` and `noise_covariance_storage` hold
-reusable buffers by size; `noise` selects whether the noise covariances
-are propagated. Return the destination node, which is merged into the
-source node unless the two are the same.
-
+The merges by which [`connectS!`](@ref) connects networks, which
+[`connectS_initialize`](@ref) works out from the numbers of ports of the
+networks and the connections alone. `steps` holds a merge `(a, b, k, l)`
+for each connection, in order: port `k` of the network at slot `a` is
+joined to port `l` of the network at slot `b`, the merged network taking
+slot `a`, or to its own port `l` when `a == b`. The networks left at the
+end are those at the slots `remaining`, with the ports `ports`, tuples of
+network name and port number. `nports` holds the number of ports of the
+network at each slot before the merges, which the networks the plan is
+applied to must have.
 """
-function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
-    fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
-    fweightlist::AbstractVector{<:AbstractVector{Int}},
-    ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-    scattering_parameters::AbstractVector{N},
-    noise_covariances::AbstractVector{N},
-    src_node::Int,connection_index::Int,nbatches::Int,
-    userinput::AbstractVector{Bool},
-    scattering_parameter_storage::Dict{Int,N},
-    noise_covariance_storage::Dict{Int,N},
-    noise::Bool) where {T,N}
-
-    # remove the edge from the graph
-    dst_node = remove_edge!(g,src_node,connection_index)
-
-    # remove and store the connection associated with that edge
-    connection = popat!(fconnectionlist[src_node], connection_index)
-
-    # remove the weight for that connection
-    weight = popat!(fweightlist[src_node], connection_index)
-
-    # the source and destination ports eg. (:S1,1) and (:S2,1)
-    src_port = (connection[1],connection[3])
-    dst_port = (connection[2],connection[4])
-
-    # the indices at which these ports are located in the source
-    # destination scattering parameter matrix
-    src_port_index = findfirst(isequal(src_port),ports[src_node])
-    dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
-
-    if isnothing(src_port_index)
-        throw(ArgumentError(lazy"Source port $(src_port) not found in the ports $(ports[src_node]) of the source node $(src_node)."))
-    end
-    if isnothing(dst_port_index)
-        throw(ArgumentError(lazy"Destination port $(dst_port) not found in the ports $(ports[dst_node]) of the destination node $(dst_node)."))
-    end
-
-    # if src_node == dst_node, then make a self connection
-    if src_node == dst_node
-        # connect the networks and find the ports of the connected network
-        if noise
-            connected_network, connected_noise = intraconnectS(scattering_parameters[src_node],noise_covariances[src_node],src_port_index,dst_port_index;nbatches=nbatches)
-            # the source takes the connected noise covariances
-            noise_covariances[src_node] = connected_noise
-        else
-            connected_network = intraconnectS(scattering_parameters[src_node],src_port_index,dst_port_index;nbatches=nbatches)
-        end
-
-        # the source takes the connected network
-        scattering_parameters[src_node] = connected_network
-
-        connected_ports = intraconnectSports(ports[src_node],src_port_index,dst_port_index)
-        
-        # delete the ports for the dst. update the ports for the src.
-        ports[src_node] = connected_ports
-
-
-    else
-
-        # when making a new array. try to see if that same sizes is in storage.
-        # if so, reuse that. if not, make a new one and add to storage.
-        # then switch from connectS to connectS!
-        d = size(scattering_parameters[src_node],1)+size(scattering_parameters[dst_node],1)-2
-        if haskey(scattering_parameter_storage,d)
-            connected_network = pop!(scattering_parameter_storage,d)
-            if noise
-                connected_noise = pop!(noise_covariance_storage,d)
-            end
-        else
-            # the size of the connected network: the first two dimensions
-            # are the sums of those of the two networks less two
-            sizeS = squaresize(d, scattering_parameters[src_node])
-
-            # uninitialized arrays like those of the source, which the
-            # connection fills
-            connected_network = similar(scattering_parameters[src_node],sizeS)
-            if noise
-                connected_noise = similar(noise_covariances[src_node],sizeS)
-            end
-        end
-
-        # connect the networks and find the ports of the connected network
-        if noise
-            interconnectS!(connected_network,connected_noise,scattering_parameters[src_node],scattering_parameters[dst_node],noise_covariances[src_node],noise_covariances[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
-        else
-            interconnectS!(connected_network,scattering_parameters[src_node],scattering_parameters[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
-        end
-        connected_ports = interconnectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
-
-        # delete the ports for the dst. update the ports for the src.
-        ports[src_node] = connected_ports
-        ports[dst_node] = []
-
-
-        # if the nodes are not user input, then store the arrays
-        if !userinput[src_node]
-            scattering_parameter_storage[size(scattering_parameters[src_node],1)]= scattering_parameters[src_node]
-            if noise
-                noise_covariance_storage[size(noise_covariances[src_node],1)]= noise_covariances[src_node]
-            end
-        end
-        if !userinput[dst_node]
-            scattering_parameter_storage[size(scattering_parameters[dst_node],1)]= scattering_parameters[dst_node]
-            if noise
-                noise_covariance_storage[size(noise_covariances[dst_node],1)]= noise_covariances[dst_node]
-            end
-        end
-
-        # the source takes the connected network and the destination an
-        # empty array
-        scattering_parameters[src_node] = connected_network
-        scattering_parameters[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
-        
-        if noise
-            noise_covariances[src_node] = connected_noise
-            noise_covariances[dst_node] = Array{eltype(connected_noise)}(undef,ntuple(zero,ndims(connected_noise)))
-        end
-
-        # mark the source and destination nodes as non-user input
-        # so we can re-use the arrays if desired
-        userinput[src_node] = false
-        userinput[dst_node] = false
-
-        # move the edges away from the dst node
-        move_edges!(g,dst_node,src_node,fconnectionlist,fweightlist)
-    end
-
-    # applying a connection changes the size of the scattering parameter
-    # matrices. first update the weights for the connections originating
-    # from the src_node. fadjlist[src_node] has the indices of the nodes
-    # for each connection originating there, so loop over those, and
-    # update the weights
-    for k in eachindex(g.fadjlist[src_node])
-        fweightlist[src_node][k] = connectionweight(scattering_parameters,
-            src_node, g.fadjlist[src_node][k])
-    end
-    # also update the weights for any connection that ends at the
-    # src_node. those nodes are found in g.badjlist[src_node]
-    for k in g.badjlist[src_node]
-        for l in eachindex(g.fadjlist[k])
-            if g.fadjlist[k][l] == src_node
-                fweightlist[k][l] = connectionweight(scattering_parameters,
-                    k, src_node)
-            end
-        end
-    end
-    return dst_node
+struct ConnectionPlan{T}
+    nports::Vector{Int}
+    steps::Vector{NTuple{4,Int}}
+    remaining::Vector{Int}
+    ports::Vector{Vector{Tuple{T,Int}}}
 end
 
-# the weight of a connection between the networks `i` and `j`, by which the
-# connections are ordered: the product of their numbers of ports less one,
-# and zero for a self connection, which always makes a network smaller
-connectionweight(scattering_parameters, i, j) = i == j ? 0 :
-    (size(scattering_parameters[i],1)-1)*(size(scattering_parameters[j],1)-1)
+# The merges of a `ConnectionPlan` for networks of `nports` ports joined at
+# the pairs of ports `connections`, each a network and the index of the port
+# in it: the steps, the slots of the networks left, and their ports, numbered
+# by their places among the ports of all the networks in order. A
+# connection within one network only makes it smaller and is made at once;
+# otherwise the next merge is that of the two networks which leaves the
+# fewest open ports, counting every connection between them, all of which
+# it makes, the first networks given on a tie. A merge costs more the more
+# ports it joins, and this order keeps the networks made small, whatever
+# the order in which the connections are listed. The merged network takes
+# the lower of the two slots.
+function connectionsteps(nports::AbstractVector{Int},
+        connections::AbstractVector{NTuple{2,Tuple{Int,Int}}})
+    # the ports of the network at each slot by their numbers, and the slot
+    # of each port
+    ports = Vector{Vector{Int}}(undef, length(nports))
+    slot = Int[]
+    for s in eachindex(nports)
+        ports[s] = collect(length(slot) .+ (1:nports[s]))
+        append!(slot, fill(s, nports[s]))
+    end
+    # the connections of the network at each slot by the slot of the other
+    # network, as pairs of port numbers, each list shared by both networks
+    links = [Dict{Int,Vector{Tuple{Int,Int}}}() for _ in nports]
+    for ((i, k), (j, l)) in connections
+        v = links[j][i] = get!(Vector{Tuple{Int,Int}}, links[i], j)
+        push!(v, (ports[i][k], ports[j][l]))
+    end
+    steps = NTuple{4,Int}[]
+    function join!(a, b, (p, q))
+        slot[p] == a || ((p, q) = (q, p))
+        k, l = findfirst(==(p), ports[a])::Int, findfirst(==(q), ports[b])::Int
+        push!(steps, (a, b, k, l))
+        ports[a] = a == b ? intraconnectSports(ports[a], k, l) :
+            interconnectSports(ports[a], ports[b], k, l)
+    end
+    closeself!(a) = foreach(c -> join!(a, a, c), pop!(links[a], a, ()))
+    key(a, b) = (length(ports[a]) + length(ports[b]) - 2length(links[a][b]), a, b)
+    foreach(closeself!, eachindex(nports))
+    queue = NTuple{3,Int}[]
+    for a in eachindex(nports), b in keys(links[a])
+        a < b && heappush!(queue, key(a, b))
+    end
+    remaining = trues(length(nports))
+    while !isempty(queue)
+        top = heappop!(queue)
+        a, b = top[2], top[3]
+        # a key made before either network last changed is passed over
+        haskey(links[a], b) && key(a, b) == top || continue
+        n = length(ports[a])
+        between = pop!(links[a], b)
+        delete!(links[b], a)
+        join!(a, b, first(between))
+        slot[ports[b]] .= a
+        empty!(ports[b])
+        remaining[b] = false
+        foreach(c -> join!(a, a, c), between[2:end])
+        # the networks joined to `b` are joined to `a` now
+        for (x, v) in links[b]
+            delete!(links[x], b)
+            haskey(links[a], x) ? append!(links[a][x], v) : (links[a][x] = links[x][a] = v)
+        end
+        # the merges whose keys changed: every merge of `a` if its number of
+        # ports did, else those with the networks `b` was joined to
+        foreach(x -> heappush!(queue, key(minmax(a, x)...)),
+            length(ports[a]) == n ? keys(links[b]) : keys(links[a]))
+        empty!(links[b])
+    end
+    return steps, findall(remaining), ports[remaining]
+end
+
+# a binary heap of the keys of the merges, the smallest first
+function heappush!(h::Vector, x)
+    push!(h, x)
+    i = length(h)
+    while i > 1 && h[i] < h[i ÷ 2]
+        h[i], h[i ÷ 2] = h[i ÷ 2], h[i]
+        i ÷= 2
+    end
+    return h
+end
+function heappop!(h::Vector)
+    x = h[1]
+    h[1] = h[end]
+    pop!(h)
+    i = 1
+    while 2i <= length(h)
+        j = 2i < length(h) && h[2i + 1] < h[2i] ? 2i + 1 : 2i
+        h[j] < h[i] || break
+        h[i], h[j] = h[j], h[i]
+        i = j
+    end
+    return x
+end
 
 # the networks as `PassiveNetwork`s with their ports named, and splitters
 # added where more than two ports meet, and the connections between pairs
@@ -2106,16 +1835,16 @@ end
     connectS_initialize(networks::AbstractVector, connections::AbstractVector;
         small_splitters::Bool = true, noise = nothing, Nmodes::Integer = 1)
 
-Return the directed graph of connections between the networks and the
-arrays [`connectS!`](@ref) works on: the forward adjacency lists, the
-ports, and the scattering parameter and noise covariance matrices of every
-network, with splitters added where more than two ports meet. A network
-given without noise covariances has an empty array in their place, which
-`connectS!` replaces with the passive covariance `(I - S S')/2` of its
-scattering parameters when it is called with `noise = true`; the `noise`
-keyword of this function is deprecated and has no effect. With
-`Nmodes > 1` each physical port of `connections` is expanded into its
-`Nmodes` mode ports (see [`add_modes`](@ref)).
+Return what [`connectS!`](@ref) takes: the [`ConnectionPlan`](@ref) of the
+merges which connect the networks, made from their numbers of ports and
+the connections alone, and the vectors of the networks' scattering
+parameters and noise covariances, with splitters added where more than two
+ports meet. A network given without noise covariances has an empty array
+in their place, which `connectS!` replaces with the passive covariance
+`(I - S S')/2` of its scattering parameters when it is called with
+`noise = true`; the `noise` keyword of this function is deprecated and has
+no effect. With `Nmodes > 1` each physical port of `connections` is
+expanded into its `Nmodes` mode ports (see [`add_modes`](@ref)).
 
 # Examples
 ```jldoctest
@@ -2124,7 +1853,7 @@ connections = [[("S1",1),("S2",2)]];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [Matrix{Float64}(undef, 0, 0), Matrix{Float64}(undef, 0, 0)])
+(JosephsonCircuits.ConnectionPlan{String}([2, 2], [(1, 2, 1, 2)], [1], [[("S1", 2), ("S2", 1)]]), [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [Matrix{Float64}(undef, 0, 0), Matrix{Float64}(undef, 0, 0)])
 ```
 """
 function connectS_initialize(networks::AbstractVector, connections::AbstractVector;
@@ -2146,8 +1875,9 @@ end
 
 The method of [`connectS_initialize`](@ref) for networks with their ports
 named and splitters added, and connections between pairs of ports: return
-the directed graph of connections between the networks and the arrays
-[`connectS!`](@ref) works on.
+the [`ConnectionPlan`](@ref) of the connections and the vectors of the
+networks' scattering parameters and noise covariances, which
+[`connectS!`](@ref) takes.
 
 # Examples
 ```jldoctest
@@ -2156,17 +1886,11 @@ connections = [("S1","S2",1,2)];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [Matrix{Float64}(undef, 0, 0), Matrix{Float64}(undef, 0, 0)])
+(JosephsonCircuits.ConnectionPlan{String}([2, 2], [(1, 2, 1, 2)], [1], [[("S1", 2), ("S2", 1)]]), [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [Matrix{Float64}(undef, 0, 0), Matrix{Float64}(undef, 0, 0)])
 ```
 """
 function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
-
-    # network data is associated with each node, so also store those as a
-    # vector of matrices where the index is the node index.
-    scattering_parameters = [network.scattering_parameters for network in networks]
-    noise_covariances = [network.noise_covariances for network in networks]
-
 
     checknetworks(networks)
     checknetworknames(networks)
@@ -2177,81 +1901,35 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
         throw(ArgumentError(lazy"Duplicate connections detected [(networkname,port),counts]: $(duplicateconnections)."))
     end
 
-    # portnames are associated with each node, so store those as a vector
-    # where the index is the node index
-    ports = [network.port_names for network in networks]
-
-    # the network and the index within it of each port
+    # the network and the index in it of the two ports of each connection
     portdict = portindices(networks)
-
-    # make the adjacency lists for the connections
-    fadjlist = Vector{Vector{Int}}(undef,length(networks))
-    badjlist = Vector{Vector{Int}}(undef,length(networks))
-    fconnectionlist = Vector{Vector{Tuple{T, T, Int64, Int64}}}(undef,length(networks))
-    fweightlist = Vector{Vector{Int}}(undef,length(networks))
-
-
-    # fill them with empty vectors
-    for i in eachindex(fadjlist)
-        fadjlist[i] = []
-    end
-    for i in eachindex(badjlist)
-        badjlist[i] = []
-    end
-    for i in eachindex(fconnectionlist)
-        fconnectionlist[i] = []
-    end
-    for i in eachindex(fweightlist)
-        fweightlist[i] = []
-    end
-
-    # loop through the connections and populate the adjacency lists
-    for connection in connections
-
-        src_name, dst_name, src_port, dst_port = connection
-        (src_index, src_port_index), (dst_index, dst_port_index) =
-            connectionports(portdict, connection)
-
-        # the source node entry points to the destination node 
-        push!(fadjlist[src_index],dst_index)
-
-        # the destination node entry points to the source node
-        push!(badjlist[dst_index],src_index)
-
-        # only store the source connections
-        push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))
-
-        push!(fweightlist[src_index],
-            connectionweight(scattering_parameters, src_index, dst_index))
-
-    end
-
-    # turn the adjacency lists into a graph
-    g = Graphs.SimpleGraphs.SimpleDiGraph(length(scattering_parameters),
-        fadjlist, badjlist)
-
-    return (g, fconnectionlist, fweightlist, ports, scattering_parameters, noise_covariances)
+    pairs = NTuple{2,Tuple{Int,Int}}[connectionports(portdict, connection)
+        for connection in connections]
+    nports = [size(network.scattering_parameters, 1) for network in networks]
+    steps, remaining, ports = connectionsteps(nports, pairs)
+    # the names of the ports, by their places among the ports of all the
+    # networks in order
+    names = Tuple{T,Int}[port for network in networks for port in network.port_names]
+    plan = ConnectionPlan(nports, steps, remaining, [names[p] for p in ports])
+    return (plan, [network.scattering_parameters for network in networks],
+        [network.noise_covariances for network in networks])
 end
 
 """
-    connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
-        fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
-        fweightlist::AbstractVector{<:AbstractVector{Int}},
-        ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-        scattering_parameters::AbstractVector{N},
-        noise_covariances::AbstractVector{N}; noise::Bool = false,
-        nbatches::Int = Base.Threads.nthreads()) where {T,N}
+    connectS!(plan::ConnectionPlan, scattering_parameters::AbstractVector,
+        noise_covariances::AbstractVector; noise::Bool = false,
+        nbatches::Int = Base.Threads.nthreads())
 
-Return the scattering parameters, noise covariances and ports of the
-networks which remain after applying all of the connections in the
-connection forward adjacency list `fconnectionlist` to the graph `g`, the
-forward adjacency weight list `fweightlist`, the vector of ports `ports`,
-and the vectors of scattering parameter and noise covariance matrices:
-one network for each set of networks the connections join. The noise
-covariances are propagated only when `noise = true`, and those of the
-networks given without covariances are then computed from their
-scattering parameters at each call, so the scattering parameter arrays of
-the networks can be updated in place between calls.
+Apply the merges of the [`ConnectionPlan`](@ref) `plan` to the networks of
+scattering parameters `scattering_parameters` and noise covariances
+`noise_covariances`, as [`connectS_initialize`](@ref) returns them, and
+return the scattering parameters, noise covariances and ports of the
+networks which remain: one network for each set of networks the
+connections join. The networks must have the numbers of ports the plan was
+made for. The noise covariances are propagated only when `noise = true`,
+and those of the networks given without covariances are then computed from
+their scattering parameters at each call, so the scattering parameter
+arrays of the networks can be updated in place between calls.
 
 # Examples
 ```jldoctest
@@ -2264,96 +1942,74 @@ JosephsonCircuits.connectS!(init...)
 (S = [[0.5 0.5; 0.5 0.5]], ports = [[("S1", 2), ("S2", 1)]])
 ```
 """
-function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
-    fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
-    fweightlist::AbstractVector{<:AbstractVector{Int}},
-    ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-    scattering_parameters::AbstractVector{N},
-    noise_covariances::AbstractVector{N};
-    noise::Bool = false,
-    nbatches::Int = Base.Threads.nthreads()) where {T,N}
+function connectS!(plan::ConnectionPlan, scattering_parameters::AbstractVector,
+    noise_covariances::AbstractVector; noise::Bool = false,
+    nbatches::Int = Base.Threads.nthreads())
 
-    # copy the graph, fconnectionlist, fweightlist, ports, and networkdata
-    # so we don't mutate these, so we can apply connectS! multiple times only
-    # modifying the input networks.
-    g = deepcopy(g)
-    fconnectionlist = deepcopy(fconnectionlist)
-    fweightlist = deepcopy(fweightlist)
-    ports = deepcopy(ports)
+    nports = [size(S, 1) for S in scattering_parameters]
+    if nports != plan.nports
+        throw(DimensionMismatch(lazy"The connection plan is for networks of $(plan.nports) ports, not $(nports)."))
+    end
     # the networks' arrays as the `Array`s the connections make: an `Array`
-    # as it is, never modified, so there is no need to deepcopy, and another
-    # array type, a `KeyedArray` say, as an `Array` of its values, taken at
-    # each call so that the networks can be updated in place between calls
-    scattering_parameters = [convert(Array, S) for S in scattering_parameters]
-    noise_covariances = [convert(Array, C) for C in noise_covariances]
+    # as it is, never modified, and another array type, a `KeyedArray` say,
+    # as an `Array` of its values, taken at each call so that the networks
+    # can be updated in place between calls
+    S = [convert(Array, X) for X in scattering_parameters]
+    C = [convert(Array, X) for X in noise_covariances]
     # the passive covariances of networks given without noise covariances
     # are computed now, from their scattering parameters as they are
     if noise
-        noise_covariances = passivecovariances(scattering_parameters,
-            noise_covariances)
+        C = passivecovariances(S, C)
     end
-
-    userinput = ones(Bool,length(scattering_parameters))
-    # the networks not merged into another by a connection
-    remaining = trues(length(scattering_parameters))
-    scattering_parameter_storage = Dict{Int,eltype(scattering_parameters)}()
-    noise_covariance_storage = Dict{Int,eltype(noise_covariances)}()
-    # find the minimum weight and the second to minimum weight
-    # we want unique weights, eg, both shouldn't be the same weight
-    minweight = Inf
-    secondtominweight = Inf
-    for i in eachindex(fweightlist)
-        for j in eachindex(fweightlist[i])
-            weight = fweightlist[i][j]
-            if weight < minweight
-                # this is the new minimum weight and the old
-                # minimum weight is now the second to minimum weight
-                secondtominweight = minweight
-                minweight = weight
-            elseif weight > minweight && weight < secondtominweight
-                # this is the new second minimum weight that is greater
-                # than the minweight but less than the secondtominweight
-                secondtominweight = weight
+    # the arrays the merges of two networks make, which once merged in turn
+    # are spare, kept by their numbers of ports for a later merge of two
+    # networks to write over. A network joined to itself is merged into a
+    # new array and its old one is not kept: a network which shrinks by
+    # joins to itself would leave a spare of every size it passes through.
+    made = falses(length(S))
+    Sspare = Dict{Int,eltype(S)}()
+    Cspare = Dict{Int,eltype(C)}()
+    for (a, b, k, l) in plan.steps
+        if a == b && noise
+            S[a], C[a] = intraconnectS(S[a], C[a], k, l; nbatches = nbatches)
+        elseif a == b
+            S[a] = intraconnectS(S[a], k, l; nbatches = nbatches)
+        else
+            n = size(S[a], 1) + size(S[b], 1) - 2
+            Sout = spare!(Sspare, n, S[a])
+            if noise
+                Cout = spare!(Cspare, n, C[a])
+                interconnectS!(Sout, Cout, S[a], S[b], C[a], C[b], k, l;
+                    nbatches = nbatches)
+                keepspare!(Cspare, C, made, a, b)
+                C[a] = Cout
+            else
+                interconnectS!(Sout, S[a], S[b], k, l; nbatches = nbatches)
             end
+            keepspare!(Sspare, S, made, a, b)
+            S[a] = Sout
+            made[a] = true
         end
     end
-    while !all(isempty.(fweightlist))
-        for i in eachindex(fweightlist)
-            j = 1
-            n = length(fweightlist[i]) 
-            while j <= n
-                weight = fweightlist[i][j]
-                if weight <= minweight
-                    # perform the connection if this is the minimum weight
-                    dst = make_connection!(g,fconnectionlist,fweightlist,
-                        ports,scattering_parameters,noise_covariances,i,j,
-                        nbatches,userinput,scattering_parameter_storage,
-                        noise_covariance_storage,noise)
-                    dst == i || (remaining[dst] = false)
-                    # set j = 1 to start looping through again
-                    j = 1
-                    n = length(fweightlist[i])
-                    # we want to make all of the minimum weight connections
-                    minweight = weight
-                else
-                    if weight < secondtominweight
-                        # record the second to minimum weight
-                        # which is greater than the minweight and less
-                        # than the secondtominweight
-                        secondtominweight = weight
-                    end
-                    j+=1
-                end
-            end
-        end
-        minweight = secondtominweight
-        secondtominweight = Inf
-    end
+    ports = map(copy, plan.ports)
     if noise
-        return (S=scattering_parameters[remaining],C=noise_covariances[remaining],ports=ports[remaining])
+        return (S = S[plan.remaining], C = C[plan.remaining], ports = ports)
     else
-        return (S=scattering_parameters[remaining],ports=ports[remaining])
+        return (S = S[plan.remaining], ports = ports)
     end
+end
+
+# an array for a network of `n` ports with the trailing dimensions of `X`:
+# a spare one of that size, or else a new one
+spare!(spares, n, X) = haskey(spares, n) ? pop!(spares, n) :
+    similar(X, squaresize(n, X))
+
+# keep as spares the arrays of the networks at the slots `a` and `b` which
+# the merges made
+function keepspare!(spares, arrays, made, a, b)
+    made[a] && (spares[size(arrays[a], 1)] = arrays[a])
+    made[b] && (spares[size(arrays[b], 1)] = arrays[b])
+    return spares
 end
 
 """
@@ -2905,16 +2561,14 @@ function solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
     indices = CartesianIndices(axes(scattering_parameters[1])[3:end])
     # the passive covariances of networks given without noise covariances
     # are computed now, from their scattering parameters as they are
-    if noise
-        noise_covariances = passivecovariances(scattering_parameters,
-            noise_covariances)
-    end
+    covariances = noise ? passivecovariances(scattering_parameters,
+        noise_covariances) : noise_covariances
     # fewer than one batch is one batch, as for the connections
-    foreachbatch(indices, cld(length(indices), max(nbatches, 1))) do batch
+    runchunks(batchviews(indices, cld(length(indices), max(nbatches, 1)))) do _, batch
         solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             See_indices, Sei_indices, Sie_indices, Sii_indices,
             gammaii_indexmap, Sii_indexmap, scattering_parameters,
-            noise_covariances, batch, factorization, noise, ordering)
+            covariances, batch, factorization, noise, ordering)
     end
 
     if noise

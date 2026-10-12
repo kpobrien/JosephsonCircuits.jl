@@ -3,9 +3,9 @@
 Choose a topic for its public interfaces. For units and array conventions,
 see [Conventions](conventions.md); for a runnable calculation, start with
 the [quickstart](quickstart.md). Public names which are not exported, such
-as `JosephsonCircuits.@params`, `JosephsonCircuits.reset!` and the network
-library, are written qualified with the module's name and listed with the
-related exported functions.
+as `JosephsonCircuits.reset!` and the network library, are written
+qualified with the module's name and listed with the related exported
+functions.
 
 - [Circuit construction and physical constants](api/circuits.md)
 - [Components and scattering models](api/components.md)

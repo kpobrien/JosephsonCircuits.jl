@@ -13,7 +13,7 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
     src = [(mode=(1,), port=1, current=0.00565e-6)]
     ws = 2*pi*(4.5:0.1:5.0)*1e9
     # a JPA whose junction and coupling capacitance are parameters
-    JosephsonCircuits.@params Lj Cc
+    Lj, Cc = :Lj, :Cc
     circuit = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)), (:C1, 1, 2, Capacitor(Cc)),
         (:Lj1, 2, 0, JosephsonJunction(Lj)), (:C2, 2, 0, Capacitor(1000e-15))])
 
@@ -49,6 +49,110 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
             (:C2, 2, 0, Capacitor(1000e-15))])
         @test_throws ArgumentError hbcache(wp, (8,), src, fd,
             Dict(Lj => 1000e-12); atol = 1e-12)
+    end
+
+    @testset "a source current written in terms of a parameter" begin
+        # the pump current as a parameter: the solvers resolve it at the
+        # definitions, and the cache sweeps it as it sweeps a component
+        # value, each point the solve with the current as a number
+        Ip = :Ip
+        defs = Dict(Lj => 1000e-12, Cc => 100e-15, Ip => 0.00565e-6)
+        drive = [(mode = (1,), port = 1, current = Ip)]
+        atnumber(I) = hbnlsolve(wp, (8,), [(mode = (1,), port = 1, current = I)],
+            circuit, defs; atol = 1e-12, keyedarrays = false).nodeflux
+        @test hbnlsolve(wp, (8,), drive, circuit, defs; atol = 1e-12,
+            keyedarrays = false).nodeflux ≈ atnumber(0.00565e-6) rtol = 1e-10
+        cache = hbcache(wp, (8,), drive, circuit, defs; atol = 1e-12)
+        for I in (0.002e-6, 0.004e-6, 0.00565e-6)
+            @test hbsolve!(cache, (Ip = I,)).nodeflux ≈ atnumber(I) rtol = 1e-8
+            @test cache.converged
+        end
+        # a current which no definition makes a number is refused
+        @test_throws ArgumentError hbcache(wp, (8,), drive, circuit,
+            Dict(Lj => 1000e-12, Cc => 100e-15); atol = 1e-12)
+    end
+
+    @testset "a tone frequency written in terms of a parameter" begin
+        # the pump frequency as a parameter: the solvers resolve it at the
+        # definitions, and the cache sweeps it, retuning what it reuses,
+        # each point the solve with the frequency as a number
+        wpp = :wpp
+        defs = Dict(Lj => 1000e-12, Cc => 100e-15, wpp => wp[1])
+        atnumber(w) = hbnlsolve((w,), (8,), src, circuit, defs; atol = 1e-12,
+            keyedarrays = false).nodeflux
+        @test hbnlsolve((wpp,), (8,), src, circuit, defs; atol = 1e-12,
+            keyedarrays = false).nodeflux ≈ atnumber(wp[1]) rtol = 1e-10
+        cache = hbcache((wpp,), (8,), src, circuit, defs; atol = 1e-12)
+        for f in (1.0, 1.002, 0.998)
+            @test hbsolve!(cache, (wpp = f*wp[1],)).nodeflux ≈ atnumber(f*wp[1]) rtol = 1e-8
+            @test cache.converged
+        end
+        # a window would retain other modes as the frequency moves
+        @test_throws ArgumentError hbcache((wpp,), (8,), src, circuit, defs;
+            frequencywindow = (0, 2*pi*20e9), atol = 1e-12)
+        # a point refused in its setup, at another tone frequency and a
+        # current which is not finite, leaves the reuse tuned as it was: the
+        # next point at that frequency retunes it, and solves as the fresh
+        # solve does
+        defs = Dict(Lj => 1000e-12, Cc => 100e-15, wpp => wp[1],
+            :Ip => 0.00565e-6)
+        cache = hbcache((wpp,), (8,), [(mode = (1,), port = 1, current = :Ip)],
+            circuit, defs; atol = 1e-12)
+        hbsolve!(cache, (;))
+        @test_throws ArgumentError hbsolve!(cache, (wpp = 1.002*wp[1], Ip = NaN))
+        @test hbsolve!(cache, (wpp = 1.002*wp[1],)).nodeflux ≈
+            atnumber(1.002*wp[1]) rtol = 1e-8
+    end
+
+    @testset "a reuse retunes to other tone frequencies" begin
+        # a reuse kept across tone frequencies on the same modes solves each
+        # point's own problem, as a fresh solve does, wherever the mode
+        # frequencies enter: the linear term under a Krylov and a direct
+        # method, coupled inductors and a direct current bias; a mode whose
+        # frequency changes its sign is refused
+        function retuned(c, defs, w0, Nh, drive; method = NewtonKrylov(), modes...)
+            psc = compile(c)
+            r = JosephsonCircuits.HBReuse()
+            x = ComplexF64[]
+            worst = 0.0
+            for f in (1.0, 1.01, 0.99)
+                w = (f*w0,)
+                freq, idx = JosephsonCircuits.pumpmodeset(w, Nh, map(i -> 2i, Nh); modes...)
+                nm = numericmatrices(psc, defs; Nmodes = length(freq.modes))
+                kept = hbnlsolve(w, drive, freq, idx, psc, nm; reuse = r, x0 = x,
+                    method, keyedarrays = false, atol = 1e-13)
+                fresh = hbnlsolve(w, Nh, drive, c, defs; method,
+                    keyedarrays = false, atol = 1e-13, modes...)
+                (kept.solverinfo.converged && fresh.solverinfo.converged) || return Inf
+                worst = max(worst, maximum(abs, kept.nodeflux .- fresh.nodeflux)/
+                    maximum(abs, fresh.nodeflux))
+                x = vec(kept.nodeflux)
+            end
+            return worst
+        end
+        defs = Dict(Lj => 1000e-12, Cc => 100e-15)
+        @test retuned(circuit, defs, wp[1], (8,), src) < 1e-9
+        @test retuned(circuit, defs, wp[1], (8,), src; method = Newton()) < 1e-9
+        # the coupled inductors and the bias of hbnlsolve's example
+        rf = Circuit([:p1 => Port(1; Z0 = 50.0), :l1 => Inductor(10e-12),
+            :l2 => Inductor(10e-12), :k1 => MutualInductor(0.9, :l1, :l2),
+            :cc => Capacitor(200e-15), :jj3 => JosephsonJunction(2000e-12),
+            :jj4 => JosephsonJunction(2000e-12), :cj => Capacitor(900e-15),
+            :gnd => Ground()],
+            [[(:p1, 1), (:l1, 1), (:cc, 1)],
+             [(:cc, 2), (:l2, 1), (:jj4, 1), (:cj, 1)],
+             [(:l2, 2), (:jj3, 1)],
+             [(:p1, 2), (:l1, 2), (:jj3, 2), (:jj4, 2), (:cj, 2), (:gnd, 1)]])
+        bias = [(mode = (0,), port = 1, current = 50e-5),
+            (mode = (1,), port = 1, current = 0.0001e-6)]
+        @test retuned(rf, Dict(), 2*pi*5e9, (2,), bias; dc = true, odd = true,
+            even = false) < 1e-9
+        # the difference of two tones changes its sign where they cross
+        modes = [(1, 0), (0, 1), (1, -1)]
+        @test_throws ArgumentError JosephsonCircuits.checkretune(
+            (2*pi*4.75e9, 2*pi*4.74e9), (2*pi*4.73e9, 2*pi*4.74e9), modes)
+        @test isnothing(JosephsonCircuits.checkretune(
+            (2*pi*4.75e9, 2*pi*4.74e9), (2*pi*4.76e9, 2*pi*4.74e9), modes))
     end
 
     @testset "hbcache reuses the compiled circuit and warm starts" begin
@@ -233,6 +337,23 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test kept(first) == saved
     end
 
+    @testset "a retried point of complex values is the fresh solve's" begin
+        # the matrices of a lossy coupling capacitance are complex, which
+        # the pump solve conjugates and scales in its own copies: the cold
+        # retry of a failed warm start solves the circuit the fresh solve
+        # does
+        defs = Dict(:Lj => 1e-9, :Cc => 100e-15*(1 - 0.01im))
+        controlled = recovery_solver(failat = [2])
+        cache = hbcache(wp, (4,), src, circuit, defs;
+            method = controlled.method)
+        hbsolve!(cache, (;))
+        retried = hbsolve!(cache, (;))
+        @test cache.converged && iszero(controlled.starts[3])
+        fresh = hbsolve!(hbcache(wp, (4,), src, circuit, defs;
+            method = recovery_solver().method), (;))
+        @test retried.nodeflux ≈ fresh.nodeflux rtol = 1e-10
+    end
+
     @testset "a warm start outside Newton's basin is retried cold" begin
         # the solution at 1010 pH is outside Newton's basin at 990 pH, even
         # at one harmonic, though a cold start converges there: the jumped
@@ -306,8 +427,8 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
     @testset "a scattering block under a swept port impedance" begin
         # the port impedance moves the solver scale, which the block's rows
         # of the reused linear term carry: every point of a cached sweep is
-        # the fresh solve's, and a reuse is refused at another pump, whose
-        # mode frequencies it holds
+        # the fresh solve's, and so is a solve at another pump frequency,
+        # which restamps the block at the new mode frequencies
         capS(C, Z0) = w -> fill((1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
         shunt = ScatteringParameters(capS(1000e-15, 50.0); nports = 1,
             grounded = true)
@@ -326,9 +447,13 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
             @test isapprox(vec(collect(sol.nodeflux)),
                 vec(collect(fresh.nodeflux)); rtol = 1e-8)
         end
-        @test_throws ArgumentError hbnlsolve((2*pi*4.6e9,), cache.sources,
-            cache.frequencies, cache.indices, cache.compiled, cache.nm;
-            reuse = cache.reuse, keyedarrays = false)
+        retuned = hbnlsolve((2*pi*4.6e9,), cache.sources, cache.frequencies,
+            cache.indices, cache.compiled, cache.nm; reuse = cache.reuse,
+            keyedarrays = false, atol = 1e-12)
+        @test retuned.solverinfo.converged
+        @test isapprox(vec(collect(retuned.nodeflux)), vec(collect(hbnlsolve(
+            (2*pi*4.6e9,), (8,), src, jpa, defs; atol = 1e-12,
+            keyedarrays = false).nodeflux)); rtol = 1e-8)
         # a start from node fluxes sets the block's port currents from
         # them, as the cache's warm starts do: a restart from a converged
         # point is converged, rather than starting at the block's response
@@ -464,16 +589,15 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
     end
 
     @testset "the definitions at a point" begin
-        # a parameter defined under its parameter object, its symbol and its
-        # string moves under every one of them, a name the definitions lack
-        # is refused, and the base definitions stay
-        JosephsonCircuits.@params La
-        d = Dict{Any,Any}(La => 1.0, :La => 1.0, "La" => 1.0, :Cb => 2.0)
+        # a name defined under its symbol and its string moves under both,
+        # a name the definitions lack is refused, and the base definitions
+        # stay
+        d = Dict{Any,Any}(:La => 1.0, "La" => 1.0, :Cb => 2.0)
         index = JosephsonCircuits.definitionkeys(d)
         at = JosephsonCircuits.definitionsat(d, index, (La = 3.0, Cb = 4.0))
-        @test at[La] == at[:La] == at["La"] == 3.0
+        @test at[:La] == at["La"] == 3.0
         @test at[:Cb] == 4.0
-        @test d[La] == 1.0 && d[:Cb] == 2.0
+        @test d[:La] == 1.0 && d[:Cb] == 2.0
         @test_throws ArgumentError JosephsonCircuits.definitionsat(d, index,
             (La = 3.0, Ln = 5.0))
         # the cache refuses a misspelt parameter, and holds its own copy of

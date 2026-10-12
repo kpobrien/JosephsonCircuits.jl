@@ -73,30 +73,59 @@ end
         Dict(:Z => law(wsym)); symfreqvar = wsym,
         keyedarrays = false)).linearized.S
     @test isapprox(Array(Snamed), Array(Sfun), rtol = 1e-12)
+    # every entry point which takes it warns
+    c = symjpa(law(wsym), 100.0e-15, 1000.0e-12, 1000.0e-15)
+    @test_logs (:warn,) match_mode = :any hbnlsolve(sym_wp, (2,), sym_src,
+        c, Dict(); symfreqvar = wsym)
+    @test_logs (:warn,) match_mode = :any hblinsolve(sym_ws, c, Dict();
+        symfreqvar = wsym)
+    # the rewrite leaves a value depending on something else alone, so the
+    # undefined variable is still reported with its component
+    @variables Rundef
+    c = Circuit([("P1", "1", "0", Port(1; Z0 = Rundef/(1 + wsym*1e-12))),
+        ("C1", "1", "0", Capacitor(100.0e-15)),
+        ("L1", "1", "0", Inductor(1.0e-9))])
+    err = @test_logs (:warn,) match_mode = :any try
+        hbnlsolve((2*pi*5e9,), (1,), [(mode=(1,),port=1,current=1e-8)], c,
+            Dict(); symfreqvar = wsym)
+        nothing
+    catch e; e; end
+    @test err isa ArgumentError
+    @test occursin("Rundef", sprint(showerror, err))
+    @test occursin("P1", sprint(showerror, err))
+    # a table of values already resolved does not carry the definitions
+    # the keyword needs, and is refused
+    psc = compile(symjpa(50.0, 100.0e-15, 1000.0e-12, 1000.0e-15))
+    sf = JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsdft((2,));
+        dc = true, odd = false, even = true, maxintermodorder = Inf)
+    vvn = JosephsonCircuits.componentvaluestonumber(psc.componentvalues,
+        Dict{Any,Any}())
+    @test_throws ArgumentError hblinsolve(sym_ws, psc, vvn, sf;
+        symfreqvar = wsym)
 end
 
 @testset "design sensitivities of Num values" begin
+    # a component written as a Num variable is written as the name of its
+    # symbol, which the values function gives
     c = symjpa(50.0, Cc, Lj, 1000.0e-15)
-    defs = Dict(Lj => 1000.0e-12, Cc => 100.0e-15)
-    r = designsensitivities(c, defs, sym_ws, sym_wp, sym_src, (2,), (8,))
+    p = (Lj = 1000.0e-12, Cc = 100.0e-15)
+    # the values are the parameters, whose derivatives are stated
+    r = designsensitivities(c, identity, p, sym_ws, sym_wp, sym_src, (2,), (8,);
+        jacobian = p -> [1.0 0.0; 0.0 1.0])
     @test Set(collect(JosephsonCircuits.AxisKeys.axiskeys(r.dSdp,
         :parameter))) == Set([:Lj, :Cc])
     # against centered finite differences of the whole solve
-    for q in (Lj, Cc)
-        h = 1e-6*defs[q]
-        at(v) = merge(Dict{Any,Any}(defs), Dict{Any,Any}(q => v))
+    for q in (:Lj, :Cc)
+        h = 1e-6*p[q]
+        at(v) = Dict{Any,Any}(pairs(merge(p, NamedTuple{(q,)}((v,)))))
         Sp = hbsolve(sym_ws, sym_wp, sym_src, (2,), (8,), c,
-            at(defs[q] + h)).linearized.S
+            at(p[q] + h)).linearized.S
         Sm = hbsolve(sym_ws, sym_wp, sym_src, (2,), (8,), c,
-            at(defs[q] - h)).linearized.S
+            at(p[q] - h)).linearized.S
         fd = vec((Array(Sp) .- Array(Sm))./(2*h))
-        mine = vec(Array(r.dSdp(
-            parameter = Symbolics.tosymbol(q; escape = false))))
+        mine = vec(Array(r.dSdp(parameter = q)))
         @test norm(mine .- fd)/norm(fd) < 1e-4
     end
-    # a parameter the value does not depend on moves nothing
-    @test JosephsonCircuits.designderivative(Symbolics.value(Cc), :Lj,
-        Dict{Any,Any}(Cc => 100.0e-15)) == 0
 end
 
 @testset "an unwrapped symbolic value is the wrapped one" begin
@@ -110,10 +139,10 @@ end
     @test isapprox(Array(hblinsolve(sym_ws, raw, defs; keyedarrays = false).S),
         Array(hblinsolve(sym_ws, wrapped, defs; keyedarrays = false).S),
         rtol = 1e-12)
-    @test JosephsonCircuits.designjacobian(raw, defs) ==
-        JosephsonCircuits.designjacobian(wrapped, defs)
-    @test JosephsonCircuits.designderivative(unwrap(Lj*Cc + Cc^2), :Lj, defs) ≈
-        100.0e-15
+    p = (Lj = 1000.0e-12, Cc = 100.0e-15)
+    J(p) = [1.0 0.0; 0.0 1.0]
+    @test JosephsonCircuits.designjacobian(raw, identity, p; jacobian = J) ==
+        JosephsonCircuits.designjacobian(wrapped, identity, p; jacobian = J)
 end
 
 @testset "a value keeps its undefined parameters" begin
@@ -148,24 +177,79 @@ end
 end
 
 @testset "a Num value defined under any of its names" begin
-    for key in (Lj, :Lj, "Lj", JosephsonCircuits.CircuitValues.Parameter(:Lj))
+    for key in (Lj, :Lj, "Lj")
         @test JosephsonCircuits.valuetonumber(2*Lj,
             Dict{Any,Any}(key => 1000.0e-12)) ≈ 2000.0e-12
     end
 end
 
-@testset "a Num value defined in other parameters or by a closure" begin
-    # a definition written in other parameters is resolved with their
-    # numbers, and a bare variable defined as a frequency dependent value
-    # takes that value, as a parameter does
-    @variables Lj0
+@testset "a Num variable defined by a closure" begin
+    # a bare variable is a name, and defined as a frequency dependent value
+    # takes that value, as a symbol does
     ws = 2*pi*[4.5e9, 5.0e9]
     S(c, d) = hblinsolve(ws, c, d; keyedarrays = false).S
-    ref = S(symjpa(50.0, 100.0e-15, 1000.0e-12, 1000.0e-15), Dict())
-    @test S(symjpa(50.0, 100.0e-15, Lj, 1000.0e-15),
-        Dict(Lj => 2*Lj0, Lj0 => 500.0e-12)) ≈ ref
     @test S(symjpa(50.0, Cc, 1000.0e-12, 1000.0e-15),
-        Dict(Cc => FrequencyDependent(w -> 100.0e-15))) ≈ ref
+        Dict(Cc => FrequencyDependent(w -> 100.0e-15))) ≈
+        S(symjpa(50.0, 100.0e-15, 1000.0e-12, 1000.0e-15), Dict())
+end
+
+@testset "the symbolic matrices of a circuit written with names" begin
+    # a name is the variable of that name, so the matrices are those of the
+    # circuit written with the variables
+    named = symbolicmatrices(symjpa(:Rleft, :Cc, :Lj, :Cj))
+    vars = symbolicmatrices(symjpa(Rleft, Cc, Lj, Cj))
+    for f in (:Cnm, :Gnm, :invLnm, :Ljb)
+        @test isequal(getfield(named, f), getfield(vars, f))
+    end
+end
+
+@testset "the examples of symbolicmatrices" begin
+    # the examples of its docstring and of the circuits page
+    # (docs/src/circuits.md) as the docs write them, which the docs build
+    # cannot run without Symbolics, and the values they show
+    @variables R
+    circuit = Circuit(
+        [:p1 => Port(1; Z0 = :Rleft),
+         :i1 => CurrentSource(:Ipump),
+         :cc => Capacitor(:Cc),
+         :jj => JosephsonJunction(:Lj),
+         :cj => Capacitor(:Cj),
+         :gnd => Ground()],
+        [[(:p1, 1), (:i1, 1), (:cc, 1)],
+         [(:cc, 2), (:jj, 1), (:cj, 1)],
+         [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+    m = symbolicmatrices(circuit)
+    @test isequal((m.Cnm[1, 2], m.Cnm[2, 2]), (-Cc, Cc + Cj))
+    @test isequal((m.Gnm[1, 1], m.Ljb[2]), (1 / Rleft, Lj))
+    jpa = Circuit([
+        (:p1, 1, 0, Port(1; Z0 = :R)),
+        (:cc, 1, 2, Capacitor(:Cc)),
+        (:jj, 2, 0, JosephsonJunction(:Lj)),
+        (:cj, 2, 0, Capacitor(:Cj)),
+    ])
+    m = symbolicmatrices(jpa)
+    @test isequal(Matrix(m.Cnm), [Cc -Cc; -Cc Cc + Cj])
+    @test isequal((m.Gnm[1, 1], m.Ljb[2]), (1 / R, Lj))
+end
+
+@testset "a netlist file holds a Num expression" begin
+    # a value written as an expression is read back by Symbolics
+    filename = tempname()
+    netlist = [("P","1","0",1), ("R","1","0",2*Rleft)]
+    @test_logs (:warn,) match_mode = :any JosephsonCircuits.export_netlist(
+        filename, netlist)
+    back = @test_logs (:warn,) match_mode = :any JosephsonCircuits.import_netlist(
+        filename)
+    rm(filename)
+    @test isequal(back, netlist)
+end
+
+@testset "the static stiffness of a symbolic inductance" begin
+    # a symbolic value is taken to provide finite, nonzero stiffness
+    @test isnothing(JosephsonCircuits.checkstaticstiffnessvalues(
+        [:P,:R,:L,:L], Any[1, 50.0, 1e-9, Lj]))
+    @test JosephsonCircuits.calcstaticfluxcomponents(
+        [:P,:R,:L],[2 2 2;1 1 1],Any[1,50.0,Lj],2) == Vector{Int64}[]
 end
 
 @testset "the value handling methods" begin

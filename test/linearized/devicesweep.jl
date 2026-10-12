@@ -32,12 +32,10 @@ function JosephsonCircuits._cudss_sweep(rowptr::Vector{<:Integer},
     return HostSweep(length(rowptr) - 1, Vector{Int}(rowptr),
         Vector{Int}(colind), nzval, X, B, NamedTuple(kwargs))
 end
-# and of cuDSS's estimate of a system's device memory: the bytes of its
+# and of cuDSS's estimate of a batch's device memory: the bytes of its
 # stored values, so that the batch is held to the host's budget as on a
 # device
-JosephsonCircuits._cudss_systembytes(rowptr::Vector{<:Integer},
-    colind::Vector{<:Integer}, nzval::Vector{ComplexF64}, nrhs::Integer;
-    kwargs...) = sizeof(nzval)
+JosephsonCircuits._cudss_sweepbytes(S::HostSweep) = sizeof(S.nzval)
 function JosephsonCircuits._cudss_sweepsolve!(S::HostSweep)
     for k in axes(S.nzval, 2)
         # the structure is compressed sparse row, so read as compressed
@@ -105,7 +103,6 @@ end
             d = JosephsonCircuits.hblinsolve(ws, psc, circuitdefs, sf;
                 nonlinear=nl, debuglsys=true)
             lsys = d.lsys
-            @test JosephsonCircuits.cansweepondevice(lsys)
             # the full grid must actually reach negative mode frequencies,
             # or the conjugation of the stored values, which is the only
             # branch in the assembly kernel, goes untested
@@ -138,29 +135,53 @@ end
         end
     end
 
-    @testset "the sweep assembly rejects a symbolic frequency" begin
-        JosephsonCircuits.@params Rleft Cc Lj Cj
-        w = FrequencyDependent(identity)
-        circuit = Any[]
-        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
-        push!(circuit,("C1", "1", "2", Capacitor(Cc*(1+1e-18*w))))
-        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-        circuit = Circuit(circuit)
-        circuitdefs = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
-            Rleft=>50.0)
-        psc = JosephsonCircuits.compile(circuit)
-        sf = JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(
-            JosephsonCircuits.calcfreqsrdft((2,)); dc=true, odd=true,
-            even=false, maxintermodorder=Inf))
-        d = JosephsonCircuits.hblinsolve(2*pi*[4.0e9, 5.0e9], psc,
-            circuitdefs, sf; debuglsys=true)
-        # a component value which depends on the frequency is not a constant
-        # coefficient, so there is nothing to precompute and hblinsolve keeps
-        # such a sweep on the host
-        @test !JosephsonCircuits.cansweepondevice(d.lsys)
-        @test_throws ArgumentError JosephsonCircuits.planfrequencysweep(d.lsys,
-            CPU())
+    @testset "the sweep assembly of frequency dependent values" begin
+        # a capacitance, a resistance and an inductance which depend on the
+        # frequency, in a pumped circuit whose modes reach negative
+        # frequencies: the sweep's kernel assembles the other entries and
+        # the stamps add these from the table of their functions' values,
+        # which must come to the host assembler's matrix in each
+        # direction's stored order
+        JC = JosephsonCircuits
+        circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cc, 1, 2, Capacitor(FrequencyDependent(f -> 100e-15*(1 + 1e-12*f)))),
+            (:jj, 2, 0, JosephsonJunction(1000e-12)),
+            (:cj, 2, 0, Capacitor(1000e-15)),
+            (:r, 2, 0, Resistor(FrequencyDependent(f -> 2.0e4*(1 + 1e-11*f)))),
+            (:l, 2, 3, Inductor(FrequencyDependent(f -> 2.0e-9*(1 + 1e-12*f)))),
+            (:c3, 3, 0, Capacitor(200e-15))])
+        wp = (2*pi*4.75001e9,)
+        nl = hbnlsolve(wp, (8,), [(mode = (1,), port = 1,
+            current = 0.00565e-6)], circuit; keyedarrays = false)
+        psc = JC.compile(circuit)
+        sf = JC.truncfreqs(JC.calcfreqsdft((4,)); dc = true, odd = true,
+            even = false, maxintermodorder = Inf)
+        ws = 2*pi*[4.5e9, 4.8e9, 5.03e9]
+        d = JC.hblinsolve(ws, psc, Dict{Any,Any}(), sf; nonlinear = nl,
+            debuglsys = true)
+        lsys = d.lsys
+        fd = lsys.frequencydependent
+        # every kind of term, at modes of both signs
+        @test Set(fd.kind) == Set(Int8[1, 2, 3])
+        @test any(w -> any(<(0), w .+ d.wpumpmodes), ws)
+        A = copy(lsys.Asparse)
+        perm = JC.cscvaluepermutation(A)
+        for adjoint in (false, true)
+            host = Matrix{ComplexF64}(undef, nnz(A), length(ws))
+            for (i, w) in enumerate(ws)
+                JC.assemblesystemmatrix!(A, lsys, w .+ d.wpumpmodes)
+                host[:, i] .= adjoint ? nonzeros(A) : nonzeros(A)[perm]
+            end
+            plan, _, _ = JC.planfrequencysweep(lsys, CPU(); adjoint = adjoint)
+            got = Matrix{ComplexF64}(undef, nnz(A), length(ws))
+            JC.assemblesweep!(got, plan, ws)
+            st = JC.plandevicefrequencydependent(fd,
+                JC.sweepdestinations(A, fd.Aindex, adjoint), nnz(A),
+                length(ws), CPU(), d.Nmodes)
+            JC.stagefrequencydependent!(st, ws, 1, length(ws), d.wpumpmodes)
+            JC.applyfrequencydependent!(got, st, plan.wpump, ws)
+            @test isapprox(got, host; rtol = 1e-14)
+        end
     end
 
     @testset "the factorization's options reach the batched solver" begin
@@ -197,14 +218,15 @@ end
     @testset "the sweep followed through solvebatch! on the host" begin
         JC = JosephsonCircuits
         # a circuit with a scattering block, whose auxiliary port current
-        # rows the batch carries, and more frequencies than one batch
-        # holds, so the last batch is short
+        # rows the batch carries, and a capacitance which depends on the
+        # frequency, so that the stamps of both reach both directions, and
+        # more frequencies than one batch holds, so the last batch is short
         Z0 = 50.0
         circuit = Circuit([
             (:p1, 1, 0, Port(1; Z0 = Z0)),
             (:b, 1, 2, ScatteringParameters(ComplexF64[0 1; 1 0]; zref = Z0,
                 noise = Lossless())),
-            (:cc, 2, 3, Capacitor(100e-15)),
+            (:cc, 2, 3, Capacitor(FrequencyDependent(f -> 100e-15*(1 + 1e-12*f)))),
             (:jj, 3, 0, JosephsonJunction(1000e-12)),
             (:cj, 3, 0, Capacitor(1000e-15))])
         wp = (2*pi*5e9,)
@@ -245,6 +267,22 @@ end
         for slot in 1:2
             @test ds.sweeps[slot].options ==
                 (pivot_epsilon = 1e-6, ir_n_steps = 3)
+        end
+        # a budget which holds the values, solutions and right hand sides of
+        # four systems in both directions but not the estimate beside them:
+        # the batch is made smaller and held to the budget, and solves
+        persystem = 2*(nnz(A) + 2*size(b, 1)*size(b, 2))*sizeof(ComplexF64)
+        small = JC.devicesolutions(lsys, b, ws, CPU(), spec, spec;
+            factorization = f, budget = 4*persystem)
+        @test small.nb < 4
+        @test small.nb*(persystem + 2*nnz(A)*sizeof(ComplexF64)) <= 4*persystem
+        for lo in 1:small.nb:length(ws)
+            JC.solvebatch!(small, lo)
+            JC.assemblesystemmatrix!(A, lsys, ws[lo] .+ d.wpumpmodes)
+            JC.forwardsolution!(X, small, lo)
+            @test X ≈ A \ b rtol = 1e-10
+            JC.adjointsolution!(X, small, lo)
+            @test X ≈ sparse(transpose(A)) \ b rtol = 1e-10
         end
     end
 
@@ -346,10 +384,11 @@ end
         # devicenoise forms the noise scattering matrix, its reductions and
         # the added noise covariance where the adjoint solutions are. Run on
         # CPU() against the host sweep, from the same adjoint solutions: the
-        # noise ports of a resistor and the channels of two instances of a
-        # lossy non-reciprocal block, which share their definition's
-        # factors, warm, in a pumped circuit whose modes reach negative
-        # frequencies, which sign the columns
+        # noise ports of a resistor and of one whose value depends on the
+        # frequency, and the channels of two instances of a lossy
+        # non-reciprocal block, which share their definition's factors,
+        # warm, in a pumped circuit whose modes reach negative frequencies,
+        # which sign the columns
         JC = JosephsonCircuits
         wp = (2*pi*4.75001e9,)
         src = [(mode = (1,), port = 1, current = 0.00565e-6)]
@@ -359,7 +398,8 @@ end
         circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:x, 1, 4, blk),
             (:y, 4, 2, blk),
             (:cc, 2, 3, Capacitor(100e-15)), (:jj, 3, 0, JosephsonJunction(1000e-12)),
-            (:cj, 3, 0, Capacitor(1000e-15)), (:r, 3, 0, Resistor(2.0e4))])
+            (:cj, 3, 0, Capacitor(1000e-15)), (:r, 3, 0, Resistor(2.0e4)),
+            (:rf, 2, 0, Resistor(FrequencyDependent(f -> 5.0e4*(1 + 1e-11*f))))])
         nl = hbnlsolve(wp, (8,), src, circuit; keyedarrays = false)
         psc = JC.compile(circuit)
         sf = JC.truncfreqs(JC.calcfreqsdft((4,)); dc = true, odd = true,
@@ -373,8 +413,9 @@ end
         ssys = d.lsys.scattering
         noiseplan = JC.planscatteringnoise(ssys)
         plan = JC.plandevicenoise(d.nodeindices, d.componenttypes,
-            d.noiseportimpedanceindices,
-            [d.vvn[j] for j in d.noiseportimpedanceindices], d.Nmodes, CPU())
+            d.noiseportimpedanceindices, d.noiseportimpedances, d.Nmodes,
+            CPU())
+        @test !isempty(plan.tableports)
         blockplan = JC.plandeviceblocknoise(ssys, noiseplan, d.Nmodes, CPU())
         providers = JC.plandeviceproviders(ssys, length(ws), CPU(),
             d.wpumpmodes, ssys.scale)
@@ -397,7 +438,8 @@ end
                 d.portimpedances, d.componenttypes, wmodes)
             Snoise = similar(host.Snoise[:, :, i])
             Cnoise = similar(host.Cnoise[:, :, i])
-            reduction = noise(i, inputwave, Snoise, Cnoise)
+            reduction = noise(i, inputwave, Snoise, Cnoise,
+                JC.providertable(d.lsys, wmodes))
             @test isapprox(Snoise, host.Snoise[:, :, i]; rtol = 1e-12)
             @test isapprox(Cnoise, host.Cnoise[:, :, i]; rtol = 1e-12)
             # the port terminations are in the vacuum

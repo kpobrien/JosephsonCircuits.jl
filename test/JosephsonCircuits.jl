@@ -10,14 +10,14 @@ using Test
 # Elaboration and compilation of the typed circuit alone.
 function warmupcompile()
 
-    JosephsonCircuits.@params Rleft Cc Lj Cj
+    Rleft, Cc, Lj, Cj = :Rleft, :Cc, :Lj, :Cj
     return JosephsonCircuits.compile(JosephsonCircuits.warmupcircuit(Rleft, Cc, Lj, Cj))
 end
 
 # The capacitance and inverse inductance matrices at numeric values.
 function warmupnumericmatrices()
 
-    JosephsonCircuits.@params Rleft Cc Lj Cj
+    Rleft, Cc, Lj, Cj = :Rleft, :Cc, :Lj, :Cj
     circuit = JosephsonCircuits.warmupcircuit(Rleft, Cc, Lj, Cj)
     return JosephsonCircuits.numericmatrices(circuit, JosephsonCircuits.warmupdefs(Rleft, Cc, Lj, Cj))
 end
@@ -25,7 +25,7 @@ end
 # A linear (no pump) frequency sweep.
 function warmuphblinsolve()
 
-    JosephsonCircuits.@params Rleft Cc Lj Cj
+    Rleft, Cc, Lj, Cj = :Rleft, :Cc, :Lj, :Cj
     circuit = JosephsonCircuits.warmupcircuit(Rleft, Cc, Lj, Cj)
     # the occupations of this lossless circuit in its vacuum are rounding,
     # which a relative comparison cannot hold, so they are not asked for
@@ -36,7 +36,7 @@ end
 # Resolving the compiled component values to numbers.
 function warmupvvn()
 
-    JosephsonCircuits.@params Rleft Cc Lj Cj
+    Rleft, Cc, Lj, Cj = :Rleft, :Cc, :Lj, :Cj
     psc = JosephsonCircuits.compile(JosephsonCircuits.warmupcircuit(Rleft, Cc, Lj, Cj); sorting = :number)
 
     return JosephsonCircuits.componentvaluestonumber(psc.componentvalues,
@@ -47,10 +47,10 @@ end
 
 @testset verbose=true "JosephsonCircuits" begin
 
-    @testset verbose=true "warmup and warmupsyms" begin
-        # the precompile workloads solve the warmup circuit with symbol
-        # valued and with @params valued components; both must give the
-        # numbers a plain numeric circuit gives
+    @testset verbose=true "warmup" begin
+        # the precompile workload solves the warmup circuit with symbol
+        # valued components, which must give the numbers a plain numeric
+        # circuit gives
         circuit = Circuit(
             ["P1" => Port(1; Z0 = 50.0), "C1" => Capacitor(100.0e-15),
              "Lj1" => JosephsonJunction(1000.0e-12), "C2" => Capacitor(1000.0e-15)],
@@ -61,7 +61,6 @@ end
             [(mode=(1,),port=1,current=0.00565e-6)], (2,), (4,), circuit;
             atol = 1e-12)
         @test JosephsonCircuits.compare(ref, JosephsonCircuits.warmup())
-        @test JosephsonCircuits.compare(ref, JosephsonCircuits.warmupsyms())
     end
 
     @testset verbose=true "warmupcompile" begin

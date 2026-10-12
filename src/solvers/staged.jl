@@ -84,7 +84,8 @@ function drivenmatrices(nm::CircuitMatrices, componenttypes::Vector{Symbol},
         for (t, v) in zip(componenttypes, nm.vvn)]
     return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Ljb, nm.Ljbm,
         nm.Mb, nm.invLnm, nm.Rbnm, nm.portindices, nm.portnumbers,
-        nm.portimpedances, nm.portenvironmentindices, nm.Lmean, vvn)
+        nm.portimpedances, nm.portenvironmentindices, nm.Lmean, vvn,
+        nm.frequencydependent)
 end
 
 # Embed a converged solution as the initial guess on a larger grid by
@@ -307,11 +308,11 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     gaveup = false      # the schedule ended without the requested point
     fold = NaN          # the last converged drive fraction below a fold
     record = function (cand, grid, sfrom, starget, action, accepted, secs)
-        si = cand.solverinfo
-        push!(stagerecords, StagedStageInfo(si.converged,
-            sum(st -> st.iterations, si.stages; init = 0), grid,
+        info = cand.solverinfo
+        push!(stagerecords, StagedStageInfo(info.converged,
+            sum(st -> st.iterations, info.stages; init = 0), grid,
             Float64(sfrom), Float64(starget), Float64(starget - sfrom),
-            action, accepted, secs, Float64(si.finalresidual), si.stages))
+            action, accepted, secs, Float64(info.finalresidual), info.stages))
         return nothing
     end
     while true

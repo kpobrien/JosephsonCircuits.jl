@@ -207,14 +207,11 @@ end
 Perform `A += c*As*Ad` with `Ad` the implicit diagonal whose entry in column
 `i` is the signed mode frequency of that column raised to `power`,
 `wmodes[(i-1) % length(wmodes) + 1]^power`, with the mode index fastest over
-the nodes and any auxiliary variables. A frequency dependent entry is
-resolved at the magnitude of its column's mode frequency
-([`substitutefreq`](@ref)), and the value is complex conjugated in every
-column whose mode frequency is negative ([`modevalue`](@ref)). The frequency
-and the conjugation of a column are computed from its index rather than
-read from materialized diagonals, so a numeric `As` is added with no
-allocation; a frequency dependent entry allocates what its evaluation
-does.
+the nodes and any auxiliary variables, and each value of `As` complex
+conjugated in every column whose mode frequency is negative
+([`modevalue`](@ref)). The frequency and the conjugation of a column are
+computed from its index rather than read from materialized diagonals, so
+nothing is allocated.
 """
 function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
     As::SparseMatrixCSC, indexmap, wmodes::AbstractVector, power::Integer)
@@ -233,11 +230,11 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
 
     Nmodes = length(wmodes)
     for i in 1:length(As.colptr)-1
-        wm = wmodes[(i-1) % Nmodes + 1]
+        m = (i-1) % Nmodes + 1
+        wm = wmodes[m]
         Ad = power == 0 ? one(wm) : power == 1 ? wm : wm^power
         for j in As.colptr[i]:(As.colptr[i+1]-1)
-            tmp = substitutefreq(As.nzval[j], wm)
-            A.nzval[indexmap[j]] += c*Ad*modevalue(tmp, wm)
+            A.nzval[indexmap[j]] += c*Ad*modevalue(As.nzval[j], wm)
         end
     end
     return A
@@ -344,33 +341,25 @@ function conjnegfreq!(A::SparseMatrixCSC, wmodes::Vector)
 end
 
 """
-    freqsubst(A::SparseMatrixCSC, wmodes::Vector)
+    freqsubst(A::SparseMatrixCSC, terms, kind, wmodes::AbstractVector,
+        table = providertable(terms, wmodes))
 
-Resolve the frequency dependent elements of `A` at the vector of mode
-frequencies `wmodes`, each at the magnitude of its column's mode frequency
-(see [`substitutefreq`](@ref)). Returns a sparse matrix with type
-`Complex{Float64}`.
+The matrix `A`, of `length(wmodes)` modes with the mode index fastest, as
+a `SparseMatrixCSC{ComplexF64}` on the same pattern, with the frequency
+dependent terms of `kind` among `terms` (see
+[`FrequencyDependentTerms`](@ref), `nothing` for none) added at each mode,
+each from the value of its function at the magnitude of the mode
+frequency, read from `table`, a row per function and a column per mode,
+which the matrices of the other kinds can share. The values are the
+result's own, so that writing them, as the pump solve's conjugation and
+scaling do, leaves `A` as it was; the pattern is shared. A negative mode
+frequency is not conjugated here (see [`conjnegfreq!`](@ref)).
 
 # Examples
 ```jldoctest
-wmodes = [-1,2];
-f = JosephsonCircuits.FrequencyDependent;
-A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [f(w->w),f(w->2*w),f(w->3*w)],2,2),2);
-JosephsonCircuits.freqsubst(A,wmodes)
+julia> A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,3],2,2),2);
 
-# output
-4×4 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
- 1.0+0.0im      ⋅      3.0+0.0im      ⋅
-     ⋅      2.0+0.0im      ⋅      6.0+0.0im
-     ⋅          ⋅      2.0+0.0im      ⋅
-     ⋅          ⋅          ⋅      4.0+0.0im
-```
-```jldoctest
-wmodes = [-1,2];
-A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,3],2,2),2);
-JosephsonCircuits.freqsubst(A,wmodes)
-
-# output
+julia> JosephsonCircuits.freqsubst(A, nothing, 1, [-1.0, 2.0])
 4×4 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
  1.0+0.0im      ⋅      3.0+0.0im      ⋅    
      ⋅      1.0+0.0im      ⋅      3.0+0.0im
@@ -378,37 +367,53 @@ JosephsonCircuits.freqsubst(A,wmodes)
      ⋅          ⋅          ⋅      2.0+0.0im
 ```
 """
-function freqsubst(A::SparseMatrixCSC, wmodes::Vector)
-
+function freqsubst(A::SparseMatrixCSC, terms, kind::Integer,
+        wmodes::AbstractVector, table = providertable(terms, wmodes))
+    Nmodes = length(wmodes)
     for i in size(A)
-        if i % length(wmodes) != 0
-            throw(DimensionMismatch(lazy"The dimensions of A must be integer multiples of the length of wmodes."))
+        i % Nmodes == 0 || throw(DimensionMismatch(lazy"The dimensions of A must be integer multiples of the length of wmodes."))
+    end
+    # a vector of a type inference knows whatever it knows of `A`
+    nzval = Vector{ComplexF64}(undef, length(A.nzval))
+    copyto!(nzval, A.nzval)
+    B = SparseMatrixCSC(A.m, A.n, A.colptr, A.rowval, nzval)
+    isnothing(terms) && return B
+    for t in eachindex(terms.kind)
+        terms.kind[t] == kind || continue
+        for m in 1:Nmodes
+            q = nzposition(B, (terms.row[t] - 1)*Nmodes + m,
+                (terms.col[t] - 1)*Nmodes + m)
+            B.nzval[q] += termvalue(kind, terms.sign[t],
+                table[terms.provider[t], m])
         end
     end
+    return B
+end
 
-    # the output is Complex{Float64} whatever the (possibly symbolic) input
-    # element type
-    nzval = zeros(Complex{Float64},length(A.nzval))
+# the values of the distinct functions `terms.providers` of frequency
+# dependent terms or stamps at the magnitudes of the mode frequencies
+# `wmodes`, a row per function and a column per mode; none for none
+providertable(::Nothing, wmodes) = nothing
+providertable(terms, wmodes) = providervalues!(
+    Matrix{ComplexF64}(undef, length(terms.providers), length(wmodes)),
+    terms.providers, wmodes)
 
-    @inbounds for i in 1:length(A.colptr)-1
-        for j in A.colptr[i]:(A.colptr[i+1]-1)
-            if checkissymbolic(A.nzval[j])
-                # `substitutefreq` evaluates the frequency dependent
-                # provider leaves at the mode frequency
-                substituted = substitutefreq(A.nzval[j],
-                    wmodes[((i-1) % length(wmodes)) + 1])
-                if checkissymbolic(substituted)
-                    error(lazy"The matrix contains the symbolic value $(A.nzval[j]). If this represents a frequency dependent component, write it as a FrequencyDependent closure of the frequency. If it contains variables which should have numerical values, add them to the circuit definitions dictionary circuitdefs.")
-                end
-                nzval[j] = substituted
-            else
-                nzval[j] = A.nzval[j]
-            end
-        end
+# The values of the functions `providers` at the magnitudes of the mode
+# frequencies `wmodes`, into `table`, a row per function and a column per
+# mode; each function is reached by one dynamic call for all the modes.
+function providervalues!(table::Matrix{ComplexF64}, providers::Vector{Any},
+        wmodes)
+    for k in eachindex(providers)
+        providerrow!(table, k, providers[k], wmodes)
     end
-
-    return SparseMatrixCSC(A.m, A.n, A.colptr, A.rowval,nzval)
-
+    return table
+end
+function providerrow!(table::Matrix{ComplexF64}, k::Int, f::F,
+        wmodes) where {F}
+    for m in eachindex(wmodes)
+        table[k, m] = f(abs(wmodes[m]))
+    end
+    return nothing
 end
 
 """

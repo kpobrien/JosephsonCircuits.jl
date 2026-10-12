@@ -107,8 +107,7 @@ the same pump in time, including the Fourier-amplitude convention.
 - Temporal stability poles about a driven state, with method-specific limits
   and convergence checks in the [stability guide](stability.md).
 - Linear circuit responses, and the circuit matrices with the component
-  values left as expressions in their parameters
-  ([`symbolicmatrices`](@ref)).
+  values left as Symbolics expressions ([`symbolicmatrices`](@ref)).
 - Transient trajectories, their tangent and adjoint responses, and noise
   in selected temporal modes.
 

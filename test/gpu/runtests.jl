@@ -157,13 +157,18 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
                 :jj => JosephsonJunction(:Lj), :c2 => Capacitor(1000.0e-15)],
             [((:p1, 1), (:r1, 1), (:cc, 1, 1)), ((:cc, 2, 1), (:jj, 1), (:c2, 1)),
              ((:cc, 1, 2), (:cc, 2, 2), (:jj, 2), (:c2, 2), (:r1, 2), (:p1, 2), Ground)])
-        bdefs = Dict(:Lj => 1000.0e-12)
+        # the derivatives of the values stated, as the device suite loads
+        # no ForwardDiff
+        bvalues(p) = (Lj = p.Lj,)
+        bjacobian(p) = [1.0 0.0]
+        bp = (Lj = 1000.0e-12, theta = 100e-15)
         bws, bwp = 2pi .* [4.5e9, 4.6e9], (2pi*4.75001e9,)
         bsrc = [(mode = (1,), port = 1, current = 0.00565e-6)]
-        host = designsensitivities(bjpa, bdefs, bws, bwp, bsrc, (2,), (8,); sensitivitymode = :forward)
+        host = designsensitivities(bjpa, bvalues, bp, bws, bwp, bsrc, (2,), (8,);
+            jacobian = bjacobian, sensitivitymode = :forward)
         for mode in (:forward, :reverse)
-            device = designsensitivities(bjpa, bdefs, bws, bwp, bsrc, (2,), (8,); sensitivitymode = mode,
-                backend = CUDABackend())
+            device = designsensitivities(bjpa, bvalues, bp, bws, bwp, bsrc, (2,), (8,);
+                jacobian = bjacobian, sensitivitymode = mode, backend = CUDABackend())
             @test agree(host.dSdp, device.dSdp; rtol = 1e-8)
         end
     end
@@ -325,6 +330,24 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             @test c.converged
             @test c.reuse.sys.phimatrix === held
             @test agree(s.nodeflux, host.nodeflux; rtol = 1e-7)
+        end
+        # the pump frequency and current as parameters: at each point the
+        # drive is refilled and the device system, its plans and the
+        # preconditioner are retuned to the new mode frequencies
+        I1 = src1[1].current
+        tuned = merge(Dict{Symbol,Any}(pairs(p0)), Dict(:wp => w1, :Ip => I1))
+        for m in (NewtonKrylov(), Newton(), QuasiNewton())
+            c = hbcache((:wp,), (8,), [(mode = (1,), port = 1, current = :Ip)],
+                chain3, tuned; backend = CUDABackend(), atol = 1e-10, method = m)
+            hbsolve!(c, (;))
+            for (f, s) in ((1.01, 1.0), (0.99, 0.9))
+                sol = hbsolve!(c, (wp = f*w1, Ip = s*I1))
+                host = hbnlsolve((f*w1,), (8,), [(mode = (1,), port = 1,
+                    current = s*I1)], chain3, Dict(pairs(p0)); atol = 1e-10,
+                    keyedarrays = false, method = m)
+                @test c.converged
+                @test agree(sol.nodeflux, host.nodeflux; rtol = 1e-7)
+            end
         end
         # the problem interface and an external solver, which it is handed
         # to, live on the host, and refuse a device backend
@@ -1079,15 +1102,30 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             @test CUDSS.cudss_get(solver, "ir_n_steps") == 3
         end
 
-        # the batch is held to the memory budget at cuDSS's estimate of a
-        # system, which holds at least the factors cuDSS reports for the
-        # pattern; a budget below one system solves one at a time
-        bytes = JC.cudsssystembytes(lsys.Asparse, ComplexF64, size(b, 2),
-            CUDABackend())
+        # the batch is held to the memory budget at cuDSS's estimate of the
+        # batch, from the analysis of its forward direction, which holds at
+        # least the factors cuDSS reports for each system of the pattern
         probe = CudssSolver(CUDA.CUSPARSE.CuSparseMatrixCSR(A), "G", 'F')
         cudss("analysis", probe, CUDA.zeros(ComplexF64, size(A, 1)),
             CUDA.zeros(ComplexF64, size(A, 1)))
-        @test bytes >= CUDSS.cudss_get(probe, "lu_nnz")*sizeof(ComplexF64)
+        @test JC._cudss_sweepbytes(ds.sweeps[1]) >=
+            ds.nb*CUDSS.cudss_get(probe, "lu_nnz")*sizeof(ComplexF64)
+        # a budget which holds the values, solutions and right hand sides of
+        # four systems in both directions but not the estimate beside them:
+        # the batch is made smaller, analyzed at its first batch, and solves
+        persystem = 2*(JC.SparseArrays.nnz(A) + 2*size(b, 1)*size(b, 2))*
+            sizeof(ComplexF64)
+        small = JC.devicesolutions(lsys, b, ws, CUDABackend(), spec, spec;
+            factorization = CUDSSFactorization(), budget = 4*persystem)
+        @test small.nb < 4 && isnothing(small.sweeps[1])
+        for lo in 1:small.nb:length(ws)
+            JC.solvebatch!(small, lo)
+            JC.assemblesystemmatrix!(A, lsys, ws[lo] .+ d.wpumpmodes)
+            JC.forwardsolution!(X, small, lo)
+            @test X ≈ A \ b rtol = 1e-8
+        end
+        JC.releasesweep!(small)
+        # a budget below one system solves one at a time
         single = JC.devicesolutions(lsys, b, ws, CUDABackend(), spec, spec;
             factorization = CUDSSFactorization(), budget = 1)
         @test single.nb == 1
@@ -1097,19 +1135,48 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test X ≈ A \ b rtol = 1e-8
     end
 
-    @testset "a sweep a frequency dependent value keeps on the host" begin
-        # the stored values change with the frequency, so the sweep runs on
-        # host threads with a host factorization whatever the backend, and
-        # a device factorization asked for is refused
-        lin = Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
-            (:Z, 1, 2, Resistor(FrequencyDependent(w -> 5.0 + im*w*1e-9))),
-            (:C, 2, 0, Capacitor(1e-12))])
-        wsl = 2*pi*(4.5:0.1:5.0)*1e9
-        la = hblinsolve(wsl, lin; keyedarrays = false)
-        lb = hblinsolve(wsl, lin; keyedarrays = false, backend = CUDABackend())
-        @test agree(la.S, lb.S; rtol = 1e-12)
-        @test_throws ArgumentError hblinsolve(wsl, lin; backend = CUDABackend(),
-            factorization = CUDSSFactorization())
+    @testset "frequency dependent values on the device" begin
+        # a capacitance, a resistance and an inductance which depend on the
+        # frequency, in a pumped circuit whose modes reach negative
+        # frequencies: the device sweep stamps their entries from the table
+        # of their functions' values the host evaluates per batch, and
+        # forms the noise of the resistance from its value at each mode,
+        # through cuDSS and the block factorization alike, as the host
+        # sweep does
+        fdc = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cc, 1, 2, Capacitor(FrequencyDependent(f -> 100e-15*(1 + 1e-12*f)))),
+            (:jj, 2, 0, JosephsonJunction(1000e-12)),
+            (:cj, 2, 0, Capacitor(1000e-15)),
+            (:r, 2, 0, Resistor(FrequencyDependent(f -> 2.0e4*(1 + 1e-11*f)))),
+            (:l, 2, 3, Inductor(FrequencyDependent(f -> 2.0e-9*(1 + 1e-12*f)))),
+            (:c3, 3, 0, Capacitor(200e-15))])
+        wpf = (2*pi*4.75001e9,)
+        srcf = [(mode = (1,), port = 1, current = 0.00565e-6)]
+        wsf = 2*pi*collect(4.5:0.1:5.0)*1e9
+        kw = (; returnSnoise = true, returnCnoise = true, keyedarrays = false)
+        ha = hbsolve(wsf, wpf, srcf, (4,), (8,), fdc; kw...)
+        for f in (CUDSSFactorization(), BlockFactorization())
+            hb = hbsolve(wsf, wpf, srcf, (4,), (8,), fdc;
+                backend = CUDABackend(), factorization = f, kw...)
+            for name in (:S, :Snoise, :QE, :CM, :Cnoise)
+                @test agree(getfield(ha.linearized, name),
+                    getfield(hb.linearized, name); rtol = 1e-10)
+            end
+        end
+        # the host outputs of a device batch read the values staged for its
+        # assembly: the device sweep evaluates the functions as often as
+        # the host sweep, whose threads count with an atomic
+        calls = Threads.Atomic{Int}(0)
+        counting = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:cc, 1, 2, Capacitor(100e-15)),
+            (:jj, 2, 0, JosephsonJunction(1000e-12)), (:cj, 2, 0, Capacitor(1000e-15)),
+            (:r, 2, 0, Resistor(FrequencyDependent(f -> (Threads.atomic_add!(calls, 1); 2.0e4))))])
+        nlc = hbnlsolve(wpf, (4,), srcf, counting, Dict(); keyedarrays = false)
+        counts = map((JosephsonCircuits.CPU(), CUDABackend())) do backend
+            calls[] = 0
+            hblinsolve(wsf, counting, Dict(); nonlinear = nlc, backend, keyedarrays = false)
+            calls[]
+        end
+        @test counts[2] == counts[1]
     end
 
     @testset "tabulated blocks beyond their band" begin
@@ -1233,4 +1300,7 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
     # the I/Q and quantum measurements on the device
     testtransientiq(CUDABackend())
     testtransientquantum(CUDABackend())
+
+    # the methods of the device extensions capture no variable boxed
+    include(joinpath(@__DIR__, "..", "captures.jl"))
 end

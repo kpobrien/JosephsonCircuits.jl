@@ -69,7 +69,7 @@ end
 
 """
     calcoutputwaves!(outputwave, phin, sourcecurrents, portindices,
-        portimpedances, nodeindices, componenttypes, wmodes)
+        portimpedances, nodeindices, componenttypes, wmodes, table = nothing)
 
 The outgoing power wave of each port mode (the rows) in each solution
 column of the node fluxes `phin`, `kval*(V - conj(Z)*I)/2` in the units of
@@ -81,7 +81,10 @@ solution column `k`. A sweep drives one port mode per column, so its source
 currents are the `Diagonal` of [`portsourcecurrents`](@ref): a port which
 shares a node with the driven one carries no source current of its own.
 `nothing` means that no port carries a source, which is how the noise ports
-are read from the adjoint solutions.
+are read from the adjoint solutions. A port value which depends on the
+frequency, given as its row of a linearized system's table of the values of
+its frequency dependent functions, is read from `table` at each mode (see
+`providertable`).
 
 # Examples
 A port of 50 ohms from node 2 to ground at the mode frequency 1, driven by a
@@ -110,16 +113,21 @@ julia> JosephsonCircuits.calcoutputwaves!(zeros(ComplexF64, 1, 1), phiopen,
 ```
 """
 function calcoutputwaves!(outputwave, phin, sourcecurrents, portindices,
-    portimpedances, nodeindices, componenttypes, wmodes)
+    portimpedances, nodeindices, componenttypes, wmodes, table = nothing)
     Nmodes = length(wmodes)
     for i in eachindex(portindices), j in 1:Nmodes
         r = (i-1)*Nmodes + j
         key1 = nodeindices[1,portindices[i]]
         key2 = nodeindices[2,portindices[i]]
         # the port impedance and the wave scale depend on the port and the
-        # mode, not on the solution column
-        portimpedance = calcimpedance(portimpedances[i],
-            componenttypes[portindices[i]], wmodes[j])
+        # mode, not on the solution column; the impedance is a number of one
+        # of two types, whatever the vector of values holds, so that the
+        # loop over the columns is compiled for it, and a value written as
+        # another number, a BigFloat say, is converted to the solve's
+        z = calcimpedance(portimpedances[i], componenttypes[portindices[i]],
+            wmodes[j], table, j)
+        portimpedance = z isa Union{Float64,ComplexF64} ? z :
+            ComplexF64(z)::ComplexF64
         if isnothing(sourcecurrents)
             scale = noisewavescale(portimpedance, wmodes[j])
             for k in axes(phin, 2)
@@ -640,6 +648,11 @@ julia> JosephsonCircuits.calcimpedance(JosephsonCircuits.FrequencyDependent(w->3
 ```
 """
 calcimpedance(c, type, w) = impedance(substitutefreq(c, w), impedancecode(type), w)
+# a frequency dependent value as its row of the table of their values at
+# the modes, read from the column `m` (see `providertable`)
+calcimpedance(c, type, w, table, m) = calcimpedance(c, type, w)
+calcimpedance(c::TableRow, type, w, table::Matrix{ComplexF64}, m) =
+    impedance(table[c.k, m], impedancecode(type), w)
 
 """
     NoiseReduction

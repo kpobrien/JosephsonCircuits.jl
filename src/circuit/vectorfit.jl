@@ -1598,26 +1598,28 @@ function dropneedless(S, ws, poles, limits::NTuple{2,Float64}; dc::Matrix{Float6
     n = size(S, 1)
     acceptable(err) = err[1] <= limits[1] && err[2] <= limits[2]
     while true
+        # the poles of this pass, which its closures read
+        current = poles
         constant = proper ? zeros(n, n) : nothing
-        residues, screen = isempty(weights) ? pruningsolve(S, ws, poles, constant, dc) :
-            (first(fitresidues(S, ws, poles; dc = dc, weights = weights, constant = constant)), nothing)
+        residues, screen = isempty(weights) ? pruningsolve(S, ws, current, constant, dc) :
+            (first(fitresidues(S, ws, current; dc = dc, weights = weights, constant = constant)), nothing)
         # the norm of the residue does not vary over the samples, so it
         # is taken once per pole rather than once per pole and sample;
         # weighted, it does, and the weighed residue's Frobenius norm at
         # each sample stands in, the order being a guess the errors of
         # the trials settle
         contribution(p) = isempty(weights) ? opnorm(view(residues, :, :, p))*
-            maximum(1/abs(im*w - poles[p]) for w in ws) :
-            maximum(norm(view(weights, :, :, k) .* view(residues, :, :, p))/abs(im*ws[k] - poles[p])
+            maximum(1/abs(im*w - current[p]) for w in ws) :
+            maximum(norm(view(weights, :, :, k) .* view(residues, :, :, p))/abs(im*ws[k] - current[p])
                 for k in eachindex(ws))
-        upper = filter(p -> imag(poles[p]) >= 0, eachindex(poles))
+        upper = filter(p -> imag(current[p]) >= 0, eachindex(current))
         candidates = upper[sortperm([contribution(p) for p in upper])]
         dropped = false
         for p in candidates
-            keep = [q for q in eachindex(poles) if q != p && !(imag(poles[p]) != 0 && poles[q] == conj(poles[p]))]
-            trial = poles[keep]
+            keep = [q for q in eachindex(current) if q != p && !(imag(current[p]) != 0 && current[q] == conj(current[p]))]
+            trial = current[keep]
             if !isempty(trial) && !isnothing(screen) &&
-                    screenedout(screen, setdiff(eachindex(poles), keep), limits, screenmargin)
+                    screenedout(screen, setdiff(eachindex(current), keep), limits, screenmargin)
                 continue
             end
             err = fiterrors(S, ws, trial; dc = dc, weights = weights, proper = proper)
@@ -2989,17 +2991,19 @@ function correctionmetric(m::ResidueForm, blocks, nu::Int, xs::AbstractVector,
         return F.L
     end
     fullrank = all(Q -> Q == I, m.spaces)
-    Z = nothing
-    if fullrank
-        isempty(dc) || (Z = nullspace(permutedims(vcat(1.0, real.(phi)))))
-    elseif !isempty(dc)
+    Z = if isempty(dc)
+        nothing
+    elseif fullrank
+        nullspace(permutedims(vcat(1.0, real.(phi))))
+    else
         E = zeros(n, nu)
         for (c, cols, M) in blocks
             E[:, cols] .+= real(c == 0 ? 1.0 : phi[c]) .* M
         end
-        Z = nullspace(E)
-        size(Z, 2) == nu - n || throw(ArgumentError(
-            lazy"the zero frequency condition leaves $(size(Z, 2)) free directions per port where $(nu - n) were expected; report this."))
+        free = nullspace(E)
+        size(free, 2) == nu - n || throw(ArgumentError(
+            lazy"the zero frequency condition leaves $(size(free, 2)) free directions per port where $(nu - n) were expected; report this."))
+        free
     end
     isempty(weights) && !fullrank &&
         return CorrectionMetric([factored(correctiongram(blocks, nu, m.poles, xs), Z)], Z, 1)
@@ -3379,7 +3383,7 @@ function everywhereunder(m::ResidueForm, work::SweepWork, level::Real)
         fbound += work.rho[k]/(-real(work.poles[k]))
     end
     C = Matrix{Float64}(I, n, n)
-    mul!(C, transpose(m.D), m.D, -1, 1)
+    mul!(C, transpose(m.D), m.D, -1.0, 1.0)
     shift = (level - 1)*(level + 1) - 2*fbound*(1 + 4*(N + 2)*eps()) - 2*(n + 2)*eps()*(norm(m.D)^2 + norm(C))
     shift -= (n + 2)^2*eps()*(1 + abs(shift))
     for i in 1:n
@@ -4079,9 +4083,10 @@ function enforcepassivity(poles::Vector{ComplexF64}, residues::AbstractArray{<:C
         isnothing(Z) || (Gm = alongbasis(G -> transpose(Z)*G, Gm, stride))
         Am = reduce(hcat, As)
         AR, AI = real.(Am), imag.(Am)
+        GR, GI = real.(Gm), imag.(Gm)
         if length(L) == 1
-            HR = alongbasis(G -> only(L) \ G, real.(Gm), stride)
-            HI = alongbasis(G -> only(L) \ G, imag.(Gm), stride)
+            HR = alongbasis(G -> only(L) \ G, GR, stride)
+            HI = alongbasis(G -> only(L) \ G, GI, stride)
             Gd = (transpose(AR)*AR) .* (transpose(HR)*HR) .- (transpose(AR)*AI) .* (transpose(HR)*HI) .-
                  (transpose(AI)*AR) .* (transpose(HI)*HR) .+ (transpose(AI)*AI) .* (transpose(HI)*HI)
         else
@@ -4090,7 +4095,6 @@ function enforcepassivity(poles::Vector{ComplexF64}, residues::AbstractArray{<:C
             # and the Gram matrix summed over the ports, `sum_i h_i' h_i`;
             # `h_i` is not held for every port, and the correction takes
             # the constraints' combination through the factor instead.
-            GR, GI = real.(Gm), imag.(Gm)
             rowsof(i) = portsolve(metric, i, GR .* transpose(view(AR, i, :)) .- GI .* transpose(view(AI, i, :)))
             Gd = zeros(length(rhs), length(rhs))
             for i in 1:n

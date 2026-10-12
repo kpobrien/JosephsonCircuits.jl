@@ -784,14 +784,27 @@ integer and the current as a complex number. See [`sourcetable`](@ref).
 const SourceTuple{N} = @NamedTuple{mode::NTuple{N,Int}, port::Int, current::ComplexF64}
 
 """
-    tonefrequencies(w)
+    tonefrequencies(w, definitions = nothing)
 
-The tone frequencies `w` as a tuple of `Float64`. Each must be a real
-number, in radians per second; the solve checks that they are finite.
+The tone frequencies `w` as a tuple of `Float64`, in radians per second.
+Each is a real number, or a name, as a component value may be, resolved
+at `definitions` to a real number; the solve checks that they are finite.
 """
-function tonefrequencies(w::NTuple{N,Number}) where {N}
-    all(x -> x isa Real, w) || throw(ArgumentError(lazy"the tone frequencies $(w) must be real numbers, in radians per second."))
-    return map(Float64, w)
+tonefrequencies(w::Tuple, definitions = nothing) =
+    map(x -> tonefrequency(x, w, definitions), w)
+
+# One tone frequency of `w` as a `Float64`: as it is given, or resolved at
+# the definitions when it is a name.
+function tonefrequency(x, w, definitions)
+    notreal = lazy"the tone frequencies $(w) must be real numbers, in radians per second."
+    x isa Number && !checkissymbolic(x) &&
+        return x isa Real ? Float64(x) : throw(ArgumentError(notreal))
+    isnothing(definitions) && throw(ArgumentError(lazy"the tone frequency $(x) of $(w) is not a number; a frequency written as a name is resolved at the definitions of the circuit's values, which this solve does not have."))
+    v = valuetonumber(x, definitions)
+    # a definition may be complex, with no imaginary part
+    (v isa Number && !checkissymbolic(v) && isreal(v)) ||
+        throw(ArgumentError(notreal))
+    return Float64(real(v))
 end
 
 """
@@ -812,15 +825,17 @@ function sweepfrequencies(ws)
 end
 
 """
-    sourcetable(sources, w)
+    sourcetable(sources, w, definitions = nothing)
 
 The sources as a `Vector{SourceTuple{N}}` for the `N` tones of `w`.
 `sources` is any iterable of named tuples with the fields `mode`, `port`
-and `current`; a source whose mode does not have one integer per tone,
-whose port is not an integer or whose current is not a number is an
+and `current`. A current is a number, or a name, as a component value
+may be, resolved at `definitions`.
+A source whose mode does not have one integer per tone, whose port is
+not an integer or whose current is not a number at the definitions is an
 `ArgumentError`.
 """
-function sourcetable(sources, ::NTuple{N,Number}) where {N}
+function sourcetable(sources, ::NTuple{N,Number}, definitions = nothing) where {N}
     table = SourceTuple{N}[]
     for s in sources
         (s isa NamedTuple && hasfield(typeof(s), :mode) &&
@@ -830,12 +845,39 @@ function sourcetable(sources, ::NTuple{N,Number}) where {N}
             all(x -> x isa Integer, s.mode)) ||
             throw(ArgumentError(lazy"the source $(s) has the mode $(s.mode); a mode is a tuple of $(N) integers, one harmonic index per tone."))
         s.port isa Integer || throw(ArgumentError(lazy"the source $(s) has the port $(s.port), which must be an integer."))
-        s.current isa Number || throw(ArgumentError(lazy"the source $(s) has the current $(s.current), which must be a number."))
         push!(table, (mode = NTuple{N,Int}(s.mode), port = Int(s.port),
-            current = ComplexF64(s.current)))
+            current = ComplexF64(sourcecurrent(s, definitions))))
     end
     return table
 end
+
+# The current of the source `s` as a number: as it is given, or resolved
+# at the definitions when it is a name.
+function sourcecurrent(s, definitions)
+    c = s.current
+    c isa Number && !checkissymbolic(c) && return c
+    isnothing(definitions) && throw(ArgumentError(lazy"the source $(s) has the current $(c), which is not a number; a current written as a name is resolved at the definitions of the circuit's values, which this solve does not have."))
+    v = valuetonumber(c, definitions)
+    v isa Number && !checkissymbolic(v) || throw(ArgumentError(lazy"the source $(s) has the current $(c), which is not a number at these definitions."))
+    return v
+end
+
+"""
+    parametricsources(sources)
+
+Whether a current of `sources` is a name, or a symbolic value, rather
+than a number, so that it moves with the definitions.
+"""
+parametricsources(sources) =
+    any(s -> !(s.current isa Number) || checkissymbolic(s.current), sources)
+
+"""
+    parametrictones(w)
+
+Whether a tone frequency of `w` is a name, or a symbolic value, rather
+than a number, so that it moves with the definitions.
+"""
+parametrictones(w) = any(x -> !(x isa Number) || checkissymbolic(x), w)
 
 """
     initialguess(x0)

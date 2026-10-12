@@ -700,7 +700,7 @@ function stationaryoperator(sys::TransientSystem)
     append!(rows, jrows); append!(cols, jcols)
     # the rational blocks' term at a reference frequency, whose pattern is
     # every frequency's
-    R = blockstates(p) > 0 ? rationalmatrix(p, im, sys.Lscale, n) : spzeros(ComplexF64, n, n)
+    R = blockstates(p) > 0 ? rationalmatrix(p, 1.0im, sys.Lscale, n) : spzeros(ComplexF64, n, n)
     patternentries!(rows, cols, R, 0, 0)
     # the lines: `P` swaps the two ports of a line with the phase of its
     # delay, so column `q` of the forced currents is column `swap(q)` of
@@ -1494,7 +1494,8 @@ function noisetile!(external, added, commutator, gain, sub::TransientBatchSoluti
         accumulator = tobackend(backend, bincontraction(kept isa Array ? kept : Array(kept), wsl, sub.times, sub.dt, stageoffsets,
             reference))
     else
-        accumulator = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, 2nfl)
+        # the sums the block flushes into, which the closures below capture
+        sums = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, 2nfl)
         wsb = tobackend(backend, wsl)
         # the block of columns and their quadratures, contracted when full
         block = 64
@@ -1503,7 +1504,7 @@ function noisetile!(external, added, commutator, gain, sub::TransientBatchSoluti
         filled = Ref(0)
         flush! = () -> begin
             filled[] == 0 && return nothing
-            mul!(accumulator, view(columns, :, 1:filled[]), view(quadratures, 1:filled[], :), 1.0, 1.0)
+            mul!(sums, view(columns, :, 1:filled[]), view(quadratures, 1:filled[], :), 1.0, 1.0)
             filled[] = 0
             nothing
         end
@@ -1520,6 +1521,7 @@ function noisetile!(external, added, commutator, gain, sub::TransientBatchSoluti
         adjoint = transientadjoint(sub, weightsout; quantity = :outgoing, targets = baths, factorization = sys.factorization,
             reuse, sink, stagesink)
         flush!()
+        accumulator = sums
     end
     # the stationary initial terms of every condition of the tile
     initials = stationaryinitialterms(sys, x0s, injection, wsl, first(sub.times), reference,

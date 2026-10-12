@@ -1180,25 +1180,31 @@ the noise channels of the linearized analysis: every resistor which is not
 a port's own termination, and every capacitor or inductor whose resolved
 value in `values` is lossy, a number with a nonzero imaginary part or a
 frequency dependent value with one at any of the angular `frequencies`,
-the mode frequencies of a sweep. Where such a value is lossless its
-channel carries no noise. Without `frequencies` a frequency dependent value
-is no channel.
+the mode frequencies of a sweep, over which each distinct function is
+evaluated once however many components share it. Where such a value is
+lossless its channel carries no noise. Without `frequencies` a frequency
+dependent value is no channel.
 
 A port termination is an external bath rather than an internal channel and
 is excluded by its role; any other resistor across a port's nodes is an
 ordinary device resistor and is included.
 """
 function noiseindices(c::CompiledCircuit, values; frequencies = ())
+    known = IdDict{Any,Bool}()
     return [i for i in noisecandidates(c) if c.componenttypes[i] === :R ||
-        islossy(values[i], frequencies)]
+        islossy(values[i], frequencies, known)]
 end
 
 # whether a capacitor's or an inductor's value dissipates: a number with an
 # imaginary part, or a frequency dependent value with one at any of
-# `frequencies`
-islossy(value, frequencies) = checkissymbolic(value) ?
-    any(w -> islossy(substitutefreq(value, w), ()), frequencies) :
+# `frequencies`, each distinct function classified once and its answer
+# kept in `known` for the components which share it
+islossy(value, frequencies, known) =
     value isa Complex && !iszero(imag(value))
+islossy(value::FrequencyDependent, frequencies, known) =
+    get!(known, value.f) do
+        any(w -> islossy(substitutefreq(value, w), (), known), frequencies)
+    end
 
 """
     isolatedsubnetworks(c::CompiledCircuit)

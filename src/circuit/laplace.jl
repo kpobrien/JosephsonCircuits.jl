@@ -44,18 +44,12 @@ end
 (response::LaplaceResponse)(w::Real) = response.f(im*w)
 (response::LaplaceResponse)(dest::AbstractMatrix, w::Real) = response.f(dest, im*w)
 
-# Only holomorphic operations are accepted in a component expression.
-# In particular real(f(s)), imag(f(s)) and conj(f(s)) are not continuations
-# of their frequency-axis expressions.
+# A component value with a Laplace continuation: a real number, or a
+# frequency dependent value whose function is a `LaplaceResponse`. A
+# function of the frequency alone has none.
 poleanalytic(x::Number) = isreal(x)
-poleanalytic(x::CircuitValues.Constant) = isreal(x.val)
-poleanalytic(x::CircuitValues.Provider) = x.f isa LaplaceResponse
-poleanalytic(x::CircuitValues.Unary) = x.f in (-, inv, sqrt, exp, log) && poleanalytic(x.a)
-poleanalytic(x::CircuitValues.Binary) = x.f in (+, -, *, /, ^) && poleanalytic(x.a) && poleanalytic(x.b)
+poleanalytic(x::FrequencyDependent) = x.f isa LaplaceResponse
 poleanalytic(x) = false
 
 laplacevalue(x::Number, s) = x
-laplacevalue(x::CircuitValues.Constant, s) = x.val
-laplacevalue(x::CircuitValues.Provider, s) = x.f.f(s)
-laplacevalue(x::CircuitValues.Unary, s) = x.f(laplacevalue(x.a, s))
-laplacevalue(x::CircuitValues.Binary, s) = x.f(laplacevalue(x.a, s), laplacevalue(x.b, s))
+laplacevalue(x::FrequencyDependent, s) = x.f.f(s)

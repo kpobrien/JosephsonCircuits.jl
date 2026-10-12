@@ -14,8 +14,7 @@
 # across it and the port termination which records that resistor, the
 # tuple forms of the entry points which took a tuple netlist in v0.5.4,
 # which sort the nodes by number as the format always did, and the tuple
-# netlist file reader, with its parser of a value written as an
-# expression, and writer.
+# netlist file reader and writer.
 #
 # A value written as an expression in a parameter named by the
 # `symfreqvar` keyword of the solvers, rewritten as a
@@ -35,7 +34,8 @@
 # resistor a port's termination names through `namedtermination`, whose
 # method for every other termination, naming none, is in
 # circuit/components.jl; the Symbolics extension unwraps a `Num` port
-# number for `legacyportnumber`; the three solver entry points which hold
+# number for `legacyportnumber` and reads an expression of a netlist file
+# for `parsecomponentvalue`; the three solver entry points which hold
 # a compiled circuit beside its definitions hand a `symfreqvar` to
 # `frequencydependentcircuit`; `hbnlsolve` and `hbsolve` hand their
 # deprecated keywords to `deprecatedsolverkeywords`, and `hbnlsolve` its
@@ -285,12 +285,8 @@ function frequencydependentvalue(value, partial, symfreqvar)
     variables = circuitvariables(partial)
     any(v -> isequal(v, symfreqvar), variables) || return value
     all(v -> isequal(v, symfreqvar), variables) || return value
-    # the frequency reaches the value two ways: as the symbolic variable it
-    # substitutes, and as the argument of any frequency dependent leaf the
-    # same expression already carries, which `substitutefreq` evaluates.
     return FrequencyDependent(
-        w -> substitutefreq(
-            valuetonumber(partial, Dict{Any,Any}(symfreqvar => w)), w))
+        w -> valuetonumber(partial, Dict{Any,Any}(symfreqvar => w)))
 end
 
 # === the deprecations of one call ===
@@ -496,13 +492,13 @@ substitutedefs(value, circuitdefs) =
 
 Import the netlist from the file with name and path `filename` and return
 it as a vector of `(name, node1, node2, value)` tuples. The value field is
-`Any`: a number for a literal and a `CircuitValue` for an expression.
+`Any`: a number for a literal, a symbol for a name and a Symbolics value
+for an expression (see [`parsecomponentvalue`](@ref)).
 """
 function import_netlist(filename)
-    # the value field is a number when the netlist holds a literal and a
-    # `CircuitValue` when it holds an expression, so the tuple is
-    # heterogeneous. Pass your own vector to `import_netlist!` to pin a
-    # narrower element type.
+    # the value field is a number, a symbol or a Symbolics value, so the
+    # tuple is heterogeneous. Pass your own vector to `import_netlist!` to
+    # pin a narrower element type.
     circuit = Tuple{String,String,String,Any}[]
     open(filename, "r") do io
         import_netlist!(io, circuit)
@@ -545,35 +541,19 @@ end
 """
     parsecomponentvalue(s::AbstractString)
 
-Parse a SPICE netlist component value into a number or a `CircuitValue`.
-Nothing is evaluated into a module, so a netlist cannot introduce arbitrary
-code.
+Parse a SPICE netlist component value: a number, a name, returned as a
+symbol, or an expression, which Symbolics reads, as the netlist reader of
+v0.5.4 did, and which needs it loaded (`using Symbolics`). Nothing is
+evaluated into a module, so a netlist cannot introduce arbitrary code.
 """
 function parsecomponentvalue(s::AbstractString)
     v = tryparse(Float64, s)
     isnothing(v) || return v
-    return expressionvalue(Meta.parse(s))
-end
-
-# A value written in a netlist file arrives as a parsed Julia `Expr`, which
-# is converted to a `CircuitValue` accepting only the closed operator set of
-# circuit/values.jl and the constants `im` and `pi`, so that no Symbolics
-# parser is needed.
-const expressionconstants = Dict{Symbol,Any}(:im => im, :pi => pi)
-const expressionbinary = Dict{Symbol,Function}(:+ => +, :- => -, :* => *, :/ => /, :^ => ^)
-const expressionunary = Dict{Symbol,Function}(:- => -, :inv => inv, :sqrt => sqrt,
-    :exp => exp, :log => log, :conj => conj, :real => real, :imag => imag)
-expressionvalue(x::Number) = CircuitValues.Constant(x)
-function expressionvalue(s::Symbol)
-    haskey(expressionconstants, s) && return CircuitValues.Constant(expressionconstants[s])
-    return CircuitValues.Parameter(s)
-end
-function expressionvalue(e::Expr)
-    e.head === :call || error("unsupported expression head $(e.head)")
-    op = e.args[1]; args = map(expressionvalue, e.args[2:end])
-    length(args) == 1 && haskey(expressionunary, op) && return expressionunary[op](args[1])
-    haskey(expressionbinary, op) && return reduce(expressionbinary[op], args)
-    error("unsupported operator $(op) in a component value")
+    e = Meta.parse(s)
+    e isa Symbol && return e
+    ext = Base.get_extension(@__MODULE__, :JosephsonCircuitsSymbolicsExt)
+    isnothing(ext) && throw(ArgumentError(lazy"The netlist value $(s) is an expression, which Symbolics reads: load it, `using Symbolics`."))
+    return ext.netlistvalue(e)
 end
 
 # === the deprecated entry points ===

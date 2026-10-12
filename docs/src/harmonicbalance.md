@@ -285,10 +285,12 @@ dS_dlnLj = sensitive.linearized.Ssensitivity((0,), 1, (0,), 1, "jj", :)
 ```
 
 [`designsensitivities`](@ref) instead differentiates with respect to the
-parameters used to define component values. It combines every component's
-contribution by the chain rule. The [worked example](recipes/sensitivities.md)
-checks a design derivative against finite differences and converts it to
-a gain derivative.
+design parameters of a Julia function which gives the component values,
+whose derivatives ForwardDiff takes when it is loaded beside the package
+(`using JosephsonCircuits, ForwardDiff`), or `jacobian = p -> J` states.
+It combines every component's contribution by the chain rule. The
+[worked example](recipes/sensitivities.md) checks a design derivative
+against finite differences and converts it to a gain derivative.
 
 ## Direct current and flux pumping
 

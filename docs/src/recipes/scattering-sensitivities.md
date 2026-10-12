@@ -2,7 +2,7 @@
 
 Differentiate the reflection phase with respect to a matched line length. The analytic reference is the round-trip propagation phase. Block derivatives describe the data at one design point; rebuilding a block is required when its captured parameters change.
 
-The plotting code requires `Plots` in addition to `JosephsonCircuits`.
+The plotting code requires `Plots` and ForwardDiff in addition to `JosephsonCircuits`.
 
 ```text
  1                  2                  3
@@ -17,7 +17,7 @@ The plotting code requires `Plots` in addition to `JosephsonCircuits`.
 A [`ScatteringParameters`](@ref) block depends on a design parameter through the analytic derivative its `derivatives` keyword states: here a matched transmission line section in front of the amplifier, with the derivative of the reflection with respect to the line length. A matched lossless line delays the reflection on its way in and out, so the gain does not depend on the length, and the phase of `S11` turns by `-2*w*len/vphase` per fractional change of the length, which the example compares with. A block which states no derivative (measured Touchstone data, say) is parameter independent and costs nothing.
 
 ```julia
-using JosephsonCircuits
+using JosephsonCircuits, ForwardDiff
 using Plots
 
 vphase = 1.2e8 # the phase velocity of the line in m/s
@@ -35,13 +35,15 @@ circuit = Circuit(
      (:jj, 3, 0, JosephsonJunction(:Lj)),
      (:c2, 3, 0, Capacitor(1000.0e-15))])
 
-p = Dict(:Lj => 1000.0e-12)
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
 sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-# the parameters: the line length the block states a derivative for, and Lj
-r = designsensitivities(circuit, p, ws, wp, sources, (8,), (16,))
+# the parameters: Lj, the value of the circuit's name, and the line length
+# the block states a derivative for
+values(p) = (Lj = p.Lj,)
+p = (Lj = 1000.0e-12, len = len)
+r = designsensitivities(circuit, values, p, ws, wp, sources, (8,), (16,))
 
 # the derivative of the phase of S11 with respect to the fractional change
 # of the length, len*imag(dS/dlen/S), against the delay of the line there

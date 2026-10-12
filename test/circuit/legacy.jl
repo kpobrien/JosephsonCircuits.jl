@@ -2,11 +2,12 @@ using JosephsonCircuits
 using LinearAlgebra
 using Test
 
-# Tests of the deprecated input formats, the tuple netlist and the symbolic
-# frequency variable, and of the deprecated entry points, kept together so
-# the compatibility surface is one file on the test side as it is on the
-# source side: this file goes with `src/circuit/legacy.jl` when they are
-# removed. Every use of them warns, and each is captured here.
+# Tests of the deprecated input format, the tuple netlist, and of the
+# deprecated entry points, kept together so the compatibility surface is
+# one file on the test side as it is on the source side: this file goes
+# with `src/circuit/legacy.jl` when they are removed. Every use of them
+# warns, and each is captured here. The symbolic frequency variable is a
+# Symbolics variable, and its tests are in test/interop/symbolics.jl.
 
 # the value of a call which warns of the deprecation
 macro deprecated(ex)
@@ -128,10 +129,8 @@ samematrices(a, b) = a.Cnm == b.Cnm && a.Gnm == b.Gnm &&
         circuit2 = @deprecated JosephsonCircuits.import_netlist(filename)
         rm(filename)
         @test isequal(circuit1, circuit2)
-        # the importer parses component values into the package's own
-        # expression type, so the round trip is checked against that
-        R1, = JosephsonCircuits.@params R1
-        circuit1 = [("P","1","0",1),("R","1","0",R1)]
+        # the importer reads a name back as a symbol
+        circuit1 = [("P","1","0",1),("R","1","0",:R1)]
         @deprecated JosephsonCircuits.export_netlist(filename, circuit1)
         circuit2 = @deprecated JosephsonCircuits.import_netlist(filename)
         rm(filename)
@@ -158,7 +157,7 @@ samematrices(a, b) = a.Cnm == b.Cnm && a.Gnm == b.Gnm &&
     end
 
     @testset "tuple round trip" begin
-        JosephsonCircuits.@params Ipump Rleft Cc Lj Cj
+        Ipump, Rleft, Cc, Lj, Cj = :Ipump, :Rleft, :Cc, :Lj, :Cj
         circuit = Tuple{String,String,String,Any}[
             ("P1","1","0",1),
             ("I1","1","0",Ipump),
@@ -169,8 +168,8 @@ samematrices(a, b) = a.Cnm == b.Cnm && a.Gnm == b.Gnm &&
         ]
         # a netlist of tuples reaches the compiler through the typed circuit,
         # so what is checked is that the adapter reads the name prefixes as
-        # component types, keeps netlist order, and passes symbolic values
-        # through untouched
+        # component types, keeps netlist order, and passes names through
+        # untouched
         psc = compile((@deprecated Circuit(circuit)); sorting = :number)
         @test psc.componentnames == ["P1","I1","R1","C1","Lj1","C2"]
         @test psc.componenttypes == [:P, :I, :R, :C, :Lj, :C]
@@ -183,9 +182,8 @@ samematrices(a, b) = a.Cnm == b.Cnm && a.Gnm == b.Gnm &&
         # the value vector is narrowed from Vector{Any} to the tightest
         # element type the netlist admits. Every entry is a quantity, the
         # port slot carrying its impedance rather than the port number, so
-        # that is the parameter type here
-        @test eltype(psc.componentvalues) ===
-            JosephsonCircuits.CircuitValues.Parameter
+        # that is the name here
+        @test eltype(psc.componentvalues) === Symbol
 
         # node "0" is ground and sorts first, so it is node index 1
         @test psc.nodenames == ["0","1","2"]
@@ -197,7 +195,7 @@ samematrices(a, b) = a.Cnm == b.Cnm && a.Gnm == b.Gnm &&
     end
 
     @testset "round trip with mutual inductors" begin
-        JosephsonCircuits.@params Ipump Rleft L1v L2v C2v
+        Ipump, Rleft, L1v, L2v, C2v = :Ipump, :Rleft, :L1v, :L2v, :C2v
         circuit = Tuple{String,String,String,Any}[
             ("P1","1","0",1),
             ("I1","1","0",Ipump),
@@ -296,109 +294,6 @@ samematrices(a, b) = a.Cnm == b.Cnm && a.Gnm == b.Gnm &&
     end
 end
 
-@testset verbose=true "deprecated symbolic frequency variable" begin
-
-    wp = (2*pi*4.75001*1e9,)
-    ws = 2*pi*(4.5:0.1:5.0)*1e9
-    sources = [(mode=(1,),port=1,current=0.00565e-6)]
-    law(w) = 50.0*(1 + (w/1e11)^2)
-    JosephsonCircuits.@params wsym
-    mk(z) = Circuit([("P1", "1", "0", Port(1; Z0 = z)),
-        ("C1", "1", "2", Capacitor(100.0e-15)),
-        ("Lj1", "2", "0", JosephsonJunction(1000.0e-12)),
-        ("C2", "2", "0", Capacitor(1000.0e-15))])
-
-    @testset "a value in the frequency variable is the closure written out" begin
-        # the deprecated spelling is rewritten into a FrequencyDependent
-        # closure, so it must give the same scattering parameters
-        Ssym = (@deprecated hbsolve(ws, wp, sources, (2,), (8,),
-            mk(law(wsym)), Dict(); symfreqvar = wsym)).linearized.S
-        Sfun = hbsolve(ws, wp, sources, (2,), (8,),
-            mk(FrequencyDependent(law))).linearized.S
-        @test isapprox(Array(Ssym), Array(Sfun), rtol = 1e-12)
-    end
-
-    @testset "a value mixing the variable with a closure resolves both" begin
-        # the rewritten closure evaluates the frequency dependent leaves the
-        # expression already carries as well as substituting the variable
-        both(z) = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)),
-            ("R1", "1", "2", Resistor(z)),
-            ("P2", "2", "0", Port(2; Z0 = 50.0))])
-        wl = [2e9, 3e9]
-        Smix = (@deprecated hblinsolve(wl,
-            both(50.0*(1 + 0.1*wsym/1e9) + FrequencyDependent(w -> 0.5*w/1e9)),
-            Dict(); symfreqvar = wsym, keyedarrays = false)).S
-        Sfun = hblinsolve(wl,
-            both(FrequencyDependent(w -> 50.0*(1 + 0.1*w/1e9) + 0.5*w/1e9));
-            keyedarrays = false).S
-        @test isapprox(Array(Smix), Array(Sfun), rtol = 1e-12)
-        # and a value named by a symbol whose definition is written in the
-        # variable is the closure too
-        Snamed = (@deprecated hblinsolve(wl, both(:Rfd),
-            Dict(:Rfd => 50.0*(1 + 0.1*wsym/1e9)); symfreqvar = wsym,
-            keyedarrays = false)).S
-        Sfun = hblinsolve(wl, both(FrequencyDependent(w -> 50.0*(1 + 0.1*w/1e9)));
-            keyedarrays = false).S
-        @test isapprox(Array(Snamed), Array(Sfun), rtol = 1e-12)
-    end
-
-    @testset "every entry point which takes it warns" begin
-        # hbsolve's warning is asserted above
-        @deprecated JosephsonCircuits.hbnlsolve(wp, (2,), sources,
-            mk(law(wsym)), Dict(); symfreqvar = wsym)
-        @deprecated hblinsolve(ws, mk(law(wsym)), Dict(); symfreqvar = wsym)
-    end
-
-    @testset "the lossy value it resolves is a noise channel" begin
-        # the channel is chosen on the resolved value, so a loss written
-        # through the frequency variable is found as one written plainly
-        C0, tand = 100.0e-15, 1e-3
-        lossy(v) = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)),
-            ("C1", "1", "2", Capacitor(v)),
-            ("Lj1", "2", "0", JosephsonJunction(1000.0e-12)),
-            ("C2", "2", "0", Capacitor(500.0e-15))])
-        sym = @deprecated hbsolve(ws, wp, sources, (2,), (8,),
-            lossy(C0*(1 - im*tand)*(1 + 0*wsym)), Dict();
-            symfreqvar = wsym, keyedarrays = false)
-        plain = hbsolve(ws, wp, sources, (2,), (8,),
-            lossy(C0*(1 - im*tand)), Dict(); keyedarrays = false)
-        @test [sym.linearized.componentnames[i]
-            for i in sym.linearized.noiseportimpedanceindices] == ["C1"]
-        @test isapprox(sym.linearized.QE, plain.linearized.QE, rtol = 1e-12)
-    end
-
-    @testset "a value which also needs a definition is named" begin
-        # the rewrite leaves a value depending on something else alone, so
-        # the undefined parameter is still reported with its component
-        JosephsonCircuits.@params Rundef
-        c = Circuit([("P1", "1", "0", Port(1; Z0 = Rundef/(1 + wsym*1e-12))),
-            ("C1", "1", "0", Capacitor(100.0e-15)),
-            ("L1", "1", "0", Inductor(1.0e-9))])
-        err = @deprecated try
-            JosephsonCircuits.hbnlsolve((2*pi*5e9,), (1,),
-                [(mode=(1,),port=1,current=1e-8)], c, Dict();
-                symfreqvar = wsym)
-            nothing
-        catch e; e; end
-        @test err isa ArgumentError
-        @test occursin("Rundef", sprint(showerror, err))
-        @test occursin("P1", sprint(showerror, err))
-    end
-
-    @testset "a resolved value table cannot take one" begin
-        # the keyword needs the definitions, which a table of already
-        # resolved values does not carry
-        psc = compile(mk(50.0))
-        sf = JosephsonCircuits.truncfreqs(
-            JosephsonCircuits.calcfreqsdft((2,)); dc = true, odd = false,
-            even = true, maxintermodorder = Inf)
-        vvn = JosephsonCircuits.componentvaluestonumber(psc.componentvalues,
-            Dict{Any,Any}())
-        @test_throws ArgumentError hblinsolve(ws, psc, vvn, sf;
-            symfreqvar = wsym)
-    end
-end
-
 # The deprecated forms warn and give the same numbers as the forms which
 # replace them; the wording of the warnings is not pinned.
 @testset verbose=true "deprecated" begin
@@ -433,8 +328,9 @@ end
         connections = [[("A", 2), ("B", 1)]]
         init = @test_logs (:warn,) JosephsonCircuits.connectS_initialize(
             networks, connections; noise = true)
-        @test init == JosephsonCircuits.connectS_initialize(networks,
-            connections)
+        @test JosephsonCircuits.connectS!(init...; noise = true) ==
+            JosephsonCircuits.connectS!(JosephsonCircuits.connectS_initialize(
+                networks, connections)...; noise = true)
     end
 
     @testset "the deprecated solver forms and keywords" begin

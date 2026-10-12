@@ -681,7 +681,7 @@ end
 function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMatrixCSC, L::SparseMatrixCSC,
         Nnodal::Int, Naux::Int, blocks = TransientBlock[])
     n = size(G, 1)
-    islands = transientsubnetworks(psc, vvn, (:C,))
+    (; islands, Z0, auxrows, rs) = circuitratesystem(psc, vvn, G, L, blocks)
     inertialess = copy(islands)
     for k in 1:Naux
         push!(inertialess, [Nnodal + k])
@@ -690,12 +690,6 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
         push!(inertialess, [b.auxbase + q])
     end
     k0 = length(islands)
-    Z0 = sparse(foldl(append!, islands; init = Int[]), [c for (c, z) in enumerate(islands) for _ in z],
-        ones(sum(length, islands; init = 0)), n, k0)
-    auxrows = [b.auxbase + q for b in blocks for q in eachindex(b.signal)]
-    Ea = sparse(auxrows, 1:length(auxrows), ones(length(auxrows)), n, length(auxrows))
-    rs = ratesystem(G, L, Z0, Ea)
-    na = length(auxrows)
     # The algebraic directions are the null vectors without a current: a
     # null vector with one, a through's current between two nodes with
     # capacitance, is a current the differential equations determine, of
@@ -730,18 +724,7 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
     # null vectors over every equation, one row each, a node row taking
     # its island's coefficient; those whose leaks reach no node in common
     # are combined apart
-    lr, lc, lv = Int[], Int[], Float64[]
-    e = 0
-    for b in rs.blocks, j in axes(b.leftnull, 2)
-        e += 1
-        for (i, r) in enumerate(b.rows)
-            x = b.leftnull[i, j]
-            for node in (r <= k0 ? islands[r] : (auxrows[r - k0],))
-                push!(lr, e); push!(lc, node); push!(lv, x)
-            end
-        end
-    end
-    rowst = sparse(lc, lr, lv, n, e)
+    rowst = nullcombinations(rs, islands, auxrows, n)
     leak = sparse(transpose(rowst))*G
     leakt = sparse(transpose(leak))
     atol = 1e-8*max(norm(G, Inf), floatmin(Float64))
@@ -775,6 +758,41 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
     append!(algebraic, [[Nnodal + k] for k in 1:Naux])
     order = sortperm(algebraic; by = z -> (first(z), length(z)))
     return inertialess, algebraic[order], directions[:, order], constraints[order, :]
+end
+
+# The rate system of the equations without capacitance (see
+# `ratesystem` and `transientclassification`): the capacitor free
+# islands, their indicators `Z0`, the rows of the blocks' port equations
+# `auxrows`, and the system of the islands' rates and the blocks' port
+# currents in the islands' summed rows and the blocks' rows.
+function circuitratesystem(psc::CompiledCircuit, vvn::Vector, G::SparseMatrixCSC,
+        L::SparseMatrixCSC, blocks)
+    n = size(G, 1)
+    islands = transientsubnetworks(psc, vvn, (:C,))
+    Z0 = sparse(foldl(append!, islands; init = Int[]), [c for (c, z) in enumerate(islands) for _ in z],
+        ones(sum(length, islands; init = 0)), n, length(islands))
+    auxrows = [b.auxbase + q for b in blocks for q in eachindex(b.signal)]
+    Ea = sparse(auxrows, 1:length(auxrows), ones(length(auxrows)), n, length(auxrows))
+    return (; islands, Z0, auxrows, rs = ratesystem(G, L, Z0, Ea))
+end
+
+# The left null vectors of the rate system `rs` of `circuitratesystem` as
+# combinations of the `n` equations, a column each, a node row taking its
+# island's coefficient.
+function nullcombinations(rs, islands, auxrows, n)
+    k0 = length(islands)
+    lr, lc, lv = Int[], Int[], Float64[]
+    e = 0
+    for b in rs.blocks, j in axes(b.leftnull, 2)
+        e += 1
+        for (i, r) in enumerate(b.rows)
+            x = b.leftnull[i, j]
+            for node in (r <= k0 ? islands[r] : (auxrows[r - k0],))
+                push!(lr, e); push!(lc, node); push!(lv, x)
+            end
+        end
+    end
+    return sparse(lc, lr, lv, n, e)
 end
 
 # A block of the rate system, its rows and its columns, which no other
@@ -846,13 +864,13 @@ function ratesystem(G::SparseMatrixCSC, L::SparseMatrixCSC, Z0::SparseMatrixCSC,
         x = maximum(abs, view(nonzeros(K), nzrange(K, j)); init = 0.0)
         x > 0 && (dc[j] = 1/x)
     end
-    Kb = K*Diagonal(dc)
+    Kc = K*Diagonal(dc)
     rmax = zeros(m)
-    for (i, x) in zip(rowvals(Kb), nonzeros(Kb))
+    for (i, x) in zip(rowvals(Kc), nonzeros(Kc))
         rmax[i] = max(rmax[i], abs(x))
     end
     dr = [x > 0 ? 1/x : 1.0 for x in rmax]
-    Kb = Diagonal(dr)*Kb
+    Kb = Diagonal(dr)*Kc
     parts = blockcomponents(Kb)
     large = ((R, C),) -> max(length(R), length(C)) > maxdense
     at = zeros(Int, m)
@@ -862,11 +880,12 @@ function ratesystem(G::SparseMatrixCSC, L::SparseMatrixCSC, Z0::SparseMatrixCSC,
         B = Kb[R, C]
         smax = max(smax, sqrt(opnorm(B, 1)*opnorm(B, Inf)))
     end
+    tol = rtol*smax
     blocks, factors = RateBlock[], RateFactor[]
     pr, pc, pv = Int[], Int[], Float64[]
     for ((R, C), f) in zip(parts, F)
         if large((R, C))
-            q = qr(Kb[R, C]; tol = rtol*smax)
+            q = qr(Kb[R, C]; tol)
             r = rank(q)
             R11 = q.R[1:r, 1:r]
             prow, pcol = q.prow, q.pcol
@@ -884,7 +903,7 @@ function ratesystem(G::SparseMatrixCSC, L::SparseMatrixCSC, Z0::SparseMatrixCSC,
             # a row or a column without an entry, its own null vector
             push!(blocks, RateBlock(R, C, Matrix(1.0I, length(C), length(C)), Matrix(1.0I, length(R), length(R))))
         else
-            r = count(s -> s > rtol*smax, f.S)
+            r = count(s -> s > tol, f.S)
             pinv = (dc[C] .* f.V[:, 1:r])*Diagonal(1 ./ f.S[1:r])*transpose(f.U[:, 1:r] .* dr[R])
             for (jj, row) in enumerate(R), (ii, col) in enumerate(C)
                 push!(pr, col); push!(pc, row); push!(pv, pinv[ii, jj])

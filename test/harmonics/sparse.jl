@@ -83,37 +83,32 @@ using Test
     end
 
     @testset "freqsubst" begin
-        begin
-            JosephsonCircuits.@params w
-            wmodes = [-1,2];
-            A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
-            @test_throws(
-                str -> occursin("FrequencyDependent closure", str),
-                JosephsonCircuits.freqsubst(A,wmodes)
-            )
-        end
-
-        begin
-            wmodes = [-1,1,2];
-            f = JosephsonCircuits.FrequencyDependent
-            A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [f(w->w),f(w->2*w),f(w->3*w)],2,2),2);
-            @test_throws(
-                DimensionMismatch("The dimensions of A must be integer multiples of the length of wmodes."),
-                JosephsonCircuits.freqsubst(A,wmodes)
-            )
-        end
-
-        # each frequency dependent value is resolved at the magnitude of
-        # the mode frequency of its own column
-        begin
-            wmodes = [-1,2];
-            f = JosephsonCircuits.FrequencyDependent
-            A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], Any[f(w->1.0*w),f(w->2.0*w),f(w->3.0*w)],2,2),2);
-            B = JosephsonCircuits.freqsubst(A,wmodes)
-            @test B[1,1] == 1.0 && B[2,2] == 2.0
-            @test B[3,3] == 2.0 && B[4,4] == 4.0
-            @test B[1,3] == 3.0 && B[2,4] == 6.0
-        end
+        # three capacitance terms on a matrix which holds their components
+        # open, each a closure of the frequency
+        JC = JosephsonCircuits
+        A = JC.diagrepeat(JC.SparseArrays.sparse([1,2,1], [1,2,2],
+            zeros(3), 2, 2), 2)
+        terms = JC.FrequencyDependentTerms(Any[w -> 1.0*w, w -> 2.0*w,
+            w -> 3.0*w], Int8[1, 1, 1], [1, 2, 1], [1, 2, 2], Int8[1, 1, 1],
+            [1, 2, 3])
+        @test_throws(
+            DimensionMismatch("The dimensions of A must be integer multiples of the length of wmodes."),
+            JC.freqsubst(A, terms, JC.TERM_CAPACITANCE, [-1, 1, 2])
+        )
+        # each term is resolved at the magnitude of the mode frequency of
+        # its own column, and only the terms of the kind asked for
+        B = JC.freqsubst(A, terms, JC.TERM_CAPACITANCE, [-1, 2])
+        @test B[1,1] == 1.0 && B[2,2] == 2.0
+        @test B[3,3] == 2.0 && B[4,4] == 4.0
+        @test B[1,3] == 3.0 && B[2,4] == 6.0
+        @test iszero(JC.freqsubst(A, terms, JC.TERM_CONDUCTANCE, [-1, 2]))
+        # the values are the result's own, also when they are complex
+        # already and need no conversion
+        Ac = JC.diagrepeat(JC.SparseArrays.sparse([1], [1], [1.0 + 2.0im],
+            1, 1), 2)
+        before = copy(Ac)
+        JC.freqsubst(Ac, nothing, JC.TERM_CAPACITANCE, [-1, 2]).nzval .*= 2
+        @test Ac == before
     end
 
 end

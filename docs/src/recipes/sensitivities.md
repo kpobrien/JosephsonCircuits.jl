@@ -18,7 +18,7 @@ parameters:
  0
 ```
 
-The adjoint calculation differentiates scattering parameters with respect to design parameters without re-solving the nonlinear problem for each perturbation. Every component value which depends on a parameter contributes through the chain rule with its exact derivative, including derived values such as `Capacitor(Cj/4)`.
+The adjoint calculation differentiates scattering parameters with respect to design parameters without re-solving the nonlinear problem for each perturbation. The components are written as names, and a Julia function of the design parameters gives the value of each name; every component which depends on a parameter contributes through the chain rule, with the derivative of that function, which ForwardDiff takes when it is loaded beside the package (`using JosephsonCircuits, ForwardDiff`), or which `jacobian = p -> J` states.
 
 ## Check a design derivative
 
@@ -26,12 +26,13 @@ This small check uses a linear RC load, for which a central difference is
 inexpensive. It exercises the same parameter interface as the JPA below.
 
 ```@example derivative
-using JosephsonCircuits
+using JosephsonCircuits, ForwardDiff
 c = Circuit([(:p1, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(:C))])
 C = 1e-12
 ws, wp = [2pi*3e9], (2pi*5e9,)
 sources = [(mode = (1,), port = 1, current = 0.0)]
-r = designsensitivities(c, Dict(:C => C), ws, wp, sources, (0,), (1,))
+values(p) = (C = p.C,)
+r = designsensitivities(c, values, (C = C,), ws, wp, sources, (0,), (1,))
 analytic = r.dSdp((0,), 1, (0,), 1, :C, 1)
 step = 1e-5*C
 response(value) = hblinsolve(ws, c, Dict(:C => value); keyedarrays = false).S[1, 1, 1]
@@ -40,45 +41,37 @@ finite_difference = (response(C + step) - response(C - step))/(2step)
 abs((analytic - finite_difference)/finite_difference)
 ```
 
-## Derived definitions
+## Derived values
 
-A parameter may be defined in terms of others, and the derivative follows
-the definition by the chain rule. The forms a definition takes:
+The function of the design parameters returns the value of every name the
+circuit's components are written in, as a `NamedTuple`, and a value
+derived from the parameters is computed there, in Julia. Its derivatives
+come from ForwardDiff, which differentiates the real and imaginary parts
+of each value, so a parameter which rotates a value in the complex plane,
+a loss tangent, is exact; `jacobian = p -> J` states them instead, a row
+per value and a column per parameter. The function returns numbers: a
+frequency dependent value, which no parameter may move, is written into
+the circuit as the component's value. A component written as a number
+takes no part, and every key of the parameters is a design parameter.
 
-| definition | example | derivative |
-|---|---|---|
-| a number, real or complex | `C => 1e-12` | one with respect to itself; a default parameter |
-| a value written in other parameters, to any depth | `:Cc => C/10` | the chain rule through the definition: `Capacitor(:Cc)` has the derivative `1/10` with respect to `C` |
-| a frequency dependent value | `:Cd => FrequencyDependent(w -> ...)` | none: no parameter moves it |
-
-The keys may be symbols, strings, the parameters of `@params` or, with
-Symbolics loaded, `Num`s. A component value is a number, a name, an
-expression in names, or a frequency dependent value, and its derivative
-is exact: the expression is differentiated symbolically and evaluated at
-the definitions. A derived parameter is not among the defaults; selected
-by name, it is differentiated as replacing its definition by its value
-would move it, the parameters it is written in held. A component whose
-value is frequency dependent cannot be moved by a selected parameter; one
-which no selected parameter moves takes no part.
-
-Here the coupling capacitance is defined as a tenth of the resonator's, so
-`C` moves both, and the derivative with respect to `C` is checked against
-a central difference which moves `C` alone in the definitions.
+Here the coupling capacitance is a tenth of the resonator's, so `C` moves
+both, and the derivative with respect to `C` is checked against a central
+difference which moves `C`.
 
 ```@example derived
-using JosephsonCircuits
-JosephsonCircuits.@params C
+using JosephsonCircuits, ForwardDiff
 c = Circuit([(:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(:Cc)),
-    (:cr, 2, 0, Capacitor(C)), (:lr, 2, 0, Inductor(1e-9))])
-definitions = Dict(:Cc => C/10, C => 1e-12)
-names, values, J = designjacobian(c, definitions)
+    (:cr, 2, 0, Capacitor(:Cr)), (:lr, 2, 0, Inductor(1e-9))])
+values(p) = (Cc = p.C/10, Cr = p.C)
+p = (C = 1e-12,)
+names, v, J = designjacobian(c, values, p)
 @assert J[findfirst(==("cc"), names), 1] ≈ 0.1
 ws, wp = [2pi*4.9e9], (2pi*5e9,)
 sources = [(mode = (1,), port = 1, current = 0.0)]
-r = designsensitivities(c, definitions, ws, wp, sources, (0,), (1,))
+r = designsensitivities(c, values, p, ws, wp, sources, (0,), (1,))
 analytic = r.dSdp((0,), 1, (0,), 1, :C, 1)
 step = 1e-6*1e-12
-response(value) = hblinsolve(ws, c, merge(definitions, Dict(C => value));
+response(value) = hblinsolve(ws, c, Dict(pairs(values((C = value,))));
     keyedarrays = false).S[1, 1, 1]
 finite_difference = (response(1e-12 + step) - response(1e-12 - step))/(2step)
 @assert isapprox(analytic, finite_difference; rtol = 1e-6)
@@ -94,7 +87,7 @@ Here a single design parameter is also a single junction's inductance, so
 we can compare with the component sensitivity at fixed pump state.
 
 ```@example pumpderivative
-using JosephsonCircuits, LinearAlgebra
+using JosephsonCircuits, ForwardDiff, LinearAlgebra
 c = Circuit([
     (:p1, 1, 0, Port(1)), (:cc, 1, 2, Capacitor(100e-15)),
     (:jj, 2, 0, JosephsonJunction(:Lj)), (:cj, 2, 0, Capacitor(1e-12)),
@@ -103,8 +96,8 @@ L = 1e-9
 wp = (2pi*4.75001e9,)
 ws = 2pi .* [4.69e9, 4.71e9]
 sources = [(mode = (1,), port = 1, current = 0.005e-6)]
-result = designsensitivities(c, Dict(:Lj => L), ws, wp, sources,
-    (4,), (8,); atol = 1e-12)
+result = designsensitivities(c, p -> (Lj = p.Lj,), (Lj = L,), ws, wp,
+    sources, (4,), (8,); atol = 1e-12)
 total = collect(result.dSdp((0,), 1, (0,), 1, :Lj, :))
 response(value) = hbsolve(ws, wp, sources, (4,), (8,), c,
     Dict(:Lj => value); atol = 1e-12)
@@ -156,27 +149,27 @@ naive finite-difference comparison.
 
 ## Gain derivatives of a pumped JPA
 
-This independent plotting recipe requires `Plots`. The displayed
+This independent plotting recipe requires `Plots` and ForwardDiff. The displayed
 normalization multiplies each absolute design derivative by its parameter
 value so the curves describe fractional changes.
 
 ```julia
-using JosephsonCircuits
+using JosephsonCircuits, ForwardDiff
 using Plots
 
-Lj, Cc, Cj = JosephsonCircuits.@params Lj Cc Cj
 jpa = Circuit(
     [(:p1, 1, 0, Port(1)),
-     (:cc, 1, 2, Capacitor(Cc)),
-     (:jj, 2, 0, JosephsonJunction(Lj)),
-     (:cj, 2, 0, Capacitor(Cj))])
+     (:cc, 1, 2, Capacitor(:Cc)),
+     (:jj, 2, 0, JosephsonJunction(:Lj)),
+     (:cj, 2, 0, Capacitor(:Cj))])
 
-p = Dict(Lj => 1000.0e-12, Cc => 100.0e-15, Cj => 1000.0e-15)
+# the design parameters are the values themselves
+p = (Lj = 1000.0e-12, Cc = 100.0e-15, Cj = 1000.0e-15)
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = 2*pi*4.75001*1e9
 sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-r = designsensitivities(jpa, p, ws, (wp,), sources, (8,), (16,))
+r = designsensitivities(jpa, identity, p, ws, (wp,), sources, (8,), (16,))
 
 # the derivative of the gain in dB with respect to each parameter,
 # dG/dp = (20/log(10))*real(conj(S)*dS/dp)/abs2(S), scaled by the
@@ -185,8 +178,8 @@ r = designsensitivities(jpa, p, ws, (wp,), sources, (8,), (16,))
 S = r.out.linearized.S((0,),1,(0,),1,:)
 plot(ws/(2*pi*1e9),
     [p[q].*(20/log(10)).*
-     real.(conj.(S).*r.dSdp((0,),1,(0,),1,q.name,:))./abs2.(S)
-     for q in (Lj, Cc, Cj)],
+     real.(conj.(S).*r.dSdp((0,),1,(0,),1,q,:))./abs2.(S)
+     for q in keys(p)],
     label=["Lj" "Cc" "Cj"],
     xlabel="Frequency (GHz)",
     ylabel="dG/dln(p) (dB)")

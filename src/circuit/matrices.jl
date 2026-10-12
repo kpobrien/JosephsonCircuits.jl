@@ -1,3 +1,37 @@
+"""
+    FrequencyDependentTerms
+
+The stamps of the frequency dependent components of a circuit on its
+capacitance, conductance and inverse inductance matrices, at one mode:
+for each, the matrix (`kind`, 1 the capacitance, 2 the conductance, 3 the
+inverse inductance), the row and column of its entry in the one mode
+matrix, the sign of the stamp, and the index of its function among
+`providers`. The matrices hold the circuit without these components; a
+term adds at its entry of every mode, of frequency `w`, the sign times the
+value of its function at `abs(w)`, the capacitance, or its inverse, the
+conductance of a resistance or the inverse of an inductance, conjugated
+where `w` is negative, as any value of those matrices is.
+"""
+struct FrequencyDependentTerms
+    providers::Vector{Any}
+    kind::Vector{Int8}
+    row::Vector{Int}
+    col::Vector{Int}
+    sign::Vector{Int8}
+    provider::Vector{Int}
+end
+
+# the kinds of `FrequencyDependentTerms`, and whether a term of a kind
+# inverts its value
+const TERM_CAPACITANCE = Int8(1)
+const TERM_CONDUCTANCE = Int8(2)
+const TERM_INVINDUCTANCE = Int8(3)
+terminverts(kind::Integer) = kind != TERM_CAPACITANCE
+
+# the value a term adds from the value `v` of its function at a mode, before
+# the conjugation of a negative mode frequency
+@inline termvalue(kind::Integer, sign::Integer, v) =
+    terminverts(kind) ? sign/v : sign*v
 
 """
     CircuitMatrices(Cnm::SparseMatrixCSC, Gnm::SparseMatrixCSC, Lb::SparseVector,
@@ -41,6 +75,11 @@ by [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
     circuit has none; the solvers replace it by the solver scale of
     [`calcsolverscale`](@ref) under the same name.
 - `vvn`: the vector of component values with the definitions substituted.
+- `frequencydependent`: the [`FrequencyDependentTerms`](@ref) of the
+    components whose values depend on the frequency, which the matrices
+    hold open, a zero capacitance or an infinite resistance or inductance,
+    so that `Lb` holds the inductance of a branch's other inductors and an
+    infinite one on a branch without any; or `nothing`.
 """
 struct CircuitMatrices{TC,TG,TLb,TLj,TLjm,TM,TiL,TLmean}
     Cnm::TC
@@ -57,6 +96,7 @@ struct CircuitMatrices{TC,TG,TLb,TLj,TLjm,TM,TiL,TLmean}
     portenvironmentindices::Vector{Int}
     Lmean::TLmean
     vvn::Vector{Any}
+    frequencydependent::Union{Nothing,FrequencyDependentTerms}
 end
 
 # the flat value table is stored as `Vector{Any}` whatever it was built as,
@@ -65,10 +105,11 @@ end
 function CircuitMatrices(Cnm, Gnm, Lb, Ljb, Ljbm, Mb, invLnm,
         Rbnm::SparseMatrixCSC{Int,Int}, portindices::Vector{Int},
         portnumbers::Vector{Int}, portimpedances::Vector,
-        portenvironmentindices::Vector{Int}, Lmean, vvn::AbstractVector)
+        portenvironmentindices::Vector{Int}, Lmean, vvn::AbstractVector,
+        frequencydependent = nothing)
     return CircuitMatrices(Cnm, Gnm, Lb, Ljb, Ljbm, Mb, invLnm, Rbnm,
         portindices, portnumbers, portimpedances, portenvironmentindices,
-        Lmean, Vector{Any}(vvn))
+        Lmean, Vector{Any}(vvn), frequencydependent)
 end
 
 """
@@ -80,16 +121,18 @@ symbolic, so that the capacitance and inverse inductance matrices can be
 inspected as expressions. The mutually coupled inductor branches are
 excluded from the inverse inductance matrix and represented by auxiliary
 branch currents instead (see circuit/mna.jl), so no symbolic linear solve is
-needed. A value written as a symbol, or as a parameter of
-[`@params`](@ref), gives entries which are expressions in the parameters,
-of the package's own `CircuitValue` type.
+needed. The expressions are those of Symbolics, which is loaded for them
+(`using Symbolics`): a value written as a name is the variable of that
+name, and one written as a Symbolics value is itself.
 
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 [`assemblematrices`](@ref), [`orderedports`](@ref),
 [`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
 
 # Examples
-```jldoctest
+```julia
+julia> using Symbolics
+
 julia> circuit = Circuit(
            [:p1 => Port(1; Z0 = :Rleft),
             :i1 => CurrentSource(:Ipump),
@@ -104,14 +147,26 @@ julia> circuit = Circuit(
 julia> m = symbolicmatrices(circuit);
 
 julia> m.Cnm[1, 2], m.Cnm[2, 2]
-(-(Cc), (Cc + Cj))
+(-Cc, Cc + Cj)
 
 julia> m.Gnm[1, 1], m.Ljb[2]
-((1.0 / Rleft), Lj)
+(1 / Rleft, Lj)
 ```
 """
 function symbolicmatrices(circuit::CompilableCircuit; Nmodes::Int = 1)
-    return numericmatrices(circuit, Dict(), Nmodes = Nmodes)
+    psc = compile(circuit)
+    values = Any[symbolicvalue(v) for v in psc.componentvalues]
+    return numericmatrices(psc, values; Nmodes = Nmodes)
+end
+
+# A component value of `symbolicmatrices`: a name as the Symbolics
+# variable of that name, which the extension makes, and any other value as
+# it is written.
+symbolicvalue(v) = v
+function symbolicvalue(v::Union{Symbol,AbstractString})
+    ext = Base.get_extension(@__MODULE__, :JosephsonCircuitsSymbolicsExt)
+    isnothing(ext) && throw(ArgumentError(lazy"The circuit has a value written as the name $(v), which symbolicmatrices writes as a Symbolics variable: load Symbolics, `using Symbolics`."))
+    return ext.variable(definitionname(v))
 end
 
 """
@@ -147,7 +202,7 @@ circuitdefs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15, :Rlef
 JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12], nothing)
 ```
 ```jldoctest
 circuit = Circuit(
@@ -165,7 +220,7 @@ psc = JosephsonCircuits.compile(circuit)
 JosephsonCircuits.testshow(stdout,numericmatrices(psc, circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], 1.0e-9, Any[50.0, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12], nothing)
 ```
 """
 function numericmatrices(circuit::CompilableCircuit,
@@ -222,7 +277,12 @@ function calcjunctionrelations(componenttypes::Vector{Symbol},
     return junctionrelations([get(bycpr, b, nothing) for b in Ljb.nzind])
 end
 
-combine_reciprocal_sum(x1,x2) = x1*x2/(x1+x2)
+# two inductances on one branch, in parallel; an infinite one, which a
+# frequency dependent inductor holds (see `gather`), is an open circuit
+combine_reciprocal_sum(x1,x2) =
+    isopen(x2) ? x1 : isopen(x1) ? x2 : x1*x2/(x1+x2)
+isopen(x::Number) = !checkissymbolic(x) && isinf(x)
+isopen(x) = false
 
 """
     branchendpoints(Rbn::SparseMatrixCSC, Nbranches::Int)

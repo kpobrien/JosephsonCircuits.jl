@@ -109,7 +109,7 @@ function testjobs()
             "spice/raw.jl", "spice/wrapper.jl", "solvers/newton.jl",
             "docstringchecktests.jl", "spice/utils.jl", "networks/unwrap.jl",
             "circuit/matrices.jl", "solvers/solverinfo.jl", "testutils.jl",
-            "solvers/linesearch.jl")
+            "solvers/linesearch.jl", "captures.jl")
     for f in files
         push!(jobs, file(f))
     end

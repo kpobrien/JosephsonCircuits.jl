@@ -17,10 +17,14 @@ period `T` in `steps` Gauss–Legendre steps. [`transienttangent`](@ref)
 then propagates the constrained circuit perturbations: node fluxes and
 rates, rational-block states, and outgoing-wave histories of transmission
 lines. The map satisfies `δx(T) = M*δx(0)`; its eigenvalues are multipliers
-`μ = exp(s*T)`. Algebraic auxiliary currents are constrained, and uniform
-flux gauge directions are removed. This is a circuit state/history map,
-not a scattering matrix. Pumped blocks convert fully on, independent of
-their startup `envelope`, as they do in harmonic balance.
+`μ = exp(s*T)`. Algebraic auxiliary currents are constrained, the
+starting perturbations meet the circuit's algebraic constraints, among
+them the voltages an ideal block (whose `I + S` is singular) ties between
+nodes with capacitance, or ties to the states of a rational or pumped
+block whose direct term is such a block, and uniform flux gauge
+directions are removed. This is a circuit state/history map, not a
+scattering matrix. Pumped blocks convert fully on, independent of their
+startup `envelope`, as they do in harmonic balance.
 
 For each selected eigenvector, propagation and Fourier analysis of its
 periodic part choose a dominant-frequency representative of `log(μ)/T`
@@ -168,13 +172,23 @@ function polemonodromy(method::Monodromy, psc::CompiledCircuit, circuitdefs, non
     # come back as a multiplier of one, a pole at zero of roundoff's sign.
     # The orbit and every mode about it meet the constraint, and the
     # starting fluxes are projected onto it; those directions map to zero.
+    # So too the rule keeps, or nearly, the residual of a constraint on the
+    # rates of nodes with capacitance and the blocks' states, which an
+    # ideal block, or a rational or a pumped block whose direct term is
+    # one, ties (see `rateconstraints`): its multiplier is deflated from
+    # the map once it is formed, by reading one coordinate of each, a
+    # pivot, from the others, whose directions then map to zero, and every
+    # direction carried after that, a mode's, has its pivots read so first
+    # (see `deflaterates!`).
+    pivots = Ref((; piv = Int[], X = zeros(0, 0)))
     function constrained!(W, rec)
         ir = rec.constraints.invariant
-        isnothing(ir) && return W
-        X = W[1:n, :]
-        readinvariantrate!(X, X, ir, invariantratework(ir, CPU(), n, size(W, 2)))
-        W[1:n, :] .= X
-        return W
+        if !isnothing(ir)
+            X = W[1:n, :]
+            readinvariantrate!(X, X, ir, invariantratework(ir, CPU(), n, size(W, 2)))
+            W[1:n, :] .= X
+        end
+        return readpivots!(W, dynamic, pivots[])
     end
     # the tangent of the directions `W` along the record `rec`, its final
     # states stacked on the host, on the record's system, which each
@@ -231,6 +245,23 @@ function polemonodromy(method::Monodromy, psc::CompiledCircuit, circuitdefs, non
         return E
     end
     M = images!(zeros(nd, nd), unit, rec, history)
+    place = zeros(Int, D)
+    place[dynamic] .= 1:nd
+    # The rate of a node without capacitance, whose column of the
+    # capacitance the step reads holds nothing, is read by the step from
+    # the others, so its direction maps to zero, which the formed map holds
+    # but for roundoff on its own coordinate, a subnormal. It is set to that
+    # zero, by the equations' structure rather than by its value: the
+    # balancing, which counts a column's diagonal, would scale such a
+    # column toward the end of the floating point range and carry the
+    # roundoff of a vector's component there into the whole vector.
+    for i in 1:nn
+        all(iszero, view(nonzeros(p.C), nzrange(p.C, i))) && (M[:, place[n + i]] .= 0.0)
+    end
+    # the constraints on the rates and the states at the record's start,
+    # over their places among the dynamic coordinates
+    deflation = deflaterates!(M, rateconstraints(p, first(rec.sol.times)), place[vcat(n .+ (1:nn), 2n .+ (1:nz))])
+    pivots[] = deflation.pivots
     # Every multiplier, and the right and left vectors of the `nev`
     # largest the eigensolve resolves, with their conditions, on the
     # backend (see `mapeigen!`): a multiplier is resolved where it exceeds
@@ -255,7 +286,8 @@ function polemonodromy(method::Monodromy, psc::CompiledCircuit, circuitdefs, non
     # complex pair's once, a line's history resampled at the finer step and
     # read back at the coarser one's columns
     errors = count == 0 ? zeros(0) : rateerrors(values, selected, VR, VL, column, eig.scale,
-        images!(zeros(nd, size(VR, 2)), ch -> VR[:, ch], record(2N), maps(2)), residuals, T; tracking, order = ruleorder)
+        projectrates!(images!(zeros(nd, size(VR, 2)), ch -> VR[:, ch], record(2N), maps(2)), deflation.projector),
+        residuals, T; tracking, order = ruleorder)
     # Each mode over the period, the modes in chunks of at most `chunk`
     # directions, their real and imaginary parts, whose samples hold no
     # more than the map does, the same whatever the threads, which share
@@ -353,6 +385,81 @@ function polemonodromy(method::Monodromy, psc::CompiledCircuit, circuitdefs, non
     return HBStabilityResult(poles[order], residuals[order], errors[order], edges[order], voltage[:, :, order], flux[:, :, order],
         modes, String.(psc.nodenames[2:end]), copy(jb), zeros(Int, count), searches, true,
         eig.unresolved, 0, omega, scale, stateedges[order], BitVector(internal[order]), zeros(Int, count), method)
+end
+
+# The period map `M` with the multipliers of the rate constraints (see
+# `rateconstraints`) deflated, `coords` the places of the rates and the
+# states among its coordinates: their pivots `piv` and `X`, with which a
+# perturbation `u` meets the constraints, `u[piv] -= X u`, and the
+# projector `(; R, Y)` of the constraints which turn with a pump, which
+# takes their multipliers' directions out of an image of the map in finer
+# steps, `u - R Y u`. Each constraint's functional is near a left
+# eigenvector of the map whose multiplier is near one, the residual the
+# rule keeps: one which does not turn is exactly that vector, and the
+# others, within the steps' error of theirs, are taken to them by inverse
+# iteration with the map shifted by `shift` off one, `iterations` times.
+# With one coordinate of each, a pivot, `X = inv(L[piv, :]') L'` for those
+# vectors `L`, and `M - M[:, piv] X` has the pivots' columns at zero and
+# every other eigenvalue of `M`, whose right vectors have no part along
+# `L`; a mode's left vector gains a part along `L` in proportion to its
+# own at the pivots, so the pivots are node rates, chosen by a pivoted QR
+# on the rates' part where it has the rank, `rtol` against its largest, as
+# an ideal block's constraints have: a block's own modes, whose left
+# vectors weigh its states, then keep their conditions. Else they are
+# chosen among the rates and states at their `scales`. The
+# turning ones' right vectors `R` are taken from their pivots' unit
+# vectors by the same iteration, and `Y = inv(L' R) L'` for their `L`: an
+# image in finer steps holds a part along `R` of the steps' error, which a
+# left vector of the deflated map would weigh.
+function deflaterates!(M::Matrix{Float64}, (; Q, scales, turning, rates), coords::Vector{Int};
+        shift::Real = sqrt(eps()), iterations::Integer = 2, rtol::Real = 1e-8)
+    k, nd = size(Q, 2), size(M, 1)
+    L = zeros(nd, k)
+    L[coords, :] .= scales .* Q
+    turn = k - turning + 1:k
+    F = turning == 0 ? nothing : lu!(M - (1 + shift)*I)
+    if !isnothing(F)
+        Lt = L[:, turn]
+        for _ in 1:iterations
+            ldiv!(transpose(F), Lt)
+            Lt ./= maximum(abs, Lt; dims = 1)
+        end
+        L[:, turn] .= Lt
+    end
+    onrates = k == 0 || k > rates ? nothing : qr(Matrix(transpose(L[coords[1:rates], :])), ColumnNorm())
+    order = k == 0 ? Int[] : !isnothing(onrates) && abs(onrates.R[k, k]) > rtol*abs(onrates.R[1, 1]) ?
+        onrates.p[1:k] : qr(Matrix(transpose(L[coords, :] ./ scales)), ColumnNorm()).p[1:k]
+    piv = coords[order]
+    X = k == 0 ? zeros(0, nd) : transpose(L[piv, :]) \ transpose(L)
+    k == 0 || (M .-= M[:, piv]*X)
+    R = zeros(nd, turning)
+    for (j, i) in enumerate(piv[turn])
+        R[i, j] = 1.0
+    end
+    if !isnothing(F)
+        for _ in 1:iterations
+            ldiv!(F, R)
+            R ./= maximum(abs, R; dims = 1)
+        end
+    end
+    Y = turning == 0 ? zeros(0, nd) : (transpose(L[:, turn])*R) \ transpose(L[:, turn])
+    return (; pivots = (; piv, X), projector = (; R, Y))
+end
+
+# the directions `W` with the pivots of `deflaterates!` read from the
+# other coordinates, the coordinates being the rows `rows` of `W`
+function readpivots!(W::Matrix{Float64}, rows::Vector{Int}, (; piv, X))
+    isempty(piv) && return W
+    W[rows[piv], :] .-= X*W[rows, :]
+    return W
+end
+
+# the images `W` of the map in finer steps with the directions of the
+# turning constraints' multipliers taken out (see `deflaterates!`)
+function projectrates!(W::Matrix{Float64}, (; R, Y))
+    size(R, 2) == 0 && return W
+    W .-= R*(Y*W)
+    return W
 end
 
 # The error of the steps in each of the period map's selected rates (see

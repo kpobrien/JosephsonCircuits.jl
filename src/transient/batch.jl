@@ -237,8 +237,8 @@ function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, co
                 sys.factorization.kwargs...)
         else
             copyto!(bf.factors[c].nzval, view(nzval, :, chunk))
-            _cudss_sweeprefactorize!(bf.factors[c])
         end
+        _cudss_sweeprefactorize!(bf.factors[c])
     end
     return bf
 end
@@ -442,8 +442,8 @@ function stagefactor!(sf::StageFactor, sys::TransientSystem, phi, weights)
                 sys.factorization.kwargs...)
         else
             copyto!(sf.factors[c].nzval, view(sf.values, :, chunk))
-            _cudss_sweeprefactorize!(sf.factors[c])
         end
+        _cudss_sweeprefactorize!(sf.factors[c])
     end
     return sf
 end
@@ -3241,22 +3241,6 @@ function advance!(st::GaussStepper, tprev, t, step)
     return st
 end
 
-# The conditions each task of a host batch steps. The conditions of a
-# batch are independent of one another, so a host splits them across the
-# threads of the session and steps the chunks at once: the whole step
-# parallelizes that way, not only the assembly, the factorization and the
-# solve, and the arrays of the batch are filled in place through views, so
-# nothing is copied to put the batch back together. A device keeps the one
-# chunk it has always had: its batch is already the parallelism, and
-# driving one device from several tasks at once is not how the package
-# uses it.
-function batchchunks(backend, N::Integer)
-    (backend isa CPU && N > 1) || return [1:N]
-    nc = min(Base.Threads.nthreads(), N)
-    nc > 1 || return [1:N]
-    return [round(Int, (k - 1)*N/nc) + 1:round(Int, k*N/nc) for k in 1:nc]
-end
-
 # The arrays a batch of `N` conditions fills, allocated before the
 # conditions are split. Every one carries the condition last, so the
 # arrays of a chunk are views along that axis and the batch's solution is
@@ -3484,70 +3468,6 @@ end
 chunkinitial(init, ch) = (; x0 = init.x0[:, ch], v0 = init.v0[:, ch], w0 = init.w0[:, ch],
     tailh = init.tailh[:, :, ch], z0 = init.z0[:, ch])
 
-# the error the chunks' tasks met, out of the failure of the tasks the
-# threaded batch reports it as: the failed steps of the chunks as the
-# first of them, with the conditions of every chunk which failed there,
-# or else the first other error
-function chunkerror(err::CompositeException)
-    isempty(err.exceptions) && return err
-    errs = [e for e in (chunkerror(e) for e in err.exceptions) if !(e isa ChunkAborted)]
-    isempty(errs) && return err
-    all(e -> e isa TransientStepError, errs) || return first(e for e in errs if !(e isa TransientStepError))
-    step = minimum(e -> e.step, errs)
-    at = [e for e in errs if e.step == step]
-    return TransientStepError(step, first(at).time, sort!(reduce(vcat, [e.conditions for e in at])), first(at).cause)
-end
-chunkerror(err::TaskFailedException) = chunkerror(err.task.result)
-chunkerror(err) = err
-
-# The chunks of one `runchunks` share a flag, the step past which none
-# goes on, kept in each chunk's task storage so that the stepping loops
-# read it without an argument (`checkchunks`). A chunk whose step fails
-# lowers it to that step: the others step on up to it, where a failure
-# of theirs would still be the first, and stop there rather than at the
-# end, so the error is the one the whole batch would meet. Any other
-# error lowers it to zero, and a chunk stopped by it throws
-# `ChunkAborted`, which the chunks' error leaves out.
-struct ChunkAborted <: Exception end
-const CHUNKFLAG = :transientchunkflag
-
-# the stop of a chunk at a step past the flag its task holds, if it holds
-# one; a step counts forward in a solve and a tangent and backward in an
-# adjoint, whose errors all lower the flag to zero
-function checkchunks(step::Integer)
-    flag = get(task_local_storage(), CHUNKFLAG, nothing)
-    flag isa Threads.Atomic{Int} && step > flag[] && throw(ChunkAborted())
-    return nothing
-end
-
-# `f(k, chunk)` for every chunk of conditions, returned as a vector: on
-# the calling task for one chunk, and otherwise each chunk on a task of
-# its own across the threads of the session, which stop after a failure
-# as the flag above says, a failure thrown as the chunks' error (see
-# `chunkerror`). `f` is called once a chunk, and compiled for its own
-# type; this is compiled once whatever closure it is given.
-function runchunks(@nospecialize(f), chunks)
-    length(chunks) == 1 && return Any[f(1, only(chunks))]
-    each = Vector{Any}(undef, length(chunks))
-    flag = Threads.Atomic{Int}(typemax(Int))
-    try
-        Base.Threads.@sync for (k, ch) in enumerate(chunks)
-            Base.Threads.@spawn begin
-                task_local_storage(CHUNKFLAG, flag)
-                try
-                    each[k] = f(k, ch)
-                catch err
-                    err isa ChunkAborted || Threads.atomic_min!(flag, err isa TransientStepError ? err.step : 0)
-                    rethrow()
-                end
-            end
-        end
-    catch err
-        throw(chunkerror(err))
-    end
-    return each
-end
-
 # One chunk of a batch stepped along `times` into the arrays `out`, on
 # the factorizations `bf`, from the initial arrays `init` of its
 # conditions, whose indices in the batch are `conditions`: every step
@@ -3693,27 +3613,7 @@ function responsewindows(sol::TransientBatchSolution, sys::TransientSystem, forw
     nt = length(sol.times)
     pr = sys.projection
     npj = isnothing(pr) ? 0 : length(pr.pj)
-    if !isnothing(sol.phases)
-        phases, endphases = sol.phases, sol.endphases
-        phases! = (buffer, k) -> begin
-            view(buffer, :, :, 1) .= view(phases, :, 1, k + 1, :)
-            view(buffer, :, :, 2) .= view(phases, :, 2, k + 1, :)
-            nothing
-        end
-        endphases! = (buffer, k) -> (npj > 0 && copyto!(buffer, view(endphases, :, k, :)); nothing)
-        endrates = sol.endrates
-        endrates! = (buffer, k) -> (npj > 0 && copyto!(buffer, view(endrates, :, k, :)); nothing)
-        # the states and the stage increments of the record, when asked for
-        flux, rate, stages = sol.flux, sol.rate, sol.stages
-        withstates && isnothing(stages) && throw(ArgumentError("the record holds no states; solve with record = :states or :checkpoints."))
-        state! = !withstates ? nothing : (x, v, k) -> (copyto!(x, view(flux, :, k, :)); copyto!(v, view(rate, :, k, :)); nothing)
-        stages! = !withstates ? nothing : (buffer, k) -> begin
-            view(buffer, :, :, 1) .= view(stages, :, 1, k + 1, :)
-            view(buffer, :, :, 2) .= view(stages, :, 2, k + 1, :)
-            nothing
-        end
-        return [ResponseWindow(1:nt - 1, phases!, endphases!, endrates!, nothing, state!, stages!)]
-    end
+    isnothing(sol.phases) || return [recordwindow(sol, npj, withstates)]
     cps = sol.checkpoints
     K, nc = cps.every, size(cps.flux, 2)
     N = length(sol.problems)
@@ -3823,6 +3723,30 @@ function responsewindows(sol::TransientBatchSolution, sys::TransientSystem, forw
         ResponseWindow(kstart:kend, phases!, endphases!, endrates!, replay, state!, stages!)
     end
     return forward ? windows : reverse(windows)
+end
+
+# The one window of a phase record, every step, reading the record: its
+# phases, the phases and the rates across the `npj` projected junctions at
+# the steps' ends, and with `withstates` its states and stage increments.
+function recordwindow(sol::TransientBatchSolution, npj::Int, withstates::Bool)
+    phases, endphases, endrates = sol.phases, sol.endphases, sol.endrates
+    phases! = (buffer, k) -> begin
+        view(buffer, :, :, 1) .= view(phases, :, 1, k + 1, :)
+        view(buffer, :, :, 2) .= view(phases, :, 2, k + 1, :)
+        nothing
+    end
+    endphases! = (buffer, k) -> (npj > 0 && copyto!(buffer, view(endphases, :, k, :)); nothing)
+    endrates! = (buffer, k) -> (npj > 0 && copyto!(buffer, view(endrates, :, k, :)); nothing)
+    # the states and the stage increments of the record, when asked for
+    flux, rate, stages = sol.flux, sol.rate, sol.stages
+    withstates && isnothing(stages) && throw(ArgumentError("the record holds no states; solve with record = :states or :checkpoints."))
+    state! = !withstates ? nothing : (x, v, k) -> (copyto!(x, view(flux, :, k, :)); copyto!(v, view(rate, :, k, :)); nothing)
+    stages! = !withstates ? nothing : (buffer, k) -> begin
+        view(buffer, :, :, 1) .= view(stages, :, 1, k + 1, :)
+        view(buffer, :, :, 2) .= view(stages, :, 2, k + 1, :)
+        nothing
+    end
+    return ResponseWindow(1:length(sol.times) - 1, phases!, endphases!, endrates!, nothing, state!, stages!)
 end
 
 # The stepper a record of checkpoints is replayed on: the batch's

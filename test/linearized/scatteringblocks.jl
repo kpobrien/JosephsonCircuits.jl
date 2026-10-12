@@ -625,12 +625,13 @@ end
 
     # the circuit must actually be non-reciprocal and must actually
     # need the adjoint, or this tests nothing it is here for
-    arrays = JosephsonCircuits.LinearizedArrays(; requestS = true,
-        requestSnoise = false, requestSsensitivity = false,
-        requestQE = true, requestCM = true, requestnodeflux = false,
-        requestnodefluxadjoint = false, requestvoltage = false,
-        requestvoltageadjoint = false, Nports = 2,
-        Nmodes = d.Nmodes,
+    arrays = JosephsonCircuits.LinearizedArrays(
+        JosephsonCircuits.LinearizedRequests(; S = true, Snoise = false,
+            Cnoise = false, Vout = false, Ssensitivity = false, QE = true,
+            CM = true, nbar = false, nodeflux = false,
+            nodefluxadjoint = false, voltage = false,
+            voltageadjoint = false);
+        Nports = 2, Nmodes = d.Nmodes,
         Nnoisechannels = length(d.noiseportimpedanceindices),
         Ncomponents = 0, Nnodes = d.Nnodes,
         Nfrequencies = length(wsweep))

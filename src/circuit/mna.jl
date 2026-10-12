@@ -24,9 +24,9 @@ false
 """
 function ismnaresistance(value)
     if checkissymbolic(value)
-        # symbolic values, such as frequency dependent resistances, are not
-        # promoted; `Symbolics.Num` is a subtype of `Real`, so this test must
-        # come first
+        # a symbolic value is not promoted; `Symbolics.Num` is a subtype of
+        # `Real`, so this test must come first. Nor is a frequency dependent
+        # one, which is neither real nor complex.
         return false
     elseif value isa Real
         return isfinite(value) && !iszero(value)

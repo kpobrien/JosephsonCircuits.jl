@@ -55,9 +55,9 @@ struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TNP,TVC,TVR,TAC,
     wmodesm::TWm
     wmodes2m::TWm
     # the frequency dependent linear terms collapsed into a single matrix,
-    # K = invLnm + im*Gnm*wmodesm - Cnm*wmodes2m. The mode frequencies are
-    # fixed for the lifetime of the system, so this is formed once here
-    # rather than at every residual and Jacobian-vector product. The
+    # K = invLnm + im*Gnm*wmodesm - Cnm*wmodes2m. The mode frequencies move
+    # only between solves, when the system is rebound, so this is formed
+    # there rather than at every residual and Jacobian-vector product. The
     # individual matrices are retained because the Jacobian assembly plans
     # scatter them separately, with the current frequencies, at assembly
     # time.
@@ -177,9 +177,9 @@ function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
     # type; the assembly itself runs on the backend.
     TF = real(eltype(phimatrix))
     # collapse the frequency dependent linear terms into a single matrix. the
-    # mode frequencies do not change for the lifetime of the system, so the
-    # three sparse products and the two diagonal scalings are done once here
-    # instead of at every evaluation.
+    # mode frequencies move only between solves, at a rebind, so the three
+    # sparse products and the two diagonal scalings are done here and at
+    # each rebind instead of at every evaluation.
     Knm = linearterm(invLnm, Gnm, Cnm, wmodesm, wmodes2m, TF)
     # the index maps of the two linear maps which surround the pointwise time
     # domain nonlinearity, built once here. with realbackward = false the real
@@ -232,7 +232,9 @@ The same system at new component values: the linear term matrices, the
 source, the junction inductances, the coefficients of the junctions'
 current-phase relations and the scale are replaced by the new ones, in
 place where the arrays live and by a new struct sharing them where a
-scalar does. The transforms, the index maps, the kernels and every
+scalar does. The mode frequencies are read from the diagonals the system
+holds, which a solve at other tone frequencies rewrites in place before
+the rebind (see [`HBReuse`](@ref)). The transforms, the index maps, the kernels and every
 workspace stay, and the values are written through `maps`, the
 [`ValueMaps`](@ref) of the system, so what it allocates is the two
 temporaries of the source vector, the junction length vectors of the

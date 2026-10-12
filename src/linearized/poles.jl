@@ -566,7 +566,7 @@ function hbpolesystem(psc::CompiledCircuit, circuitdefs, nonlinear,
     # argument is one, so multiply the modulation after construction.
     lsys = HBLinearizedSystem(modulation.Amatrixindices, nm.Ljb, R,
         m, psc.topology.Nbranches, modulation.phimatrix, K, G, C,
-        K, G, C, false, M, modulation.wpumpmodes)
+        nothing, M, modulation.wpumpmodes)
     K = copy(lsys.Asparse)
     K.nzval .*= Lscale
     K += lsys.invLnm + M

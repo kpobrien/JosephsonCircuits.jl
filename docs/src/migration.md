@@ -36,9 +36,9 @@ using JosephsonCircuits, Symbolics
 @variables Lj Cc Cj
 ```
 
-or write the values without it. A symbol names a parameter, given a
-value by the definitions passed to the analysis, and
-`JosephsonCircuits.@params` declares names to combine in expressions:
+or write the values without it. A symbol names a value, which the
+definitions passed to the analysis give; a value derived from others is
+computed in Julia and given as the number it comes to:
 
 ```@example migration
 using JosephsonCircuits
@@ -54,8 +54,11 @@ sol = hblinsolve(ws, circuit, defs)
 nothing # hide
 ```
 
-[`symbolicmatrices`](@ref) of a circuit whose values are symbols carries
-the symbols in its matrices, with or without Symbolics.
+[`symbolicmatrices`](@ref), the expressions of a netlist file read by
+`import_netlist` and the symbolic frequency variable `symfreqvar` compute
+with Symbolics, which is loaded for them, as v0.5.4 had it loaded;
+`symbolicmatrices` writes a value given as a symbol as the Symbolics
+variable of that name.
 
 ## Tuple netlists and port terminations
 
@@ -149,9 +152,8 @@ nothing # hide
 ```
 
 A closure is evaluated at the magnitude of a mode's frequency, and a
-negative frequency takes the complex conjugate, so
-`FrequencyDependent(identity)` is the magnitude of the angular frequency.
-A frequency-dependent value combines with parameter expressions.
+negative frequency takes the complex conjugate. The closure is the whole
+value: a value derived from others is computed inside it.
 
 ## Solvers
 
@@ -273,6 +275,18 @@ warning.
   frequency axis whatever the vector's length.
 - `connectS` takes the arrays `solveS` takes, `KeyedArray`s included, and
   a covariance of an array type other than the networks'.
+- `connectS_initialize` returns the plan of the merges and the networks'
+  arrays, `(plan, scattering parameters, noise covariances)`, which
+  `connectS!` takes, where v0.5.4 returned the connection graph with its
+  lists of connections, weights and ports, and the arrays;
+  `connectS!(connectS_initialize(networks, connections)...)` is called as
+  before.
+- `connectS` and `solveS` refuse a network given with other than one port
+  name per port, which v0.5.4 took, naming the wrong ports.
+- `connectS` merges first the two networks whose merge leaves the fewest
+  ports, so the ports of a network it returns may come in another order
+  than in v0.5.4, and its results differ at rounding; find a port by its
+  name in `ports`.
 
 ## Other deprecations and removals
 

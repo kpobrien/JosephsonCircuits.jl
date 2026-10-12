@@ -1,12 +1,11 @@
 """
     JosephsonCircuitsSymbolicsExt
 
-Symbolics.jl support, loaded with `using Symbolics`.
-
-The numeric path of the package works on `CircuitValue`, its own
-dependency free expression type, so Symbolics is needed only to accept
-component values written as `Num` or `BasicSymbolic` expressions, by
-substituting the definitions into them directly.
+Symbolics.jl support, loaded with `using Symbolics`: component values
+written as `Num` or `BasicSymbolic` expressions, with the definitions of
+their variables substituted; the matrices of a circuit as expressions
+(`symbolicmatrices`); and the expressions of a netlist file
+(`import_netlist`).
 """
 module JosephsonCircuitsSymbolicsExt
 
@@ -19,59 +18,26 @@ const SymAny = Union{Num,SymbolicUtils.BasicSymbolic}
 
 # === methods of the core's value handling functions for symbolic values ===
 
-# Substitution keeps Symbolics' partial substitution semantics rather than
-# lowering to a `CircuitValue` first: a variable the definitions do not
-# give stays in the value, for the check of the values to name. Each
-# variable is looked up under whichever key names it, its `Num`, its
-# symbol, its string or its parameter object, as a `CircuitValue` is.
+# A symbolic value at the definitions. A bare variable is a name, and is
+# its definition whatever that is, as a symbol is; an expression has the
+# definitions of its variables which are numbers substituted. A variable
+# the definitions do not give stays in the value, for the check of the
+# values to name. Each variable is looked up under whichever key names it,
+# its own, its symbol or its string.
 function JC.valuetonumber(v::SymAny, circuitdefs)
     x = Symbolics.value(v)
     x isa SymbolicUtils.BasicSymbolic || return x
-    return JC.resolvevalue(x, JC.definitionsbyname(circuitdefs), nothing,
-        circuitdefs)
-end
-
-# A value of a table whose definitions are gathered by name once for the
-# whole table (see `componentvaluestonumber`), with the numbers among them
-# in `d` (or `nothing`, for them to be gathered when needed): only the
-# value's own variables are looked up. A bare variable is a name, and
-# resolves to its definition whatever that is, as a bare parameter does;
-# an expression substitutes the definitions of its variables.
-function JC.resolvevalue(v::SymAny, byname, d, circuitdefs)
-    x = Symbolics.value(v)
-    x isa SymbolicUtils.BasicSymbolic || return x
+    byname = JC.definitionsbyname(circuitdefs)
     if SymbolicUtils.issym(x)
-        def = get(byname, Symbolics.tosymbol(x; escape = false), nothing)
-        (isnothing(def) || substitutable(def)) || return JC.resolvedefinition(
-            def, isnothing(d) ? JC.normalizedefinitions(byname) : d)
+        def = get(byname, JC.definitionname(x), x)
+        return def isa SymAny ? Symbolics.value(def) : def
     end
-    return Symbolics.value(Symbolics.substitute(x,
-        symbolicdefinitions(x, byname); fold = Val(true)))
-end
-
-# a definition Symbolics can substitute for a variable: a number, or a
-# symbolic expression
-substitutable(def) = def isa Number || def isa SymAny
-
-# The definitions of the variables of `v` which can be substituted into
-# it, keyed by the variables. A definition which is itself an expression
-# has the definitions of its own variables substituted once, when `nested`,
-# so that a parameter may be defined in terms of others the definitions
-# give as numbers. A variable defined as anything else (a frequency
-# dependent value) stays in the value, for the check of the values to name.
-function symbolicdefinitions(v, byname, nested::Bool = true)
     d = Dict{Any,Any}()
-    for variable in Symbolics.get_variables(v)
-        def = get(byname, Symbolics.tosymbol(variable; escape = false), nothing)
-        substitutable(def) || continue
-        if JC.checkissymbolic(def)
-            nested || continue
-            def = Symbolics.substitute(def, symbolicdefinitions(def, byname,
-                false); fold = Val(true))
-        end
-        d[variable] = def
+    for variable in Symbolics.get_variables(x)
+        def = get(byname, JC.definitionname(variable), nothing)
+        def isa Number && (d[variable] = def)
     end
-    return d
+    return Symbolics.value(Symbolics.substitute(x, d; fold = Val(true)))
 end
 
 # the port number of a deprecated tuple netlist entry (circuit/legacy.jl)
@@ -90,21 +56,19 @@ JC.checkissymbolic(a::Num) = !(Symbolics.value(a) isa Number)
 JC.checkissymbolic(a::SymbolicUtils.BasicSymbolic) = true
 JC.circuitvariables(a::SymAny) = Symbolics.get_variables(a)
 
-# the design sensitivities: a `Num` key of the definitions names the
-# parameter, and the derivative of a `Num` value with respect to the
-# parameter of that name is Symbolics' own, evaluated at the definitions
+# a `Num` variable names the parameter of its symbol, as a key of the
+# definitions and as a component value
 JC.definitionname(k::SymAny) = Symbolics.tosymbol(k; escape = false)
-function JC.designderivative(v::SymAny, name::Symbol, definitions)
-    # the variables are iterated rather than indexed: `get_variables` gives
-    # an ordered set in recent versions of Symbolics and a vector in older
-    # ones, and only iteration is common to the two
-    for variable in Symbolics.get_variables(v)
-        Symbolics.tosymbol(variable; escape = false) === name || continue
-        d = JC.valuetonumber(Symbolics.derivative(v, variable), definitions)
-        d isa Number || throw(ArgumentError(lazy"the derivative of the value $(v) with respect to $(name) is $(d) at these definitions, which is not a number; design sensitivities need every parameter defined."))
-        return ComplexF64(d)
-    end
-    return zero(ComplexF64)
-end
+
+# the variable of a name, for `symbolicmatrices`
+variable(name::Symbol) = Symbolics.variable(name)
+
+# A value of a netlist file written as an expression, as Symbolics reads
+# it (`import_netlist`): the operators and the functions and constants
+# named here are evaluated, and any other name is a variable, so a netlist
+# runs no code of its own.
+const netlistnames = Dict{Symbol,Any}(:im => im, :pi => pi, :inv => inv,
+    :conj => conj, :real => real, :imag => imag)
+netlistvalue(e) = Symbolics.parse_expr_to_symbolic(e, netlistnames)
 
 end # module

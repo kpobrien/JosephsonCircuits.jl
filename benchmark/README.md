@@ -24,10 +24,20 @@ julia --startup-file=no --project=. benchmark/circuit-preparation.jl main
   pump on a long line, and a batch of four pumped transients. Each row
   ends with whether the solve converged or what it reached.
 - `latency.jl`: the load time, the first solves of a JPA in frequency and
-  in time and of a two tone JTWPA, their compile times, and the number of
-  methods the package defines and of method instances each first solve
-  compiled. With `--precompile` it first builds the precompiled image and
-  times that too.
+  in time and of a two tone JTWPA, and the JPA's sweep as a session writes
+  it (from a closure, with a keyword of another type than the default's,
+  over a view of frequencies, and through a cache over some of its
+  parameters), their compile times, and the number of methods the package
+  defines and of method instances each first solve compiled. The cases
+  named after the label run in that order, every one by default; a case
+  alone in its process is its own first call, where after others it reuses
+  what they compiled. With `--precompile` it first builds the precompiled
+  image and times that too. The case `firstdesign`, run only when named,
+  times the load of ForwardDiff, the first design sensitivity of the JPA
+  through its extension and a warm repeat; it needs an environment which
+  holds ForwardDiff beside the package (a project whose `[sources]` points
+  `JosephsonCircuits` at the checkout), and its rows depend on whether the
+  package was loaded with its precompile workload.
 
 `--smoke` runs every case at a small size with few samples, and does not
 precompile. Nothing it prints is a measurement; it is what
@@ -38,4 +48,11 @@ Compare two revisions by running the same script in a fresh process for
 each, with one Julia thread and one BLAS thread, from the same depot, and
 take several samples: the single-shot figures are noisy, the allocation
 counts are not. `latency.jl` in particular needs a fresh process of its
-own, since what it measures is what that process compiles.
+own, since what it measures is what that process compiles, and a fresh
+process for each case to compare the first calls one by one:
+
+```sh
+for case in firstsweep firsttransient firstline firstclosure firstkeyword firstview firstcache; do
+    julia --startup-file=no --project=. benchmark/latency.jl main $case
+done
+```

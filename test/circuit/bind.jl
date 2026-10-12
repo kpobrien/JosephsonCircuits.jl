@@ -303,15 +303,11 @@ end
     end
 end
 
-@testset "definitions are normalized once and may hold non numbers" begin
-    JosephsonCircuits.@params La Lb
-    vals = JosephsonCircuits.componentvaluestonumber(
-        Any[La, La + Lb, 3.0e-12, :Lc],
-        Dict(La => 1e-12, Lb => 2e-12, :Lc => 4e-12, :note => "not a value"))
-    @test vals == [1e-12, 3e-12, 3e-12, 4e-12]
-    d = JosephsonCircuits.normalizedefinitions(JosephsonCircuits.definitionsbyname(
-        Dict("La" => 1, :Lb => 2.0im, :note => "text")))
-    @test d == Dict(:La => 1.0 + 0im, :Lb => 2.0im)
+@testset "definitions may hold non numbers" begin
+    # a definition no value names is left alone, whatever it is
+    vals = JosephsonCircuits.componentvaluestonumber(Any[:La, 3.0e-12, "Lc"],
+        Dict(:La => 1e-12, "Lc" => 4e-12, :note => "not a value"))
+    @test vals == [1e-12, 3e-12, 4e-12]
 end
 
 @testset "the sign of the mutual stamps" begin
@@ -419,8 +415,4 @@ end
         work = JC.CircuitMatrixWorkspace(plan,nm)
         @test JC.assemblematrices!(nm,plan,b,work).invLnm == ref
     end
-    JosephsonCircuits.@params L
-    cc = compile(Circuit([(:l,1,0,Inductor(L))]))
-    nm = numericmatrices(cc, Dict{Symbol,Any}())
-    @test JC.componentvaluestonumber(nm.invLnm.nzval,Dict(:L=>2.)) == [0.5]
 end

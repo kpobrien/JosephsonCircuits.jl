@@ -1,7 +1,6 @@
 # =====================================================================
 # A reusable harmonic balance solver for parameter sweeps and optimizer
-# loops, over a typed circuit whose values are written in terms of
-# parameters.
+# loops, over a typed circuit whose values are written as names.
 #
 # The expensive, reusable part of a solve is fixed by the topology and the
 # harmonic selection: the compiled circuit, the mode grid and the Fourier
@@ -47,8 +46,16 @@ mutable struct HBCache{N,K,P}
     frequencies::Frequencies{N}
     indices::FourierIndices{N}
     Nmodes::Int
+    # the tone frequencies of the last point (at the definitions before
+    # the first), and as given when one is a name, resolved anew at each
+    # point (`nothing` when every one is a number)
     w::NTuple{N,Float64}
+    givenw::Union{Nothing,Tuple}
+    # the sources of the last point (at the definitions before the first),
+    # and the sources as given when a current is a name, resolved anew at
+    # each point (`nothing` when every current is a number)
     sources::Vector{SourceTuple{N}}
+    givensources::Union{Nothing,Vector{Any}}
     kwargs::K
     # the node fluxes of the last converged point, the warm start, and
     # whether the last solve converged
@@ -70,15 +77,20 @@ end
         frequencywindow = (0, Inf), kwargs...)
 
 A reusable nonlinear solver over a typed [`Circuit`](@ref), or the
-[`CompiledCircuit`](@ref) of one, whose values are written in terms of
-parameters (symbols, or the parameters of [`@params`](@ref)), with
-`circuitdefs` giving every parameter a number. The cache keeps a copy of
+[`CompiledCircuit`](@ref) of one, whose values are written as names
+(symbols), `circuitdefs` giving each a number. The cache keeps a copy of
 `circuitdefs`, so editing the dictionary afterwards does not move it.
 [`hbsolve!`](@ref) takes the parameters to move as a named tuple keyed by
 their names, reads the rest from the definitions, and evaluates the values
 at the point; a name the definitions do not hold is refused, and so is a
 value which is not a number at the definitions (a frequency dependent
-one).
+one). The current of a source and a tone frequency may be names as
+well, and move with their definitions, so a sweep of a pump current, of
+a direct current bias or of a pump frequency reuses the cache as a sweep
+of a component value does. A tone frequency written as a name takes the
+default `frequencywindow`, since a window would retain other modes as the
+frequency moves, and the frequency of no mode
+may change its sign along the sweep (see [`HBReuse`](@ref)).
 
 The harmonic selection keywords match [`hbnlsolve`](@ref); the remaining
 keywords are stored and forwarded to every solve as keywords of
@@ -105,9 +117,22 @@ for Lj in (900:25:1100)*1e-12
     sol = hbsolve!(cache, (Lj = Lj,))
     cache.converged || break
 end
+# the pump current and frequency as parameters: the current swept upward
+# from the definitions, then the frequency at the last current
+cache = hbcache((:wp,), (8,),
+    [(mode=(1,), port=1, current=:Ip)], circuit,
+    Dict(:Lj => 1000e-12, :Cc => 100e-15, :Ip => 1e-9, :wp => 2*pi*4.75e9))
+for Ip in (1:10)*1e-9
+    sol = hbsolve!(cache, (Ip = Ip,))
+    cache.converged || break
+end
+for wp in 2*pi*(4.70:0.01:4.80)*1e9
+    sol = hbsolve!(cache, (wp = wp,))
+    cache.converged || break
+end
 ```
 """
-function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
+function hbcache(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
         circuit::CompilableCircuit,
         circuitdefs::AbstractDict = Dict{Symbol,Any}();
         Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
@@ -119,9 +144,16 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     definitions = Dict{Any,Any}(circuitdefs)
     # every value a number at the definitions, or refused naming it
     cachevalues(compiled, definitions)
-    # the inputs in their canonical forms, once, for every solve
-    w = tonefrequencies(w)
-    sources = sourcetable(sources, w)
+    # the inputs in their canonical forms, once, for every solve; the
+    # sources at the definitions, which refuses a current they do not make
+    # a number, and as given when a current moves with the parameters
+    givenw = parametrictones(w) ? w : nothing
+    isnothing(givenw) || frequencywindow == (0, Inf) || throw(ArgumentError(
+        lazy"a tone frequency of $(w) is written as a name, and moves the modes `frequencywindow` = $(frequencywindow) retains; give the default window."))
+    w = tonefrequencies(w, definitions)
+    given = sources
+    sources = sourcetable(given, w, definitions)
+    givensources = parametricsources(given) ? collect(Any, given) : nothing
     frequencies, indices = pumpmodeset(w, Nharmonics, Nevaluationharmonics;
         dc = dc, odd = odd, even = even, maxintermodorder = maxintermodorder,
         frequencywindow = frequencywindow)
@@ -131,21 +163,33 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         # as a named tuple: a keyword splat of mixed value types is a
         # `Pairs{Symbol,Any}`, and splatting that into every solve hands the
         # solver keywords of unknown type
-        frequencies, indices, Nmodes, w, sources, NamedTuple(kwargs),
-        nothing, false, 0, HBReuse(), nothing, nothing)
+        frequencies, indices, Nmodes, w, givenw, sources, givensources,
+        NamedTuple(kwargs), nothing, false, 0, HBReuse(), nothing, nothing)
 end
 
 # The values of the circuit at its definitions, every one a number, as one
-# real or complex vector, which is how the assembly takes them.
+# real or complex vector, which is how the assembly takes them. The table
+# holds them untyped, so each is stored in a branch on its type: a value
+# of a common type converts without a dynamic call, which a point would
+# otherwise make once per component.
 function cachevalues(compiled::CompiledCircuit, definitions)
     vvn = numericvalues(compiled, definitions)
-    vals = Complex{Float64}[v for v in vvn]
+    vals = Vector{Complex{Float64}}(undef, length(vvn))
+    for (i, v) in enumerate(vvn)
+        if v isa Float64
+            vals[i] = v
+        elseif v isa Complex{Float64}
+            vals[i] = v
+        else
+            vals[i] = v
+        end
+    end
     return all(v -> iszero(imag(v)), vals) ? real.(vals) : vals
 end
 
-# the keys of the definitions under each parameter name: a parameter may
-# be defined under its parameter object, its symbol or its string, and a
-# point moves every key of its name
+# the keys of the definitions under each name: a name may be defined
+# under its symbol, its string or, with the Symbolics extension, its
+# variable, and a point moves every key of its name
 function definitionkeys(definitions::AbstractDict)
     index = Dict{Symbol,Vector{Any}}()
     for key in keys(definitions)
@@ -223,16 +267,6 @@ function checkcachekwargs(kwargs)
     return nothing
 end
 
-"""
-    componentvalues(cache::HBCache, p::NamedTuple)
-
-The component values of the cache's circuit at `p`, in the compiled order:
-the circuit's values at its definitions with the parameters of `p` moved.
-"""
-componentvalues(cache::HBCache, p::NamedTuple) =
-    cachevalues(cache.compiled,
-        definitionsat(cache.definitions, cache.definitionkeys, p))
-
 # whether the matrices `nm` hold the element types the values of `b`
 # assemble to, so that they can be refilled in place
 function refillable(nm::CircuitMatrices, b::BoundCircuit)
@@ -270,14 +304,16 @@ end
     hbsolve!(cache::HBCache, p::NamedTuple; warmstart = true)
 
 Solve the nonlinear harmonic balance problem of `cache` at the design
-parameters `p`, warm starting from the last converged operating point.
+parameters `p`, warm starting from the last converged operating point;
+the parameters move the component values, the source currents and the
+tone frequencies written as their names.
 Returns the [`NonlinearHB`](@ref) solution; `cache.converged` reports
 whether it converged. A name of `p` which the definitions of the
 cache do not hold is an `ArgumentError`.
 
 The compiled circuit and the mode grid are reused, and so are the system
 of the previous solve and what its method solves with, rebound to the new
-component values (see [`HBReuse`](@ref)): under `NewtonKrylov` the
+component values, drive and tone frequencies (see [`HBReuse`](@ref)): under `NewtonKrylov` the
 preconditioner and the Krylov vectors, under `Newton` and `QuasiNewton`
 the assembled Jacobian and its factorization, whose fill reducing ordering
 and symbolic analysis are kept, except for a circuit which injects direct
@@ -305,7 +341,14 @@ retried, and keeps the stored point, unlike
 [`JosephsonCircuits.reset!`](@ref).
 """
 function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
-    vvn = componentvalues(cache, p)
+    definitions = definitionsat(cache.definitions, cache.definitionkeys, p)
+    vvn = cachevalues(cache.compiled, definitions)
+    # the tone frequencies and the drive at the point, when they move with
+    # the parameters; other tone frequencies retune what the cache reuses
+    isnothing(cache.givenw) ||
+        (cache.w = tonefrequencies(cache.givenw, definitions))
+    isnothing(cache.givensources) ||
+        (cache.sources = sourcetable(cache.givensources, cache.w, definitions))
     # only the numbers moved, so the topology, the groups and the sparsity
     # patterns are reused, and the matrices are refilled in the storage of
     # the previous point's when they hold the element types the values

@@ -172,9 +172,9 @@ end
         wpumpmodes = JosephsonCircuits.calcmodefreqs(nonlinear.w,
             signalfreq.modes)
         wmodes1 = 2*pi*5.0e9 .+ wpumpmodes
-        Cnmcopy = JosephsonCircuits.freqsubst(Cnmp, wmodes1)
-        Gnmcopy = JosephsonCircuits.freqsubst(Gnmsub, wmodes1)
-        invLnmcopy = JosephsonCircuits.freqsubst(invLnmp, wmodes1)
+        Cnmcopy = JosephsonCircuits.freqsubst(Cnmp, nothing, 1, wmodes1)
+        Gnmcopy = JosephsonCircuits.freqsubst(Gnmsub, nothing, 2, wmodes1)
+        invLnmcopy = JosephsonCircuits.freqsubst(invLnmp, nothing, 3, wmodes1)
         Asparseref = JosephsonCircuits.spaddkeepzeros(
             JosephsonCircuits.spaddkeepzeros(
                 JosephsonCircuits.spaddkeepzeros(
@@ -185,8 +185,7 @@ end
         # the plan construction, as used by hblinsolve
         lsys = JosephsonCircuits.HBLinearizedSystem(Amatrixindices,
             signalnm.Ljb, Rbnmmna, Nsignalmodes, psc.topology.Nbranches, phimatrix,
-            invLnmcopy, Gnmcopy, Cnmcopy, invLnmp, Gnmsub, Cnmp,
-            false, Amna0, wpumpmodes)
+            invLnmp, Gnmsub, Cnmp, nothing, Amna0, wpumpmodes)
         Asparse = lsys.Asparse
 
         # identical sparsity structure, including stored zeros
@@ -250,7 +249,7 @@ end
 
         # Josephson junctions between pairs of ungrounded nodes exercise all
         # four incidence matrix scatter targets of the direct assembly.
-        JosephsonCircuits.@params Ljx Cg Cjx Rl
+        Ljx, Cg, Cjx, Rl = :Ljx, :Cg, :Cjx, :Rl
         Ncells = 5
         circuit = Any[]
         push!(circuit, ("P1", "1", "0", Port(1; Z0 = Rl)))

@@ -14,7 +14,8 @@ item per (noise port, mode, right hand side).
 
 This is [`calcoutputwaves!`](@ref) with no source current, as the host reads
 the noise ports; the input waves it is divided by come from the source terms
-alone and are computed on the host.
+alone and are computed on the host. `values` holds the value of each noise
+port at each mode, a column per port.
 """
 @kernel function noiseoutputwavekernel!(out, @Const(phin), @Const(node1),
         @Const(node2), @Const(values), @Const(codes), @Const(wmodes),
@@ -26,7 +27,7 @@ alone and are computed on the host.
         i = (q ÷ Nmodes) % Nnoise + 1
         k = q ÷ (Nmodes*Nnoise) + 1
         w = wmodes[j]
-        z = impedance(values[i], codes[i], w)
+        z = impedance(values[j, i], codes[i], w)
         k1 = Int(node1[i]); k2 = Int(node2[i])
         v = if k1 == 1
             -phin[(k2-2)*Nmodes+j, k]
@@ -54,7 +55,12 @@ end
     DeviceNoisePlan
 
 The noise ports of a circuit, on a backend, for
-[`noiseoutputwavekernel!`](@ref).
+[`noiseoutputwavekernel!`](@ref): their nodes, impedance codes, and the
+value of each at each mode, a column per port. A port whose component value
+depends on the frequency is the row of its function in the linearized
+system's table of their values (a `TableRow`): the ports
+`tableports`, of the rows `tablerows`, whose columns of `valueshost` each
+signal frequency fills from the table and sends.
 """
 struct DeviceNoisePlan{VI,VC,VZ,B}
     node1::VI
@@ -64,13 +70,19 @@ struct DeviceNoisePlan{VI,VC,VZ,B}
     nmodes::Int
     nnoise::Int
     backend::B
+    tableports::Vector{Int}
+    tablerows::Vector{Int}
+    valueshost::Matrix{Complex{Float64}}
 end
 
 """
     plandevicenoise(nodeindices, componenttypes, noiseportimpedanceindices,
         noiseportimpedances, Nmodes, backend)
 
-Build a [`DeviceNoisePlan`](@ref) for the noise ports of a circuit.
+Build a [`DeviceNoisePlan`](@ref) for the noise ports of a circuit, whose
+values `noiseportimpedances` are numbers or, where they depend on the
+frequency, rows of the linearized system's table of their functions'
+values.
 """
 function plandevicenoise(nodeindices, componenttypes,
     noiseportimpedanceindices, noiseportimpedances, Nmodes::Integer, backend)
@@ -80,11 +92,22 @@ function plandevicenoise(nodeindices, componenttypes,
     node2 = Int[nodeindices[2, p] for p in noiseportimpedanceindices]
     codes = Int32[impedancecode(componenttypes[p])
         for p in noiseportimpedanceindices]
-    values = Complex{Float64}[convert(Complex{Float64}, z)
-        for z in noiseportimpedances]
+    # a constant value at every mode; one which depends on the frequency is
+    # filled at each signal frequency
+    valueshost = zeros(Complex{Float64}, Nmodes, nn)
+    tableports, tablerows = Int[], Int[]
+    for (i, z) in enumerate(noiseportimpedances)
+        if z isa TableRow
+            push!(tableports, i)
+            push!(tablerows, z.k)
+        else
+            valueshost[:, i] .= convert(Complex{Float64}, z)
+        end
+    end
     return DeviceNoisePlan(tobackend(backend, node1),
-        tobackend(backend, node2), tobackend(backend, values),
-        tobackend(backend, codes), Int(Nmodes), nn, backend)
+        tobackend(backend, node2), tobackend(backend, copy(valueshost)),
+        tobackend(backend, codes), Int(Nmodes), nn, backend, tableports,
+        tablerows, valueshost)
 end
 
 """
@@ -105,9 +128,12 @@ host, and are evaluated through the same [`DeviceProviders`](@ref)
 `providers` the stamps are.
 
 Returned in the form [`hblinsolve_inner!`](@ref) takes as `presolvednoise`:
-called with the frequency index, its input waves and the destination for the
-noise scattering matrix, it returns the [`NoiseReduction`](@ref) the quantum
-efficiency and the commutation relations read.
+called with the frequency index, its input waves, the destination for the
+noise scattering matrix, that for the noise covariance or `nothing`, and the
+table of the values of the frequency dependent functions at the frequency's
+modes (see `providertable`), from which the values of the noise ports which
+depend on the frequency are read, it returns the [`NoiseReduction`](@ref)
+the quantum efficiency and the commutation relations read.
 
 The adjoint solution never leaves the backend, and neither does the noise
 scattering matrix unless `keepmatrix`: on a line with loss spread along it
@@ -165,15 +191,30 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
     # the host copy of the noise scattering matrix, when it is kept
     Snoisehost = keepmatrix ? Matrix{T}(undef, nrows, nrhs) :
         Matrix{T}(undef, 0, 0)
+    # the values of the noise ports at each mode: the plan's, or, when a
+    # port's depends on the frequency, this callback's own, which each
+    # frequency refills
+    tableports = plan.tableports
+    valueshost = isempty(tableports) ? plan.valueshost : copy(plan.valueshost)
+    values = isempty(tableports) ? plan.values :
+        tobackend(backend, copy(valueshost))
 
-    return function(i, inputwave, Snoiseview, Cnoiseview = nothing)
+    return function(i, inputwave, Snoiseview, Cnoiseview = nothing,
+            table = nothing)
         @inbounds for m in eachindex(wmodes)
             wmodes[m] = w[i] + wpumpmodes[m]
         end
         copyto!(wmodesd, wmodes)
+        if !isempty(tableports)
+            @inbounds for (p, k) in zip(tableports, plan.tablerows),
+                    m in 1:plan.nmodes
+                valueshost[m, p] = table[k, m]
+            end
+            copyto!(values, valueshost)
+        end
         if lumpedrows > 0
             noiseoutputwavekernel!(backend, 64)(out, adjointsolution(i),
-                plan.node1, plan.node2, plan.values, plan.codes, wmodesd,
+                plan.node1, plan.node2, values, plan.codes, wmodesd,
                 plan.nmodes, plan.nnoise, nrhs;
                 ndrange = lumpedrows*nrhs)
         end

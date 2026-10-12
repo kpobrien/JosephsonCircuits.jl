@@ -128,8 +128,7 @@ drives through itself from its first terminal to its second: it draws the
 current from the node at its first terminal and delivers it to the node at
 its second, the opposite sense of a port source, which injects its current
 into the port's first (positive) terminal. The value is a number, or a
-parameter or an expression in parameters whose number `circuitdefs`
-supplies.
+name whose number `circuitdefs` supplies.
 
 Harmonic balance drives the zero frequency mode with the constant current,
 so a solve of a circuit holding a nonzero one retains that mode,
@@ -1776,8 +1775,8 @@ compiled once. A block depends on a design parameter through these
 entries alone. A
 derivative is not a scattering matrix and is never passivity checked. The
 block's scattering matrix and its derivatives describe one design point:
-the definitions move the parameters a component value is written in, not
-values a block's data or closure has captured, so a block whose data
+the definitions move the component values written as names, not values
+a block's data or closure has captured, so a block whose data
 depends on a parameter must be restated at each point along with its
 derivatives.
 A Touchstone path is tabulated data: its derivatives are read as a

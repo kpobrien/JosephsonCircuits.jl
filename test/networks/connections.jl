@@ -764,41 +764,6 @@ import StaticArrays
         @test isapprox(out7[2][1],out8[2])
     end
 
-    @testset "make_connection! errors" begin
-        begin
-            networks = [("S1",Complex{Float64}[0.0 1.0;1.0 0.0]),("S2",Complex{Float64}[0.5 0.5;0.5 0.5])];
-            connections = [("S1","S2",1,2)];
-            userinput = ones(Bool,length(networks))
-            scattering_parameter_storage = Dict{Int,typeof(networks[1][2])}()
-            noise_covariance_storage = Dict{Int,typeof(networks[1][2])}()
-            noise = true
-            g, fconnectionlist, fweightlist, ports, scattering_parameters, noise_covariances = JosephsonCircuits.connectS_initialize(networks,connections)
-            # corrupt the vector of ports
-            ports = [[("S1", 1), ("S1", 2)],[("S2", 1), ("S3", 2)]]
-            @test_throws(
-                ArgumentError("""Destination port ("S2", 2) not found in the ports [("S2", 1), ("S3", 2)] of the destination node 2."""),
-                JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, scattering_parameters, noise_covariances,1,1,1,userinput,scattering_parameter_storage,noise_covariance_storage,noise)
-            )
-        end
-
-        begin
-            networks = [("S1",Complex{Float64}[0.0 1.0;1.0 0.0]),("S2",Complex{Float64}[0.5 0.5;0.5 0.5])];
-            connections = [("S1","S2",1,2)];
-            userinput = ones(Bool,length(networks))
-            scattering_parameter_storage = Dict{Int,typeof(networks[1][2])}()
-            noise_covariance_storage = Dict{Int,typeof(networks[1][2])}()
-            noise = true
-            g, fconnectionlist, fweightlist, ports, scattering_parameters, noise_covariances = JosephsonCircuits.connectS_initialize(networks,connections)
-            # corrupt the vector of ports
-            ports = [[("S3", 1), ("S1", 2)],[("S2", 1), ("S2", 2)]]
-            @test_throws(
-                ArgumentError("""Source port ("S1", 1) not found in the ports [("S3", 1), ("S1", 2)] of the source node 1."""),
-                JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, scattering_parameters, noise_covariances,1,1,1,userinput,scattering_parameter_storage,noise_covariance_storage,noise)
-            )
-        end
-
-    end
-
     @testset "connectS_initialize errors" begin
 
         begin
@@ -871,6 +836,14 @@ import StaticArrays
                 ArgumentError("Duplicate port (:S3, 5) in network S2."),
                 JosephsonCircuits.connectS_initialize(networks,connections)
             )
+        end
+
+        # a network given port names has one for each of its ports
+        S = Complex{Float64}[0.0 1.0;1.0 0.0]
+        for names in ([("S1",1),("S1",2),("S1",3)], [("S1",1)])
+            networks = [("S1",S,names),("S2",S)]
+            @test_throws ArgumentError JosephsonCircuits.connectS(networks,[("S1","S2",1,2)])
+            @test_throws ArgumentError JosephsonCircuits.solveS(networks,[("S1","S2",1,2)])
         end
 
     end
@@ -1004,6 +977,60 @@ import StaticArrays
             Ss, Cs = s.S[:, :, f], s.C[:, :, f]
             @test isapprox(Cs, (I - Ss*Ss')/2; atol = 1e-13)
         end
+    end
+
+    @testset "connectS's networks of several sets, and its plan" begin
+        # two sets of joined networks, one of two networks joined twice and
+        # one of a network joined to itself and another, and a network no
+        # connection touches: connectS gives one network for each, the
+        # untouched one as it was given, and solveS the blocks of each
+        passive(n) = stack([0.8 .* (X ./ opnorm(X)) for X in
+            [randn(Complex{Float64}, n, n) for f in 1:3]])
+        networks = [("A", passive(3)), ("B", passive(2)), ("D", passive(2)),
+            ("E", passive(4)), ("F", passive(2))]
+        connections = [[("A", 2), ("B", 1)], [("A", 3), ("B", 2)],
+            [("E", 1), ("E", 2)], [("E", 3), ("F", 1)]]
+        c = JosephsonCircuits.connectS(networks, connections; noise = true)
+        s = JosephsonCircuits.solveS(networks, connections; noise = true)
+        @test c.ports == [[("A", 1)], [("D", 1), ("D", 2)], [("E", 4), ("F", 2)]]
+        @test c.S[2] === networks[3][2]
+        for (S, C, ports) in zip(c.S, c.C, c.ports)
+            i = [findfirst(==(port), s.ports) for port in ports]
+            @test isapprox(S, s.S[i, i, :]) && isapprox(C, s.C[i, i, :])
+        end
+
+        # a plan holds only for networks of the numbers of ports it was
+        # made for
+        init = JosephsonCircuits.connectS_initialize(networks, connections)
+        @test_throws DimensionMismatch JosephsonCircuits.connectS!(init[1],
+            [init[2][1:4]; [passive(3)]], init[3])
+    end
+
+    @testset "connectS merges a ladder along itself, however it is listed" begin
+        # a ladder of 32 cells, two rails of two-ports and a two-port rung
+        # at each inner node, its four rail ends open, its connections
+        # listed one rail after the other: the merges never make a network
+        # of more than six ports, and connectS agrees with solveS, noise
+        # included
+        n = 32
+        passive() = (X = randn(Complex{Float64}, 2, 2);
+            reshape(0.9 .* X ./ opnorm(X), 2, 2, 1))
+        networks = [[("a$i", passive()) for i in 1:n];
+            [("b$i", passive()) for i in 1:n]; [("r$i", passive()) for i in 1:n-1]]
+        connections = [[("$rail$i", 2), ("$rail$(i + 1)", 1), ("r$i", port)]
+            for (rail, port) in (("a", 1), ("b", 2)) for i in 1:n-1]
+        plan = first(JosephsonCircuits.connectS_initialize(networks, connections))
+        sizes = copy(plan.nports)
+        largest = maximum(sizes)
+        for (a, b, k, l) in plan.steps
+            sizes[a] = a == b ? sizes[a] - 2 : sizes[a] + sizes[b] - 2
+            largest = max(largest, sizes[a])
+        end
+        @test largest <= 6
+        c = JosephsonCircuits.connectS(networks, connections; noise = true)
+        s = JosephsonCircuits.solveS(networks, connections; noise = true)
+        i = [findfirst(==(port), s.ports) for port in only(c.ports)]
+        @test only(c.S) ≈ s.S[i, i, :] && only(c.C) ≈ s.C[i, i, :]
     end
 
     @testset "noise and internal waves against a dense solve of every wave" begin

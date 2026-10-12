@@ -14,6 +14,21 @@
 # is a solve's own.
 
 """
+    FrequencyDependentComponents
+
+The capacitors, resistors and inductors of a bound circuit whose values
+are [`FrequencyDependent`](@ref): the distinct functions of their values,
+as `===` tells them apart, in `providers`, and for each group the position
+of each such component in it and the index of its function.
+"""
+struct FrequencyDependentComponents
+    providers::Vector{Any}
+    capacitors::Vector{Tuple{Int,Int}}
+    resistors::Vector{Tuple{Int,Int}}
+    inductors::Vector{Tuple{Int,Int}}
+end
+
+"""
     BoundCircuit
 
 A [`CompiledCircuit`](@ref) with its component values resolved to numbers,
@@ -25,6 +40,12 @@ Each group is a concrete vector in the compiled group order, so
 matrix assembly chooses them, so a lossy capacitance does not make the
 resistances complex.
 
+A component whose value depends on the frequency holds a value in its
+group which leaves it open, a zero capacitance or an infinite resistance
+or inductance, so that the matrices assembled from the groups describe the
+circuit without it; `frequencydependent` records it, and the terms of
+[`FrequencyDependentTerms`](@ref) add it at each mode frequency.
+
 # Fields
 - `circuit`: the [`CompiledCircuit`](@ref).
 - `capacitors`, `resistors`, `inductors`, `junctions`, `mutualinductors`:
@@ -32,6 +53,8 @@ resistances complex.
     inductor's among the junctions. The current sources are read from
     `values`, so they have no group here.
 - `values`: the flat component table, resolved to numbers.
+- `frequencydependent`: the [`FrequencyDependentComponents`](@ref), or
+    `nothing` when no value depends on the frequency.
 """
 struct BoundCircuit{TC,TR,TL,TJ,TK}
     circuit::CompiledCircuit
@@ -41,6 +64,33 @@ struct BoundCircuit{TC,TR,TL,TJ,TK}
     junctions::Vector{TJ}
     mutualinductors::Vector{TK}
     values::Vector          # the flat component table, resolved
+    frequencydependent::Union{Nothing,FrequencyDependentComponents}
+end
+
+# the frequency dependent capacitors, resistors and inductors of the flat
+# value table `values`, or `nothing` when there are none; a frequency
+# dependent junction, mutual coupling or coupled inductor is refused
+function frequencydependentcomponents(c::CompiledCircuit, values)
+    any(v -> v isa FrequencyDependent, values) || return nothing
+    checkfrequencyindependent(c, values)
+    providers = Any[]
+    index = IdDict{Any,Int}()
+    function members(group)
+        out = Tuple{Int,Int}[]
+        for (k, i) in enumerate(group)
+            v = values[i]
+            v isa FrequencyDependent || continue
+            j = get!(index, v.f) do
+                push!(providers, v.f)
+                length(providers)
+            end
+            push!(out, (k, j))
+        end
+        return out
+    end
+    C, R, L = members(c.capacitors), members(c.resistors), members(c.inductors)
+    isempty(providers) && return nothing
+    return FrequencyDependentComponents(providers, C, R, L)
 end
 
 function Base.show(io::IO, b::BoundCircuit)
@@ -58,17 +108,19 @@ end
 # of its values rather than one per way of writing them; every solver
 # method downstream is compiled once per matrix type, and a circuit whose
 # values are real runs on the code compiled for real values whatever
-# table they came in. A group with a value which is not a plain number
-# (symbolic, or a frequency dependent provider) keeps the promotion of the
-# types present and of their inverses; a value which is neither a number
-# nor symbolic (`nothing`, a string, a name defined as a name) is refused
-# there, by the component `names` gives it.
+# table they came in. A frequency dependent value is held as the value
+# which leaves its component open (see `gather`) and adds no type. A group
+# with a symbolic value keeps the promotion of the types present and of
+# their inverses; a value which is neither a number nor symbolic
+# (`nothing`, a vector) is refused there, by the component `names` gives
+# it.
 function grouptype(values, idx, names = eachindex(values))
     isempty(idx) && return Float64
     complex = false
     plain = true
     for i in idx
         v = values[i]
+        v isa FrequencyDependent && continue
         if v isa Complex && plainnumber(real(v))
             complex |= !iszero(imag(v))
         elseif !plainnumber(v)
@@ -80,8 +132,9 @@ function grouptype(values, idx, names = eachindex(values))
     valuetype = Union{}
     for i in idx
         v = values[i]
+        v isa FrequencyDependent && continue
         v isa Number || checkissymbolic(v) || throw(ArgumentError(
-            lazy"The component $(names[i]) has the value $(repr(v)), which is not a number, a parameter or an expression in parameters."))
+            lazy"The component $(names[i]) has the value $(repr(v)), which is not a number, a name or a frequency dependent value."))
         valuetype = promote_type(valuetype, typeof(v))
         # the inverse too: the conductance of a symbolic resistance is a
         # different expression type from the resistance itself
@@ -92,18 +145,22 @@ end
 
 plainnumber(v) = v isa Union{Integer,AbstractFloat,Rational,Irrational}
 
-gather(::Type{T}, values, idx) where {T} = T[values[i] for i in idx]
+# the values of a group, a frequency dependent one as the value which
+# leaves its component open: a zero capacitance, an infinite resistance or
+# inductance
+gather(::Type{T}, values, idx, open) where {T} =
+    T[values[i] isa FrequencyDependent ? open : values[i] for i in idx]
 
 # the mean of the linear and Josephson inductances, zero when the circuit
 # has none. A frequency dependent inductance has no one value and is left
-# out; a group of numbers holds none. An empty group is left out of the sum
-# rather than started from its own zero, so the mean is the sum's own type
-# and a value type with no zero of its own, such as a symbolic expression,
-# is still summed.
+# out. An empty group is left out of the sum rather than started from its
+# own zero, so the mean is the sum's own type and a value type with no
+# zero of its own, such as a symbolic expression, is still summed.
 function inductancemean(b::BoundCircuit)
-    fixed(group) = eltype(group) <: Number ? group :
-        filter(v -> !CircuitValues.hasprovider(v), group)
-    inductors, junctions = fixed(b.inductors), fixed(b.junctions)
+    fd = b.frequencydependent
+    inductors = isnothing(fd) || isempty(fd.inductors) ? b.inductors :
+        b.inductors[setdiff(eachindex(b.inductors), first.(fd.inductors))]
+    junctions = b.junctions
     n = length(inductors) + length(junctions)
     n == 0 && return 0.0
     total = if isempty(junctions)
@@ -113,31 +170,22 @@ function inductancemean(b::BoundCircuit)
     else
         sum(inductors) + sum(junctions)
     end
-    # a group which holds a frequency dependent value holds its numbers as
-    # constant expressions
-    total isa CircuitValues.Constant && (total = total.val)
     return total/n
 end
 
 # The inductance of a junction, a mutual coupling and the inductances it
 # couples are read once, by the nonlinear term and the mutual stamps,
 # rather than at each mode frequency, so none of them may depend on
-# frequency. A group of numbers holds no frequency dependent value and is
-# not looked at.
-function checkfrequencyindependent(b::BoundCircuit)
-    c, values = b.circuit, b.values
-    if !(eltype(b.junctions) <: Number)
-        for i in c.junctions
-            CircuitValues.hasprovider(values[i]) && throw(ArgumentError(
-                lazy"The junction $(c.componentnames[i]) has the frequency dependent value $(values[i]); the inductance of a junction cannot depend on frequency."))
-        end
+# frequency.
+function checkfrequencyindependent(c::CompiledCircuit, values)
+    for i in c.junctions
+        values[i] isa FrequencyDependent && throw(ArgumentError(
+            lazy"The junction $(c.componentnames[i]) has the frequency dependent value $(values[i]); the inductance of a junction cannot depend on frequency."))
     end
-    if !(eltype(b.inductors) <: Number && eltype(b.mutualinductors) <: Number)
-        for (k, i, j) in c.couplings, m in (k, i, j)
-            CircuitValues.hasprovider(values[m]) || continue
-            kind = m == k ? "mutual coupling" : "coupled inductor"
-            throw(ArgumentError(lazy"The $(kind) $(c.componentnames[m]) has the frequency dependent value $(values[m]); a mutual coupling and the inductances it couples cannot depend on frequency."))
-        end
+    for (k, i, j) in c.couplings, m in (k, i, j)
+        values[m] isa FrequencyDependent || continue
+        kind = m == k ? "mutual coupling" : "coupled inductor"
+        throw(ArgumentError(lazy"The $(kind) $(c.componentnames[m]) has the frequency dependent value $(values[m]); a mutual coupling and the inductances it couples cannot depend on frequency."))
     end
     return nothing
 end
@@ -146,11 +194,11 @@ end
     numericvalues(c::CompiledCircuit, definitions)
 
 The flat value table of a compiled circuit resolved at `definitions`, with
-every entry a number. A value which still depends on an undefined
-parameter, and one which is frequency dependent rather than a number, are
-both refused naming their component, so a caller which can work with
-neither fails with the cause rather than downstream. The definitions may be
-any dictionary.
+every entry a number. A value which still depends on a name the
+definitions do not give, and one which is frequency dependent rather than
+a number, are both refused naming their component, so a caller which can
+work with neither fails with the cause rather than downstream. The
+definitions may be any dictionary.
 """
 function numericvalues(c::CompiledCircuit, definitions)
     vvn = componentvaluestonumber(c.componentvalues,
@@ -169,8 +217,9 @@ end
 A [`BoundCircuit`](@ref) from the flat value table `values`, the component
 values resolved with [`componentvaluestonumber`](@ref): the values gathered
 into the per group arrays, each in the element type its group promotes to.
-A value which is neither a number nor symbolic is refused naming its
-component.
+A name the definitions did not give, a value which is neither a number nor
+symbolic, and a frequency dependent junction, mutual coupling or coupled
+inductor are refused naming their components.
 
 The topology, the groups and the assembly plans do not depend on the
 values, so a sweep binds its values at each point and refills the matrices
@@ -180,17 +229,22 @@ function bindvalues(c::CompiledCircuit, values)
     length(values) == ncomponents(c) || throw(DimensionMismatch(
         "componenttypes and componentvalues should have the same length"))
     names = c.componentnames
+    # a name the definitions did not give is held by no group, port or
+    # source: reported here with every other undefined value
+    any(v -> v isa Union{Symbol,AbstractString}, values) &&
+        checkcomponentvaluesdefined(names, values)
     TC = grouptype(values, c.capacitors, names)
     TL = grouptype(values, c.inductors, names)
     TR = grouptype(values, c.resistors, names)
     TJ = grouptype(values, c.junctions, names)
     TK = grouptype(values, c.mutualinductors, names)
     return BoundCircuit(c,
-        gather(TC, values, c.capacitors),
-        gather(TR, values, c.resistors),
-        gather(TL, values, c.inductors),
-        gather(TJ, values, c.junctions),
-        gather(TK, values, c.mutualinductors), values)
+        gather(TC, values, c.capacitors, zero(TC)),
+        gather(TR, values, c.resistors, convert(TR, Inf)),
+        gather(TL, values, c.inductors, convert(TL, Inf)),
+        gather(TJ, values, c.junctions, convert(TJ, Inf)),
+        gather(TK, values, c.mutualinductors, zero(TK)), values,
+        frequencydependentcomponents(c, values))
 end
 
 # === nodal stamp plans ===
@@ -621,6 +675,48 @@ together, because an environment is realized as an ordinary resistor.
 end
 
 """
+    frequencydependentterms(plan::CircuitMatrixPlan,
+        fd::FrequencyDependentComponents)
+
+The [`FrequencyDependentTerms`](@ref) of the frequency dependent
+components `fd` of a circuit, from the stamp plans: each contribution of
+a capacitor or resistor, and each of the inverse inductance of the branch
+of an inductor, which the coupled branches never are. `nothing` for
+`nothing`.
+"""
+frequencydependentterms(plan::CircuitMatrixPlan, ::Nothing) = nothing
+function frequencydependentterms(plan::CircuitMatrixPlan,
+        fd::FrequencyDependentComponents)
+    kind, row, col, sign, provider =
+        Int8[], Int[], Int[], Int8[], Int[]
+    # the terms of the sources `members`, `(source, function)` pairs, of the
+    # stamp plan `stamp`: the plan's entries are gathered by source in one
+    # pass, so that a component's are found without a pass of their own
+    function addterms!(stamp::NodalStampPlan, k::Integer, members)
+        entries = Dict{Int,Vector{Int}}(src => Int[] for (src, _) in members)
+        for t in eachindex(stamp.src)
+            e = get(entries, stamp.src[t], nothing)
+            isnothing(e) || push!(e, t)
+        end
+        for (src, j) in members, t in entries[src]
+            d = stamp.dest[t]
+            push!(kind, k); push!(row, stamp.rowval[d])
+            push!(col, searchsortedlast(stamp.colptr, d))
+            push!(sign, stamp.weights[t]); push!(provider, j)
+        end
+    end
+    addterms!(plan.capacitance, TERM_CAPACITANCE, fd.capacitors)
+    addterms!(plan.conductance, TERM_CONDUCTANCE, fd.resistors)
+    # an inductor's branch, and that branch's place among the retained ones
+    # the inverse inductance stamps
+    retained = Dict(p => r for (r, p) in enumerate(plan.invinductance.positions))
+    addterms!(plan.invinductance.stamp, TERM_INVINDUCTANCE,
+        [(retained[plan.inductance.dest[g]], j) for (g, j) in fd.inductors])
+    return FrequencyDependentTerms(fd.providers, kind, row, col, sign,
+        provider)
+end
+
+"""
     assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
 
 The [`CircuitMatrices`](@ref) of a bound circuit, assembled against the fixed
@@ -635,7 +731,6 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     c = plan.circuit
     vvn = b.values
     Nmodes = plan.Nmodes
-    checkfrequencyindependent(b)
 
     TC = eltype(b.capacitors)
     TR = eltype(b.resistors)
@@ -663,7 +758,8 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
 
     return CircuitMatrices(Cnm, Gnm, Lb, Ljb, Ljbm, Mb, invLnm,
         plan.Rbnm, portindices, portnumbers, portimpedances,
-        [p.environment for p in plan.ports], Lmean, vvn)
+        [p.environment for p in plan.ports], Lmean, vvn,
+        frequencydependentterms(plan, b.frequencydependent))
 end
 
 # === the same matrices at new values ===
@@ -763,7 +859,6 @@ function assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
     c = plan.circuit
     vvn = b.values
     Nmodes = plan.Nmodes
-    checkfrequencyindependent(b)
     refillnodal!(nm.Cnm, plan.capacitance, b.capacitors, work.capacitance, Nmodes)
     refillnodal!(nm.Gnm, plan.conductance, b.resistors, work.conductance, Nmodes)
     assemblebranch!(nm.Lb.nzval, work.inductor_seen, plan.inductance,
@@ -783,7 +878,7 @@ function assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
     return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Ljb, nm.Ljbm,
         nm.Mb, nm.invLnm, nm.Rbnm, nm.portindices, nm.portnumbers,
         portreferenceimpedances(plan.ports, vvn), nm.portenvironmentindices,
-        Lmean, vvn)
+        Lmean, vvn, frequencydependentterms(plan, b.frequencydependent))
 end
 
 # === the scattering blocks of a compiled circuit ===

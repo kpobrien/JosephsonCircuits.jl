@@ -867,6 +867,22 @@ using Test
             ["rload"]
         @test nm.Gnm[1,1] == 1/50 + 1/100
 
+        # a frequency dependent value is a channel when it is lossy at any
+        # of the sweep's mode frequencies, and each distinct function is
+        # evaluated once over them, however many components share it
+        calls = Ref(0)
+        lossless = FrequencyDependent(w -> (calls[] += 1; 40e-15))
+        lossy = FrequencyDependent(w -> w > 2 ? 40e-15*(1 - 0.01im) :
+            40e-15 + 0im)
+        cf = JC.compile(Circuit(Any[(:p1, 1, 0, Port(1)),
+            (:c1, 1, 0, Capacitor(lossless)), (:c2, 1, 0, Capacitor(lossless)),
+            (:c3, 1, 0, Capacitor(lossless)), (:c4, 1, 0, Capacitor(lossy)),
+            (:l1, 1, 0, Inductor(1e-9))]))
+        vals = JC.componentvaluestonumber(cf.componentvalues, Dict{Any,Any}())
+        @test [cf.componentnames[i] for i in
+            JC.noiseindices(cf, vals; frequencies = 1.0:4.0)] == ["c4"]
+        @test calls[] == 4
+
         # the checks the geometric path made are still made
         # both ports sit across the same terminals, so each is loaded by the
         # other's termination and compiling says so; the refusal under test

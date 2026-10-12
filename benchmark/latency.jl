@@ -1,9 +1,12 @@
 # Latency benchmark: the time to load the package and to its first solves,
 # and how many methods and method instances it carries. The process is the
 # measurement, so run it fresh, with one Julia/BLAS thread:
-# julia --startup-file=no --project=. benchmark/latency.jl label [--precompile]
-# `--precompile` first builds the package's precompiled image anew and
-# times that; it takes minutes and writes a new image into the depot.
+# julia --startup-file=no --project=. benchmark/latency.jl label [case ...] [--precompile]
+# The cases named after the label run in that order, every case by
+# default. A case run alone is its own first call; after others it reuses
+# what they compiled, as in a session. `--precompile` first builds the
+# package's precompiled image anew and times that; it takes minutes and
+# writes a new image into the depot.
 #
 # A method instance is a method specialized for the types of one call,
 # inferred and compiled for it; those the precompile workload made are in
@@ -85,7 +88,60 @@ function firstline()
          (mode = (0, 1), port = 1, current = 1.0e-6)], (2, 2), (4, 4), line)
 end
 
-firstcall("firstsweep", firstsweep)
-firstcall("firsttransient", firsttransient)
-firstcall("firstline", firstline)
+# the JPA's sweep as a session writes it rather than as the workload does:
+# from a closure whose keyword is held in a global, so that the call is
+# reached with a keyword of unknown type; with a keyword of another type
+# than the default's; and over a view of a frequency range
+const METHOD = Ref{Any}(NewtonKrylov())
+const FIRSTCLOSURE = () -> hbsolve(2*pi*(4.5:0.05:5.0)*1e9, (WP,),
+    [(mode = (1,), port = 1, current = IP)], (8,), (16,), jpa();
+    method = METHOD[])
+firstclosure() = FIRSTCLOSURE()
+firstkeyword() = hbsolve(2*pi*(4.5:0.05:5.0)*1e9, (WP,),
+    [(mode = (1,), port = 1, current = IP)], (8,), (16,), jpa(); rtol = 0)
+firstview() = hbsolve(view(2*pi*collect(4.0:0.05:5.5)*1e9, 11:21), (WP,),
+    [(mode = (1,), port = 1, current = IP)], (8,), (16,), jpa())
+
+# a cache over the JPA with its junction and coupling capacitor as
+# parameters, swept over a subset of them, the junction alone
+function firstcache()
+    circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+        (:cc, 1, 2, Capacitor(:Cc)),
+        (:jj, 2, 0, JosephsonJunction(:Lj)),
+        (:cj, 2, 0, Capacitor(1000e-15))])
+    cache = hbcache((WP,), (16,), [(mode = (1,), port = 1, current = IP)],
+        circuit, Dict(:Lj => 1000e-12, :Cc => 100e-15))
+    for Lj in (990:10:1010)*1e-12
+        hbsolve!(cache, (Lj = Lj,))
+    end
+    return cache
+end
+
+# The design sensitivities of the JPA's gain sweep to its three values
+# through the ForwardDiff extension, which needs an environment holding
+# ForwardDiff beside the package: the load of ForwardDiff, the first
+# sensitivity after it and a warm repeat are separate rows, and the case is
+# not among the defaults, since `--project=.` cannot load ForwardDiff.
+function firstdesign()
+    jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+        (:cc, 1, 2, Capacitor(:Cc)),
+        (:jj, 2, 0, JosephsonJunction(:Lj)),
+        (:cj, 2, 0, Capacitor(:Cj))])
+    return designsensitivities(jpa, identity,
+        (Lj = 1000e-12, Cc = 100e-15, Cj = 1000e-15), 2*pi*(4.5:0.05:5.0)*1e9,
+        (WP,), [(mode = (1,), port = 1, current = IP)], (8,), (16,))
+end
+
+const CASES = (; firstsweep, firsttransient, firstline, firstclosure,
+    firstkeyword, firstview, firstcache)
+const OPTIONALCASES = (; firstdesign)
+let named = filter(a -> !startswith(a, "--"), ARGS)[2:end]
+    for case in (isempty(named) ? keys(CASES) : Symbol.(named))
+        f = haskey(CASES, case) ? CASES[case] : haskey(OPTIONALCASES, case) ? OPTIONALCASES[case] :
+            error("no case $(case); the cases are $(join((keys(CASES)..., keys(OPTIONALCASES)...), ", ")).")
+        case === :firstdesign && row("forwarddiff_load_s", @elapsed @eval using ForwardDiff)
+        firstcall(string(case), f)
+        case === :firstdesign && row("$(case)_warm_s", @elapsed Base.invokelatest(f))
+    end
+end
 row("instances", last(counts(JosephsonCircuits)))

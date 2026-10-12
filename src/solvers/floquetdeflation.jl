@@ -427,8 +427,9 @@ function _rebuildfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     # magnitude of their correction `norm(W[:, j])`, so the cap at `size`
     # keeps the survivors carrying the most correction; the survivors need
     # not be a prefix, since `eta` also divides by `norm(X[:, j])`.
-    strength = [norm(view(W, :, j))/
-        max(norm(view(X, :, j)), floatmin(T)) for j in 1:r]
+    strength = let W = W, X = X
+        [norm(view(W, :, j))/max(norm(view(X, :, j)), floatmin(T)) for j in 1:r]
+    end
     keep = [j for j in 1:r if strength[j] > pc.spec.benefittol]
     if isempty(keep)
         _clearfloquet!(pc)

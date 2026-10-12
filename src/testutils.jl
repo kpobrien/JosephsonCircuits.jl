@@ -47,7 +47,7 @@ parameters) applied to its fields, each printed with [`testshow`](@ref).
 julia> JosephsonCircuits.testshow(stdout,JosephsonCircuits.NoiseReduction([1.0, 2.0], [3.0, -4.0]))
 JosephsonCircuits.NoiseReduction{Vector{Float64}}([1.0, 2.0], [3.0, -4.0])
 
-julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmupsyms())
+julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmup())
 ```
 """
 function showstruct(io::IO,out)

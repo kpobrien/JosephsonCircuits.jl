@@ -14,16 +14,16 @@ using Test
 
         for tandelta in [0,1e-3]
 
-            circuitdefs = merge(jpadefs,
-                Dict(:Cj => 1000.0e-15/(1+im*tandelta)))
-
             ws = 2*pi*4.74*1e9
             wp = 2*pi*4.75001*1e9
             Ip = 0.00565e-6
             Is = 1e-14
+            circuitdefs = merge(jpadefs,
+                Dict(:Cj => 1000.0e-15/(1+im*tandelta), :Ip => Ip))
 
-            # linearized simulation
-            sources = [(mode=(1,),port=1,current=Ip)]
+            # linearized simulation, its pump current written as a
+            # parameter, which the definitions resolve
+            sources = [(mode=(1,),port=1,current=:Ip)]
             Npumpharmonics = (6,)
             Nmodulationharmonics = (6,)
             sol1 = hbsolve(ws, (wp,), sources, Nmodulationharmonics,
@@ -288,13 +288,12 @@ using Test
         end
     end
 
-    @testset "undefined symbolic component values" begin
+    @testset "undefined component values" begin
 
-        # forgetting to assign a value to a symbolic variable in
-        # circuitdefs fails immediately with an ArgumentError naming the
-        # component and the undefined variable, instead of a downstream
-        # error about the symbolic frequency variable.
-        JosephsonCircuits.@params Rv Ccv Ljv Cjv
+        # a name the circuit definitions do not give fails immediately
+        # with an ArgumentError naming the component and the name, rather
+        # than downstream.
+        Rv, Ccv, Ljv, Cjv = :Rv, :Ccv, :Ljv, :Cjv
         circuit = Circuit([("P1", "1", "0", Port(1; Z0 = Rv)),("C1", "1", "2", Capacitor(Ccv)),
             ("Lj1", "2", "0", JosephsonJunction(Ljv)),("C2", "2", "0", Capacitor(Cjv))])
         circuitdefs = Dict(Ljv=>1000.0e-12, Cjv=>1000.0e-15, Rv=>50.0)
@@ -323,43 +322,27 @@ using Test
         @test err2 isa ArgumentError
         @test occursin("Ccv", sprint(showerror, err2))
 
-        # a frequency dependent value is accepted, and one which also
-        # carries an undefined parameter is rejected naming both the
-        # component and the parameter
-        JosephsonCircuits.@params Rundef
-        wfd = FrequencyDependent(identity)
-        c2 = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0 + 0.0*wfd)),("C1", "1", "0", Capacitor(100.0e-15)),("L1", "1", "0", Inductor(1.0e-9))])
-        out = JosephsonCircuits.hbnlsolve(wp, (1,), sources, c2, Dict())
-        @test out.solverinfo.converged
-        c3 = Circuit([("P1", "1", "0", Port(1; Z0 = Rundef/(1 + wfd*1e-12))),("C1", "1", "0", Capacitor(100.0e-15)),("L1", "1", "0", Inductor(1.0e-9))])
-        err3 = try
-            JosephsonCircuits.hbnlsolve(wp, (1,), sources, c3, Dict())
-            nothing
-        catch e
-            e
-        end
-        @test err3 isa ArgumentError
-        @test occursin("Rundef", sprint(showerror, err3))
-        @test occursin("P1", sprint(showerror, err3))
     end
 
     @testset "a value written as a closure of the frequency" begin
-        # the same frequency law spelled two ways: a closure passed whole,
-        # and the identity closure entering an expression. The scattering
-        # parameters must agree to roundoff.
+        # a port whose reference impedance is a closure of the frequency:
+        # without a pump each signal frequency is its only mode, so the
+        # sweep must be the circuit with the impedance fixed at each
+        # frequency in turn
         wp = (2*pi*4.75001*1e9,)
         ws = 2*pi*(4.5:0.1:5.0)*1e9
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
         law(w) = 50.0*(1 + (w/1e11)^2)
-        wfd = FrequencyDependent(identity)
-        cexp = Circuit([("P1", "1", "0", Port(1; Z0 = law(wfd))),("C1", "1", "2", Capacitor(100.0e-15)),("Lj1", "2", "0", JosephsonJunction(1000.0e-12)),
+        port(z) = Circuit([("P1", "1", "0", Port(1; Z0 = z)),
+            ("C1", "1", "2", Capacitor(100.0e-15)),
+            ("L1", "2", "0", Inductor(1000.0e-12)),
             ("C2", "2", "0", Capacitor(1000.0e-15))])
-        cfun = Circuit([("P1", "1", "0", Port(1; Z0 = FrequencyDependent(law))),
-            ("C1", "1", "2", Capacitor(100.0e-15)),("Lj1", "2", "0", JosephsonJunction(1000.0e-12)),
-            ("C2", "2", "0", Capacitor(1000.0e-15))])
-        Sexp = hbsolve(ws, wp, sources, (2,), (8,), cexp, Dict()).linearized.S
-        Sfun = hbsolve(ws, wp, sources, (2,), (8,), cfun).linearized.S
-        @test isapprox(Array(Sexp), Array(Sfun), rtol = 1e-12)
+        Sfun = hblinsolve(ws, port(FrequencyDependent(law));
+            keyedarrays = false).S
+        for (i, w) in enumerate(ws)
+            @test hblinsolve([w], port(law(w)); keyedarrays = false).S[:, :, 1] ≈
+                Sfun[:, :, i] rtol = 1e-12
+        end
 
         # a lossy capacitor is a noise channel however its value is
         # written: as a plain complex number, or as a frequency dependent
@@ -374,9 +357,6 @@ using Test
         outs = (hbsolve(ws, wp, sources, (2,), (8,), lossy(C0*(1 - im*tand)),
                     Dict(); keyedarrays = false),
             hbsolve(ws, wp, sources, (2,), (8,),
-                lossy(C0*(1 - im*tand)*(1 + 0*wfd)), Dict();
-                keyedarrays = false),
-            hbsolve(ws, wp, sources, (2,), (8,),
                 lossy(FrequencyDependent(w -> C0*(1 - im*tand))), Dict();
                 keyedarrays = false))
         for o in outs
@@ -386,6 +366,17 @@ using Test
                 rtol = 1e-12)
             @test o.linearized.QE[1,1,1] < o.linearized.QEideal[1,1,1]
         end
+
+        # the pump solve evaluates each function once at each of its two
+        # modes, w and 3w, for the capacitances, conductances and inverse
+        # inductances together
+        counted(f) = (n = Ref(0); (FrequencyDependent(w -> (n[] += 1; f(w))), n))
+        (cf, nc), (rf, nr), (lf, nl) = counted(w -> 100e-15), counted(w -> 2e4), counted(w -> 2e-9)
+        threekinds = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:cc, 1, 2, Capacitor(cf)),
+            (:jj, 2, 0, JosephsonJunction(1000e-12)), (:r, 2, 0, Resistor(rf)),
+            (:l, 2, 3, Inductor(lf)), (:c3, 3, 0, Capacitor(200e-15))])
+        hbnlsolve(wp, (4,), sources, threekinds, Dict(); keyedarrays = false)
+        @test (nc[], nr[], nl[]) == (2, 2, 2)
     end
 
     @testset "calcsources errors" begin
@@ -438,7 +429,7 @@ using Test
     # equivalence of the two solve strategies.
     @testset verbose=true "hblinsolve adjoint solve" begin
 
-        JosephsonCircuits.@params Rleft Rright Cc Lj Cj Lla Llb Kab
+        Rleft, Rright, Cc, Lj, Cj, Lla, Llb, Kab = :Rleft, :Rright, :Cc, :Lj, :Cj, :Lla, :Llb, :Kab
 
         # a JPA: one port
         circuitjpa, circuitdefsjpa = testjpacircuit()
@@ -605,7 +596,7 @@ using Test
         # the component values of the linearized solve.
 
         @testset "linear network" begin
-            JosephsonCircuits.@params R1v R2v R3v C1v L1v C2v
+            R1v, R2v, R3v, C1v, L1v, C2v = :R1v, :R2v, :R3v, :C1v, :L1v, :C2v
             circuit = Any[]
             push!(circuit,("P1", "1", "0", Port(1; Z0 = R1v)))
             push!(circuit,("C1", "1", "2", Capacitor(C1v))); push!(circuit,("L1", "2", "0", Inductor(L1v)))
@@ -747,7 +738,7 @@ using Test
             # pair instead of contracting each component against the full
             # sparsity structure of the linearized system, so its cost is
             # independent of the number of components. The two must agree.
-            JosephsonCircuits.@params Rl Ljx Cg Cjx Cg1v
+            Rl, Ljx, Cg, Cjx, Cg1v = :Rl, :Ljx, :Cg, :Cjx, :Cg1v
             Ncells = 3
             circuit = Any[]
             push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
@@ -913,7 +904,7 @@ using Test
             # fixed operating point sensitivity, in every contraction mode,
             # and the operating point machinery must not be constructed at
             # all.
-            JosephsonCircuits.@params Rl Ll Cs
+            Rl, Ll, Cs = :Rl, :Ll, :Cs
             circuit = Any[]
             push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
             push!(circuit,("L1", "1", "2", Inductor(Ll))); push!(circuit,("C1", "2", "0", Capacitor(Cs)))
@@ -954,7 +945,7 @@ using Test
             # transposed transform on a grid with a dc harmonic. the bias is
             # well below the junction critical current so the finite
             # difference re-solves stay on the same solution branch.
-            JosephsonCircuits.@params Rl Ll Lj Cj
+            Rl, Ll, Lj, Cj = :Rl, :Ll, :Lj, :Cj
             circuit = Any[]
             push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
             push!(circuit,("L1", "1", "2", Inductor(Ll))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
@@ -1028,7 +1019,7 @@ using Test
         end
 
         @testset "unsupported components" begin
-            JosephsonCircuits.@params Rl Cc Lj Cj Lla Llb Kab
+            Rl, Cc, Lj, Cj, Lla, Llb, Kab = :Rl, :Cc, :Lj, :Cj, :Lla, :Llb, :Kab
             circuit = Any[]
             push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
             push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
@@ -1134,7 +1125,7 @@ using Test
         # a promoted port resistor and a mutual inductor: the modified nodal
         # analysis rows join the node blocks, and the sensitivity path takes
         # its own factorization of the pump Jacobian
-        JosephsonCircuits.@params Rl Rr Cc Lj Cj Lla Llb Kab
+        Rl, Rr, Cc, Lj, Cj, Lla, Llb, Kab = :Rl, :Rr, :Cc, :Lj, :Cj, :Lla, :Llb, :Kab
         circuitm = Any[]
         push!(circuitm,("P1", "1", "0", Port(1; Z0 = Rl)))
         push!(circuitm,("C1", "1", "2", Capacitor(Cc))); push!(circuitm,("Lj1", "2", "0", JosephsonJunction(Lj)))
@@ -1356,7 +1347,7 @@ using Test
     @testset "outputs do not depend on whether S is retained" begin
         # every output consumes the per frequency view of S, so whether the
         # scattering cube is retained changes none of them
-        JosephsonCircuits.@params R1v R2v C1v L1v C2v Ljv
+        R1v, R2v, C1v, L1v, C2v, Ljv = :R1v, :R2v, :C1v, :L1v, :C2v, :Ljv
         circuit = Any[]
         push!(circuit,("P1", "1", "0", Port(1; Z0 = R1v)))
         push!(circuit,("C1", "1", "2", Capacitor(C1v))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Ljv)))

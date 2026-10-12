@@ -325,6 +325,98 @@ function readinvariantrate!(dst, v, ir::InvariantRate, w::InvariantRateWork, for
     return dst
 end
 
+# The constraints at the time `t` on the rates of the nodes with
+# capacitance and on the blocks' states, as an orthonormal basis of their
+# rows' span over the rates and then the states, a column each, none when
+# there are none, in the coordinates `scales .* u`: a state scaled to the
+# size its output terms take in the blocks' rows over the pump's period
+# beside the rates' (see `outputsizes`), its own scale being its
+# realization's. They are the combinations of the
+# equations without capacitance, the capacitor free islands' and the
+# scattering blocks' rows, in which the islands' rates and the blocks'
+# port currents cancel (the left null vectors of `ratesystem`) and no
+# flux, junction or line wave remains: a block whose `I + S` is singular,
+# an ideal through or transformer between nodes with capacitance, ties
+# their voltages so, and a rational or a pumped block whose direct term
+# is such a block ties them to its states, whose output terms its rows
+# carry. The rule keeps the residual of such a linear constraint without
+# a source, so a rate off it is carried as it is, a multiplier of one.
+# The last `turning` columns weigh a pumped block's converted outputs,
+# with their weights at `t`, and turn with the pump: the rule keeps their
+# residuals within the steps' error only. The first `rates` coordinates
+# are the rates.
+function rateconstraints(p::TransientProblem, t::Real = 0.0; rtol = 1e-8)
+    (; islands, auxrows, rs) = circuitratesystem(p.circuit, p.matrices.vvn, p.G, p.L, p.blocks)
+    Y = Matrix(nullcombinations(rs, islands, auxrows, size(p.G, 1)))
+    nn = p.Nnodal
+    O = blockoutputs(p, t)
+    # the largest entry of a sparse matrix, of its stored ones: a reduction
+    # over the matrix with a start value reads every entry
+    largest(M) = maximum(abs, nonzeros(M); init = 0.0)
+    gmax = max(largest(p.G), floatmin(Float64))
+    scales = vcat(ones(nn), [s > 0 ? s/gmax : 1.0 for s in outputsizes(p)])
+    size(Y, 2) == 0 && return (; Q = zeros(length(scales), 0), scales, turning = 0, rates = nn)
+    # the combinations of them without a flux, a junction or a wave, and
+    # their rates and states, each part against the largest entry of its
+    # matrix, as what cancels in a null vector does so to roundoff
+    scaled(A, M) = (s = largest(M); iszero(s) ? A : A ./ s)
+    rest = vcat(scaled(transpose(p.L)*Y, p.L), scaled(p.RJ*Y, p.RJ),
+        scaled(transpose(p.lineE)*Y, p.lineE))
+    K = size(rest, 1) == 0 ? Matrix(1.0I, size(Y, 2), size(Y, 2)) :
+        nullspace(rest; atol = rtol)
+    YK = Y*K
+    rows = vcat(transpose(p.G[:, 1:nn])*YK, transpose(O)*YK) ./ (gmax .* scales)
+    # the combinations which weigh no converted output, and the others,
+    # told apart in the rows' coordinates
+    T = convertedweights(p, YK, gmax .* scales[nn + 1:end])
+    still = iszero(T) ? Matrix(1.0I, size(YK, 2), size(YK, 2)) : nullspace(T; atol = rtol)
+    kept(A) = A[:, [norm(c) > rtol for c in eachcol(A)]]
+    Qstill = orthonormalcolumns(kept(rows*still))
+    turns = kept(rows*nullspace(transpose(still)))
+    Qturn = orthonormalcolumns(kept(turns .- Qstill*(transpose(Qstill)*turns)))
+    return (; Q = hcat(Qstill, Qturn), scales, turning = size(Qturn, 2), rates = nn)
+end
+
+# The weights of the combinations `YK` of the equations on the pumped
+# blocks' converted outputs at their largest, two, a row per converted
+# output and state, a column per combination, each state's over its
+# divisor in `statescales`: the rows of `rateconstraints` in its
+# coordinates, and so whatever a block's realization scales its states by.
+function convertedweights(p::TransientProblem, YK::Matrix{Float64}, statescales::Vector{Float64})
+    weights = [(4p.Lscale/phi0) .* (transpose(m.C)*YK[b.auxbase .+ eachindex(b.signal), :]) ./
+        statescales[b.zbase .+ axes(b.A, 1)] for b in p.blocks for m in b.modulations]
+    return reduce(vcat, weights; init = zeros(0, size(YK, 2)))
+end
+
+# The size of each block state's output terms in its block's rows over
+# the pump's period, a converted one at its largest weight, two: the
+# largest over the rows of the sum of their magnitudes, zero for a state
+# which no output reads.
+function outputsizes(p::TransientProblem)
+    sizes = zeros(blockstates(p))
+    for b in p.blocks, q in eachindex(b.signal), k in axes(b.A, 1)
+        v = abs(b.C[q, k]) + sum(m -> 2abs(m.C[q, k]), b.modulations; init = 0.0)
+        sizes[b.zbase + k] = max(sizes[b.zbase + k], 2p.Lscale/phi0*v)
+    end
+    return sizes
+end
+
+# The terms of the blocks' states in their port rows at the time `t`, as
+# the step's residual carries them, `(n, states)`: minus each output term,
+# the unconverted one and the converted ones with their weights at `t`,
+# scattered onto the rows of its block's ports (see `rationalcoupling`).
+function blockoutputs(p::TransientProblem, t::Real)
+    oi, oj, ov = Int[], Int[], Float64[]
+    for b in p.blocks, q in eachindex(b.signal), k in axes(b.A, 1)
+        v = b.C[q, k]
+        for m in b.modulations
+            v += modulationweight(b, m, t)*m.C[q, k]
+        end
+        iszero(v) || (push!(oi, b.auxbase + q); push!(oj, b.zbase + k); push!(ov, -2p.Lscale/phi0*v))
+    end
+    return sparse(oi, oj, ov, length(p), blockstates(p))
+end
+
 # The rate along the projected directions read from the differentiated
 # constraint at the state `x`: `dst = v + Z alpha` with
 # `Z' (L + J'(x)) Z alpha = Z' bdot - Z' (L + J'(x)) v`, the Jacobians of

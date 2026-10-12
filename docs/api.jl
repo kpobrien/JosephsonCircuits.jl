@@ -7,7 +7,7 @@ const GROUPS = (
     circuits = Symbol.([
         "Circuit", "Interface", "Ground", "Net", "PortRef", "PinRef",
         "compile", "CompiledCircuit", "symbolicmatrices", "numericmatrices",
-        "IctoLj", "LjtoIc", "@params",
+        "IctoLj", "LjtoIc",
         "ComponentNotSupportedError",
     ]),
     constants = Symbol.([

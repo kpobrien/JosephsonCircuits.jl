@@ -203,15 +203,19 @@ workflow for pole searches and their convergence in the harmonics.
 
 ## Sensitivities
 
-[`designsensitivities`](@ref) returns derivatives with respect to named
-design parameters, combining all dependent component values by the chain
-rule. See the complete [parameter-sensitivity recipe](recipes/sensitivities.md).
+[`designsensitivities`](@ref) returns derivatives with respect to the
+design parameters of a Julia function which gives the circuit's values,
+combining all dependent component values by the chain rule. The
+derivatives of the function are ForwardDiff's, loaded beside the package
+(`using JosephsonCircuits, ForwardDiff`), or stated by
+`jacobian = p -> J`. See the complete
+[parameter-sensitivity recipe](recipes/sensitivities.md).
 
 For a scattering block, supply derivatives through the `derivatives`
-keyword of [`ScatteringParameters`](@ref). These describe the block at
-one design point; changing parameters in a circuit dictionary does not
-update numbers captured by a block's closure. Rebuild the block's data
-and derivative at a new point. The
+keyword of [`ScatteringParameters`](@ref), by the names of the design
+parameters. These describe the block at one design point; changing the
+design parameters does not update numbers captured by a block's
+closure. Rebuild the block's data and derivative at a new point. The
 [line-length example](recipes/scattering-sensitivities.md) shows this interface.
 
 ## Testing

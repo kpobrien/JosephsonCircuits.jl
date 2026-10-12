@@ -346,6 +346,50 @@ end
         end
     end
 
+    @testset "the period map of a line whose port node has no capacitance" begin
+        # The rate of the port node maps to zero; the map holds a subnormal
+        # on its diagonal, which balanced as it stands would scale the
+        # coordinate toward the end of the floating point range and swamp
+        # every vector with its roundoff. The map is real, so its modes come
+        # in conjugate pairs, and the least damped modes of a pumped line
+        # are carried by the unshifted harmonic, sidebands of 0.004.
+        cs = Any[(:p1, 1, 0, Port(1; Z0 = 50.0)), (:p2, 33, 0, Port(2; Z0 = 50.0))]
+        for k in 1:32
+            push!(cs, (Symbol(:jj, k), k, k + 1, JosephsonJunction(IctoLj(3.4e-6))),
+                (Symbol(:cg, k), k + 1, 0, Capacitor(45e-15)))
+        end
+        line = Circuit(cs)
+        pump = hbnlsolve((2pi*7.12e9,), (8,), [(mode = (1,), port = 1, current = 1.0e-6)], line; keyedarrays = false)
+        r = hbstability(line; nonlinear = pump, Nmodulationharmonics = (4,), method = Monodromy(nev = 4, steps = 64))
+        @test closepoles(r.poles, conj.(r.poles); tol = 1e-9*maximum(abs, r.poles))
+        @test all(axes(r.nodevoltage, 3)) do j
+            argmax(vec(sum(abs2, r.nodevoltage[:, :, j]; dims = 2))) == findfirst(==((0,)), r.modes)
+        end
+    end
+
+    @testset "the period map's multipliers whatever the units of its coordinates" begin
+        # A coordinate which nothing else reaches or reads isolates its
+        # multiplier, which a diagonal similarity leaves as it is: the map
+        # resolves it beside a pair however large the pair's coordinates
+        # make the map's norm. In a circuit, a parallel LC on a port of 500
+        # ohms and an RC on another of 50, in units of w: the map's poles
+        # are the analytic ones over w at w = 1 and at 8 GHz.
+        B = [0.6 -0.2 0.0; 0.2 0.6 0.0; 0.0 0.0 1e-6]
+        for s in (1.0, 1e11)
+            M = Diagonal([1.0, s, 1.0])*B/Diagonal([1.0, s, 1.0])
+            eig = JC.mapeigen!(copy(M), typemax(Int), JC.CPU())
+            @test closepoles(eig.values[eig.selected], eigvals(B); tol = 1e-12)
+        end
+        expected = [-0.05 + sqrt(1 - 0.05^2)*im, -0.05 - sqrt(1 - 0.05^2)*im, -2.0]
+        for w in (1.0, 2pi*8e9)
+            c = Circuit([(:p1, 1, 0, Port(1; Z0 = 500.0)), (:c1, 1, 0, Capacitor(1/(50w))),
+                (:l1, 1, 0, Inductor(50/w)), (:p2, 2, 0, Port(2; Z0 = 50.0)), (:c2, 2, 0, Capacitor(1/(100w)))])
+            m = hbstability(c; pumpfrequency = 0.8w, Nmodulationharmonics = (2,),
+                method = Monodromy(steps = 128, nev = :all))
+            @test closepoles(m.poles/w, expected; tol = 2e-6)
+        end
+    end
+
     @testset "the poles near many shifts" begin
         # A junction chain searched near many shifts over a band: each
         # search keeps the vectors of the poles it finds, and the whole

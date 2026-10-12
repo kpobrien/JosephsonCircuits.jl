@@ -13,10 +13,10 @@ The per-frequency assembly of [`assemblesystemmatrix!`](@ref) is
     A = AoLjnm + invLnm + im*Gnm*w - Cnm*w^2 + Amna0
 
 with the frequency of each stored entry taken from its column's mode, and
-with the stored value of every frequency dependent term conjugated where that
-mode frequency is negative (see [`modevalue`](@ref)). Each stored entry is
-therefore an independent quadratic in its own mode frequency, and the whole
-assembly collapses to four constant coefficient vectors and one kernel:
+with the stored value of every term conjugated where that mode frequency is
+negative (see [`modevalue`](@ref)). Each stored entry is therefore an
+independent quadratic in its own mode frequency, and the whole assembly
+collapses to four constant coefficient vectors and one kernel:
 
     A[q] = cst[q] + sel(kinvL[q]) + im*wm*sel(kG[q]) - wm^2*sel(kC[q])
 
@@ -32,7 +32,9 @@ Because the coefficients do not depend on the signal frequency, one kernel
 fills the stored values of a whole batch of frequencies, which is what a
 uniform batch wants, whether cuDSS's or the batched block factorization's:
 the batch shares one sparsity pattern and one symbolic analysis, and only
-the values differ.
+the values differ. The matrices hold the components whose values depend on
+the frequency open, so the coefficients leave them out; their stamps are
+added to the batch by [`applyfrequencydependent!`](@ref).
 
 # Fields
 - `colof`: the matrix column of each stored entry, from which its mode
@@ -81,20 +83,6 @@ end
         vC = neg ? conj(kC[e]) : kC[e]
         nzval[q] = cst[e] + vL + (im*wm)*vG - (wm*wm)*vC
     end
-end
-
-"""
-    cansweepondevice(lsys::HBLinearizedSystem)
-
-Whether the linearized system's per-frequency assembly can be reduced to the
-constant coefficients of a [`FrequencySweepPlan`](@ref).
-
-It cannot when a component value is frequency dependent: then the stored
-values themselves change with the frequency and there is no constant
-quadratic to precompute.
-"""
-function cansweepondevice(lsys::HBLinearizedSystem)
-    return !lsys.symbolicvalues
 end
 
 # scatter the stored values of `As` into the slots of the system matrix its
@@ -150,8 +138,6 @@ block factors solve both directions.
 """
 function planfrequencysweep(lsys::HBLinearizedSystem, backend;
     adjoint::Bool = false)
-    cansweepondevice(lsys) || throw(ArgumentError(
-        "a component value of the linearized system is frequency dependent, so its assembly is not a constant quadratic in the signal frequency."))
     A = lsys.Asparse
     n = size(A, 1)
     nz = nnz(A)
@@ -211,6 +197,170 @@ function assemblesweep!(nzval::AbstractMatrix, plan::FrequencySweepPlan,
     plan.assemble!(nzval, plan.colof, plan.cst, plan.kinvL, plan.kG, plan.kC,
         plan.wpump, ws, plan.nmodes, plan.nnz; ndrange = length(nzval))
     KernelAbstractions.synchronize(plan.backend)
+    return nzval
+end
+
+# ---------------------------------------------------------------------------
+# the frequency dependent components on a backend
+# ---------------------------------------------------------------------------
+
+# Add the frequency dependent stamps of one stored entry, for one frequency
+# of the batch, into that frequency's system matrix: each stamp is the
+# value of its function at its mode frequency, read from the batch's
+# table, or the inverse of that value, with its sign, conjugated at a
+# negative mode frequency and multiplied by its frequency factor, `-w^2`
+# for a capacitance and `im*w` for a conductance, as
+# `addfrequencydependent!` adds them on the host. The stamps are grouped by
+# destination, as the scattering stamps are, so each address is written by
+# one work item and the sum needs no atomic.
+@kernel function frequencydependentkernel!(nzval, @Const(dest),
+        @Const(order), @Const(segptr), @Const(mode), @Const(tablerow),
+        @Const(kind), @Const(sign), @Const(table), @Const(wpump), @Const(ws),
+        ndest, nzA)
+    gid = @index(Global)
+    @inbounds begin
+        q = gid - 1
+        k = q % ndest + 1
+        f = q ÷ ndest + 1
+        acc = zero(eltype(table))
+        for s in Int(segptr[k]):(Int(segptr[k+1]) - 1)
+            p = Int(order[s])
+            wm = ws[f] + wpump[Int(mode[p])]
+            c = kind[p]
+            v = modevalue(termvalue(c, sign[p], table[Int(tablerow[p]), f]),
+                wm)
+            acc += c == TERM_CAPACITANCE ? -(wm*wm)*v :
+                c == TERM_CONDUCTANCE ? (im*wm)*v : v
+        end
+        nzval[Int(dest[k]) + (f-1)*nzA] += acc
+    end
+end
+
+"""
+    DeviceFrequencyDependentStamps
+
+The stamps of the frequency dependent components of a linearized system
+(see [`FrequencyDependentStamps`](@ref)) on a backend, for a batch of
+signal frequencies.
+
+[`assemblesweep!`](@ref) covers the terms which are a constant quadratic in
+the signal frequency, and the matrices it reads hold these components
+open. Their values are those of their functions at the mode frequencies,
+arbitrary Julia callables, so the functions are evaluated on the host, each
+distinct one once a mode frequency, into the batch's `table`, a column per
+frequency and a row per function and mode, which is sent; a kernel then
+forms each stamp from its row of the table and adds it
+([`applyfrequencydependent!`](@ref)).
+
+The table serves both directions of a sweep: the value of a stamp does not
+depend on the direction the system is assembled in, only its destination
+does, so the adjoint direction gets a second view with destinations of its
+own (see [`transposedestinations`](@ref)).
+"""
+struct DeviceFrequencyDependentStamps{VI,VK,M,B}
+    providers::Vector{Any}
+    # the stamps grouped by destination; see `groupdestinations`
+    dest::VI
+    order::VI
+    segptr::VI
+    # of each stamp: its mode, the row of its function's value at that mode
+    # in a column of the table, its kind and its sign
+    mode::VI
+    tablerow::VI
+    kind::VK
+    sign::VK
+    table::M                # nproviders*Nmodes by nbatch, on the backend
+    host::Matrix{Complex{Float64}}
+    # one frequency's values, a row per function and a column per mode, and
+    # its mode frequencies
+    values::Matrix{Complex{Float64}}
+    wmodes::Vector{Float64}
+    backend::B
+    nzA::Int
+end
+
+"""
+    plandevicefrequencydependent(fd, dest, nzA, nbatch, backend, Nmodes)
+
+Build a [`DeviceFrequencyDependentStamps`](@ref) from the stamps `fd` of a
+linearized system, with their destinations `dest` in the stored order the
+batch uses (see [`sweepdestinations`](@ref)), or `nothing` when `fd` is
+`nothing`.
+"""
+function plandevicefrequencydependent(fd, dest::AbstractVector{Int},
+    nzA::Integer, nbatch::Integer, backend, Nmodes::Integer)
+    isnothing(fd) && return nothing
+    np = length(fd.providers)
+    Ti = nzA*nbatch < typemax(Int32) ? Int32 : Int
+    order, groups, segptr = groupdestinations(dest)
+    # copies, which the backend adopts on the host
+    d = x -> tobackend(backend, Vector{Ti}(x))
+    return DeviceFrequencyDependentStamps(fd.providers, d(groups), d(order),
+        d(segptr), d(fd.mode), d(fd.provider .+ np .* (fd.mode .- 1)),
+        tobackend(backend, copy(fd.kind)), tobackend(backend, copy(fd.sign)),
+        KernelAbstractions.allocate(backend, Complex{Float64}, np*Nmodes,
+            nbatch),
+        Matrix{Complex{Float64}}(undef, np*Nmodes, nbatch),
+        Matrix{Complex{Float64}}(undef, np, Nmodes), zeros(Float64, Nmodes),
+        backend, Int(nzA))
+end
+
+# the same stamps and table with the destinations of the transposed
+# (adjoint) system
+function transposedestinations(st::DeviceFrequencyDependentStamps,
+    dest::AbstractVector{Int}, backend)
+    Ti = eltype(st.dest)
+    order, groups, segptr = groupdestinations(dest)
+    d = x -> tobackend(backend, Vector{Ti}(x))
+    return DeviceFrequencyDependentStamps(st.providers, d(groups), d(order),
+        d(segptr), st.mode, st.tablerow, st.kind, st.sign, st.table, st.host,
+        st.values, st.wmodes, backend, st.nzA)
+end
+
+"""
+    stagefrequencydependent!(st::DeviceFrequencyDependentStamps, w, lo, k,
+        wpumpmodes)
+
+Evaluate the functions of the frequency dependent components on the host
+at the mode frequencies of the batch of `k` signal frequencies of `w`
+beginning at `lo`, each distinct function once a mode frequency, and send
+the table to the backend. A short final batch repeats its last frequency,
+as its assembly does.
+"""
+function stagefrequencydependent!(st::DeviceFrequencyDependentStamps, w,
+    lo::Integer, k::Integer, wpumpmodes)
+    n = length(st.values)
+    @inbounds for j in 1:size(st.host, 2)
+        if j <= k
+            for m in eachindex(st.wmodes)
+                st.wmodes[m] = w[lo + j - 1] + wpumpmodes[m]
+            end
+            providervalues!(st.values, st.providers, st.wmodes)
+            copyto!(st.host, (j - 1)*n + 1, st.values, 1, n)
+        else
+            copyto!(st.host, (j - 1)*n + 1, st.host, (k - 1)*n + 1, n)
+        end
+    end
+    copyto!(st.table, st.host)
+    return st
+end
+
+"""
+    applyfrequencydependent!(nzval::AbstractMatrix,
+        st::DeviceFrequencyDependentStamps, wpump, ws)
+
+Add the stamps of the frequency dependent components into the stored
+values `nzval` of a batch of system matrices at the signal frequencies
+`ws`, from the table [`stagefrequencydependent!`](@ref) staged for the
+batch; `wpump` holds the pump mode offsets of the signal modes.
+"""
+function applyfrequencydependent!(nzval::AbstractMatrix,
+    st::DeviceFrequencyDependentStamps, wpump, ws)
+    ndest = length(st.dest)
+    frequencydependentkernel!(st.backend, 64)(nzval, st.dest, st.order,
+        st.segptr, st.mode, st.tablerow, st.kind, st.sign, st.table, wpump,
+        ws, ndest, st.nzA; ndrange = ndest*size(st.table, 2))
+    KernelAbstractions.synchronize(st.backend)
     return nzval
 end
 
@@ -520,12 +670,15 @@ where it was computed, for the noise scattering parameters.
 - `blocks`: the block path's `(plan, nzval, B, F, X, Xadj)`, or `nothing`.
 - `scatstamps`, `scatstampsadjoint`, `providers`: the scattering block
     stamps of each direction and the providers they are evaluated through.
+- `fdstamps`, `fdstampsadjoint`: the stamps of the frequency dependent
+    components of each direction ([`DeviceFrequencyDependentStamps`](@ref)),
+    or `nothing` when there are none.
 - `sweeps`: the cuDSS sweep of each direction, made on the first batch.
 - `solverkwargs`: the factorization's options, forwarded to each sweep as
     it is made so a caller can override the sweep's own defaults.
 - `batchlo`: the first signal frequency of the batch currently staged.
 """
-struct DeviceSweep{TB,TFw,TAd,TFs,TAs,TBl,TSt,TSa,TPr,TK<:NamedTuple}
+struct DeviceSweep{TB,TFw,TAd,TFs,TAs,TBl,TSt,TSa,TPr,TFd,TFa,TK<:NamedTuple}
     backend::TB
     nb::Int
     F::Int
@@ -541,6 +694,8 @@ struct DeviceSweep{TB,TFw,TAd,TFs,TAs,TBl,TSt,TSa,TPr,TK<:NamedTuple}
     scatstamps::TSt
     scatstampsadjoint::TSa
     providers::TPr
+    fdstamps::TFd
+    fdstampsadjoint::TFa
     sweeps::Vector{Any}
     solverkwargs::TK
     batchlo::Base.RefValue{Int}
@@ -568,7 +723,10 @@ scattering parameters, which are formed there rather than brought back (see
 [`devicenoise`](@ref)). The `providers` field is the
 [`DeviceProviders`](@ref) the scattering blocks are evaluated through, or
 `nothing` when there are none or they cannot be evaluated on `backend`; the
-noise channels of the dissipative blocks are read through the same one.
+noise channels of the dissipative blocks are read through the same one. The
+components whose values depend on the frequency are stamped from a table
+of their functions' values at the batch's modes, which the host fills for
+each batch ([`DeviceFrequencyDependentStamps`](@ref)).
 
 The split is what keeps the host work parallel. `solvebatch!` is the only verb
 which touches the device; once it has returned, its batch's frequencies can be
@@ -580,13 +738,16 @@ factorization ([`blockanalysis`](@ref)), analyzes it once and then factorizes
 and solves each batch together, from the values of one
 [`assemblesweep!`](@ref). With a sparse device factorization the batch
 size is capped by [`uniformbatchlimit`](@ref) and by `budget`
-([`memorybudget`](@ref) by default) at cuDSS's own estimate of a system's
-factorization ([`cudsssystembytes`](@ref)) with the values, solutions and
-right hand sides of each direction ([`cudssbatchlimit`](@ref)); with a
-[`BlockFactorization`](@ref) the cap does not apply and the batch is sized by
-[`blocksystembytes`](@ref), the factors, the originals when refining, the
-solutions of both directions and the value matrix of one system, against
-`budget` and the length of the sweep.
+([`memorybudget`](@ref) by default) at cuDSS's own estimate of the batch's
+factorization, from the analysis of its forward direction, with the values,
+solutions and right hand sides of each direction
+([`cudssbatchlimit`](@ref)): the largest batch those arrays allow is
+analyzed and kept when the estimate fits beside them, and a smaller one
+made when it does not. With a [`BlockFactorization`](@ref) the cap does
+not apply and the batch is sized by [`blocksystembytes`](@ref), the
+factors, the originals when refining, the solutions of both directions and
+the value matrix of one system, against `budget` and the length of the
+sweep.
 
 `forward` and `adjoint` each describe what a direction needs, as a named tuple
 `(full, rows)`. With `full` the whole solution is copied back, which the node
@@ -613,15 +774,23 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     nrhs = size(bnm, 2)
     nzA = nnz(lsys.Asparse)
     F = length(w)
+    # the right hand sides do not depend on the frequency, and are the same for
+    # both directions, but cuDSS wants one set per system of the batch
+    bhost = convert(Matrix{T}, bnm)
     # a block factorization solves both directions from one factorization
     # per frequency, filled from the values assembled in the stored order;
     # its batch is sized by the memory of the factors and the solutions of
     # one system, within the device's memory budget. The cuDSS batch cap
     # does not apply to it; the memory and the sweep do. A cuDSS batch is
-    # held to the same budget, at cuDSS's own estimate of a system's
-    # factorization, from an analysis of the pattern, and the values,
-    # solutions and right hand sides each system holds, in each direction
+    # held to the same budget, at cuDSS's own estimate of its factorization
+    # and the values, solutions and right hand sides each system holds, in
+    # each direction. The estimate needs an analysis, which the batch size
+    # must precede, so the largest batch the cap, the sweep and those arrays
+    # allow is made and its forward direction analyzed; the first batch
+    # factorizes that analysis. When the estimate does not fit beside the
+    # arrays, a smaller batch is made instead, analyzed at its first batch.
     usesblocks = factorization isa BlockFactorization
+    fwdbatch, fwdsweep = nothing, nothing
     nb = if usesblocks
         blocksym = blocksymbolic(lsys.Asparse, lsys.Nmodes)
         Tf = something(factorization.precision, Float64)
@@ -633,15 +802,25 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
             n*nrhs*sizeof(T) + nzA*sizeof(T)
         clamp(budget ÷ persystem, 1, F)
     else
-        persystem = (isnothing(adjoint) ? 1 : 2)*(cudsssystembytes(
-            lsys.Asparse, T, nrhs, backend; solverkwargs(factorization)...) +
-            nzA*sizeof(T) + 2n*nrhs*sizeof(T))
-        min(cudssbatchlimit(persystem, nrhs, budget), F)
+        directions = isnothing(adjoint) ? 1 : 2
+        arrays = nzA*sizeof(T) + 2n*nrhs*sizeof(T)
+        largest = min(cudssbatchlimit(directions*arrays, nrhs, budget), F)
+        fwdbatch = devicebatch(lsys, backend, false, bhost, largest)
+        fwdsweep = _cudss_sweep(fwdbatch.rowptr, fwdbatch.colind,
+            fwdbatch.nzval, fwdbatch.X, fwdbatch.B;
+            solverkwargs(factorization)...)
+        persystem = directions*(cld(_cudss_sweepbytes(fwdsweep), largest) +
+            arrays)
+        fits = min(cudssbatchlimit(persystem, nrhs, budget), largest)
+        if fits < largest
+            _cudss_release!(fwdsweep)
+            releasearrays!(fwdbatch)
+            fwdbatch = devicebatch(lsys, backend, false, bhost, fits)
+            fwdsweep = nothing
+        end
+        fits
     end
 
-    # the right hand sides do not depend on the frequency, and are the same for
-    # both directions, but cuDSS wants one set per system of the batch
-    bhost = convert(Matrix{T}, bnm)
     hasscattering = !isnothing(lsys.scattering)
 
     # One set of scattering values serves both directions: a contribution
@@ -665,6 +844,19 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     scatproviders = plandeviceproviders(lsys.scattering, nb, backend,
         lsys.wpumpmodes, isnothing(lsys.scattering) ? 1.0 :
             lsys.scattering.scale)
+    # the frequency dependent components: one table of their functions'
+    # values serves both directions, whose stamps differ only in where
+    # they land
+    fd = lsys.frequencydependent
+    fdstamps = plandevicefrequencydependent(fd, isnothing(fd) ? Int[] :
+        sweepdestinations(lsys.Asparse, fd.Aindex, usesblocks), nzA, nb,
+        backend, lsys.Nmodes)
+    fdstampsadjoint = if !isnothing(fd) && !isnothing(adjoint) && !usesblocks
+        transposedestinations(fdstamps, sweepdestinations(lsys.Asparse,
+            fd.Aindex, true), backend)
+    else
+        fdstamps
+    end
 
     fstage = devicestage(forward, n, nrhs, nb, backend)
     astage = isnothing(adjoint) ? nothing :
@@ -687,8 +879,7 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     else
         nothing
     end
-    fwd = usesblocks ? (X = blocks.X,) :
-        devicebatch(lsys, backend, false, bhost, nb)
+    fwd = usesblocks ? (X = blocks.X,) : fwdbatch
     adj = isnothing(adjoint) ? nothing :
         usesblocks ? (X = blocks.Xadj,) :
         devicebatch(lsys, backend, true, bhost, nb)
@@ -699,7 +890,8 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     return DeviceSweep(backend, nb, F, collect(Float64, w),
         collect(Float64, lsys.wpumpmodes), wshost, wsdev, fwd, adj, fstage,
         astage, blocks, scatstamps, scatstampsadjoint, scatproviders,
-        Any[nothing, nothing], solverkwargs(factorization), Ref(0))
+        fdstamps, fdstampsadjoint, Any[fwdsweep, nothing],
+        solverkwargs(factorization), Ref(0))
 end
 
 """
@@ -806,10 +998,12 @@ end
 # the block path: the batch of frequencies is factorized from its assembled
 # values in one batched block LU and solved in both directions from the one
 # factorization
-function runblockbatch!(ds::DeviceSweep, stamps)
+function runblockbatch!(ds::DeviceSweep, stamps, fdstamps)
     bl = ds.blocks
     assemblesweep!(bl.nzval, bl.plan, ds.wsdev)
     isnothing(stamps) || applyscatteringstamps!(bl.nzval, stamps)
+    isnothing(fdstamps) || applyfrequencydependent!(bl.nzval, fdstamps,
+        bl.plan.wpump, ds.wsdev)
     fillandfactorize!(bl.F, bl.nzval)
     refinedsolve!(bl.X, bl.F, bl.B)
     isnothing(bl.Xadj) || refinedsolve!(bl.Xadj, bl.F, bl.B; transposed = true)
@@ -819,11 +1013,14 @@ function runblockbatch!(ds::DeviceSweep, stamps)
 end
 
 # the sparse device factorization path of one direction: the batch is
-# assembled, equilibrated, analyzed once on the first batch, refactorized
-# and solved, and the solutions are returned to the unscaled unknowns
-function runbatch!(ds::DeviceSweep, slot::Int, b, stage, stamps)
+# assembled, equilibrated, analyzed on the first batch unless the sizing
+# analyzed it, factorized and solved, and the solutions are returned to the
+# unscaled unknowns
+function runbatch!(ds::DeviceSweep, slot::Int, b, stage, stamps, fdstamps)
     assemblesweep!(b.nzval, b.plan, ds.wsdev)
     isnothing(stamps) || applyscatteringstamps!(b.nzval, stamps)
+    isnothing(fdstamps) || applyfrequencydependent!(b.nzval, fdstamps,
+        b.plan.wpump, ds.wsdev)
     equilibrate!(b.nzval, b.B, b.B0, b.equil, ds.backend)
     if isnothing(ds.sweeps[slot])
         ds.sweeps[slot] = _cudss_sweep(b.rowptr, b.colind, b.nzval, b.X, b.B;
@@ -856,12 +1053,14 @@ function solvebatch!(ds::DeviceSweep, lo::Integer)
                 lo, k)
         end
     end
+    isnothing(ds.fdstamps) || stagefrequencydependent!(ds.fdstamps, ds.w, lo,
+        k, ds.wpumpmodes)
     if !isnothing(ds.blocks)
-        runblockbatch!(ds, ds.scatstamps)
+        runblockbatch!(ds, ds.scatstamps, ds.fdstamps)
     else
-        runbatch!(ds, 1, ds.fwd, ds.fstage, ds.scatstamps)
+        runbatch!(ds, 1, ds.fwd, ds.fstage, ds.scatstamps, ds.fdstamps)
         isnothing(ds.adj) || runbatch!(ds, 2, ds.adj, ds.astage,
-            ds.scatstampsadjoint)
+            ds.scatstampsadjoint, ds.fdstampsadjoint)
     end
     ds.batchlo[] = lo
     return nothing
@@ -910,6 +1109,21 @@ The adjoint counterpart of [`forwardsolution!`](@ref).
 """
 adjointsolution!(phin, ds::DeviceSweep, i::Integer) =
     fillsolution!(phin, ds, ds.astage, i)
+
+"""
+    stagedtable!(table, ds::DeviceSweep, i::Integer)
+
+Fill `table` with the values of the frequency dependent functions at the
+modes of frequency `i` of the batch staged by the last
+[`solvebatch!`](@ref), a row per function and a column per mode, as
+[`stagefrequencydependent!`](@ref) evaluated them for its assembly. The
+form [`hblinsolve_inner!`](@ref) takes as `presolvedtable`.
+"""
+function stagedtable!(table::Matrix{ComplexF64}, ds::DeviceSweep, i::Integer)
+    n = length(table)
+    copyto!(table, 1, ds.fdstamps.host, (batchslot(ds, i) - 1)*n + 1, n)
+    return table
+end
 
 """
     adjointdevice(ds::DeviceSweep, i::Integer)

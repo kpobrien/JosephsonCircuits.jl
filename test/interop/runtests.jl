@@ -214,4 +214,7 @@ end
 
 include(joinpath(@__DIR__, "symbolics.jl"))
 
+# the methods of the extensions this suite loads capture no variable boxed
+include(joinpath(@__DIR__, "..", "captures.jl"))
+
 end

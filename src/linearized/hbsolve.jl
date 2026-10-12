@@ -381,14 +381,15 @@ const _DOC_LINBACKEND = """
     batched dense block factorization, whose batch is sized by the free
     memory of the device. The adjoint (transposed) solve and the noise
     scattering parameters run on the device too, and the sensitivities of
-    `S` on host threads from the solutions the device returns. The sweep
-    falls back to the host when a component value is
-    frequency dependent (see [`cansweepondevice`](@ref)) or when
-    sensitivities with respect to
-    scattering block parameters are requested, whose stamps are rebuilt
-    per frequency on the host; a scattering block whose parameters cannot
-    be evaluated on the device forms its noise channels on the host from
-    the whole adjoint solution copied back."""
+    `S` on host threads from the solutions the device returns. A
+    component whose value depends on the frequency is stamped on the
+    device from its function's values, which the host evaluates per batch,
+    each distinct function once a mode frequency. The sweep falls back to
+    the host when sensitivities with respect to scattering block
+    parameters are requested, whose stamps are rebuilt per frequency on
+    the host; a scattering block whose parameters cannot be evaluated on
+    the device forms its noise channels on the host from the whole adjoint
+    solution copied back."""
 
 """
     checksweepoptions(w, nbatches, psc, backend, factorization,
@@ -452,7 +453,7 @@ function sensitivitycomponentindex(psc::CompiledCircuit, name)
 end
 
 """
-    hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
+    hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
         Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
         circuit, circuitdefs; dc = false, threewavemixing = false,
         fourwavemixing = true, maxpumpintermodorder = Inf,
@@ -498,20 +499,24 @@ nonzero frequencies instead.
 - `ws`: the signal angular frequency or frequencies in radians per second,
     such as `2*pi*5.0e9` or `2*pi*(4.5:0.001:5.0)*1e9`; a real number or
     any iterable of them.
-- `wp::NTuple{N,Number}`: the pump angular frequencies in radians per
+- `wp::NTuple{N,Any}`: the pump angular frequencies in radians per
     second, `(2*pi*5.0e9,)` for a single pump or `(2*pi*5.0e9, 2*pi*6.0e9)`
-    for two, as real numbers. The pumps should be non-commensurate; for commensurate pumps
-    give the lowest frequency here and add the others to `sources` with a
-    mode index equal to the frequency ratio. The pump solution's `S` then
-    drives several port modes at once, so it is not a scattering matrix
-    (see [`NonlinearHB`](@ref)); the linearized solution's is.
+    for two, as real numbers or names, as a component value may be,
+    which `circuitdefs` defines. The pumps should be non-commensurate; for
+    commensurate pumps give the lowest frequency here and add the others to
+    `sources` with a mode index equal to the frequency ratio. The pump
+    solution's `S` then drives several port modes at once, so it is not a
+    scattering matrix (see [`NonlinearHB`](@ref)); the linearized
+    solution's is.
 - `sources`: the sources, as named tuples `(mode, port, current)` in any
     iterable. `mode` is a tuple of harmonic indices, one per pump
     frequency, `port` the port number, and `current` the complex current
     amplitude in Amperes; see [`sourcetable`](@ref) for the checks. `[(mode=(1,0), port=1, current=Ip1), (mode=(0,1), port=1,
     current=Ip2)]` applies a source at `1*wp[1] + 0*wp[2]` and one at
     `0*wp[1] + 1*wp[2]`, both at port 1. A source with `mode = (0,)` and
-    `dc = true` is a direct current bias.
+    `dc = true` is a direct current bias. A current may be written in
+    terms of parameters, as a component value is, and `circuitdefs` then
+    gives them their values.
 - `Nmodulationharmonics::NTuple{M,Int}`: how many harmonics of each pump to
     retain around the signal in the linearized solve, which sets the
     signal and idler modes.
@@ -523,8 +528,8 @@ nonzero frequencies instead.
     `Circuit` is compiled with the default node ordering; for another one,
     pass `compile(circuit; sorting = ...)`.
 - `circuitdefs`: a dictionary from the symbols or symbolic variables used
-    as component values to their numerical values. Optional when every
-    component value is numeric.
+    as component values or source currents to their numerical values.
+    Optional when every component value and current is numeric.
 
 # Keywords
 - `dc = false`: retain the zero frequency mode in the nonlinear solve. A
@@ -628,16 +633,25 @@ $(_DOC_SSENS)
 - `HB`: the nonlinear and linearized solutions; see [`HB`](@ref).
 
 """
-function hbsolve(ws, wp::NTuple{N,Number}, sources,
+function hbsolve(ws, wp::NTuple{N,Any}, sources,
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
     circuit::CompilableCircuit, circuitdefs::AbstractDict = Dict{Symbol,Any}();
     kwargs...) where {N,M}
     # the circuit compiled and the inputs in their canonical forms, so that
     # the solve is compiled once for every way of writing them
     psc = compile(circuit)
-    return hbsolve(sweepfrequencies(ws), tonefrequencies(wp),
-        sourcetable(sources, wp), Nmodulationharmonics, Npumpharmonics,
-        psc, definitiontable(circuitdefs); kwargs...)
+    defs = definitiontable(circuitdefs)
+    wp = tonefrequencies(wp, defs)
+    # every keyword is the solve's, with its defaults there. They are handed
+    # over through `invokelatest`, as `hblinsolve` hands over its own, a
+    # barrier inference does not cross: keywords of unknown type, as from a
+    # first call in a closure, would otherwise have the solve inferred for
+    # the declared type of each of its keywords, the paths of every option
+    # the call does not take included, rather than compiled for the ones it
+    # is given
+    return Base.invokelatest(hbsolve, sweepfrequencies(ws), wp,
+        sourcetable(sources, wp, defs), Nmodulationharmonics, Npumpharmonics,
+        psc, defs; kwargs...)
 end
 
 """

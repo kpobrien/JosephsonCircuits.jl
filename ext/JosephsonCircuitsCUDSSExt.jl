@@ -5,12 +5,13 @@ Package extension loaded with `using CUDSS`. It supplies the cuDSS
 factorizations: `_cudss_factorize` and `_cudss_factorize!` for one sparse
 system, real or complex, from the host or with its values on the device,
 with the solves of `myldiv!` and, for several right hand sides at once,
-`matrixsolve!`; `_cudss_systembytes`, cuDSS's estimate of the memory of
-one system, by which a sweep sizes its batch; `_cudss_sweep` and
-`_cudss_sweepsolve!` for the uniform batch of a frequency sweep; and
-`_cudss_sweeprefactorize!` and `_cudss_sweepapply!`, the refactorization
-and the solve of a uniform batch apart, for the transient batch, which
-solves many times per refactorization. cuDSS 0.8 has no transposed solve,
+`matrixsolve!`; `_cudss_sweep`, a uniform batch analyzed, with
+`_cudss_sweepbytes`, cuDSS's estimate of its memory, by which a sweep
+sizes its batch, and `_cudss_sweepsolve!`, its factorization and solve,
+for a frequency sweep; and `_cudss_sweeprefactorize!` and
+`_cudss_sweepapply!`, the factorization and the solve of a uniform batch
+apart, for the transient batch, which solves many times per
+factorization. cuDSS 0.8 has no transposed solve,
 which is why the sweep's adjoint direction is a second factorization
 there; a `BlockFactorization` on the device does not need this extension.
 """
@@ -26,7 +27,7 @@ using LinearAlgebra
 import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
     _cudss_sweep, _cudss_sweepsolve!, _cudss_sweeprefactorize!, _cudss_sweepapply!,
     _cudss_release!,
-    _cudss_systembytes, myldiv!, cscvaluepermutation, rowpointer, columnindices
+    _cudss_sweepbytes, myldiv!, cscvaluepermutation, rowpointer, columnindices
 
 # ---------------------------------------------------------------------------
 # binding the caller's vectors to a cuDSS descriptor
@@ -253,6 +254,8 @@ JosephsonCircuits.matrixsolve!(X, F::CUDSSSolve, B) = myldiv!(X, F, B)
 # The right hand sides are the same for every frequency but cuDSS wants one
 # per system, so they are replicated into an `n` by `nrhs` by `nbatch` array;
 # that costs a few tens of megabytes and saves a descriptor rebind per system.
+# The batch is made analyzed; its first numeric phase is the factorization,
+# which allocates the factors, and every later one a refactorization.
 mutable struct CUDSSSweep{T,INT,TS,TD}
     solver::TS
     rowptr::CuVector{INT}
@@ -266,28 +269,7 @@ mutable struct CUDSSSweep{T,INT,TS,TD}
     B::CuArray{T,3}
     xdesc::TD
     bdesc::TD
-end
-
-# cuDSS's estimate of the device memory one system of the pattern takes,
-# after its analysis under the factorization's options: the peak of the
-# factorization, the second of the sixteen estimates cuDSS reports (the
-# device's permanent and peak memory, then the host's)
-function _cudss_systembytes(rowptr::CuVector{INT}, colind::CuVector{INT},
-    nzval::CuVector{T}, nrhs::Integer; kwargs...) where {T,INT}
-    n = length(rowptr) - 1
-    solver = configure!(CudssSolver(rowptr, colind, nzval, "G", 'F'); kwargs...)
-    X, B = CUDA.zeros(T, n, nrhs), CUDA.zeros(T, n, nrhs)
-    cudss("analysis", solver, X, B)
-    estimates = zeros(Int64, 16)
-    GC.@preserve estimates begin
-        cudss_set(solver, "memory_estimates", estimates)
-        cudss_get(solver, "memory_estimates")
-    end
-    # the analysis and its arrays freed at once, before the sweep sizes
-    # its batch against the free memory
-    finalize(solver.data)
-    CUDA.unsafe_free!(X); CUDA.unsafe_free!(B)
-    return Int(estimates[2])
+    factorized::Bool
 end
 
 function _cudss_sweep(rowptr::CuVector{INT}, colind::CuVector{INT},
@@ -304,10 +286,23 @@ function _cudss_sweep(rowptr::CuVector{INT}, colind::CuVector{INT},
     nbatch > 1 && cudss_set(solver, "ubatch_size", nbatch)
     xdesc, bdesc = bindbatch!(CudssMatrix(T, n, nrhs; nbatch = nbatch),
         CudssMatrix(T, n, nrhs; nbatch = nbatch), X, B)
+    # the analysis reads the pattern alone, so the values need not be
+    # assembled yet
     cudss("analysis", solver, xdesc, bdesc)
-    cudss("factorization", solver, xdesc, bdesc)
     return CUDSSSweep{T,INT,typeof(solver),typeof(xdesc)}(
-        solver, rowptr, colind, nzval, nzvec, X, B, xdesc, bdesc)
+        solver, rowptr, colind, nzval, nzvec, X, B, xdesc, bdesc, false)
+end
+
+# cuDSS's estimate of the device memory the analyzed batch takes: the
+# peak of its factorization, the second of the sixteen estimates cuDSS
+# reports (the device's permanent and peak memory, then the host's)
+function _cudss_sweepbytes(S::CUDSSSweep)
+    estimates = zeros(Int64, 16)
+    GC.@preserve estimates begin
+        cudss_set(S.solver, "memory_estimates", estimates)
+        cudss_get(S.solver, "memory_estimates")
+    end
+    return Int(estimates[2])
 end
 
 # the factorization data of a finished sweep, which cuDSS allocated outside
@@ -319,7 +314,7 @@ function _cudss_release!(S::CUDSSSweep)
     return nothing
 end
 
-# refactorize the whole batch against whatever values `S.nzval` now holds and
+# factorize the whole batch against whatever values `S.nzval` now holds and
 # solve every system for every right hand side, reusing the one analysis
 function _cudss_sweepsolve!(S::CUDSSSweep)
     _cudss_sweeprefactorize!(S)
@@ -329,14 +324,16 @@ function _cudss_sweepsolve!(S::CUDSSSweep)
 end
 
 # the two phases apart, for a time stepper that solves many times per
-# refactorization: the refactorization against the values `S.nzval` holds,
-# the descriptors bound to the owned buffers; and a solve of the caller's
-# `X` and `B`, `(n, nrhs, nbatch)` device arrays of the batch's shape, bound
+# factorization: the factorization against the values `S.nzval` holds, the
+# descriptors bound to the owned buffers; and a solve of the caller's `X`
+# and `B`, `(n, nrhs, nbatch)` device arrays of the batch's shape, bound
 # for the call, with no synchronization
 function _cudss_sweeprefactorize!(S::CUDSSSweep)
     CUDSS.cudss_update(S.solver, S.rowptr, S.colind, S.nzvec)
     bindbatch!(S.xdesc, S.bdesc, S.X, S.B)
-    cudss("refactorization", S.solver, S.xdesc, S.bdesc)
+    cudss(S.factorized ? "refactorization" : "factorization", S.solver,
+        S.xdesc, S.bdesc)
+    S.factorized = true
     return S
 end
 function _cudss_sweepapply!(S::CUDSSSweep, X::CuArray{T,3}, B::CuArray{T,3}) where {T}

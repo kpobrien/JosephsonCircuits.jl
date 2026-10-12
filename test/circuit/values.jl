@@ -36,13 +36,6 @@ using Test
         Sb = hbsolve(ws, wp, src, (2,), (8,), circb).linearized.S
         @test isapprox(Array(Sa), Array(Sb), rtol = 1e-12)
 
-        # providers combine with numbers through the value arithmetic
-        circc = Circuit(Any[
-            ("P1", "1", "0", Port(1; Z0 = 2*FrequencyDependent(w -> 25.0))), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1000e-12)),
-            ("C2", "2", "0", Capacitor(1000e-15))])
-        Sc = hbsolve(ws, wp, src, (2,), (8,), circc).linearized.S
-        @test isapprox(Array(Sc), Array(Sb), rtol = 1e-12)
-
         # the linear-only entry point also accepts a circuit alone
         lin = hblinsolve(ws, circb; Nmodulationharmonics = (2,))
         @test all(isfinite, Array(lin.S))
@@ -50,8 +43,8 @@ using Test
 
     @testset "a frequency dependent value at the idlers" begin
         # a series resistor and inductor written as one closure of the
-        # frequency, as an expression in the frequency, and as two elements:
-        # the idlers of the pumped solve lie at negative frequencies, where a
+        # frequency and as two elements: the idlers of the pumped solve lie
+        # at negative frequencies, where a
         # real element's impedance is the conjugate of its impedance at the
         # magnitude of the frequency
         R0, L0 = 5.0, 1e-9
@@ -61,62 +54,28 @@ using Test
         S(c) = Array(hbsolve(ws, wp, src, (2,), (8,), c).linearized.S)
         explicit = S(jpa((:R1, 1, 4, Resistor(R0)), (:L1, 4, 3, Inductor(L0))))
         closure = S(jpa((:Z1, 1, 3, Resistor(FrequencyDependent(w -> R0 + im*w*L0)))))
-        expression = S(jpa((:Z1, 1, 3, Resistor(R0 + im*L0*FrequencyDependent(identity)))))
         @test isapprox(closure, explicit; rtol = 1e-10)
-        @test isapprox(expression, explicit; rtol = 1e-10)
     end
 
-    @testset "a parameter defined under any of its names" begin
-        # a value written as a symbol or as a parameter is defined under its
-        # symbol, its string or its parameter object alike, and a parameter
-        # defined twice with different values is refused
-        JosephsonCircuits.@params Cp
+    @testset "a name defined under its symbol or its string" begin
+        # a value written as a symbol or a string is defined under either,
+        # a name defined twice with different values is refused, a name
+        # defined as a frequency dependent value takes it, and a value no
+        # group holds is refused naming its component
         onec(v) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(v))])
         S(c, d) = hblinsolve(ws, c, d; keyedarrays = false).S
         ref = S(onec(1e-12), Dict())
-        for (value, key) in ((:Cc, :Cc), (:Cc, "Cc"),
-                (:Cc, JosephsonCircuits.CircuitValues.Parameter(:Cc)),
-                (Cp, :Cp), (Cp, "Cp"), (Cp, Cp))
+        for value in (:Cc, "Cc"), key in (:Cc, "Cc")
             @test S(onec(value), Dict(key => 1e-12)) ≈ ref
         end
         @test_throws ArgumentError S(onec(:Cc), Dict(:Cc => 1e-12, "Cc" => 2e-12))
-        # a string value names its parameter as a symbol does, and a name
-        # defined as a frequency dependent value serves a parameter as it
-        # serves a symbol
-        for key in (:Cc, "Cc", JosephsonCircuits.CircuitValues.Parameter(:Cc))
-            @test S(onec("Cc"), Dict(key => 1e-12)) ≈ ref
-        end
         @test_throws ArgumentError S(onec("Cq"), Dict())
-        fd = FrequencyDependent(w -> 1e-12)
-        @test S(onec(Cp), Dict(:Cp => fd)) ≈ S(onec(:Cp), Dict(:Cp => fd)) ≈ ref
-        # a name may be defined as an expression in parameters the
-        # definitions give as numbers, and a value which is neither a
-        # number nor symbolic is refused naming its component
-        for value in (:Cc, "Cc", JosephsonCircuits.CircuitValues.Parameter(:Cc))
-            @test S(onec(value), Dict(:Cc => Cp/2, :Cp => 2e-12)) ≈ ref
-        end
+        @test S(onec(:Cp), Dict(:Cp => FrequencyDependent(w -> 1e-12))) ≈ ref
         for d in (Dict(:Cc => nothing), Dict(:Cc => "1e-12"), Dict(:Cc => :C0))
             e = try S(onec(:Cc), d); nothing catch err; err end
             @test e isa ArgumentError && occursin("c1", sprint(showerror, e))
         end
         @test_throws ArgumentError S(onec(nothing), Dict())
-    end
-
-    @testset "a parameter defined in terms of others" begin
-        # a name defined by an expression in other parameters, to any
-        # depth, means inside an expression what it means as a whole
-        # value; a definition which comes back to itself is refused
-        JosephsonCircuits.@params Lj Lj0 Lj1
-        onel(v) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
-            (:l1, 1, 0, Inductor(v)), (:c1, 1, 0, Capacitor(1e-12))])
-        S(c, d) = hblinsolve(ws, c, d; keyedarrays = false).S
-        defs = Dict(Lj => Lj0/2, Lj0 => 2*Lj1, :Lj1 => 1e-9)
-        ref = S(onel(2e-9), Dict())
-        for v in (2*Lj, Lj + Lj1, :Lj0, Lj0, "Lj0")
-            @test S(onel(v), defs) ≈ ref
-        end
-        @test S(onel(:Lj), defs) ≈ S(onel(1e-9), Dict())
-        @test_throws ArgumentError S(onel(Lj), Dict(Lj => Lj0/2, Lj0 => 2*Lj))
     end
 
     @testset "two junctions on one branch" begin

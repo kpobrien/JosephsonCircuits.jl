@@ -890,7 +890,7 @@ function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
         if !isempty(dAop)
             copyto!(nonzeros(dA), dAop[k])
             mul!(dAphin, dA, phin)
-            mul!(contraction, transpose(phinadjoint), dAphin, 1, 1)
+            mul!(contraction, transpose(phinadjoint), dAphin, true, true)
         end
 
         for b in 1:NPM
