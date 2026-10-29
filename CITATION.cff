@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use JosephsonCircuits.jl in your research, please cite it."
+type: software
+title: JosephsonCircuits.jl
+authors:
+  - family-names: "O'Brien"
+    given-names: "Kevin P."
+    affiliation: Massachusetts Institute of Technology
+repository-code: https://github.com/kpobrien/JosephsonCircuits.jl
+url: https://josephsoncircuits.org/
+license: MIT
+# This concept DOI identifies all versions. Release-specific citations are
+# available from Zenodo; do not pair this DOI with a particular version/date.
+doi: 10.5281/zenodo.23765395
