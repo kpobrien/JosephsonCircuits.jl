@@ -1,7 +1,7 @@
 
 # JosephsonCircuits.jl
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23765396.svg)](https://doi.org/10.5281/zenodo.23765396)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23765395.svg)](https://doi.org/10.5281/zenodo.23765395)
 
 [![Code coverage](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl/branch/main/graphs/badge.svg)](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl)
 [![Build Status](https://github.com/kpobrien/JosephsonCircuits.jl/actions/workflows/CI.yml/badge.svg
